@@ -37,14 +37,14 @@
                     @foreach($modules as $module)
                         @continue($module['key'] === 'client-information')
                         <x-ui.module-card
-                            :id="$module['key'] === 'cibi-report' ? 'open-cibi-report' : null"
+                            :id="match($module['key']) { 'cibi-report' => 'open-cibi-report', 'income-sources' => 'open-business-report', default => null }"
                             :title="$module['title']"
                             :icon="$module['icon']"
                             :state="$module['state']"
-                            :description="$module['description']"
+                            :description="$module['key'] === 'income-sources' ? null : $module['description']"
                             :href="$moduleHref($module)"
-                            :modal-id="$module['key'] === 'cibi-report' ? 'cibi-report-dialog' : null"
-                            :modal-url="$module['key'] === 'cibi-report' ? $moduleHref($module) : null"
+                            :modal-id="match($module['key']) { 'cibi-report' => 'cibi-report-dialog', 'income-sources' => 'business-report-dialog', default => null }"
+                            :modal-url="in_array($module['key'], ['cibi-report', 'income-sources'], true) ? $moduleHref($module) : null"
                             :updated-at="$module['updatedAt'] ? Illuminate\Support\Carbon::parse($module['updatedAt'])->timezone($displayTimezone)->format('M j, Y') : null"
                         />
                     @endforeach
@@ -109,4 +109,5 @@
     </div>
 
     <x-ui.cibi-report-modal />
+    <x-ui.business-report-modal />
 @endsection

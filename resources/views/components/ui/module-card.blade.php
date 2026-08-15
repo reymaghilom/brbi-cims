@@ -12,7 +12,7 @@
 @endphp
 
 @if($href)
-    <a href="{{ $href }}" @if($modalId) data-modal-open="{{ $modalId }}" data-cibi-report-url="{{ $modalUrl ?? $href }}" @endif {{ $attributes->class('group flex min-h-[4.75rem] items-center gap-3 rounded-card bg-surface-muted/65 p-3 transition duration-150 hover:bg-brand-soft/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 sm:p-3.5') }}>
+    <a href="{{ $href }}" @if($modalId) data-modal-open="{{ $modalId }}" @if($modalId === 'business-report-dialog') data-business-report-url="{{ $modalUrl ?? $href }}" @else data-cibi-report-url="{{ $modalUrl ?? $href }}" @endif @endif {{ $attributes->class('group flex min-h-[4.75rem] items-center gap-3 rounded-card bg-surface-muted/65 p-3 transition duration-150 hover:bg-brand-soft/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 sm:p-3.5') }}>
 @elseif($asButton)
     <button type="button" {{ $attributes->class('group flex min-h-[4.75rem] w-full items-center gap-3 rounded-card bg-surface-muted/65 p-3 text-left transition duration-150 hover:bg-brand-soft/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 sm:p-3.5') }}>
 @else

@@ -54,8 +54,15 @@ class IncomeSourcesCompletionEvaluator
     private function businessComplete(IncomeSource $source): bool
     {
         $report = $source->businessReport;
-        if ($report === null || ! filled($source->source_name) || ! filled($report->business_name)
-            || ! filled($report->report_category) || ! filled($report->main_business_address) || ! filled($report->registered_owner)) {
+        if ($report === null || ! filled($source->source_name) || ! filled($report->business_name) || ! filled($report->report_category)) {
+            return false;
+        }
+
+        if ($source->template->businessReportSchema() !== []) {
+            return collect($report->template_data ?? [])->flatten()->contains(fn ($value): bool => filled($value));
+        }
+
+        if (! filled($report->main_business_address) || ! filled($report->registered_owner)) {
             return false;
         }
 

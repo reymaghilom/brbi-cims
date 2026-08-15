@@ -16,9 +16,9 @@ use Illuminate\Support\Facades\DB;
 
 class SaveBusinessIncomeSource
 {
-    private const SOURCE_FIELDS = ['source_name', 'business_name', 'contribution_rank', 'estimated_monthly_contribution', 'is_primary', 'branch_name', 'amount_applied', 'account_officer_name'];
+    private const SOURCE_FIELDS = ['source_name', 'business_name', 'contribution_rank', 'estimated_monthly_contribution', 'is_primary', 'branch_name', 'account_officer_name'];
 
-    private const REPORT_FIELDS = ['business_name', 'report_category', 'main_business_address', 'previous_business_address', 'reason_for_transfer', 'registered_owner', 'relationship_to_borrower', 'year_established', 'length_of_stay_months', 'monthly_rent', 'ownership_type', 'business_type', 'scale', 'informant', 'report_remarks'];
+    private const REPORT_FIELDS = ['business_name', 'report_category', 'start_date', 'submitted_date', 'main_business_address', 'previous_business_address', 'previous_business_address_length_of_stay', 'reason_for_transfer', 'registered_owner', 'relationship_to_borrower', 'year_established', 'length_of_stay_months', 'monthly_rent', 'ownership_type', 'rented_from', 'business_type', 'scale', 'informant', 'report_remarks', 'template_data'];
 
     private const SECTIONS = [
         'branches' => ['branches', ['location', 'is_declared', 'is_inspected', 'reason_not_inspected', 'frontage_meters', 'total_area_square_meters', 'is_air_conditioned', 'operating_days_hours', 'shifts_count', 'employees_per_shift', 'average_sales_per_shift', 'inventory_level', 'monthly_rent', 'years_in_area', 'nearby_brands'], 'location'],
@@ -42,7 +42,7 @@ class SaveBusinessIncomeSource
             $report = $source->businessReport()->firstOrCreate([], ['business_name' => $source->business_name ?: $source->source_name, 'report_category' => $source->template->business_category ?: $source->template->name]);
             $report->fill(Arr::only($data, self::REPORT_FIELDS));
             $report->save();
-            $tags = $source->template->compatibility_tags ?? [];
+            $tags = $source->template->businessReportSchema() !== [] ? [] : ($source->template->compatibility_tags ?? []);
             $changes = [];
 
             foreach (self::SECTIONS as $input => [$relation, $fields, $required]) {

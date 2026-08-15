@@ -18,61 +18,41 @@ use Illuminate\View\View;
 
 class IncomeSourceController extends Controller
 {
-    public function launch(ClientFolder $clientFolder): RedirectResponse
+    public function launch(ClientFolder $clientFolder): View
     {
         Gate::authorize('view', $clientFolder);
-        $source = $this->dedicatedSource($clientFolder);
 
-        if ($source) {
-            return redirect()->route('client-folders.income-sources.edit', [$clientFolder, $source]);
-        }
-
-        return redirect()->route('client-folders.income-sources.create', $clientFolder);
+        return $this->businessPage($clientFolder, null);
     }
 
-    public function index(ClientFolder $clientFolder): View
+    public function index(ClientFolder $clientFolder): RedirectResponse
     {
         Gate::authorize('view', $clientFolder);
-        $sources = $clientFolder->incomeSources()->with('template:id,name,business_category,is_fallback')->withCount(['mediaReferences', 'generatedReports'])->orderBy('sort_order')->orderBy('id')->get();
 
-        return view('client-folders.income-sources.index', compact('clientFolder', 'sources'));
+        return redirect()->route('client-folders.income-sources.index', $clientFolder);
     }
 
-    public function create(ClientFolder $clientFolder, CreateIncomeSource $create): RedirectResponse
+    public function create(ClientFolder $clientFolder): RedirectResponse
     {
         Gate::authorize('create', [IncomeSource::class, $clientFolder]);
-        $source = $this->dedicatedSource($clientFolder);
-        if ($source === null) {
-            $template = IncomeSourceTemplate::query()
-                ->where('is_active', true)
-                ->where('is_fallback', false)
-                ->where('form_handler', 'dedicated-business')
-                ->orderBy('sort_order')
-                ->orderBy('id')
-                ->firstOrFail();
-            $source = $create->execute(request()->user(), $clientFolder, [
-                'income_source_template_id' => $template->id,
-                'source_name' => '',
-                'business_name' => null,
-            ]);
-        }
 
-        return redirect()->route('client-folders.income-sources.edit', [$clientFolder, $source]);
+        return redirect()->route('client-folders.income-sources.index', $clientFolder);
     }
 
-    public function selectTemplate(ClientFolder $clientFolder): View
+    public function selectTemplate(ClientFolder $clientFolder): RedirectResponse
     {
         Gate::authorize('create', [IncomeSource::class, $clientFolder]);
-        $templates = IncomeSourceTemplate::query()->where('is_active', true)->orderBy('is_fallback')->orderBy('sort_order')->orderBy('name')->get();
 
-        return view('client-folders.income-sources.create', compact('clientFolder', 'templates'));
+        return redirect()->route('client-folders.income-sources.index', $clientFolder);
     }
 
-    public function store(StoreIncomeSourceRequest $request, ClientFolder $clientFolder, CreateIncomeSource $create): RedirectResponse
+    public function store(StoreIncomeSourceRequest $request, ClientFolder $clientFolder, CreateIncomeSource $create, SaveBusinessIncomeSource $save): RedirectResponse
     {
-        $source = $create->execute($request->user(), $clientFolder, $request->validated());
+        $data = $request->validated();
+        $source = $create->execute($request->user(), $clientFolder, $data);
+        $save->execute($request->user(), $clientFolder, $source, $data);
 
-        return redirect()->route('client-folders.income-sources.edit', [$clientFolder, $source])->with('status', 'Income source created. Complete its selected report form below.');
+        return redirect()->route('client-folders.income-sources.edit', [$clientFolder, $source])->with('status', 'A new blank Business Report is ready for encoding.');
     }
 
     public function show(ClientFolder $clientFolder, IncomeSource $incomeSource): RedirectResponse
@@ -82,20 +62,15 @@ class IncomeSourceController extends Controller
         return redirect()->route('client-folders.income-sources.edit', [$clientFolder, $incomeSource]);
     }
 
-    public function edit(ClientFolder $clientFolder, IncomeSource $incomeSource): View
+    public function edit(ClientFolder $clientFolder, IncomeSource $incomeSource): View|RedirectResponse
     {
         Gate::authorize('update', $incomeSource);
         $incomeSource->load('template');
         if ($incomeSource->template->is_fallback) {
-            $incomeSource->load('generalReport.declaredItems');
-
-            return view('client-folders.income-sources.general-edit', compact('clientFolder', 'incomeSource'));
+            return redirect()->route('client-folders.income-sources.index', $clientFolder);
         }
 
-        $incomeSource->load(['businessReport.properties.tenants', 'businessReport.branches', 'businessReport.products', 'businessReport.suppliers', 'businessReport.observations', 'businessReport.competitors']);
-        $businesses = $this->dedicatedSources($clientFolder);
-
-        return view('client-folders.income-sources.business-edit', compact('clientFolder', 'incomeSource', 'businesses'));
+        return $this->businessPage($clientFolder, $incomeSource);
     }
 
     public function addBusiness(ClientFolder $clientFolder, IncomeSource $incomeSource, CreateIncomeSource $create): RedirectResponse
@@ -135,19 +110,14 @@ class IncomeSourceController extends Controller
         Gate::authorize('delete', $incomeSource);
         $delete->execute(request()->user(), $clientFolder, $incomeSource);
 
-        return redirect()->route('client-folders.income-sources.manage', $clientFolder)->with('status', 'Income source removed from the active folder.');
+        return redirect()->route('client-folders.income-sources.index', $clientFolder)->with('status', 'Income source removed from the active folder.');
     }
 
     private function afterSave(string $intent, ClientFolder $folder, IncomeSource $source): RedirectResponse
     {
-        $route = $intent === 'return' ? route('client-folders.income-sources.manage', $folder) : route('client-folders.income-sources.edit', [$folder, $source]);
+        $route = $intent === 'return' ? route('client-folders.income-sources.index', $folder) : route('client-folders.income-sources.edit', [$folder, $source]);
 
         return redirect($route)->with('status', 'Income source report saved successfully.');
-    }
-
-    private function dedicatedSource(ClientFolder $folder): ?IncomeSource
-    {
-        return $this->dedicatedSources($folder)->first();
     }
 
     private function dedicatedSources(ClientFolder $folder)
@@ -161,5 +131,46 @@ class IncomeSourceController extends Controller
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
+    }
+
+    private function businessPage(ClientFolder $clientFolder, ?IncomeSource $incomeSource): View
+    {
+        $clientFolder->loadMissing([
+            'assignedInvestigator:id,full_name',
+            'cibiReport:id,client_folder_id,party_type,branch_name,account_officer_name,amount_applied',
+        ]);
+        if ($incomeSource) {
+            $incomeSource->load([
+                'template', 'businessReport.properties.tenants', 'businessReport.branches', 'businessReport.products',
+                'businessReport.suppliers', 'businessReport.observations', 'businessReport.competitors',
+            ]);
+        }
+        $businesses = $this->dedicatedSources($clientFolder);
+        $legacyPlaceholders = $businesses->filter(fn (IncomeSource $business): bool => $this->isBlankLegacyPlaceholder($business));
+        $suppressLegacyBusinessUi = $legacyPlaceholders->count() > 1;
+        if ($suppressLegacyBusinessUi) {
+            $legacyIds = $legacyPlaceholders->modelKeys();
+            $businesses = $businesses->reject(fn (IncomeSource $business): bool => in_array($business->getKey(), $legacyIds, true))->values();
+            if ($incomeSource && in_array($incomeSource->getKey(), $legacyIds, true)) {
+                $incomeSource = null;
+            }
+        }
+        $businessTemplates = IncomeSourceTemplate::query()
+            ->where('is_active', true)
+            ->where('is_fallback', false)
+            ->where('form_handler', 'dedicated-business')
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get(['id', 'name', 'description', 'business_category', 'template_type', 'version', 'compatibility_tags']);
+
+        return view('client-folders.income-sources.business-edit', compact('clientFolder', 'incomeSource', 'businesses', 'businessTemplates', 'suppressLegacyBusinessUi'));
+    }
+
+    private function isBlankLegacyPlaceholder(IncomeSource $source): bool
+    {
+        return $source->revision === 1
+            && blank($source->source_name)
+            && blank($source->business_name)
+            && blank($source->businessReport?->business_name);
     }
 }

@@ -18,7 +18,7 @@ class IncomeSource extends Model
 
     protected function casts(): array
     {
-        return ['state' => RecordState::class, 'is_primary' => 'boolean', 'estimated_monthly_contribution' => 'decimal:2', 'amount_applied' => 'decimal:2', 'completed_at' => 'datetime'];
+        return ['state' => RecordState::class, 'is_primary' => 'boolean', 'estimated_monthly_contribution' => 'decimal:2', 'completed_at' => 'datetime'];
     }
 
     public function clientFolder(): BelongsTo

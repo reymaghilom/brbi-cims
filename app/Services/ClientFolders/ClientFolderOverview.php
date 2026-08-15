@@ -85,7 +85,7 @@ class ClientFolderOverview
         return [
             $this->module('client-information', 'Client Information', 'user', $this->singleState($folder->information?->completion_state), $folder->information ? 'Client profile record available.' : 'No client information has been encoded.', $folder->information?->updated_at),
             $this->module('cibi-report', 'CI / BI Report', 'report', $this->singleState($folder->cibiReport?->state), $folder->cibiReport ? 'Official CI / BI report record available.' : 'No CI / BI report has been started.', $folder->cibiReport?->updated_at),
-            $this->module('income-sources', 'Business / Income Sources', 'folder', $this->collectionState($folder->income_sources_count, $folder->completed_income_sources_count), $this->countDescription($folder->income_sources_count, 'income source'), $folder->income_sources_max_updated_at),
+            $this->module('income-sources', 'Business / Income Sources', 'folder', $this->collectionState($folder->income_sources_count, $folder->completed_income_sources_count), null, $folder->income_sources_max_updated_at),
             $this->module('residence-business', 'Residence & Business Report', 'media', $this->singleState($folder->residenceBusinessReport?->state), $folder->residenceBusinessReport ? 'Residence and business report record available.' : 'No residence and business report has been started.', $folder->residenceBusinessReport?->updated_at),
             $this->module('activities', 'CI Activities', 'activity', $this->activityState($folder), $this->activityDescription($folder), $folder->activities_max_updated_at),
             $this->module('media', 'Photos & Videos', 'media', $folder->media_references_count > 0 ? 'available' : 'not_started', $this->countDescription($folder->media_references_count, 'media item'), $folder->media_references_max_updated_at),
@@ -96,7 +96,7 @@ class ClientFolderOverview
         ];
     }
 
-    private function module(string $key, string $title, string $icon, string $state, string $description, mixed $updatedAt): array
+    private function module(string $key, string $title, string $icon, string $state, ?string $description, mixed $updatedAt): array
     {
         return compact('key', 'title', 'icon', 'state', 'description', 'updatedAt');
     }

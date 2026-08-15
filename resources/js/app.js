@@ -314,9 +314,9 @@ document.addEventListener('click', (event) => {
         closeFolderMenus();
         const dialog = document.getElementById(modalTrigger.dataset.modalOpen);
         if (dialog instanceof HTMLDialogElement) {
-            const cibiFrame = dialog.querySelector('[data-cibi-report-frame]');
-            const cibiLoading = dialog.querySelector('[data-cibi-report-loading]');
-            const cibiUrl = modalTrigger.dataset.cibiReportUrl;
+            const cibiFrame = dialog.querySelector('[data-cibi-report-frame]') || dialog.querySelector('[data-business-report-frame]');
+            const cibiLoading = dialog.querySelector('[data-cibi-report-loading]') || dialog.querySelector('[data-business-report-loading]');
+            const cibiUrl = modalTrigger.dataset.cibiReportUrl || modalTrigger.dataset.businessReportUrl;
             if (cibiFrame instanceof HTMLIFrameElement && cibiUrl) {
                 const requestedUrl = new URL(cibiUrl, window.location.href).href;
                 if (cibiFrame.src !== requestedUrl) {
@@ -369,6 +369,8 @@ const refreshSavedCibiFolder = (returnUrl, folder = {}) => {
         progressbar?.setAttribute('aria-valuenow', String(percentage));
         if (progressbar?.firstElementChild instanceof HTMLElement) progressbar.firstElementChild.style.width = `${percentage}%`;
     }
+
+    window.location.reload();
 };
 
 window.addEventListener('message', (event) => {
@@ -396,8 +398,9 @@ document.addEventListener('contextmenu', (event) => {
 
 document.querySelectorAll('[data-unsaved-form]').forEach((form) => {
     let dirty = false;
-    form.addEventListener('input', () => { dirty = true; });
+    form.addEventListener('input', (event) => { if (event.target.form === form) dirty = true; });
     form.addEventListener('submit', () => { dirty = false; });
+    form.addEventListener('unsaved-form-reset', () => { dirty = false; });
     window.addEventListener('beforeunload', (event) => {
         if (!dirty) return;
         event.preventDefault();
@@ -432,11 +435,19 @@ const removeRepeaterRow = (row, repeater) => {
     repeater.dispatchEvent(new Event('input', { bubbles: true }));
 };
 
-const repeaterRowHasData = (row) => [...row.querySelectorAll('input, select, textarea')].some((field) => {
+const repeaterRowHasData = (row, repeater) => {
+    const savedId = row.querySelector('input[name$="[id]"]')?.value;
+    if (savedId) return true;
+    const selector = repeater.matches('[data-empty-row-remove-without-confirmation]')
+        ? 'input:not([type="hidden"]), select, textarea'
+        : 'input, select, textarea';
+
+    return [...row.querySelectorAll(selector)].some((field) => {
     if (field.matches('[name$="[id]"], [name$="[_delete]"]')) return false;
     if (['checkbox', 'radio'].includes(field.type)) return field.checked;
     return field.value.trim() !== '';
-});
+    });
+};
 
 repeaterRemoveDialog?.querySelector('[data-repeater-remove-confirm]')?.addEventListener('click', () => {
     if (!pendingRepeaterRemoval) return;
@@ -447,7 +458,9 @@ repeaterRemoveDialog?.querySelector('[data-repeater-remove-confirm]')?.addEventL
 });
 repeaterRemoveDialog?.addEventListener('close', () => { pendingRepeaterRemoval = null; });
 
-document.querySelectorAll('[data-repeater]').forEach((repeater) => {
+const initializeBusinessRepeaters = (scope = document) => scope.querySelectorAll('[data-repeater]').forEach((repeater) => {
+    if (repeater.dataset.repeaterReady) return;
+    repeater.dataset.repeaterReady = 'true';
     const rows = repeater.querySelector('[data-repeater-rows]');
     const template = repeater.querySelector('[data-repeater-template]');
     let nextIndex = rows?.children.length ?? 0;
@@ -461,6 +474,9 @@ document.querySelectorAll('[data-repeater]').forEach((repeater) => {
                 if (attribute.value.includes('__INDEX__')) element.setAttribute(attribute.name, attribute.value.replaceAll('__INDEX__', String(nextIndex)));
             });
         });
+        if (repeater.closest('[data-business-template-preview-target]')) {
+            row.querySelectorAll('input[name], select[name], textarea[name]').forEach((control) => control.setAttribute('form', 'business-template-form'));
+        }
         nextIndex++;
         rows.append(row);
         initializeCibiControls(row);
@@ -473,7 +489,7 @@ document.querySelectorAll('[data-repeater]').forEach((repeater) => {
         if (!button) return;
         const row = button.closest('[data-repeater-row]');
         if (!row) return;
-        if (repeaterRemoveDialog instanceof HTMLDialogElement && repeaterRowHasData(row)) {
+        if (repeaterRemoveDialog instanceof HTMLDialogElement && repeaterRowHasData(row, repeater)) {
             pendingRepeaterRemoval = { row, repeater };
             repeaterRemoveDialog.showModal();
             repeaterRemoveDialog.querySelector('[data-modal-close]')?.focus();
@@ -481,6 +497,213 @@ document.querySelectorAll('[data-repeater]').forEach((repeater) => {
         }
         removeRepeaterRow(row, repeater);
     });
+});
+
+initializeBusinessRepeaters();
+
+document.addEventListener('input', (event) => {
+    const stockroomInput = event.target.closest('[data-distributor-stockroom-input]');
+    if (!(stockroomInput instanceof HTMLInputElement)) return;
+    const section = stockroomInput.closest('[data-distributor-stockroom]');
+    const fieldType = stockroomInput.dataset.distributorStockroomInput;
+    const valueField = section?.querySelector(`[data-distributor-stockroom-value="${fieldType}"]`);
+    if (!(valueField instanceof HTMLInputElement)) return;
+    valueField.value = [...section.querySelectorAll(`[data-distributor-stockroom-input="${fieldType}"]`)]
+        .map((field) => field.value.trim())
+        .join('\n');
+    valueField.dispatchEvent(new Event('input', { bubbles: true }));
+});
+
+document.addEventListener('change', (event) => {
+    const option = event.target.closest('[data-distributor-product-option]');
+    if (!(option instanceof HTMLInputElement)) return;
+    const section = option.closest('[data-distributor-stockroom]');
+    const valueField = section?.querySelector('[data-distributor-products-value]');
+    if (!(valueField instanceof HTMLInputElement)) return;
+    valueField.value = [...section.querySelectorAll('[data-distributor-product-option]:checked')]
+        .map((field) => field.value)
+        .join(', ');
+    valueField.dispatchEvent(new Event('input', { bubbles: true }));
+});
+
+const syncDistributorPaymentTerm = (section, clearInactive = false) => {
+    const termOption = section.querySelector('[data-distributor-payment-option="term"]');
+    const termInput = section.querySelector('[data-distributor-payment-term-input]');
+    if (!(termOption instanceof HTMLInputElement) || !(termInput instanceof HTMLInputElement)) return;
+    const termSelected = termOption.checked;
+    termInput.disabled = !termSelected;
+    if (!termSelected && clearInactive) termInput.value = '';
+    termOption.value = `TERM:${termInput.value.trim() ? ` ${termInput.value.trim()}` : ''}`;
+};
+
+document.addEventListener('change', (event) => {
+    const option = event.target.closest('[data-distributor-payment-option]');
+    if (!(option instanceof HTMLInputElement)) return;
+    const section = option.closest('[data-distributor-payment-terms]');
+    if (section instanceof HTMLElement) syncDistributorPaymentTerm(section, true);
+});
+
+document.addEventListener('input', (event) => {
+    const termInput = event.target.closest('[data-distributor-payment-term-input]');
+    if (!(termInput instanceof HTMLInputElement)) return;
+    const section = termInput.closest('[data-distributor-payment-terms]');
+    if (section instanceof HTMLElement) syncDistributorPaymentTerm(section);
+});
+
+document.addEventListener('input', (event) => {
+    const display = event.target.closest('[data-property-boolean-display]');
+    if (!(display instanceof HTMLInputElement)) return;
+    const valueField = display.previousElementSibling;
+    if (!(valueField instanceof HTMLInputElement) || !valueField.matches('[data-property-boolean-value]')) return;
+    const value = display.value.trim().toUpperCase();
+    valueField.value = value === 'Y' ? '1' : (value === 'N' ? '0' : '');
+});
+
+document.addEventListener('input', (event) => {
+    const summaryReason = event.target.closest('[data-property-summary-reason]');
+    if (!(summaryReason instanceof HTMLInputElement)) return;
+    const section = summaryReason.closest('.business-non-agricultural-properties');
+    const reasonField = section?.querySelector('[data-repeater-row]:not([hidden]) [data-property-reason-value]');
+    if (reasonField instanceof HTMLInputElement) reasonField.value = summaryReason.value;
+});
+
+const initializeBusinessAddressStatus = (scope = document) => scope.querySelectorAll('[data-business-address-from]').forEach((fromField) => {
+    if (fromField.dataset.businessAddressStatusReady) return;
+    fromField.dataset.businessAddressStatusReady = 'true';
+    const container = fromField.closest('.business-address-status');
+    const statuses = [...(container?.querySelectorAll('[data-business-address-status]') ?? [])];
+    const monthlyRentField = container?.querySelector('[data-business-monthly-rent]');
+    const sync = () => {
+        const status = statuses.find((option) => option.checked)?.value;
+        const mortgageeOrLessorApplicable = ['Mortgaged', 'Rented'].includes(status);
+        fromField.disabled = !mortgageeOrLessorApplicable;
+        if (!mortgageeOrLessorApplicable) fromField.value = '';
+        if (monthlyRentField instanceof HTMLInputElement) monthlyRentField.disabled = status !== 'Rented';
+    };
+    statuses.forEach((option) => option.addEventListener('change', sync));
+    sync();
+});
+
+initializeBusinessAddressStatus();
+
+const initializeOtherIncomeSourceSummary = (root = document) => {
+    root.querySelectorAll('[data-other-income-source]').forEach((section) => {
+        if (section.dataset.summaryReady === 'true') return;
+        section.dataset.summaryReady = 'true';
+        const summary = section.querySelector('[data-income-source-summary]');
+        const empty = section.querySelector('[data-income-source-empty]');
+        if (!(summary instanceof HTMLOListElement)) return;
+
+        const sync = () => {
+            const selected = [...section.querySelectorAll('[data-income-source-rank]')]
+                .filter((control) => control.value.trim() !== '');
+            summary.replaceChildren(...selected.map((control) => {
+                const rank = control.value.trim();
+                const item = document.createElement('li');
+                const label = control.dataset.incomeSourceLabel || 'Income source';
+                item.textContent = rank ? `${rank}. ${label}` : label;
+                return item;
+            }).sort((a, b) => {
+                const aRank = Number.parseInt(a.textContent, 10);
+                const bRank = Number.parseInt(b.textContent, 10);
+                return (Number.isNaN(aRank) ? Number.MAX_SAFE_INTEGER : aRank) - (Number.isNaN(bRank) ? Number.MAX_SAFE_INTEGER : bRank);
+            }));
+            if (empty instanceof HTMLElement) empty.hidden = selected.length > 0;
+        };
+
+        section.addEventListener('input', sync);
+        section.addEventListener('change', sync);
+        sync();
+    });
+};
+
+initializeOtherIncomeSourceSummary();
+
+document.querySelectorAll('[data-business-template-title]').forEach((chooser) => {
+    const select = chooser.querySelector('[data-business-template-select]');
+    const page = chooser.closest('[data-business-report-form]');
+    const previewTarget = page?.querySelector('[data-business-template-preview-target]');
+    const currentForm = page?.querySelector('[data-current-business-form]');
+    const currentToolbar = page?.querySelector('[data-current-business-toolbar]');
+    const saveToolbar = document.querySelector('[data-business-save-toolbar]');
+    const saveButton = saveToolbar?.querySelector('[data-business-save]');
+    const headerControls = page?.querySelectorAll('.business-report-header-control[name]') ?? [];
+    const switchDialog = document.querySelector('[data-business-template-switch-dialog]');
+    const switchConfirm = switchDialog?.querySelector('[data-business-template-switch-confirm]');
+    if (!(select instanceof HTMLSelectElement) || !previewTarget || !currentForm) return;
+
+    let activeTemplateId = select.value;
+    let pendingTemplateId = null;
+    let hasUnsavedTemplateData = false;
+
+    const showSelectedTemplate = () => {
+        previewTarget.replaceChildren();
+        const template = document.querySelector(`[data-business-template-preview="${CSS.escape(select.value)}"]`);
+        const hasSelection = template instanceof HTMLTemplateElement;
+        currentForm.hidden = hasSelection;
+        if (currentToolbar) currentToolbar.hidden = hasSelection;
+        if (saveToolbar) saveToolbar.hidden = !hasSelection && !page.matches('form');
+        if (saveButton) saveButton.setAttribute('form', hasSelection ? 'business-template-form' : (page.matches('form') ? 'business-report-form' : 'business-template-form'));
+        previewTarget.hidden = !hasSelection;
+        headerControls.forEach((control) => control.setAttribute('form', hasSelection ? 'business-template-form' : (page.matches('form') ? 'business-report-form' : 'business-template-form')));
+        if (!hasSelection) return;
+
+        const content = template.content.cloneNode(true);
+        content.querySelectorAll('input[name], select[name], textarea[name]').forEach((control) => control.setAttribute('form', 'business-template-form'));
+        previewTarget.append(content);
+        initializeBusinessRepeaters(previewTarget);
+        initializeBusinessAddressStatus(previewTarget);
+        initializeOtherIncomeSourceSummary(previewTarget);
+        previewTarget.animate?.([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 180, easing: 'ease-out' });
+    };
+
+    page.addEventListener('input', (event) => {
+        const control = event.target;
+        if (control instanceof HTMLElement && control.matches('[data-repeater]')) {
+            hasUnsavedTemplateData = true;
+            return;
+        }
+        if (!(control instanceof HTMLInputElement || control instanceof HTMLSelectElement || control instanceof HTMLTextAreaElement)) return;
+        if (control === select || control.readOnly || control.disabled || control.type === 'hidden') return;
+        hasUnsavedTemplateData = true;
+    });
+    page.addEventListener('change', (event) => {
+        const control = event.target;
+        if (!(control instanceof HTMLInputElement || control instanceof HTMLSelectElement || control instanceof HTMLTextAreaElement)) return;
+        if (control === select || control.readOnly || control.disabled || control.type === 'hidden') return;
+        hasUnsavedTemplateData = true;
+    });
+
+    select.addEventListener('change', () => {
+        const requestedTemplateId = select.value;
+        if (!hasUnsavedTemplateData || requestedTemplateId === activeTemplateId || !(switchDialog instanceof HTMLDialogElement)) {
+            activeTemplateId = requestedTemplateId;
+            hasUnsavedTemplateData = false;
+            showSelectedTemplate();
+            return;
+        }
+
+        pendingTemplateId = requestedTemplateId;
+        select.value = activeTemplateId;
+        switchDialog.showModal();
+        switchDialog.querySelector('[data-modal-close]')?.focus();
+    });
+    switchConfirm?.addEventListener('click', () => {
+        if (pendingTemplateId === null) return;
+        activeTemplateId = pendingTemplateId;
+        pendingTemplateId = null;
+        hasUnsavedTemplateData = false;
+        select.value = activeTemplateId;
+        if (page instanceof HTMLFormElement) page.dispatchEvent(new Event('unsaved-form-reset'));
+        switchDialog.close();
+        showSelectedTemplate();
+        select.focus();
+    });
+    switchDialog?.addEventListener('close', () => {
+        pendingTemplateId = null;
+        select.value = activeTemplateId;
+    });
+    showSelectedTemplate();
 });
 
 const initializeCibiControls = (scope = document) => {
@@ -679,13 +902,13 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
     const errorSummary = form.querySelector('[data-cibi-error-summary]');
     let saving = false;
 
-    const residenceStatus = form.querySelector('[data-residence-status]');
+    const residenceStatuses = [...form.querySelectorAll('[data-residence-status]')];
     const residenceFromDisplay = form.querySelector('[data-residence-from-display]');
     const residenceFromValue = form.querySelector('[data-residence-from-value]');
     const monthlyRentDisplay = form.querySelector('[data-monthly-rent-display]');
     const monthlyRentValue = form.querySelector('[data-monthly-rent-value]');
     const syncResidenceFields = () => {
-        const status = residenceStatus?.value;
+        const status = residenceStatuses.find((option) => option.checked)?.value;
         const fromApplicable = ['Mortgaged', 'Rented'].includes(status);
         const rented = status === 'Rented';
         if (residenceFromDisplay && residenceFromValue) {
@@ -699,7 +922,7 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
             else if (monthlyRentDisplay.value === 'N/A') monthlyRentDisplay.value = monthlyRentValue.value = '';
         }
     };
-    residenceStatus?.addEventListener('change', syncResidenceFields);
+    residenceStatuses.forEach((option) => option.addEventListener('change', syncResidenceFields));
     residenceFromDisplay?.addEventListener('input', () => { residenceFromValue.value = residenceFromDisplay.value; });
     monthlyRentDisplay?.addEventListener('input', () => { monthlyRentValue.value = monthlyRentDisplay.value; });
     const presentAddress = form.querySelector('[data-present-address]');
@@ -799,6 +1022,7 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
         close.textContent = '×';
         toast.append(text, close);
         region.append(toast);
+        window.setTimeout(() => toast.remove(), 2500);
     };
 
     const updateOverview = (payload) => {
@@ -857,7 +1081,6 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
         clearErrors();
 
         const submitter = event.submitter;
-        const isInitialSave = submitter?.dataset.cibiSubmitMode === 'save';
         const intent = submitter?.value || 'complete';
         form.querySelector('[data-cibi-intent]').value = intent;
         const buttons = [...form.querySelectorAll('[data-cibi-submit]')];
@@ -878,16 +1101,14 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
             }
 
             updateOverview(payload);
-            if (isInitialSave && !payload.report.was_completed) {
-                if (window.parent !== window) {
-                    window.parent.postMessage({
-                        type: 'brbi:cibi-saved',
-                        returnUrl: payload.return_url,
-                        folder: payload.folder,
-                    }, window.location.origin);
-                }
-            }
             showToast(payload.message);
+            if (window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'brbi:cibi-saved',
+                    returnUrl: payload.return_url,
+                    folder: payload.folder,
+                }, window.location.origin);
+            }
         } catch {
             showErrors({}, 'The report could not be saved. Check your connection and try again.');
         } finally {

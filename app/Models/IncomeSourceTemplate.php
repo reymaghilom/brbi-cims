@@ -17,6 +17,11 @@ class IncomeSourceTemplate extends Model
         return ['compatibility_tags' => 'array', 'is_fallback' => 'boolean', 'is_active' => 'boolean'];
     }
 
+    public function businessReportSchema(): array
+    {
+        return config("business-report-templates.{$this->template_type}.schema", []);
+    }
+
     public function incomeSources(): HasMany
     {
         return $this->hasMany(IncomeSource::class);

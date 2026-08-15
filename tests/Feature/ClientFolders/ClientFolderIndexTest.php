@@ -209,6 +209,9 @@ class ClientFolderIndexTest extends TestCase
             ->assertDontSee(route('client-folders.client-information.edit', $folder), false)
             ->assertSee(route('client-folders.cibi-report.edit', $folder), false)
             ->assertSee(route('client-folders.income-sources.index', $folder), false)
+            ->assertSee('data-modal-open="business-report-dialog"', false)
+            ->assertSee('data-business-report-url="'.route('client-folders.income-sources.index', $folder).'"', false)
+            ->assertSee('data-business-report-frame', false)
             ->assertSee(route('client-folders.generated-reports.index', $folder), false)
             ->assertSee(route('client-folders.media.index', $folder), false);
     }

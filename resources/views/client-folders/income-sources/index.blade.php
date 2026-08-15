@@ -1,14 +1,8 @@
 @extends('layouts.app')
 
-@section('title', 'Business / Income Sources')
+@section('title', 'Business Report')
 
 @section('content')
-    <x-ui.breadcrumb :items="[['label' => 'Client Folders', 'url' => route('client-folders.index')], ['label' => $clientFolder->display_name, 'url' => route('client-folders.show', $clientFolder)], ['label' => 'Business / Income Sources']]" />
-    <x-ui.page-header title="Business / Income Sources" eyebrow="Client folder module">
-        <x-slot:description>Maintain separate official validation records for every business or declared income source.</x-slot:description>
-        <x-slot:actions><a href="{{ route('client-folders.show', $clientFolder) }}" class="ui-button-secondary">Back to Folder</a><a href="{{ route('client-folders.income-sources.select-template', $clientFolder) }}" class="ui-button-primary">+ Add Income Source</a></x-slot:actions>
-    </x-ui.page-header>
-
     @error('income_source')<div class="mb-6 rounded-card border border-danger/30 bg-danger-soft p-4 text-sm font-semibold text-danger" role="alert">{{ $message }}</div>@enderror
 
     @if($sources->isEmpty())

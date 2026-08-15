@@ -19,7 +19,7 @@
     }
     $rows = count($rows) ? $rows : [[]];
     $headers = match($section) {
-        'bank_accounts' => ['Institution', 'Branch', 'Year', 'ADB Level', 'CA / SA / Share Capital', 'Remarks', ''],
+        'bank_accounts' => ['Institution', 'Branch', 'Year Opened', 'ADB Level', 'CA / SA / Share Capital', 'Remarks', ''],
         'loan_records' => ['Bank / Coop / Branch', 'Original Amount', 'Balance', 'Amortization', 'Granted / Maturity', 'Cycle / Security', 'Performance & Findings', ''],
         default => ['Income Source Validated', 'Stability', 'Key Information', ''],
     };

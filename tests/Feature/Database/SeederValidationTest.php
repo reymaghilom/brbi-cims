@@ -22,9 +22,10 @@ class SeederValidationTest extends TestCase
         $this->seed();
 
         $this->assertSame(6, ActivityDefinition::count());
-        $this->assertSame(4, IncomeSourceTemplate::count());
-        $this->assertSame(3, IncomeSourceTemplate::where('is_active', true)->count());
+        $this->assertSame(22, IncomeSourceTemplate::count());
+        $this->assertSame(20, IncomeSourceTemplate::where('is_active', true)->count());
         $this->assertSame(1, IncomeSourceTemplate::where('is_fallback', true)->count());
+        $this->assertSame(18, IncomeSourceTemplate::all()->filter(fn (IncomeSourceTemplate $template): bool => $template->businessReportSchema() !== [])->count());
         $this->assertSame(0, CompletionRule::whereNotNull('weight')->count());
         $this->assertSame(1, User::count());
         $this->assertSame(0, User::where('role', 'administrator')->count());

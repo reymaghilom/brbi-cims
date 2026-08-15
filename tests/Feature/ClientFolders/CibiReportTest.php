@@ -317,6 +317,8 @@ class CibiReportTest extends TestCase
             ->assertDontSee('Mark Complete')
             ->assertSee('name="party_type"', false)
             ->assertSee('name="ci_risk_level"', false)
+            ->assertSee('class="cibi-party-risk-row"', false)
+            ->assertSee('business-report-choice-group cibi-header-choice-group', false)
             ->assertSee('data-repeater-remove-dialog', false)
             ->assertSee('cibi-remove-entry-button', false)
             ->assertSee('size-5', false)
@@ -437,7 +439,7 @@ class CibiReportTest extends TestCase
         foreach (['branch_name', 'account_officer_name', 'start_date', 'submitted_date', 'ci_risk_level'] as $field) {
             $payload[$field] = null;
         }
-        $requiredPersonal = ['age', 'spouse_age', 'spouse_name', 'present_address', 'residence_status', 'home_condition', 'number_of_storeys', 'material_cost_level', 'living_condition', 'parents_address', 'civil_status', 'reputation', 'barangay_findings', 'lifestyle'];
+        $requiredPersonal = ['age', 'present_address', 'residence_status', 'home_condition', 'number_of_storeys', 'material_cost_level', 'living_condition', 'parents_address', 'civil_status', 'reputation', 'barangay_findings', 'lifestyle'];
         foreach ($requiredPersonal as $field) {
             $payload['personal_snapshot'][$field] = null;
         }
@@ -450,7 +452,7 @@ class CibiReportTest extends TestCase
             ]);
 
         $this->assertSame('This field is required.', $response->json('errors.branch_name.0'));
-        $this->assertSame('This field is required.', $response->json('errors')['personal_snapshot.spouse_name'][0]);
+        $response->assertJsonMissingValidationErrors(['personal_snapshot.spouse_name', 'personal_snapshot.spouse_age']);
 
         $this->assertDatabaseMissing('cibi_reports', ['client_folder_id' => $folder->id]);
     }
@@ -475,11 +477,15 @@ class CibiReportTest extends TestCase
         $valid['purpose_codes'] = [];
         $valid['income_summaries'] = [];
         $valid['legal_findings'] = [];
+        $valid['personal_snapshot']['spouse_name'] = null;
+        $valid['personal_snapshot']['spouse_age'] = null;
         $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $valid)
             ->assertOk()
             ->assertJsonPath('message', 'CI/BI Report saved successfully.')
             ->assertJsonPath('report.state', 'complete');
         $this->assertDatabaseHas('client_completion_results', ['client_folder_id' => $folder->id, 'is_satisfied' => true]);
+        $this->assertNull($folder->cibiReport()->sole()->personal_snapshot['spouse_name']);
+        $this->assertNull($folder->cibiReport()->sole()->personal_snapshot['spouse_age']);
     }
 
     public function test_section_one_validated_fields_save_as_snapshot_while_canonical_name_remains_locked(): void
@@ -579,7 +585,7 @@ class CibiReportTest extends TestCase
             ->assertSee('data-residence-status', false)
             ->assertSee('id="personal-residence-status"', false)
             ->assertSee('name="personal_snapshot[residence_status]"', false)
-            ->assertSee('<option value="">Select Status</option>', false)
+            ->assertDontSee('<option value="">Select Status</option>', false)
             ->assertSee('data-residence-from-display', false)
             ->assertSee('data-monthly-rent-display', false)
             ->assertSee('name="personal_snapshot[other_residences]"', false)
@@ -589,7 +595,14 @@ class CibiReportTest extends TestCase
             ->assertSee('value="Mortgaged"', false)
             ->assertSee('value="Rented"', false)
             ->assertSee('value="Living with Parents"', false)
-            ->assertDontSee('type="radio" name="personal_snapshot[residence_status]"', false)
+            ->assertSee('Mortgaged From')
+            ->assertSee('Rented From')
+            ->assertDontSee('class="ui-label">From</label>', false)
+            ->assertSee('type="radio" name="personal_snapshot[residence_status]"', false)
+            ->assertSee('business-report-choice-group cibi-residence-status-options', false)
+            ->assertSee('business-report-choice-option', false)
+            ->assertSee('>Year Opened</th>', false)
+            ->assertDontSee('<option value="Other">Other</option>', false)
             ->assertDontSee('name="personal_snapshot[residence_status]" value="Other"', false)
             ->assertSee('Permanent Address')
             ->assertSee('data-copy-present-address="personal-previous-address"', false)
@@ -647,7 +660,12 @@ class CibiReportTest extends TestCase
             ->assertDontSee('id="personal-snapshot-court-background"', false)
             ->assertDontSee('personal-snapshot-living-with-parents');
 
+        $this->assertDoesNotMatchRegularExpression('/<input[^>]+id="personal_snapshot-spouse_name"[^>]+required/', $response->getContent());
+        $this->assertDoesNotMatchRegularExpression('/<input[^>]+id="personal_snapshot-spouse_age"[^>]+required/', $response->getContent());
+
         $javascript = file_get_contents(resource_path('js/app.js'));
+        $this->assertStringContainsString("residenceStatuses.find((option) => option.checked)?.value", $javascript);
+        $this->assertStringContainsString("residenceStatuses.forEach((option) => option.addEventListener('change', syncResidenceFields))", $javascript);
         $this->assertStringContainsString("['Mortgaged', 'Rented'].includes(status)", $javascript);
         $this->assertStringContainsString("status === 'Rented'", $javascript);
         $this->assertStringContainsString('[data-copy-present-address]', $javascript);
@@ -667,6 +685,27 @@ class CibiReportTest extends TestCase
         $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(6) { width: 25%; }', $stylesheet);
         $this->assertStringContainsString('.cibi-entry-table-wrap', $stylesheet);
         $this->assertStringContainsString('.cibi-signatory-role', $stylesheet);
+        $this->assertStringContainsString('.cibi-excel-metadata > .cibi-party-risk-row { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);', $stylesheet);
+        $this->assertStringNotContainsString('.cibi-encoding-signatory-name { min-height: 1.75rem; border-bottom:', $stylesheet);
+        $this->assertStringContainsString('.cibi-signatories .ui-control { min-height: 1.3rem; border: 0;', $stylesheet);
+        $this->assertStringContainsString('.cibi-section-note { margin: .55rem 1rem 0; color: var(--color-danger);', $stylesheet);
+    }
+
+    public function test_saved_residence_status_is_selected_in_the_single_choice_radio_group(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        CibiReport::factory()->create([
+            'client_folder_id' => $folder->id,
+            'ci_in_charge_id' => $ci->id,
+            'personal_snapshot' => ['residence_status' => 'Rented'],
+        ]);
+
+        $html = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+
+        $this->assertSame(4, substr_count($html, 'type="radio" name="personal_snapshot[residence_status]"'));
+        $this->assertMatchesRegularExpression('/name="personal_snapshot\[residence_status\]" value="Rented" checked/', $html);
+        $this->assertSame(1, preg_match_all('/name="personal_snapshot\[residence_status\]" value="[^"]+" checked/', $html));
     }
 
     public function test_official_text_fields_totals_and_na_normalization_persist_without_deleting_legacy_rows(): void

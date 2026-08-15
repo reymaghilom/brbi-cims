@@ -15,7 +15,7 @@ class BusinessReport extends Model
 
     protected function casts(): array
     {
-        return ['monthly_rent' => 'decimal:2'];
+        return ['start_date' => 'date', 'submitted_date' => 'date', 'template_data' => 'array'];
     }
 
     public function incomeSource(): BelongsTo

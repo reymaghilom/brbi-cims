@@ -18,14 +18,19 @@ class CibiReportCompletionEvaluator
         $condition = $rule->source_condition ?? [];
         $fields = $condition['required_report_fields'] ?? [
             'start_date', 'submitted_date', 'party_type', 'branch_name', 'account_officer_name',
-            'ci_risk_level', 'personal_snapshot.age', 'personal_snapshot.spouse_age',
-            'personal_snapshot.spouse_name', 'personal_snapshot.present_address',
+            'ci_risk_level', 'personal_snapshot.age', 'personal_snapshot.present_address',
             'personal_snapshot.residence_status', 'personal_snapshot.home_condition',
             'personal_snapshot.number_of_storeys', 'personal_snapshot.material_cost_level',
             'personal_snapshot.living_condition', 'personal_snapshot.parents_address',
             'personal_snapshot.civil_status', 'personal_snapshot.reputation',
             'personal_snapshot.barangay_findings', 'personal_snapshot.lifestyle',
         ];
+        // Ignore legacy completion-rule entries so spouse details remain optional
+        // for reports created before and after this presentation adjustment.
+        $fields = array_values(array_diff($fields, [
+            'personal_snapshot.spouse_age',
+            'personal_snapshot.spouse_name',
+        ]));
         $childCounts = $condition['required_child_counts'] ?? [];
 
         $reportData = $report->toArray();

@@ -171,7 +171,7 @@
                     <h4 id="folder-contents-title-{{ $clientFolder->id }}" class="px-4 pb-1.5 pt-3 text-sm font-semibold">Folder Contents</h4>
                     <nav class="folder-contents-nav pb-2" aria-label="Folder contents for {{ $clientFolder->display_name }}">
                         @foreach($folderModules as $module)
-                            <a href="{{ $module['url'] }}" class="folder-content-link" @if($module['label'] === 'CI / BI Report') data-modal-open="cibi-report-dialog" data-cibi-report-url="{{ $module['url'] }}" @endif>
+                            <a href="{{ $module['url'] }}" class="folder-content-link" @if($module['label'] === 'CI / BI Report') data-modal-open="cibi-report-dialog" data-cibi-report-url="{{ $module['url'] }}" @elseif($module['label'] === 'Business / Income Sources') data-modal-open="business-report-dialog" data-business-report-url="{{ $module['url'] }}" @endif>
                                 <span @class([
                                     'folder-content-icon',
                                     'bg-blue-50 text-blue-700' => $module['tone'] === 'blue',
@@ -226,5 +226,6 @@
 
     @include('client-folders._create-modal')
     <x-ui.cibi-report-modal />
+    <x-ui.business-report-modal />
     </div>
 </section>
