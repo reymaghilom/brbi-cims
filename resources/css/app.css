@@ -493,15 +493,15 @@
     .business-report-choice-option .business-report-checkbox { flex: 0 0 auto; margin-top: 0; }
     .business-report-choice-field .business-report-choice-group { justify-content: flex-start; }
     .business-other-income-scroll { overflow-x: auto; overscroll-behavior-inline: contain; }
-    .business-other-income-layout { display: grid; min-width: 64rem; grid-template-columns: minmax(46rem, 1fr) minmax(14rem, .28fr); gap: .75rem; padding: .65rem .85rem .85rem; }
+    .business-other-income-layout { display: grid; min-width: 64rem; grid-template-columns: minmax(0, 1fr); gap: .75rem; padding: .65rem .85rem .85rem; }
     .business-other-income-catalog { display: grid; min-width: 0; grid-template-columns: repeat(4, minmax(10.5rem, 1fr)); border-top: 1px solid #d8d3c6; border-left: 1px solid #d8d3c6; }
     .business-other-income-column { min-width: 0; border-right: 1px solid #d8d3c6; border-bottom: 1px solid #d8d3c6; }
     .business-other-income-group + .business-other-income-group { border-top: 1px solid #d8d3c6; }
     .business-other-income-group h3 { min-height: 1.6rem; background: #ece6d6; padding: .35rem .4rem; color: var(--color-brand-sidebar); font-size: .625rem; font-weight: 700; letter-spacing: .025em; line-height: 1.2; }
     .business-other-income-choice { display: grid; min-height: 1.7rem; grid-template-columns: 2.45rem minmax(0, 1fr); align-items: stretch; border-top: 1px solid #e4dfd3; }
     .business-other-income-choice > span { display: flex; min-width: 0; align-items: center; padding: .2rem .32rem; color: #26303c; font-size: .66rem; font-weight: 400; line-height: 1.2; overflow-wrap: anywhere; }
-    .business-other-income-choice .ui-control { min-height: 1.7rem; border: 0; border-right: 1px solid #d8d3c6; border-radius: 0; padding: .15rem .2rem; font-size: .68rem; font-weight: 400; text-align: center; }
-    .business-other-income-choice .ui-control:focus { box-shadow: inset 0 0 0 1px var(--color-brand-primary); }
+    .business-other-income-choice .business-report-checkbox { width: .9rem; height: .9rem; align-self: center; justify-self: center; margin: 0; border: 1px solid #6b7684; accent-color: var(--color-brand-primary); }
+    .business-other-income-choice .business-report-checkbox:focus-visible { outline: 2px solid rgb(30 91 75 / .25); outline-offset: 1px; }
     .business-other-income-choice + [role="alert"] { margin: 0; padding: .15rem .3rem; border-top: 1px solid #e4dfd3; font-size: .62rem; }
     .business-other-income-summary { min-width: 0; border: 1px solid #d8d3c6; background: #fffdf9; }
     .business-other-income-summary h3 { border-bottom: 1px solid #d8d3c6; background: #ece6d6; padding: .42rem .45rem; color: var(--color-brand-sidebar); font-size: .625rem; font-weight: 700; letter-spacing: .035em; line-height: 1.2; text-transform: uppercase; }

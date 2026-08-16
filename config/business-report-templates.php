@@ -166,6 +166,7 @@ foreach ($otherIncomeSourceGroups as $choices) {
         $otherIncomeSourceFields[] = $field($choice['key'].'_rank', $choice['label'].' Rank', 'number');
     }
 }
+$otherIncomeSourceFields[] = $field('income_sources', 'Income Sources', 'array');
 
 return [
     'leasing_truck_equipment' => ['schema' => [

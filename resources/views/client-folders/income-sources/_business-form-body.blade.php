@@ -20,14 +20,14 @@
         </div>
         <label class="ui-label" for="year_established">{{ in_array($template->template_type, ['taxi_operator', 'puj_van_jeepney_operator'], true) ? 'Years Operating:' : 'Year Established:' }}</label>
         <div class="business-excel-row-control">
-            <input id="year_established" class="ui-control" name="year_established" type="number" min="1800" value="{{ old('year_established', $report?->year_established) }}">
+            <input id="year_established" class="ui-control" name="year_established" type="number" min="1800" value="{{ old('year_established', $report?->year_established) }}" @required($showBusinessProfile)>
             <x-form.validation-message for="year_established" />
         </div>
     </div>
     <div class="business-excel-paired-row business-main-address-row">
         <label class="ui-label" for="main_business_address">{{ in_array($template->template_type, ['trucking_services', 'distributorship_wholesaler_b2b'], true) ? 'Garage/ Office Address:' : 'Main Business Address:' }}</label>
         <div class="business-excel-row-control">
-            <input id="main_business_address" class="ui-control" name="main_business_address" type="text" value="{{ old('main_business_address', $report?->main_business_address) }}">
+            <input id="main_business_address" class="ui-control" name="main_business_address" type="text" value="{{ old('main_business_address', $report?->main_business_address) }}" @required($showBusinessProfile)>
             <x-form.validation-message for="main_business_address" />
         </div>
         <label class="ui-label" for="length_of_stay_months">Length of Stay:</label>
@@ -98,7 +98,7 @@
     <div class="business-excel-paired-row business-owner-relationship-row">
         <label class="ui-label" for="registered_owner">Registered Owner:</label>
         <div class="business-excel-row-control">
-            <input id="registered_owner" class="ui-control" name="registered_owner" type="text" value="{{ old('registered_owner', $report?->registered_owner) }}" required>
+            <input id="registered_owner" class="ui-control" name="registered_owner" type="text" value="{{ old('registered_owner', $report?->registered_owner) }}" @required($template->template_type !== 'leasing_truck_equipment')>
             <x-form.validation-message for="registered_owner" />
         </div>
         @if($template->template_type === 'leasing_non_agricultural')
@@ -206,7 +206,7 @@
     <h2>{{ $template->template_type === 'other_business_source_of_income' ? 'BUSINESS / INCOME SOURCE DETAILS' : 'OTHER REMARKS' }}</h2>
     <div>
         <label for="report_remarks" class="sr-only">{{ $template->template_type === 'other_business_source_of_income' ? 'Business or income source details' : 'Other Remarks' }}</label>
-        <textarea id="report_remarks" name="report_remarks" rows="{{ $template->template_type === 'other_business_source_of_income' ? 8 : 5 }}" class="ui-control">{{ old('report_remarks', $report?->report_remarks) }}</textarea>
+        <textarea id="report_remarks" name="report_remarks" rows="{{ $template->template_type === 'other_business_source_of_income' ? 8 : 5 }}" class="ui-control" @required($template->template_type === 'other_business_source_of_income')>{{ old('report_remarks', $report?->report_remarks) }}</textarea>
         <x-form.validation-message for="report_remarks" />
     </div>
 </section>

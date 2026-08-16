@@ -428,9 +428,9 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame('leasing_real_estate_agri_rank', $template->businessReportSchema()['fields'][0]['key']);
 
         $page = $this->actingAs($ci)->get(route('client-folders.income-sources.index', $folder))->assertOk();
-        $page->assertSee('RANK ALL INCOME SOURCES THAT CLIENT DECLARED BASED ON CONTRIBUTION (1 BEING THE HIGHEST)');
+        $page->assertSee('SELECT ALL APPLICABLE INCOME SOURCES');
         $page->assertSee('data-other-income-source', false);
-        $page->assertSee('INCOME SOURCE');
+        $page->assertDontSee('INCOME SOURCE:');
         $page->assertSee('Agriculture Production');
         $page->assertSee('Professional Services');
         $page->assertSee('Employment');
@@ -440,6 +440,13 @@ class IncomeSourcesTest extends TestCase
         $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), [
             'income_source_template_id' => $template->id,
             'source_name' => 'Custom Income Activity',
+        ])->assertSessionHasErrors('template_data.fields.income_sources');
+
+        $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), [
+            'income_source_template_id' => $template->id,
+            'source_name' => 'Custom Income Activity',
+            'report_remarks' => 'Client-entered fallback details.',
+            'template_data' => ['fields' => ['income_sources' => ['still_lotto_outlet']]],
         ])->assertRedirect();
 
         $source = $folder->incomeSources()->with('businessReport')->firstOrFail();
@@ -453,14 +460,23 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Custom Income Activity',
             'business_name' => 'Other Business/Source of Income',
             'report_category' => 'Other',
+            'report_remarks' => 'Client-entered fallback details.',
+            'template_data' => ['fields' => ['income_sources' => []]],
+        ])->assertSessionHasErrors('template_data.fields.income_sources');
+
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'intent' => 'stay',
+            'source_name' => 'Custom Income Activity',
+            'business_name' => 'Other Business/Source of Income',
+            'report_category' => 'Other',
             'template_data' => ['fields' => [
-                'still_lotto_outlet_rank' => '1',
+                'income_sources' => ['still_lotto_outlet'],
             ]],
             'report_remarks' => 'Client-entered fallback details.',
         ])->assertSessionHasNoErrors();
 
         $source->refresh()->load('businessReport');
-        $this->assertSame('1', data_get($source->businessReport->template_data, 'fields.still_lotto_outlet_rank'));
+        $this->assertSame(['still_lotto_outlet'], data_get($source->businessReport->template_data, 'fields.income_sources'));
         $this->assertSame('Client-entered fallback details.', $source->businessReport->report_remarks);
     }
 

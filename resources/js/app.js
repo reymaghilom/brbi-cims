@@ -595,18 +595,12 @@ const initializeOtherIncomeSourceSummary = (root = document) => {
         if (!(summary instanceof HTMLOListElement)) return;
 
         const sync = () => {
-            const selected = [...section.querySelectorAll('[data-income-source-rank]')]
-                .filter((control) => control.value.trim() !== '');
+            const selected = [...section.querySelectorAll('[data-income-source-choice]:checked')];
             summary.replaceChildren(...selected.map((control) => {
-                const rank = control.value.trim();
                 const item = document.createElement('li');
                 const label = control.dataset.incomeSourceLabel || 'Income source';
-                item.textContent = rank ? `${rank}. ${label}` : label;
+                item.textContent = label;
                 return item;
-            }).sort((a, b) => {
-                const aRank = Number.parseInt(a.textContent, 10);
-                const bRank = Number.parseInt(b.textContent, 10);
-                return (Number.isNaN(aRank) ? Number.MAX_SAFE_INTEGER : aRank) - (Number.isNaN(bRank) ? Number.MAX_SAFE_INTEGER : bRank);
             }));
             if (empty instanceof HTMLElement) empty.hidden = selected.length > 0;
         };

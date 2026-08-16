@@ -26,6 +26,7 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             ?? IncomeSourceTemplate::query()->find($this->integer('income_source_template_id'));
         $schema = $template?->businessReportSchema() ?? [];
         $requiresProfile = $schema === [] || (bool) data_get($schema, 'profile', false);
+        $ownerOptional = $template?->template_type === 'leasing_truck_equipment';
         $hiddenProfileFields = (array) data_get($schema, 'hidden_profile_fields', []);
         $rules = [
             'intent' => ['required', Rule::in(['stay', 'return', 'complete'])],
@@ -33,14 +34,22 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             'contribution_rank' => ['nullable', 'integer', 'min:1', 'max:65535'], 'estimated_monthly_contribution' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'], 'is_primary' => ['nullable', 'boolean'],
             'branch_name' => ['nullable', 'string', 'max:255'], 'account_officer_name' => ['nullable', 'string', 'max:255'],
             'start_date' => ['nullable', 'date', 'before_or_equal:today'], 'submitted_date' => ['nullable', 'date', 'before_or_equal:today'],
-            'report_category' => ['required', 'string', 'max:80'], 'main_business_address' => [Rule::requiredIf($complete && $requiresProfile), 'nullable', 'string', 'max:10000'],
+            'report_category' => ['required', 'string', 'max:80'], 'main_business_address' => [Rule::requiredIf($requiresProfile), 'nullable', 'string', 'max:10000'],
             'previous_business_address' => ['nullable', 'string', 'max:10000'], 'previous_business_address_length_of_stay' => ['nullable', 'string', 'max:100'], 'reason_for_transfer' => ['nullable', 'string', 'max:10000'],
-            'registered_owner' => [Rule::requiredIf($complete && $requiresProfile && ! in_array('registered_owner', $hiddenProfileFields, true)), 'nullable', 'string', 'max:255'], 'relationship_to_borrower' => ['nullable', 'string', 'max:255'],
-            'year_established' => ['nullable', 'integer', 'min:1800', 'max:'.now()->year], 'length_of_stay_months' => ['nullable', 'integer', 'min:0', 'max:2400'],
+            'registered_owner' => [Rule::requiredIf($complete && $requiresProfile && ! $ownerOptional && ! in_array('registered_owner', $hiddenProfileFields, true)), 'nullable', 'string', 'max:255'], 'relationship_to_borrower' => ['nullable', 'string', 'max:255'],
+            'year_established' => [Rule::requiredIf($requiresProfile), 'nullable', 'integer', 'min:1800', 'max:'.now()->year], 'length_of_stay_months' => ['nullable', 'integer', 'min:0', 'max:2400'],
             'monthly_rent' => ['nullable', 'string', 'max:255'], 'ownership_type' => ['nullable', 'string', 'max:80'], 'rented_from' => ['nullable', 'string', 'max:255'], 'business_type' => ['nullable', 'string', 'max:100'],
-            'scale' => ['nullable', 'string', 'max:80'], 'informant' => ['nullable', 'string', 'max:255'], 'report_remarks' => ['nullable', 'string', 'max:30000'],
+            'scale' => ['nullable', 'string', 'max:80'], 'informant' => ['nullable', 'string', 'max:255'],
+            'report_remarks' => $template?->template_type === 'other_business_source_of_income'
+                ? ['required', 'string', 'max:30000']
+                : ['nullable', 'string', 'max:30000'],
             'template_data' => ['nullable', 'array:fields,tables,questions'],
-            'template_data.fields' => ['nullable', 'array'], 'template_data.fields.*' => ['nullable', 'string', 'max:10000'],
+            'template_data.fields' => ['nullable', 'array'],
+            'template_data.fields.*' => [Rule::forEach(function ($value, string $attribute): array {
+                return str_ends_with($attribute, '.income_sources')
+                    ? ['nullable', 'array']
+                    : ['nullable', 'string', 'max:10000'];
+            })],
             'template_data.tables' => ['nullable', 'array'], 'template_data.tables.*' => ['nullable', 'array', 'max:50'],
             'template_data.tables.*.*' => ['nullable', 'array'], 'template_data.tables.*.*.*' => ['nullable', 'string', 'max:10000'],
             'template_data.questions' => ['nullable', 'array'], 'template_data.questions.*' => ['nullable', 'string', 'max:10000'],
@@ -59,6 +68,10 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             }
             foreach ((array) data_get($schema, 'required_questions', []) as $questionIndex) {
                 $rules["template_data.questions.$questionIndex"] = ['required', 'string', 'max:10000'];
+            }
+            if ($template?->template_type === 'other_business_source_of_income') {
+                $rules['template_data.fields.income_sources'] = ['required', 'array', 'min:1'];
+                $rules['template_data.fields.income_sources.*'] = ['string', 'max:10000'];
             }
         }
 
@@ -82,6 +95,18 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
         ];
     }
 
+    public function messages(): array
+    {
+        return [
+            'report_remarks.required' => 'Business / Income Source Details are required before saving this report.',
+            'business_name.required' => 'Business Name is required before saving this report.',
+            'main_business_address.required' => 'Main Business Address is required before saving this report.',
+            'year_established.required' => 'Year Established is required before saving this report.',
+            'template_data.fields.income_sources.required' => 'Please select at least one business/income source.',
+            'template_data.fields.income_sources.min' => 'Please select at least one business/income source.',
+        ];
+    }
+
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator): void {
@@ -93,6 +118,9 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             }
             $source = $this->route('incomeSource');
             $this->validateTemplateData($validator, $source->template->businessReportSchema());
+            if ($source->template_type === 'other_business_source_of_income') {
+                $this->validateOtherIncomeSourceGroup($validator);
+            }
             $report = $source->businessReport;
             $tags = $source->template->businessReportSchema() !== [] ? [] : ($source->template->compatibility_tags ?? []);
             $relations = ['properties' => 'properties', 'branches' => 'branches', 'products' => 'products', 'suppliers' => 'suppliers', 'observations' => 'observations', 'competitors' => 'competitors'];
@@ -226,6 +254,18 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             if (! is_numeric($index) || (int) $index >= $questionCount) {
                 $validator->errors()->add("template_data.questions.$index", 'This question does not belong to the selected Business Template.');
             }
+        }
+    }
+
+    protected function validateOtherIncomeSourceGroup(Validator $validator): void
+    {
+        $selections = $this->input('template_data.fields.income_sources');
+        $selections = is_array($selections)
+            ? array_values(array_filter($selections, static fn ($selection): bool => filled($selection)))
+            : [];
+
+        if ($selections === []) {
+            $validator->errors()->add('template_data.fields.income_sources', 'Please select at least one business/income source.');
         }
     }
 

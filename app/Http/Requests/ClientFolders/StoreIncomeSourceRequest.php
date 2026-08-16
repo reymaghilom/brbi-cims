@@ -16,12 +16,20 @@ class StoreIncomeSourceRequest extends UpdateBusinessIncomeSourceRequest
 
     public function rules(): array
     {
-        return parent::rules() + [
+        $rules = parent::rules() + [
             'income_source_template_id' => ['required', 'integer', Rule::exists('income_source_templates', 'id')->where(fn ($query) => $query
                 ->where('is_active', true)
                 ->where('is_fallback', false)
                 ->where('form_handler', 'dedicated-business'))],
         ];
+
+        $template = IncomeSourceTemplate::query()->find($this->integer('income_source_template_id'));
+        if ($template?->template_type === 'other_business_source_of_income') {
+            $rules['template_data.fields.income_sources'] = ['required', 'array', 'min:1'];
+            $rules['template_data.fields.income_sources.*'] = ['string', 'max:10000'];
+        }
+
+        return $rules;
     }
 
     public function withValidator(Validator $validator): void
@@ -39,6 +47,9 @@ class StoreIncomeSourceRequest extends UpdateBusinessIncomeSourceRequest
                 return;
             }
             $this->validateTemplateData($validator, $template->businessReportSchema());
+            if ($template->template_type === 'other_business_source_of_income') {
+                $this->validateOtherIncomeSourceGroup($validator);
+            }
             $compatible = $template->businessReportSchema() !== [] ? [] : ($template->compatibility_tags ?? []);
             foreach (['properties', 'tenants', 'branches', 'products', 'suppliers', 'observations', 'competitors'] as $section) {
                 if (! in_array($section, $compatible, true) && collect((array) $this->input($section))->flatten()->filter(fn ($value) => filled($value))->isNotEmpty()) {

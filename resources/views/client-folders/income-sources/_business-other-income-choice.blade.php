@@ -1,21 +1,19 @@
 @php
-    $fieldKey = $choice['key'].'_rank';
-    $rank = old('template_data.fields.'.$fieldKey, data_get($report?->template_data, 'fields.'.$fieldKey));
+    $fieldKey = $choice['key'];
+    $selectedSources = $selectedSources ?? [];
 @endphp
 
 <div class="business-other-income-choice">
-    <label class="sr-only" for="other_income_{{ $fieldKey }}">{{ $choice['label'] }} contribution rank</label>
+    <label class="sr-only" for="other_income_{{ $fieldKey }}">Select {{ $choice['label'] }}</label>
     <input
         id="other_income_{{ $fieldKey }}"
-        class="ui-control business-other-income-rank"
-        name="template_data[fields][{{ $fieldKey }}]"
-        type="number"
-        min="1"
-        value="{{ $rank }}"
-        inputmode="numeric"
-        data-income-source-rank
+        class="business-report-checkbox"
+        name="template_data[fields][income_sources][]"
+        type="checkbox"
+        value="{{ $fieldKey }}"
+        data-income-source-choice
         data-income-source-label="{{ $choice['label'] }}"
+        @checked(in_array($fieldKey, $selectedSources, true))
     >
     <span>{{ $choice['label'] }}</span>
 </div>
-<x-form.validation-message :for="'template_data.fields.'.$fieldKey" />
