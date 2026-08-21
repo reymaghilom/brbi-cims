@@ -4,6 +4,7 @@ namespace App\Services\Reports;
 
 use App\Enums\RecordState;
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
@@ -20,9 +21,9 @@ class CibiExcelExporter
 
     private const INCOME_CAPACITY = 3;
 
-    public function generate(ClientFolder $folder): string
+    public function generate(ClientFolder $folder, ?CoMaker $activePerson = null): string
     {
-        $report = $folder->cibiReport()->with([
+        $report = $folder->cibiReport()->where('co_maker_id', $activePerson?->id)->with([
             'investigator:id,full_name',
             'bankAccounts' => fn ($query) => $query->orderBy('sort_order')->orderBy('id'),
             'loanRecords' => fn ($query) => $query->orderBy('sort_order')->orderBy('id'),
@@ -47,16 +48,18 @@ class CibiExcelExporter
         $this->assertTemplate($book->getSheetCount(), $sheet);
 
         $personal = $report->personal_snapshot ?? [];
-        $this->value($sheet, 'G6', $this->na($report->investigator?->full_name));
+        $this->value($sheet, 'G6', mb_strtoupper($this->na($report->investigator?->full_name)));
         $this->value($sheet, 'T6', $this->na($report->branch_name));
         $this->date($sheet, 'G7', $report->start_date);
         $this->value($sheet, 'T7', $this->na($report->account_officer_name));
         $this->date($sheet, 'G8', $report->submitted_date);
         $this->value($sheet, 'T8', $this->numberOrNa($report->amount_applied));
-        $this->value($sheet, 'C9', $this->choices($report->party_type?->value, ['borrower' => 'BORROWER', 'co_maker' => 'CO-MAKER']));
+        // Derived from $activePerson (the report's actual owner), not the stored party_type
+        // column — see the matching note in OfficialReportDataBuilder::cibi().
+        $this->value($sheet, 'C9', $this->choices($activePerson ? 'co_maker' : 'borrower', ['borrower' => 'BORROWER', 'co_maker' => 'CO-MAKER']));
         $this->value($sheet, 'T9', $this->choices($report->ci_risk_level, ['very_low' => 'VERY LOW', 'low' => 'LOW', 'mid' => 'MID', 'high' => 'HIGH', 'very_high' => 'VERY HIGH']));
 
-        $this->value($sheet, 'G11', $folder->display_name);
+        $this->value($sheet, 'G11', $activePerson?->full_name ?? $folder->display_name);
         $this->value($sheet, 'Y11', $this->na($personal['age'] ?? null));
         $this->value($sheet, 'G12', $this->na($personal['spouse_name'] ?? null));
         $this->value($sheet, 'Y12', $this->na($personal['spouse_age'] ?? null));
@@ -87,6 +90,7 @@ class CibiExcelExporter
         $this->value($sheet, 'G24', $this->choices($personal['lifestyle'] ?? null, ['Modest' => 'MODEST', 'Extravagant' => 'EXTRAVAGANT', 'Below Average' => 'BELOW AVERAGE']));
         $this->value($sheet, 'T24', $this->na($personal['vehicles_owned'] ?? null));
         $this->value($sheet, 'J25', $this->na($personal['contact_details'] ?? null));
+        $this->suppressNumberStoredAsTextWarning($sheet, 'J25', $personal['contact_details'] ?? null);
         $this->value($sheet, 'E26', $this->na($personal['other_remarks'] ?? null));
 
         $purposes = $report->purpose_codes ?? [];
@@ -105,6 +109,12 @@ class CibiExcelExporter
         }
         $this->value($sheet, 'E32', $this->na($report->purpose_remarks));
 
+        // The reference template's own data rows are size 12, and some columns (institution,
+        // branch, original amount) are bold — inconsistent with the size-8 headers and with
+        // every other data column, which is why the amounts and remarks looked mismatched.
+        // Every written cell is normalized to size 10, not bold, matching what the reference
+        // workbook already uses consistently everywhere else.
+        $bankColumns = ['C', 'G', 'J', 'L', 'Q', 'R', 'U'];
         foreach ($banks as $index => $bank) {
             $row = 36 + $index;
             [$adbChoices, $adbFigures] = $this->adb($bank->adb_level);
@@ -115,9 +125,13 @@ class CibiExcelExporter
             $this->value($sheet, 'Q'.$row, $adbFigures);
             $this->value($sheet, 'R'.$row, filled($bank->capital_share_text) ? $bank->capital_share_text : $this->numberOrNa($bank->capital_share_amount));
             $this->value($sheet, 'U'.$row, $this->na($bank->relevant_remarks));
+            foreach ($bankColumns as $column) {
+                $sheet->getStyle($column.$row)->getFont()->setSize(10)->setBold(false);
+            }
         }
         $this->value($sheet, 'E42', 'N/A');
 
+        $loanColumns = ['C', 'G', 'J', 'M', 'P', 'S', 'T', 'V'];
         foreach ($loans as $index => $loan) {
             $row = 45 + $index;
             $this->value($sheet, 'C'.$row, $this->na($loan->institution));
@@ -128,6 +142,9 @@ class CibiExcelExporter
             $this->value($sheet, 'S'.$row, $this->na($loan->cycle_label ?: $loan->cycle_number));
             $this->value($sheet, 'T'.$row, $this->na($loan->security_type));
             $this->value($sheet, 'V'.$row, $this->joined([$loan->payment_performance, $loan->remarks], ' '));
+            foreach ($loanColumns as $column) {
+                $sheet->getStyle($column.$row)->getFont()->setSize(10)->setBold(false);
+            }
         }
         $totals = $report->summary_totals ?? [];
         $this->value($sheet, 'H52', (int) ($totals['institutions_checked'] ?? $report->creditChecks()->whereNotNull('institution')->count()));
@@ -143,11 +160,11 @@ class CibiExcelExporter
             $this->value($sheet, 'P'.$row, $this->na($income->key_information));
         }
 
-        $this->value($sheet, 'G63', $this->na($report->prepared_by_name ?: $report->investigator?->full_name));
+        $this->value($sheet, 'G63', mb_strtoupper($this->na($report->prepared_by_name ?: $report->investigator?->full_name)));
         $this->value($sheet, 'S63', null);
         $book->getProperties()
             ->setCreator('Binhi Rural Bank Inc.')
-            ->setTitle('CI / BI Report - '.$folder->display_name)
+            ->setTitle('CI / BI Report - '.($activePerson?->full_name ?? $folder->display_name))
             ->setSubject('Saved CI / BI report data');
         $book->setActiveSheetIndexByName(self::SHEET);
 
@@ -199,7 +216,23 @@ class CibiExcelExporter
 
     private function mark(bool $selected): string
     {
-        return $selected ? '( / )' : '(   )';
+        return $selected ? '( ✓ )' : '(   )';
+    }
+
+    /**
+     * Marks a cell to ignore Excel's "Number Stored as Text" check — only when the written
+     * value is the kind that actually triggers it (an all-digit string; a leading zero, as in
+     * a mobile number, is exactly why it was written as text in the first place, not a real
+     * mismatch). A contact value with a "/" separator, an email address, or multiple numbers
+     * never matches this, so it's left alone and never flagged by Excel to begin with. Leaves
+     * the cell's own data type — already correctly text, via PhpSpreadsheet's own value binder
+     * — untouched; this only suppresses the workbook-side warning indicator.
+     */
+    private function suppressNumberStoredAsTextWarning(Worksheet $sheet, string $coordinate, mixed $value): void
+    {
+        if (is_string($value) && preg_match('/^\d+$/', $value) === 1) {
+            $sheet->getCell($coordinate)->getIgnoredErrors()->setNumberStoredAsText(true);
+        }
     }
 
     private function choices(mixed $selected, array $options, string $separator = '  '): string

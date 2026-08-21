@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Storage;
 
 class User extends Authenticatable
 {
@@ -43,5 +44,19 @@ class User extends Authenticatable
     public function activityNotes(): HasMany
     {
         return $this->hasMany(ActivityNote::class);
+    }
+
+    /**
+     * Null when the user has no uploaded photo, or the saved path no longer has a file behind
+     * it — callers fall back to the default avatar in either case rather than rendering a
+     * broken image.
+     */
+    public function profilePhotoUrl(): ?string
+    {
+        if (blank($this->profile_photo_path) || ! Storage::disk('public')->exists($this->profile_photo_path)) {
+            return null;
+        }
+
+        return Storage::disk('public')->url($this->profile_photo_path);
     }
 }

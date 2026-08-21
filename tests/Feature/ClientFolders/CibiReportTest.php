@@ -309,10 +309,13 @@ class CibiReportTest extends TestCase
             ->assertDontSee('aria-label="Breadcrumb"', false)
             ->assertDontSee('CI / BI Encoding')
             ->assertSee('Save')
-            ->assertSee('data-cibi-output-actions', false)
-            ->assertSee('Print Preview')
-            ->assertSee('Download PDF')
-            ->assertSee('Download Excel')
+            // The encoding form's bottom action area shows only Save/Update — Print Preview and
+            // Download PDF/Excel now live exclusively on the Folder Contents CI/BI card once the
+            // report is complete, never inside the encoding form itself.
+            ->assertDontSee('data-cibi-output-actions', false)
+            ->assertDontSee('Print Preview')
+            ->assertDontSee('Download PDF')
+            ->assertDontSee('Download Excel')
             ->assertDontSee('>Preview<', false)
             ->assertDontSee('Mark Complete')
             ->assertSee('name="party_type"', false)
@@ -325,29 +328,28 @@ class CibiReportTest extends TestCase
             ->assertSee('Remove this entry?')
             ->assertDontSee('data-cibi-modal', false)
             ->assertDontSee('Generate PDF')->assertDontSee('Generate Word')->assertDontSee('type="file"', false);
-
-        $this->assertMatchesRegularExpression('/data-cibi-output-actions\s+hidden/', $response->getContent());
     }
 
-    public function test_completed_report_reveals_saved_data_preview_and_pdf_actions_without_a_status_badge(): void
+    public function test_completed_report_shows_only_the_update_action_without_preview_or_download_links(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         CibiReport::factory()->create(['client_folder_id' => $folder->id, 'ci_in_charge_id' => $ci->id, 'state' => RecordState::Complete]);
 
-        $response = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()
-            ->assertSee(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']), false)
-            ->assertSee(route('client-folders.cibi-report.export-pdf', $folder), false)
-            ->assertSee(route('client-folders.cibi-report.export-excel', $folder), false)
-            ->assertSee('Print Preview')
-            ->assertSee('Download PDF')
-            ->assertSee('Download Excel')
+        $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()
+            // Print Preview / Download PDF / Download Excel belong on the Folder Contents CI/BI
+            // card after completion, not inside the encoding form — see ClientFolderContentsTest
+            // for that card's own assertions.
+            ->assertDontSee(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']), false)
+            ->assertDontSee(route('client-folders.cibi-report.export-pdf', $folder), false)
+            ->assertDontSee(route('client-folders.cibi-report.export-excel', $folder), false)
+            ->assertDontSee('Print Preview')
+            ->assertDontSee('Download PDF')
+            ->assertDontSee('Download Excel')
             ->assertSee('data-cibi-submit data-cibi-submit-mode="update">Update</button>', false)
             ->assertDontSee('data-cibi-submit-mode="save">Save</button>', false)
             ->assertDontSee('data-cibi-state-badge', false)
             ->assertDontSee('data-cibi-state-label', false);
-
-        $this->assertDoesNotMatchRegularExpression('/data-cibi-output-actions\s+hidden/', $response->getContent());
     }
 
     public function test_json_save_stays_on_encoding_page_and_automatically_completes(): void

@@ -95,7 +95,13 @@ class IncomeSourcesTest extends TestCase
 
         $this->actingAs($ci)
             ->get(route('client-folders.income-sources.manage', $folder))
-            ->assertRedirect(route('client-folders.income-sources.index', $folder));
+            ->assertOk()
+            ->assertSee('Business / Income Sources')
+            ->assertSee('Add Business')
+            ->assertDontSee('Add Another Business')
+            ->assertSee('No businesses saved yet')
+            ->assertDontSee('Saved Businesses / Income Sources')
+            ->assertDontSee('Add New Business / Income Source');
     }
 
     public function test_add_business_creates_an_independent_blank_report_without_rendering_business_tabs(): void
@@ -132,9 +138,9 @@ class IncomeSourcesTest extends TestCase
         $this->actingAs($ci)
             ->get(route('client-folders.income-sources.edit', [$folder, $second]))
             ->assertOk()
-            ->assertSee('Add Business')
-            ->assertSee('Please choose Business Template')
-            ->assertSee('data-business-template-select', false)
+            ->assertDontSee('Add Business')
+            ->assertDontSee('Please choose Business Template')
+            ->assertDontSee('data-business-template-select', false)
             ->assertDontSee('data-business-selector', false)
             ->assertDontSee('business-selector-tab', false)
             ->assertDontSee('role="tablist"', false)
@@ -190,7 +196,7 @@ class IncomeSourcesTest extends TestCase
             ->assertOk()
             ->assertSee('Approved Business')
             ->assertSee('!bottom-3 !rounded-control !p-2.5', false)
-            ->assertSee('form="business-report-form" name="intent" value="complete" class="ui-button-primary" data-business-save>Save</button>', false)
+            ->assertSee('form="business-report-form" name="intent" value="complete" class="ui-button-primary" data-business-save>Update</button>', false)
             ->assertDontSee('Business 1')
             ->assertDontSee('Save and Return')
             ->assertDontSee('Save Draft')
@@ -1687,7 +1693,8 @@ class IncomeSourcesTest extends TestCase
         }
         DB::enableQueryLog();
         $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))
-            ->assertRedirect(route('client-folders.income-sources.index', $folder));
+            ->assertOk()
+            ->assertSee('Business / Income Sources');
         $this->assertLessThanOrEqual(12, count(DB::getQueryLog()));
         DB::disableQueryLog();
     }
@@ -2194,16 +2201,17 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame($originalTemplate, $source->refresh()->income_source_template_id);
     }
 
-    public function test_deletion_is_blocked_for_referenced_source_and_safe_source_is_soft_deleted(): void
+    public function test_deletion_permanently_removes_the_source_even_when_referenced_by_media_or_reports(): void
     {
         [$ci, $folder, $source] = $this->createSource('general_income_sources');
-        MediaReference::factory()->create(['client_folder_id' => $folder->id, 'income_source_id' => $source->id]);
-        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]))->assertSessionHasErrors('income_source');
-        $this->assertNotSoftDeleted($source);
+        $media = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'income_source_id' => $source->id]);
+        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]))->assertRedirect(route('client-folders.income-sources.manage', $folder));
+        $this->assertModelMissing($source);
+        $this->assertModelMissing($media);
 
         [, , $safe] = $this->createSource('general_income_sources', $ci, $folder);
-        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $safe]))->assertRedirect(route('client-folders.income-sources.index', $folder));
-        $this->assertSoftDeleted($safe);
+        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $safe]))->assertRedirect(route('client-folders.income-sources.manage', $folder));
+        $this->assertModelMissing($safe);
     }
 
     public function test_folder_completion_requires_every_active_source_to_be_complete_and_recalculates_progress(): void

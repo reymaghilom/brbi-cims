@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\ClientFolders;
 
+use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -12,8 +13,13 @@ class UpdateGeneralIncomeSourceRequest extends FormRequest
     {
         $folder = $this->route('clientFolder');
         $source = $this->route('incomeSource');
+        $rawCoMakerId = $this->input('co_maker_id');
+        $expectedCoMakerId = blank($rawCoMakerId) ? null : (int) $rawCoMakerId;
 
-        return $source?->client_folder_id === $folder->id && $source->template->is_fallback && $this->user()->can('update', $source);
+        return $source?->client_folder_id === $folder->id
+            && $source->co_maker_id === $expectedCoMakerId
+            && $source->template->is_fallback
+            && $this->user()->can('update', $source);
     }
 
     public function rules(): array
@@ -21,6 +27,7 @@ class UpdateGeneralIncomeSourceRequest extends FormRequest
         $complete = $this->input('intent') === 'complete';
 
         return [
+            'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
             'intent' => ['required', Rule::in(['stay', 'return', 'complete'])],
             'source_name' => ['required', 'string', 'max:255'],
             'applicant_name_snapshot' => [Rule::requiredIf($complete), 'nullable', 'string', 'max:255'],

@@ -3,6 +3,7 @@
 namespace App\Http\Requests\ClientFolders;
 
 use App\Models\IncomeSourceTemplate;
+use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -15,8 +16,14 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
     {
         $folder = $this->route('clientFolder');
         $source = $this->route('incomeSource');
+        $rawCoMakerId = $this->input('co_maker_id');
+        $expectedCoMakerId = blank($rawCoMakerId) ? null : (int) $rawCoMakerId;
 
-        return $source?->client_folder_id === $folder->id && ! $source->template->is_fallback && $source->template->form_handler === 'dedicated-business' && $this->user()->can('update', $source);
+        return $source?->client_folder_id === $folder->id
+            && $source->co_maker_id === $expectedCoMakerId
+            && ! $source->template->is_fallback
+            && $source->template->form_handler === 'dedicated-business'
+            && $this->user()->can('update', $source);
     }
 
     public function rules(): array
@@ -27,8 +34,15 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
         $schema = $template?->businessReportSchema() ?? [];
         $requiresProfile = $schema === [] || (bool) data_get($schema, 'profile', false);
         $ownerOptional = $template?->template_type === 'leasing_truck_equipment';
+        // Retail: Grocery/Supermarket/Sari-Sari/Water Refilling only — # of Shifts and # of
+        // Employees per Shift accept free text (e.g. "2A", "N/A"), unlike the legacy Business
+        // Source Validation template, which also uses this same real "branches" relation.
+        $branchShiftRule = $template?->template_type === 'retail_grocery_water_refilling'
+            ? ['nullable', 'string', 'max:255']
+            : ['nullable', 'integer', 'min:0'];
         $hiddenProfileFields = (array) data_get($schema, 'hidden_profile_fields', []);
         $rules = [
+            'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
             'intent' => ['required', Rule::in(['stay', 'return', 'complete'])],
             'source_name' => ['required', 'string', 'max:255'], 'business_name' => ['required', 'string', 'max:255'],
             'contribution_rank' => ['nullable', 'integer', 'min:1', 'max:65535'], 'estimated_monthly_contribution' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'], 'is_primary' => ['nullable', 'boolean'],
@@ -37,9 +51,11 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             'report_category' => ['required', 'string', 'max:80'], 'main_business_address' => [Rule::requiredIf($requiresProfile), 'nullable', 'string', 'max:10000'],
             'previous_business_address' => ['nullable', 'string', 'max:10000'], 'previous_business_address_length_of_stay' => ['nullable', 'string', 'max:100'], 'reason_for_transfer' => ['nullable', 'string', 'max:10000'],
             'registered_owner' => [Rule::requiredIf($complete && $requiresProfile && ! $ownerOptional && ! in_array('registered_owner', $hiddenProfileFields, true)), 'nullable', 'string', 'max:255'], 'relationship_to_borrower' => ['nullable', 'string', 'max:255'],
-            'year_established' => [Rule::requiredIf($requiresProfile), 'nullable', 'integer', 'min:1800', 'max:'.now()->year], 'length_of_stay_months' => ['nullable', 'integer', 'min:0', 'max:2400'],
+            'year_established' => [Rule::requiredIf($requiresProfile), 'nullable', 'integer', 'min:1800', 'max:'.now()->year], 'length_of_stay_months' => ['nullable', 'string', 'max:100'],
             'monthly_rent' => ['nullable', 'string', 'max:255'], 'ownership_type' => ['nullable', 'string', 'max:80'], 'rented_from' => ['nullable', 'string', 'max:255'], 'business_type' => ['nullable', 'string', 'max:100'],
             'scale' => ['nullable', 'string', 'max:80'], 'informant' => ['nullable', 'string', 'max:255'],
+            'branches_declared' => ['nullable', 'string', 'max:255'], 'branches_inspected' => ['nullable', 'string', 'max:255'],
+            'branches_not_inspected' => ['nullable', 'string', 'max:255'], 'branches_reason_not_inspected' => ['nullable', 'string', 'max:10000'],
             'report_remarks' => $template?->template_type === 'other_business_source_of_income'
                 ? ['required', 'string', 'max:30000']
                 : ['nullable', 'string', 'max:30000'],
@@ -78,16 +94,16 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
         return $rules + [
             'properties.*' => ['array:id,_delete,property_type,is_declared,is_inspected,reason_not_inspected,units_available,units_with_tenants,location,area_square_meters,has_contract,remarks'],
             'properties.*.property_type' => ['nullable', 'string', 'max:80'], 'properties.*.is_declared' => ['nullable', 'boolean'], 'properties.*.is_inspected' => ['nullable', 'boolean'],
-            'properties.*.reason_not_inspected' => ['nullable', 'string', 'max:10000'], 'properties.*.units_available' => ['nullable', 'integer', 'min:0'], 'properties.*.units_with_tenants' => ['nullable', 'integer', 'min:0'],
+            'properties.*.reason_not_inspected' => ['nullable', 'string', 'max:10000'], 'properties.*.units_available' => ['nullable', 'string', 'max:255'], 'properties.*.units_with_tenants' => ['nullable', 'string', 'max:255'],
             'properties.*.location' => ['nullable', 'string', 'max:10000'], 'properties.*.area_square_meters' => ['nullable', 'numeric', 'min:0'], 'properties.*.has_contract' => ['nullable', 'boolean'], 'properties.*.remarks' => ['nullable', 'string', 'max:10000'],
             'tenants.*' => ['array:id,_delete,business_property_id,tenant_name,monthly_rent,years_renting,has_contract,contact_details,remarks'],
             'tenants.*.business_property_id' => ['nullable', 'integer'], 'tenants.*.tenant_name' => ['nullable', 'string', 'max:255'], 'tenants.*.monthly_rent' => ['nullable', 'numeric', 'min:0'],
             'tenants.*.years_renting' => ['nullable', 'numeric', 'min:0'], 'tenants.*.has_contract' => ['nullable', 'boolean'], 'tenants.*.contact_details' => ['nullable', 'string', 'max:255'], 'tenants.*.remarks' => ['nullable', 'string', 'max:10000'],
             'branches.*' => ['array:id,_delete,location,is_declared,is_inspected,reason_not_inspected,frontage_meters,total_area_square_meters,is_air_conditioned,operating_days_hours,shifts_count,employees_per_shift,average_sales_per_shift,inventory_level,monthly_rent,years_in_area,nearby_brands'],
             'branches.*.location' => ['nullable', 'string', 'max:10000'], 'branches.*.is_declared' => ['nullable', 'boolean'], 'branches.*.is_inspected' => ['nullable', 'boolean'], 'branches.*.reason_not_inspected' => ['nullable', 'string', 'max:10000'],
-            'branches.*.frontage_meters' => ['nullable', 'numeric', 'min:0'], 'branches.*.total_area_square_meters' => ['nullable', 'numeric', 'min:0'], 'branches.*.is_air_conditioned' => ['nullable', 'boolean'], 'branches.*.operating_days_hours' => ['nullable', 'string', 'max:255'],
-            'branches.*.shifts_count' => ['nullable', 'integer', 'min:0'], 'branches.*.employees_per_shift' => ['nullable', 'integer', 'min:0'], 'branches.*.average_sales_per_shift' => ['nullable', 'numeric', 'min:0'], 'branches.*.inventory_level' => ['nullable', 'string', 'max:40'],
-            'branches.*.monthly_rent' => ['nullable', 'numeric', 'min:0'], 'branches.*.years_in_area' => ['nullable', 'numeric', 'min:0'], 'branches.*.nearby_brands' => ['nullable', 'string', 'max:10000'],
+            'branches.*.frontage_meters' => ['nullable', 'string', 'max:255'], 'branches.*.total_area_square_meters' => ['nullable', 'string', 'max:255'], 'branches.*.is_air_conditioned' => ['nullable', 'boolean'], 'branches.*.operating_days_hours' => ['nullable', 'string', 'max:255'],
+            'branches.*.shifts_count' => $branchShiftRule, 'branches.*.employees_per_shift' => $branchShiftRule, 'branches.*.average_sales_per_shift' => ['nullable', 'string', 'max:255'], 'branches.*.inventory_level' => ['nullable', 'string', 'max:40'],
+            'branches.*.monthly_rent' => ['nullable', 'string', 'max:255'], 'branches.*.years_in_area' => ['nullable', 'string', 'max:255'], 'branches.*.nearby_brands' => ['nullable', 'string', 'max:10000'],
             'products.*' => ['array:id,_delete,product_name,unit_size,selling_price,stock_level,is_top_seller'], 'products.*.product_name' => ['nullable', 'string', 'max:255'], 'products.*.unit_size' => ['nullable', 'string', 'max:255'], 'products.*.selling_price' => ['nullable', 'numeric', 'min:0'], 'products.*.stock_level' => ['nullable', 'string', 'max:40'], 'products.*.is_top_seller' => ['nullable', 'boolean'],
             'suppliers.*' => ['array:id,_delete,supplier_name,office_location,contact_information,is_confirmed,years_transacting,payment_performance,remarks'], 'suppliers.*.supplier_name' => ['nullable', 'string', 'max:255'], 'suppliers.*.office_location' => ['nullable', 'string', 'max:10000'], 'suppliers.*.contact_information' => ['nullable', 'string', 'max:255'], 'suppliers.*.is_confirmed' => ['nullable', 'boolean'], 'suppliers.*.years_transacting' => ['nullable', 'numeric', 'min:0'], 'suppliers.*.payment_performance' => ['nullable', 'string', 'max:255'], 'suppliers.*.remarks' => ['nullable', 'string', 'max:10000'],
             'observations.*' => ['array:id,_delete,observation_code,question_snapshot,answer,remarks'], 'observations.*.observation_code' => ['nullable', 'string', 'max:100'], 'observations.*.question_snapshot' => ['nullable', 'string', 'max:10000'], 'observations.*.answer' => ['nullable', 'string', 'max:10000'], 'observations.*.remarks' => ['nullable', 'string', 'max:10000'],
@@ -170,10 +186,10 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             $data['rented_from'] = null;
         }
         $source = $this->route('incomeSource');
-        $cibiReport = $this->route('clientFolder')?->cibiReport;
+        $cibiReport = $this->route('clientFolder')?->cibiReport()->where('co_maker_id', $source?->co_maker_id)->first();
         $data['branch_name'] = $source?->branch_name ?: $cibiReport?->branch_name;
         $data['account_officer_name'] = $source?->account_officer_name ?: $cibiReport?->account_officer_name;
-        foreach (['main_business_address', 'previous_business_address', 'reason_for_transfer', 'report_remarks'] as $field) {
+        foreach (['main_business_address', 'previous_business_address', 'reason_for_transfer', 'report_remarks', 'branches_reason_not_inspected', 'length_of_stay_months', 'branches_declared', 'branches_inspected', 'branches_not_inspected'] as $field) {
             $data[$field] = $this->text($this->input($field));
         }
         $report = $source?->businessReport;

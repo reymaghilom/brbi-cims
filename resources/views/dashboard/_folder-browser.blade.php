@@ -19,6 +19,11 @@
                     <span class="text-lg leading-none" aria-hidden="true">+</span>
                     Create Client Folder
                 </button>
+                <button type="button" class="ui-button-secondary-compact hidden shrink-0 xl:inline-flex" data-folder-preview-toggle aria-expanded="true">
+                    <x-ui.icon name="eye-off" size="size-3.5" data-folder-preview-toggle-icon="visible" />
+                    <x-ui.icon name="eye" size="size-3.5" data-folder-preview-toggle-icon="hidden" hidden />
+                    <span data-folder-preview-toggle-label>Hide Preview Panel</span>
+                </button>
             </div>
         </div>
 
@@ -90,7 +95,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <button type="button" class="client-folder-menu-trigger" aria-label="Actions for {{ $clientFolder->display_name }}" aria-haspopup="menu" aria-expanded="false" aria-controls="client-folder-menu-{{ $clientFolder->id }}" data-folder-menu-trigger>
+                                <button type="button" class="client-folder-menu-trigger ui-dots-trigger" aria-label="Actions for {{ $clientFolder->display_name }}" aria-haspopup="menu" aria-expanded="false" aria-controls="client-folder-menu-{{ $clientFolder->id }}" data-folder-menu-trigger>
                                     <x-ui.icon name="more" size="size-5" />
                                 </button>
                                 <div id="client-folder-menu-{{ $clientFolder->id }}" class="client-folder-menu" role="menu" aria-label="Actions for {{ $clientFolder->display_name }}" hidden data-folder-action-menu>

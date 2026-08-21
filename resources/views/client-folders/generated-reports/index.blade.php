@@ -3,10 +3,11 @@
 @section('title', 'Generated Reports')
 
 @section('content')
-    <x-ui.breadcrumb :items="[['label' => 'Client Folders', 'url' => route('client-folders.index')], ['label' => $clientFolder->display_name, 'url' => route('client-folders.show', $clientFolder)], ['label' => 'Generated Reports']]" />
+    @php($personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null))
+    <x-ui.breadcrumb :items="[['label' => 'Client Folders', 'url' => route('client-folders.index')], ['label' => $clientFolder->display_name, 'url' => route('client-folders.show', [$clientFolder] + $personParams)], ['label' => 'Generated Reports']]" />
     <x-ui.page-header title="Generated Reports" eyebrow="Protected official artifacts">
         <x-slot:description>Create, preview, download, and regenerate historical PDF and editable Word versions. Every output is built from currently saved report data.</x-slot:description>
-        <x-slot:actions><a href="{{ route('client-folders.show', $clientFolder) }}" class="ui-button-secondary">Back to Folder</a></x-slot:actions>
+        <x-slot:actions><a href="{{ route('client-folders.show', [$clientFolder] + $personParams) }}" class="ui-button-secondary">Back to Folder</a></x-slot:actions>
     </x-ui.page-header>
 
     @if(session('error'))<div class="mb-6 rounded-card border border-danger/30 bg-danger-soft p-4 text-sm font-semibold text-danger" role="alert">{{ session('error') }}</div>@endif
@@ -22,10 +23,10 @@
                         <h3 class="font-bold text-brand-sidebar">{{ $option['label'] }}</h3>
                         <p class="mt-1 text-xs text-text-muted">{{ $option['source'] ? 'Linked to this specific income source.' : 'Linked to the client folder.' }}</p>
                         <div class="mt-4 flex flex-wrap gap-2">
-                            <a target="_blank" rel="noopener" href="{{ route('client-folders.generated-reports.preview', [$clientFolder, 'report_type' => $option['type']->value, 'income_source_id' => $option['source']?->id]) }}" class="ui-button-secondary">Preview / Print</a>
+                            <a target="_blank" rel="noopener" href="{{ route('client-folders.generated-reports.preview', [$clientFolder, 'report_type' => $option['type']->value, 'income_source_id' => $option['source']?->id] + $personParams) }}" class="ui-button-secondary">Preview / Print</a>
                             @foreach(App\Enums\ReportFormat::cases() as $format)
                                 <form method="POST" action="{{ route('client-folders.generated-reports.store', $clientFolder) }}">@csrf
-                                    <input type="hidden" name="report_type" value="{{ $option['type']->value }}"><input type="hidden" name="format" value="{{ $format->value }}">@if($option['source'])<input type="hidden" name="income_source_id" value="{{ $option['source']->id }}">@endif
+                                    <input type="hidden" name="report_type" value="{{ $option['type']->value }}"><input type="hidden" name="format" value="{{ $format->value }}"><input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">@if($option['source'])<input type="hidden" name="income_source_id" value="{{ $option['source']->id }}">@endif
                                     <button class="ui-button-primary" type="submit">Generate {{ strtoupper($format->value) }}</button>
                                 </form>
                             @endforeach

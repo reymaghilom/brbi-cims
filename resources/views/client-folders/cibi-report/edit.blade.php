@@ -7,6 +7,7 @@
         @csrf
         @method('PUT')
         <input type="hidden" name="intent" value="complete" data-cibi-intent>
+        <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
 
         <div class="mb-3 rounded-control border border-danger/30 bg-danger-soft p-3 text-sm text-danger" role="alert" tabindex="-1" data-cibi-error-summary @if(!$errors->any()) hidden @endif>
             <p class="font-semibold">Please correct the highlighted report fields.</p>
@@ -20,22 +21,9 @@
         <x-ui.sticky-form-toolbar class="!bottom-3 !rounded-control !p-2.5">
             <span class="sr-only" data-cibi-revision>{{ $report?->revision ?? 1 }}</span>
             <x-slot:actions>
-                <div class="flex flex-col-reverse gap-2 sm:flex-row" data-cibi-output-actions @if($report?->state?->value !== 'complete') hidden @endif>
-                    <a href="{{ route('client-folders.generated-reports.preview', [$clientFolder, 'report_type' => 'cibi']) }}" target="_blank" rel="noopener" class="ui-button-secondary">Print Preview</a>
-                    <button type="submit" form="cibi-export-pdf-form" class="ui-button-secondary">Download PDF</button>
-                    <button type="submit" form="cibi-export-excel-form" class="ui-button-secondary">Download Excel</button>
-                </div>
                 <button type="submit" name="intent" value="complete" class="ui-button-primary" data-cibi-submit data-cibi-submit-mode="{{ $report?->state?->value === 'complete' ? 'update' : 'save' }}">{{ $report?->state?->value === 'complete' ? 'Update' : 'Save' }}</button>
             </x-slot:actions>
         </x-ui.sticky-form-toolbar>
-    </form>
-
-    <form id="cibi-export-pdf-form" method="POST" action="{{ route('client-folders.cibi-report.export-pdf', $clientFolder) }}" target="_blank" hidden>
-        @csrf
-    </form>
-
-    <form id="cibi-export-excel-form" method="POST" action="{{ route('client-folders.cibi-report.export-excel', $clientFolder) }}" hidden>
-        @csrf
     </form>
 
     <x-ui.modal id="cibi-remove-entry-dialog" title="Remove this entry?" description="This row already contains information. Are you sure you want to remove it?" size="max-w-md" data-repeater-remove-dialog>

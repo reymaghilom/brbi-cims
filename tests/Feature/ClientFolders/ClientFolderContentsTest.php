@@ -62,11 +62,11 @@ class ClientFolderContentsTest extends TestCase
         $contents->assertSee('CI Activities')->assertSee(route('client-folders.activities.index', $folder), false);
         $contents->assertSee('CI / BI Report')->assertSee(route('client-folders.cibi-report.edit', $folder), false)->assertSee('data-modal-open="cibi-report-dialog"', false);
         $contents->assertSee('Business / Income Sources')
-            ->assertSee(route('client-folders.income-sources.index', $folder), false)
+            ->assertSee(route('client-folders.income-sources.manage', $folder), false)
             ->assertSee('id="open-business-report"', false)
-            ->assertSee('data-modal-open="business-report-dialog"', false)
-            ->assertSee('data-business-report-url="'.route('client-folders.income-sources.index', $folder).'"', false)
-            ->assertSee('data-business-report-frame', false);
+            ->assertDontSee('data-modal-open="business-report-dialog"', false)
+            ->assertDontSee('data-business-report-frame', false);
+        $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))->assertOk()->assertSee('Business / Income Sources')->assertSee('Add Business')->assertDontSee('Add Another Business')->assertDontSee('Add New Business / Income Source');
         $this->actingAs($ci)->get(route('client-folders.income-sources.index', $folder))->assertOk()->assertSee('Please choose Business Template')->assertDontSee('Add Income Source')->assertDontSee('Business / Income Sources')->assertDontSee('income sources available.');
         $contents->assertSee('Residence & Business Report')->assertSee(route('client-folders.residence-business.edit', $folder), false);
         $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk()->assertSee('Residence & Business Report');
@@ -156,7 +156,7 @@ class ClientFolderContentsTest extends TestCase
         $modules = collect($response->viewData('modules'))->keyBy('key');
 
         $response->assertOk()->assertDontSee('2 income sources available.');
-        $response->assertSee('Business / Income Sources')->assertSee(route('client-folders.income-sources.index', $folder), false);
+        $response->assertSee('Business / Income Sources')->assertSee(route('client-folders.income-sources.manage', $folder), false);
         $this->assertSame('complete', $modules['client-information']['state']);
         $this->assertSame('draft', $modules['cibi-report']['state']);
         $this->assertSame('in_progress', $modules['income-sources']['state']);
@@ -179,7 +179,7 @@ class ClientFolderContentsTest extends TestCase
             $this->actingAs($ci)->get(route('client-folders.show', $folder))
                 ->assertOk()
                 ->assertSee('Business / Income Sources')
-                ->assertSee(route('client-folders.income-sources.index', $folder), false)
+                ->assertSee(route('client-folders.income-sources.manage', $folder), false)
                 ->assertDontSee($count.' income source'.($count === 1 ? '' : 's').' available.')
                 ->assertDontSee('No income sources available.');
         }
@@ -250,9 +250,9 @@ class ClientFolderContentsTest extends TestCase
             ->assertSee('data-cibi-report-url="'.route('client-folders.cibi-report.edit', $folder).'"', false)
             ->assertSee('data-cibi-report-frame', false)
             ->assertSee('id="open-business-report"', false)
-            ->assertSee('data-modal-open="business-report-dialog"', false)
-            ->assertSee('data-business-report-url="'.route('client-folders.income-sources.index', $folder).'"', false)
-            ->assertSee('data-business-report-frame', false)
+            ->assertSee('href="'.route('client-folders.income-sources.manage', $folder).'"', false)
+            ->assertDontSee('data-modal-open="business-report-dialog"', false)
+            ->assertDontSee('data-business-report-frame', false)
             ->assertDontSee('data-cibi-modal', false)
             ->assertDontSee('cibi-modal-dialog', false)
             ->assertDontSee('PREFILLED BRANCH')
@@ -301,16 +301,16 @@ class ClientFolderContentsTest extends TestCase
             ->assertDontSee('aria-label="Breadcrumb"', false)
             ->assertDontSee('Back to Client Folder')
             ->assertDontSee('CI / BI Encoding')
-            ->assertSee('Print Preview')
-            ->assertSee('Download PDF')
-            ->assertSee('Download Excel')
+            // Print Preview / Download PDF / Download Excel belong on the Folder Contents CI/BI
+            // card after completion, never inside the encoding form itself.
+            ->assertDontSee('Print Preview')
+            ->assertDontSee('Download PDF')
+            ->assertDontSee('Download Excel')
             ->assertDontSee('>Preview<', false)
             ->assertSee('Save')
             ->assertDontSee('Mark Complete')
             ->assertSee('data-repeater-remove-dialog', false)
             ->assertDontSee('data-cibi-modal', false);
-
-        $this->assertMatchesRegularExpression('/data-cibi-output-actions\s+hidden/', $response->getContent());
 
         $javascript = file_get_contents(resource_path('js/app.js'));
         $this->assertStringContainsString("dialog.querySelector('[data-cibi-report-frame]')", $javascript);
@@ -392,7 +392,9 @@ class ClientFolderContentsTest extends TestCase
         $queryCount = count(DB::getQueryLog());
         DB::disableQueryLog();
 
-        $this->assertLessThanOrEqual(8, $queryCount);
+        // 9, not 8: the Co-Maker switcher added one more constant-cost eager load (the folder's
+        // coMakers list) on top of the original 8 — still flat regardless of child-record volume.
+        $this->assertLessThanOrEqual(9, $queryCount);
     }
 
     private function rule(string $code, string $label, int $sortOrder, bool $required = true, bool $active = true): CompletionRule

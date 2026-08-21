@@ -39,7 +39,7 @@ class SaveCibiReport
     public function execute(User $actor, ClientFolder $folder, array $data): CibiReport
     {
         return DB::transaction(function () use ($actor, $folder, $data): CibiReport {
-            $report = $folder->cibiReport()->firstOrNew();
+            $report = $folder->cibiReport()->firstOrNew(['co_maker_id' => $data['co_maker_id'] ?? null]);
             $created = ! $report->exists;
             $report->fill(Arr::only($data, self::REPORT_FIELDS));
             $report->ci_in_charge_id = $report->ci_in_charge_id ?: $folder->assigned_ci_id;

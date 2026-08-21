@@ -6,6 +6,7 @@ use App\Actions\ClientFolders\SaveCibiReport;
 use App\Enums\RecordState;
 use App\Http\Requests\ClientFolders\SaveCibiReportRequest;
 use App\Models\ClientFolder;
+use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CibiReportFormData;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -17,13 +18,16 @@ class CibiReportController extends Controller
     public function edit(ClientFolder $clientFolder, CibiReportFormData $formData): View
     {
         Gate::authorize('update', $clientFolder);
+        $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
 
-        return view('client-folders.cibi-report.edit', ['clientFolder' => $clientFolder] + $formData->for($clientFolder));
+        return view('client-folders.cibi-report.edit', ['clientFolder' => $clientFolder, 'activePerson' => $activePerson] + $formData->for($clientFolder, $activePerson));
     }
 
     public function update(SaveCibiReportRequest $request, ClientFolder $clientFolder, SaveCibiReport $save): RedirectResponse|JsonResponse
     {
-        $wasCompleted = $clientFolder->cibiReport()->where('state', RecordState::Complete)->exists();
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id'));
+        $personParams = ActivePersonResolver::queryParams($activePerson);
+        $wasCompleted = $clientFolder->cibiReport()->where('co_maker_id', $activePerson?->id)->where('state', RecordState::Complete)->exists();
         $report = $save->execute($request->user(), $clientFolder, $request->validated());
         $message = $wasCompleted ? 'CI/BI Report updated successfully.' : 'CI/BI Report saved successfully.';
 
@@ -32,7 +36,7 @@ class CibiReportController extends Controller
 
             return response()->json([
                 'message' => $message,
-                'return_url' => route('client-folders.show', $clientFolder),
+                'return_url' => route('client-folders.show', [$clientFolder] + $personParams),
                 'report' => [
                     'state' => $report->state->value,
                     'was_completed' => $wasCompleted,
@@ -62,7 +66,7 @@ class CibiReportController extends Controller
             ]);
         }
 
-        return redirect(route('client-folders.cibi-report.edit', $clientFolder))
+        return redirect(route('client-folders.cibi-report.edit', [$clientFolder] + $personParams))
             ->with('status', $message);
     }
 }

@@ -27,6 +27,7 @@ class UploadMedia
                     $storedPaths[] = $stored['thumbnail_path'];
                     $media = MediaReference::create(Arr::except($stored, ['suggested_label']) + [
                         'client_folder_id' => $folder->id,
+                        'co_maker_id' => $data['co_maker_id'] ?? null,
                         'income_source_id' => $data['income_source_id'] ?? null,
                         'category' => $data['category'],
                         'label' => $data['label'] ?: $stored['suggested_label'],

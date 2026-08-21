@@ -4,7 +4,6 @@ namespace App\Actions\ClientFolders;
 
 use App\Enums\ClientFolderStatus;
 use App\Enums\UserRole;
-use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\ClientFolder;
 use App\Models\User;
@@ -17,6 +16,7 @@ class CreateClientFolder
     public function __construct(
         private readonly FolderNumberGenerator $numbers,
         private readonly ClientNameFormatter $names,
+        private readonly SeedCiActivities $seedActivities,
     ) {}
 
     public function execute(User $actor, array $data): ClientFolder
@@ -40,17 +40,7 @@ class CreateClientFolder
                 'progress_percent' => 0,
             ]);
 
-            $folder->activities()->createMany(
-                ActivityDefinition::query()
-                    ->where('is_active', true)
-                    ->orderBy('sort_order')
-                    ->get(['id', 'name'])
-                    ->map(fn (ActivityDefinition $definition): array => [
-                        'activity_definition_id' => $definition->id,
-                        'name' => $definition->name,
-                    ])
-                    ->all(),
-            );
+            $this->seedActivities->execute($folder);
 
             AuditLog::create([
                 'user_id' => $actor->id,

@@ -22,6 +22,7 @@ class StoreUserRequest extends FormRequest
             'employee_id' => ['nullable', 'string', 'max:50', 'unique:users,employee_id'],
             'username' => ['required', 'string', 'max:100', 'regex:/^[a-zA-Z0-9._-]+$/', 'unique:users,username'],
             'role' => ['required', Rule::enum(UserRole::class)],
+            'profile_photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'password' => ['required', 'string', 'confirmed', PasswordPolicy::rule()],
         ];
     }

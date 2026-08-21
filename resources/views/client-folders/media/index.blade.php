@@ -3,7 +3,8 @@
 @section('title', 'Photos & Videos')
 
 @section('content')
-    <x-ui.breadcrumb :items="[['label' => 'Client Folders', 'url' => route('client-folders.index')], ['label' => $clientFolder->display_name, 'url' => route('client-folders.show', $clientFolder)], ['label' => 'Photos & Videos']]" />
+    @php($personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null))
+    <x-ui.breadcrumb :items="[['label' => 'Client Folders', 'url' => route('client-folders.index')], ['label' => $clientFolder->display_name, 'url' => route('client-folders.show', [$clientFolder] + $personParams)], ['label' => 'Photos & Videos']]" />
 
     <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div><p class="text-xs font-bold uppercase tracking-[0.16em] text-brand-primary">Protected field evidence</p><h1 class="ui-page-title mt-1">Photos &amp; Videos</h1><p class="mt-2 text-sm text-text-muted">{{ $clientFolder->display_name }} · {{ $clientFolder->folder_number }}</p></div>
@@ -18,10 +19,11 @@
     <section class="mt-6 ui-panel overflow-hidden" aria-label="Media evidence gallery">
         <div class="border-b border-ui-border p-4 sm:p-5">
             <form method="GET" class="flex flex-col gap-3 sm:flex-row sm:items-end">
+                @foreach($personParams as $key => $value)<input type="hidden" name="{{ $key }}" value="{{ $value }}">@endforeach
                 <div class="flex-1"><label for="media-type" class="ui-label">Media</label><select id="media-type" name="type" class="ui-control"><option value="">All Media ({{ $counts['all'] }})</option><option value="photo" @selected(request('type') === 'photo')>Photos ({{ $counts['photo'] }})</option><option value="video" @selected(request('type') === 'video')>Videos ({{ $counts['video'] }})</option></select></div>
                 <div class="flex-1"><label for="media-category" class="ui-label">Category</label><select id="media-category" name="category" class="ui-control"><option value="">All Categories</option>@foreach($categories as $category)<option value="{{ $category->value }}" @selected(request('category') === $category->value)>{{ str($category->value)->replace('_', ' ')->title() }}</option>@endforeach</select></div>
                 <button class="ui-button-secondary">Apply Filters</button>
-                @if(request()->hasAny(['type', 'category']))<a href="{{ route('client-folders.media.index', $clientFolder) }}" class="ui-button-secondary">Clear</a>@endif
+                @if(request()->hasAny(['type', 'category']))<a href="{{ route('client-folders.media.index', [$clientFolder] + $personParams) }}" class="ui-button-secondary">Clear</a>@endif
             </form>
         </div>
 
@@ -48,7 +50,7 @@
     @can('create', [App\Models\MediaReference::class, $clientFolder])
         <x-ui.modal id="media-upload-dialog" title="Add Media" description="Upload protected field evidence. Each selected file creates its own evidence record." size="max-w-2xl" :data-open-on-error="old('media_form') === 'upload' ? 'true' : 'false'">
             <form id="media-upload-form" method="POST" action="{{ route('client-folders.media.store', $clientFolder) }}" enctype="multipart/form-data">
-                @csrf<input type="hidden" name="media_form" value="upload">
+                @csrf<input type="hidden" name="media_form" value="upload"><input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
                 <div>
                     <label for="media-files" class="ui-label">Photos or MP4 videos <span class="text-danger">*</span></label>
                     <input id="media-files" name="files[]" type="file" multiple required accept="image/jpeg,image/png,image/webp,video/mp4" class="ui-control file:mr-3 file:rounded-control file:border-0 file:bg-brand-soft file:px-3 file:py-1.5 file:font-semibold file:text-brand-primary">
@@ -77,7 +79,7 @@
         @can('update', $media)
             @php($editHasErrors = old('media_form') === 'edit-'.$media->id)
             <x-ui.modal id="media-edit-{{ $media->id }}" title="Edit Media Details" size="max-w-lg" :data-open-on-error="$editHasErrors ? 'true' : 'false'">
-                <form id="media-edit-form-{{ $media->id }}" method="POST" action="{{ route('client-folders.media.update', [$clientFolder, $media]) }}">@csrf @method('PATCH')<input type="hidden" name="media_form" value="edit-{{ $media->id }}">
+                <form id="media-edit-form-{{ $media->id }}" method="POST" action="{{ route('client-folders.media.update', [$clientFolder, $media]) }}">@csrf @method('PATCH')<input type="hidden" name="media_form" value="edit-{{ $media->id }}"><input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
                     <div class="grid gap-4 sm:grid-cols-2">
                         <div><label class="ui-label" for="edit-category-{{ $media->id }}">Category</label><select class="ui-control" id="edit-category-{{ $media->id }}" name="category">@foreach($categories as $category)<option value="{{ $category->value }}" @selected(($editHasErrors ? old('category') : $media->category->value) === $category->value)>{{ str($category->value)->title() }}</option>@endforeach</select></div>
                         <div><label class="ui-label" for="edit-date-{{ $media->id }}">Date Taken</label><input class="ui-control" id="edit-date-{{ $media->id }}" name="captured_at" type="date" value="{{ $editHasErrors ? old('captured_at') : $media->captured_at?->toDateString() }}"></div>

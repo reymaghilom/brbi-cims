@@ -3,6 +3,12 @@
     $columns = $table['columns'];
     $rows = old("template_data.tables.$tableKey", data_get($report?->template_data, "tables.$tableKey", []));
     $rows = count((array) $rows) ? $rows : array_fill(0, max(1, (int) ($table['default_rows'] ?? 1)), []);
+    // Pharmacy / Drugstore, General Merchandise / Hardware / Auto or Motor Parts, and Buy &
+    // Sell Store: Dry Goods: Top Sellable Products always shows at least 3 rows, padding a
+    // partially-saved table (1 or 2 saved rows) up to 3 — not just the "0 saved" case above.
+    if (in_array($template->template_type, ['pharmacy_drugstore', 'general_merchandise_hardware_parts', 'buy_sell_dry_goods'], true) && count((array) $rows) < 3) {
+        $rows = array_merge(array_values((array) $rows), array_fill(0, 3 - count((array) $rows), []));
+    }
     $questionAnswers = old('template_data.questions', data_get($report?->template_data, 'questions', []));
     $questionOrder = $template->template_type === 'buy_sell_dry_goods'
         ? [0, 1, 2, 4, 5, 6, 7, 3]

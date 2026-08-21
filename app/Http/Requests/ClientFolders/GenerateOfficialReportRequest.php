@@ -5,6 +5,7 @@ namespace App\Http\Requests\ClientFolders;
 use App\Enums\OfficialReportType;
 use App\Enums\ReportFormat;
 use App\Models\GeneratedReport;
+use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -21,6 +22,7 @@ class GenerateOfficialReportRequest extends FormRequest
             'report_type' => ['required', Rule::enum(OfficialReportType::class)],
             'format' => ['required', Rule::enum(ReportFormat::class)],
             'income_source_id' => ['nullable', 'integer'],
+            'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
         ];
     }
 }

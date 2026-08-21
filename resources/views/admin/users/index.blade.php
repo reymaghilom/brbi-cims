@@ -15,7 +15,7 @@
             <tbody>
                 @foreach ($users as $managedUser)
                     <tr>
-                        <td><div class="flex items-center gap-3"><span class="grid size-9 place-items-center rounded-full bg-brand-soft font-bold text-brand-primary">{{ str($managedUser->full_name)->substr(0, 1)->upper() }}</span><div><p class="font-bold">{{ $managedUser->full_name }}</p><p class="text-xs text-text-muted">{{ $managedUser->employee_id ?: 'No employee ID' }}</p></div></div></td>
+                        <td><div class="flex items-center gap-3">@if ($managedUser->profilePhotoUrl())<img src="{{ $managedUser->profilePhotoUrl() }}" alt="" class="size-9 shrink-0 rounded-full border border-ui-border object-cover [aspect-ratio:1/1]">@else<span class="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft font-bold text-brand-primary">{{ str($managedUser->full_name)->substr(0, 1)->upper() }}</span>@endif<div><p class="font-bold">{{ $managedUser->full_name }}</p><p class="text-xs text-text-muted">{{ $managedUser->employee_id ?: 'No employee ID' }}</p></div></div></td>
                         <td class="font-medium">{{ $managedUser->username }}</td>
                         <td>{{ str($managedUser->role->value)->replace('_', ' ')->title() }}</td>
                         <td><x-ui.status-badge :status="$managedUser->status" /></td>
@@ -28,7 +28,7 @@
 
     <div class="grid gap-4 md:hidden">
         @forelse($users as $managedUser)
-            <article class="ui-card p-5"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 class="truncate font-bold">{{ $managedUser->full_name }}</h2><p class="mt-1 text-sm text-text-muted">{{ $managedUser->username }}</p></div><x-ui.status-badge :status="$managedUser->status" /></div><div class="mt-4 flex items-center justify-between border-t border-ui-border pt-4"><span class="text-sm font-semibold text-text-muted">{{ str($managedUser->role->value)->replace('_', ' ')->title() }}</span><a href="{{ route('admin.users.edit', $managedUser) }}" class="ui-button-secondary">Manage</a></div></article>
+            <article class="ui-card p-5"><div class="flex items-start justify-between gap-3"><div class="flex min-w-0 items-center gap-3">@if ($managedUser->profilePhotoUrl())<img src="{{ $managedUser->profilePhotoUrl() }}" alt="" class="size-9 shrink-0 rounded-full border border-ui-border object-cover [aspect-ratio:1/1]">@else<span class="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft font-bold text-brand-primary">{{ str($managedUser->full_name)->substr(0, 1)->upper() }}</span>@endif<div class="min-w-0"><h2 class="truncate font-bold">{{ $managedUser->full_name }}</h2><p class="mt-1 text-sm text-text-muted">{{ $managedUser->username }}</p></div></div><x-ui.status-badge :status="$managedUser->status" /></div><div class="mt-4 flex items-center justify-between border-t border-ui-border pt-4"><span class="text-sm font-semibold text-text-muted">{{ str($managedUser->role->value)->replace('_', ' ')->title() }}</span><a href="{{ route('admin.users.edit', $managedUser) }}" class="ui-button-secondary">Manage</a></div></article>
         @empty
             <x-ui.empty-state title="No users found" icon="users" />
         @endforelse

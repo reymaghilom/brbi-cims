@@ -3,6 +3,7 @@
 namespace App\Http\Requests\ClientFolders;
 
 use App\Enums\ActivityStatus;
+use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -13,16 +14,20 @@ class UpdateCiActivityRequest extends FormRequest
     {
         $folder = $this->route('clientFolder');
         $activity = $this->route('ciActivity');
+        $rawCoMakerId = $this->input('co_maker_id');
+        $expectedCoMakerId = blank($rawCoMakerId) ? null : (int) $rawCoMakerId;
 
         return $this->user()->can('update', $folder)
             && $activity !== null
             && $activity->client_folder_id === $folder->id
+            && $activity->co_maker_id === $expectedCoMakerId
             && $this->user()->can('update', $activity);
     }
 
     public function rules(): array
     {
         return [
+            'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
             'status' => ['required', Rule::enum(ActivityStatus::class)],
             'visit_date' => ['nullable', 'date', 'before_or_equal:today', Rule::requiredIf($this->input('status') === ActivityStatus::Completed->value)],
             'time_in' => ['nullable', 'date_format:H:i'],

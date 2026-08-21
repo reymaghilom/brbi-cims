@@ -11,7 +11,12 @@
             'selling_price' => $record->selling_price,
         ])->all();
     }
-    $productRows = count($productRows) ? $productRows : array_fill(0, 6, []);
+    $productRows = count($productRows) ? array_values($productRows) : array_fill(0, 3, []);
+    // A table with 1 or 2 saved rows must still show 3 rows total (the same minimum as a
+    // brand-new report) — the line above only fills blanks when nothing was saved at all.
+    if (count($productRows) < 3) {
+        $productRows = array_merge($productRows, array_fill(0, 3 - count($productRows), []));
+    }
     $retailQuestions = [
         ['code' => 'competitors', 'label' => 'Who are the competitors near the area?'],
         ['code' => 'location', 'label' => 'Does the client have a good location? (Residential / commercial market)'],

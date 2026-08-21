@@ -4,18 +4,22 @@ namespace App\Services\ClientFolders;
 
 use App\Enums\PartyType;
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 
 class CibiReportFormData
 {
-    public function for(ClientFolder $clientFolder): array
+    public function for(ClientFolder $clientFolder, ?CoMaker $activePerson = null): array
     {
         // Reload the report relation because the folder overview intentionally selects
-        // only state/timestamp columns for its lightweight module summary.
+        // only state/timestamp columns for its lightweight module summary. cibiReport and
+        // incomeSources are constrained to the active person — a Co-Maker's CI/BI form must
+        // never load the Applicant's saved report (or vice versa, or another Co-Maker's).
         $clientFolder->load([
             'assignedInvestigator:id,full_name',
             'information',
             'addresses',
-            'incomeSources:id,client_folder_id,source_name',
+            'incomeSources' => fn ($query) => $query->select(['id', 'client_folder_id', 'co_maker_id', 'source_name'])->where('co_maker_id', $activePerson?->id),
+            'cibiReport' => fn ($query) => $query->where('co_maker_id', $activePerson?->id),
             'cibiReport.investigator:id,full_name',
             'cibiReport.bankAccounts',
             'cibiReport.loanRecords',
@@ -25,9 +29,9 @@ class CibiReportFormData
         ]);
 
         $personalSnapshot = array_replace(
-            $this->personalDefaults($clientFolder),
+            $this->personalDefaults($clientFolder, $activePerson),
             $clientFolder->cibiReport?->personal_snapshot ?? [],
-            ['name' => $clientFolder->display_name],
+            ['name' => $activePerson?->full_name ?? $clientFolder->display_name],
         );
         foreach (['spouse_name', 'present_address', 'residence_status_from', 'monthly_rent', 'length_of_stay_months', 'other_residences', 'previous_address', 'parents_address', 'previous_address_length_of_stay_months', 'separated_year', 'vehicles_owned', 'contact_details', 'other_remarks'] as $field) {
             if (strcasecmp(trim((string) ($personalSnapshot[$field] ?? '')), 'N/A') === 0) {
@@ -59,8 +63,29 @@ class CibiReportFormData
         ];
     }
 
-    private function personalDefaults(ClientFolder $clientFolder): array
+    private function personalDefaults(ClientFolder $clientFolder, ?CoMaker $activePerson): array
     {
+        // A Co-Maker only has the handful of fields captured on the Co-Maker record itself —
+        // there is no ClientInformation/ClientAddress profile to draw richer defaults from, so
+        // the rest of the personal snapshot simply starts blank for manual encoding, same as it
+        // would for the Applicant before their own profile was ever filled in.
+        if ($activePerson) {
+            return [
+                'name' => $activePerson->full_name,
+                'age' => null, 'spouse_name' => null, 'spouse_age' => null,
+                'present_address' => $activePerson->address,
+                'length_of_stay_months' => null, 'residence_status' => null, 'residence_status_from' => null,
+                'monthly_rent' => null, 'living_with_parents' => false, 'other_residences' => null,
+                'home_condition' => null, 'number_of_storeys' => null, 'material_cost_level' => null,
+                'living_condition' => null, 'previous_address' => null, 'previous_address_length_of_stay_months' => null,
+                'parents_address' => null, 'dependents_count' => null, 'civil_status' => null, 'separated_year' => null,
+                'reputation' => null, 'barangay_findings' => null, 'court_background_status' => null, 'court_background' => null,
+                'lifestyle' => null, 'vehicles_owned' => null,
+                'contact_details' => $activePerson->contact_number,
+                'other_remarks' => null,
+            ];
+        }
+
         $information = $clientFolder->information;
         $addresses = $clientFolder->addresses->keyBy(fn ($address): string => $address->address_type->value);
         $formatAddress = function ($address): ?string {

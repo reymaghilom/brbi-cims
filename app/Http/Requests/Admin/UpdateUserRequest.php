@@ -20,6 +20,7 @@ class UpdateUserRequest extends FormRequest
             'employee_id' => ['nullable', 'string', 'max:50', Rule::unique('users', 'employee_id')->ignore($this->route('user'))],
             'username' => ['required', 'string', 'max:100', 'regex:/^[a-zA-Z0-9._-]+$/', Rule::unique('users', 'username')->ignore($this->route('user'))],
             'role' => ['required', Rule::enum(UserRole::class)],
+            'profile_photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ];
     }
 

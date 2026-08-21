@@ -2,19 +2,14 @@
 
 namespace Tests\Feature\ClientFolders;
 
-use App\Enums\MediaCategory;
-use App\Enums\RecordState;
-use App\Models\AuditLog;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
-use App\Models\MediaReference;
-use App\Models\ResidenceBusinessReport;
 use App\Models\User;
-use App\Services\ClientFolders\ResidenceBusinessReportCompletionEvaluator;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use RuntimeException;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class ResidenceBusinessReportTest extends TestCase
@@ -25,6 +20,7 @@ class ResidenceBusinessReportTest extends TestCase
     {
         parent::setUp();
         $this->seed(ReferenceDataSeeder::class);
+        Storage::fake('local');
     }
 
     public function test_access_is_limited_to_administrator_and_assigned_ci_and_deleted_folders_are_unavailable(): void
@@ -32,191 +28,233 @@ class ResidenceBusinessReportTest extends TestCase
         $ci = User::factory()->create();
         $other = User::factory()->create();
         $admin = User::factory()->administrator()->create();
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $folder = $this->folderFor($ci);
 
         $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk();
         $this->actingAs($admin)->get(route('client-folders.residence-business.edit', $folder))->assertOk();
         $this->actingAs($other)->get(route('client-folders.residence-business.edit', $folder))->assertForbidden();
-        $this->actingAs($other)->get(route('client-folders.residence-business.preview', $folder))->assertForbidden();
         $folder->delete();
         $this->actingAs($admin)->get(route('client-folders.residence-business.edit', $folder->id))->assertNotFound();
     }
 
-    public function test_repeated_saves_update_one_report_and_existing_sections(): void
-    {
-        [$ci, $folder, $source, $residenceMedia, $businessMedia] = $this->context();
-        $payload = $this->completePayload($source, $residenceMedia, $businessMedia);
-        $this->actingAs($ci)->put(route('client-folders.residence-business.update', $folder), $payload)->assertRedirect();
-        $report = $folder->residenceBusinessReport()->firstOrFail();
-        $payload['sections'][0]['id'] = $report->sections()->where('category', 'residence')->value('id');
-        $payload['sections'][1]['id'] = $report->sections()->where('category', 'business')->value('id');
-        $payload['sections'][0]['remarks'] = 'Updated residence finding';
-        $this->actingAs($ci)->put(route('client-folders.residence-business.update', $folder), $payload)->assertRedirect();
-
-        $this->assertSame(1, ResidenceBusinessReport::where('client_folder_id', $folder->id)->count());
-        $this->assertSame(2, $report->sections()->count());
-        $this->assertSame('Updated residence finding', $report->sections()->where('category', 'residence')->value('remarks'));
-        $this->assertSame(2, $report->fresh()->revision);
-    }
-
-    public function test_report_supports_residence_co_maker_and_multiple_distinct_business_sections(): void
-    {
-        [$ci, $folder, $firstSource, $residenceMedia, $firstBusinessMedia] = $this->context();
-        $secondSource = $this->incomeSource($folder, 'Second Business');
-        $secondBusinessMedia = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'income_source_id' => $secondSource->id, 'category' => MediaCategory::Business]);
-        $payload = $this->completePayload($firstSource, $residenceMedia, $firstBusinessMedia);
-        $payload['sections'][] = ['category' => 'residence', 'subject_party' => 'co_maker', 'subject_name' => 'Co-maker Person', 'heading_subject' => 'Residence Check', 'location' => 'Co-maker Address', 'sort_order' => 3, 'media' => [$this->mediaRow($residenceMedia, 1, 'Co-maker Residence')]];
-        $payload['sections'][] = ['category' => 'business', 'subject_party' => 'applicant', 'heading_subject' => 'Business Check', 'business_name' => 'Second Business', 'income_source_id' => $secondSource->id, 'location' => 'Second Location', 'sort_order' => 4, 'media' => [$this->mediaRow($secondBusinessMedia, 1, 'Second Business')]];
-
-        $this->actingAs($ci)->put(route('client-folders.residence-business.update', $folder), $payload)->assertRedirect();
-        $report = $folder->residenceBusinessReport()->firstOrFail();
-        $this->assertSame(2, $report->sections()->where('category', 'residence')->count());
-        $this->assertSame(2, $report->sections()->where('category', 'business')->count());
-        $this->assertEqualsCanonicalizing([$firstSource->id, $secondSource->id], $report->sections()->where('category', 'business')->pluck('income_source_id')->all());
-    }
-
-    public function test_media_links_preserve_output_metadata_and_can_be_reordered_or_unlinked(): void
-    {
-        [$ci, $folder, $source, $residenceMedia, $businessMedia] = $this->context();
-        $extra = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'category' => MediaCategory::Residence]);
-        $payload = $this->completePayload($source, $residenceMedia, $businessMedia);
-        $payload['sections'][0]['media'][] = $this->mediaRow($extra, 2, 'Second View', 'Second caption');
-        $this->actingAs($ci)->put(route('client-folders.residence-business.update', $folder), $payload);
-        $section = $folder->residenceBusinessReport->sections()->where('category', 'residence')->firstOrFail();
-        $this->assertDatabaseHas('photo_report_media', ['photo_report_section_id' => $section->id, 'media_reference_id' => $extra->id, 'output_label' => 'Second View', 'caption' => 'Second caption', 'sort_order' => 2]);
-
-        $payload['sections'][0]['id'] = $section->id;
-        $payload['sections'][1]['id'] = $folder->residenceBusinessReport->sections()->where('category', 'business')->value('id');
-        $payload['sections'][0]['media'] = [$this->mediaRow($extra, 1, 'First View')];
-        $this->actingAs($ci)->put(route('client-folders.residence-business.update', $folder), $payload);
-        $this->assertDatabaseMissing('photo_report_media', ['photo_report_section_id' => $section->id, 'media_reference_id' => $residenceMedia->id]);
-        $this->assertDatabaseHas('photo_report_media', ['photo_report_section_id' => $section->id, 'media_reference_id' => $extra->id, 'sort_order' => 1]);
-    }
-
-    public function test_forged_section_source_and_media_ids_are_rejected(): void
-    {
-        [$ci, $folder, $source, $residenceMedia, $businessMedia] = $this->context();
-        $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $foreignSource = $this->incomeSource($otherFolder, 'Foreign Source');
-        $foreignMedia = MediaReference::factory()->create(['client_folder_id' => $otherFolder->id, 'income_source_id' => $foreignSource->id, 'category' => MediaCategory::Business]);
-        $foreignReport = ResidenceBusinessReport::factory()->create(['client_folder_id' => $otherFolder->id, 'ci_user_id' => $ci->id]);
-        $foreignSection = $foreignReport->sections()->create(['category' => 'residence', 'subject_party' => 'applicant']);
-        $payload = $this->completePayload($source, $residenceMedia, $businessMedia);
-        $payload['sections'][0]['id'] = $foreignSection->id;
-        $payload['sections'][1]['income_source_id'] = $foreignSource->id;
-        $payload['sections'][1]['media'] = [$this->mediaRow($foreignMedia, 1)];
-
-        $this->actingAs($ci)->put(route('client-folders.residence-business.update', $folder), $payload)
-            ->assertSessionHasErrors(['sections.0.id', 'sections.1.income_source_id', 'sections.1.media.0.media_reference_id']);
-        $this->assertDatabaseMissing('residence_business_reports', ['client_folder_id' => $folder->id]);
-    }
-
-    public function test_media_from_another_income_source_or_category_cannot_be_linked(): void
-    {
-        [$ci, $folder, $source, $residenceMedia, $businessMedia] = $this->context();
-        $otherSource = $this->incomeSource($folder, 'Other Business');
-        $otherBusinessMedia = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'income_source_id' => $otherSource->id, 'category' => MediaCategory::Business]);
-        $payload = $this->completePayload($source, $residenceMedia, $businessMedia);
-        $payload['sections'][0]['media'] = [$this->mediaRow($businessMedia, 1)];
-        $payload['sections'][1]['media'] = [$this->mediaRow($otherBusinessMedia, 1)];
-
-        $this->actingAs($ci)->put(route('client-folders.residence-business.update', $folder), $payload)
-            ->assertSessionHasErrors(['sections.0.media.0.media_reference_id', 'sections.1.media.0.media_reference_id']);
-    }
-
-    public function test_transaction_rolls_back_when_completion_evaluation_fails(): void
-    {
-        [$ci, $folder, $source, $residenceMedia, $businessMedia] = $this->context();
-        $this->app->instance(ResidenceBusinessReportCompletionEvaluator::class, new class extends ResidenceBusinessReportCompletionEvaluator
-        {
-            public function evaluate(ResidenceBusinessReport $report): bool
-            {
-                throw new RuntimeException('Injected completion failure');
-            }
-        });
-
-        $this->withoutExceptionHandling();
-        $this->expectException(RuntimeException::class);
-        try {
-            $this->actingAs($ci)->put(route('client-folders.residence-business.update', $folder), $this->completePayload($source, $residenceMedia, $businessMedia));
-        } finally {
-            $this->assertDatabaseMissing('residence_business_reports', ['client_folder_id' => $folder->id]);
-            $this->assertDatabaseCount('photo_report_sections', 0);
-        }
-    }
-
-    public function test_completion_recalculates_progress_and_folder_overview_uses_real_route(): void
-    {
-        [$ci, $folder, $source, $residenceMedia, $businessMedia] = $this->context();
-        $this->actingAs($ci)->put(route('client-folders.residence-business.update', $folder), $this->completePayload($source, $residenceMedia, $businessMedia));
-        $report = $folder->residenceBusinessReport()->firstOrFail();
-        $this->assertSame(RecordState::Complete, $report->state);
-        $result = $folder->completionResults()->whereHas('rule', fn ($query) => $query->where('code', 'residence_business_report'))->firstOrFail();
-        $this->assertTrue($result->is_satisfied);
-        $this->assertEquals(16.67, $folder->refresh()->progress_percent);
-        $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->assertSee(route('client-folders.residence-business.edit', $folder), false)->assertSee('Residence and business report record available.');
-    }
-
-    public function test_preview_uses_official_paper_foundation_two_media_pages_maps_and_escaped_narratives(): void
-    {
-        [$ci, $folder, $source, $residenceMedia, $businessMedia] = $this->context();
-        $extraOne = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'category' => MediaCategory::Residence]);
-        $extraTwo = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'category' => MediaCategory::Residence]);
-        $payload = $this->completePayload($source, $residenceMedia, $businessMedia);
-        $payload['sections'][0]['google_maps_link'] = 'https://maps.google.com/example';
-        $payload['sections'][0]['remarks'] = '<script>alert("unsafe")</script>';
-        $payload['sections'][0]['media'] = [$this->mediaRow($residenceMedia, 1), $this->mediaRow($extraOne, 2), $this->mediaRow($extraTwo, 3)];
-        $this->actingAs($ci)->put(route('client-folders.residence-business.update', $folder), $payload);
-
-        $response = $this->actingAs($ci)->get(route('client-folders.residence-business.preview', $folder))->assertOk()->assertSee('Read-only Report Preview')->assertSee('https://maps.google.com/example')->assertSee('&lt;script&gt;alert(&quot;unsafe&quot;)&lt;/script&gt;', false)->assertDontSee('<script>alert("unsafe")</script>', false);
-        $this->assertGreaterThanOrEqual(3, substr_count($response->getContent(), 'official-report-page photo-report-page'));
-        $css = file_get_contents(resource_path('css/print/official-report.css'));
-        $this->assertStringContainsString('size: 8.5in 13in', $css);
-        $this->assertStringContainsString('grid-template-rows: repeat(2', $css);
-    }
-
-    public function test_encoding_ui_has_section_controls_existing_media_only_and_safe_audit_metadata(): void
-    {
-        [$ci, $folder, $source, $residenceMedia, $businessMedia] = $this->context();
-        $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk()->assertSee('+ Residence Section')->assertSee('+ Business Section')->assertSee('Existing Media References')->assertSee('Preview Report')->assertDontSee('Upload Media');
-        $payload = $this->completePayload($source, $residenceMedia, $businessMedia);
-        $payload['residence_remarks'] = 'PRIVATE RESIDENCE NARRATIVE';
-        $payload['sections'][0]['media'][0]['caption'] = 'PRIVATE CAPTION';
-        $this->actingAs($ci)->put(route('client-folders.residence-business.update', $folder), $payload)->assertRedirect();
-        $audit = AuditLog::where('action', 'residence_business_report.created')->firstOrFail();
-        $json = json_encode($audit->metadata);
-        $this->assertStringNotContainsString('PRIVATE RESIDENCE NARRATIVE', $json);
-        $this->assertStringNotContainsString('PRIVATE CAPTION', $json);
-    }
-
-    private function context(): array
+    public function test_the_old_documentation_section_workflow_is_gone(): void
     {
         $ci = User::factory()->create();
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $source = $this->incomeSource($folder, 'Water Refilling');
-        $residenceMedia = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'category' => MediaCategory::Residence, 'label' => 'Residence Front']);
-        $businessMedia = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'income_source_id' => $source->id, 'category' => MediaCategory::Business, 'label' => 'Business Front']);
+        $folder = $this->folderFor($ci);
 
-        return [$ci, $folder, $source, $residenceMedia, $businessMedia];
+        $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))
+            ->assertOk()
+            ->assertSee('Residence Checks')
+            ->assertSee('Business Checks')
+            ->assertDontSee('Documentation Sections')
+            ->assertDontSee('Report Header')
+            ->assertDontSee('Overall Findings')
+            ->assertDontSee('Save and Mark Complete');
     }
 
-    private function incomeSource(ClientFolder $folder, string $name): IncomeSource
+    public function test_residence_check_can_be_saved_with_a_photo_and_then_updated_in_place(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $photo = UploadedFile::fake()->image('Residence Front.jpg', 900, 700)->size(500);
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'ci_date' => now()->toDateString(),
+            'location' => 'Applicant Address',
+            'remarks' => 'Residence confirmed',
+            'photos' => [$photo],
+        ])->assertRedirect(route('client-folders.residence-business.edit', $folder));
+
+        $this->assertDatabaseCount('residence_checks', 1);
+        $check = $folder->residenceChecks()->firstOrFail();
+        $this->assertSame($ci->id, $check->ci_user_id);
+        $this->assertSame(1, $check->photos()->count());
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'check_id' => $check->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'Applicant Address',
+            'remarks' => 'Updated remarks',
+        ])->assertRedirect();
+
+        $this->assertDatabaseCount('residence_checks', 1);
+        $this->assertSame('Updated remarks', $check->fresh()->remarks);
+    }
+
+    public function test_residence_and_business_checks_are_isolated_between_applicant_and_each_co_maker(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $coMakerOne = $folder->coMakers()->create(['full_name' => 'Co Maker One']);
+        $coMakerTwo = $folder->coMakers()->create(['full_name' => 'Co Maker Two']);
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'ci_date' => now()->toDateString(), 'location' => 'Applicant Address',
+        ])->assertRedirect();
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'co_maker_id' => $coMakerOne->id, 'ci_date' => now()->toDateString(), 'location' => 'Co-Maker One Address',
+        ])->assertRedirect();
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'co_maker_id' => $coMakerTwo->id, 'ci_date' => now()->toDateString(), 'location' => 'Co-Maker Two Address',
+        ])->assertRedirect();
+
+        $this->assertSame(1, $folder->residenceChecks()->where('co_maker_id', null)->count());
+        $this->assertSame(1, $folder->residenceChecks()->where('co_maker_id', $coMakerOne->id)->count());
+        $this->assertSame(1, $folder->residenceChecks()->where('co_maker_id', $coMakerTwo->id)->count());
+
+        $applicantResponse = $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk();
+        $applicantResponse->assertSee('Applicant Address')->assertDontSee('Co-Maker One Address')->assertDontSee('Co-Maker Two Address');
+
+        $coMakerOneResponse = $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder).'?person=co-maker&co_maker_id='.$coMakerOne->id)->assertOk();
+        $coMakerOneResponse->assertSee('Co-Maker One Address')->assertDontSee('Applicant Address')->assertDontSee('Co-Maker Two Address');
+    }
+
+    public function test_a_check_from_another_client_folder_cannot_be_edited_or_deleted(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $otherFolder = $this->folderFor($ci);
+        $foreignCheck = $otherFolder->residenceChecks()->create(['ci_date' => now(), 'location' => 'Foreign Address', 'ci_user_id' => $ci->id]);
+
+        $this->actingAs($ci)->get(route('client-folders.residence-checks.edit', [$folder, $foreignCheck]))->assertNotFound();
+        $this->actingAs($ci)->delete(route('client-folders.residence-checks.destroy', [$folder, $foreignCheck]))->assertNotFound();
+        $this->assertDatabaseHas('residence_checks', ['id' => $foreignCheck->id]);
+    }
+
+    public function test_business_check_requires_a_dedicated_saved_business_owned_by_the_active_person(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $source = $this->businessSource($folder, 'Sari-Sari Store', 'Poblacion, San Miguel, Bulacan');
+        $otherFolder = $this->folderFor($ci);
+        $foreignSource = $this->businessSource($otherFolder, 'Foreign Store', 'Elsewhere');
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'income_source_id' => $foreignSource->id,
+            'ci_date' => now()->toDateString(),
+        ])->assertSessionHasErrors('income_source_id');
+
+        $photo = UploadedFile::fake()->image('Store Front.jpg', 900, 700)->size(500);
+        $competitor = UploadedFile::fake()->image('Competitor.jpg', 900, 700)->size(500);
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'income_source_id' => $source->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'Poblacion, San Miguel, Bulacan',
+            'business_photos' => [$photo],
+            'competitor_photos' => [$competitor],
+            'competitor_remarks' => 'Two nearby competitors observed.',
+        ])->assertRedirect(route('client-folders.residence-business.edit', $folder));
+
+        $this->assertDatabaseCount('business_checks', 1);
+        $check = $folder->businessChecks()->firstOrFail();
+        $this->assertSame(1, $check->businessPhotos()->count());
+        $this->assertSame(1, $check->competitorPhotos()->count());
+    }
+
+    public function test_deleting_a_check_removes_its_stored_photos(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $photo = UploadedFile::fake()->image('Residence Front.jpg', 900, 700)->size(500);
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'photos' => [$photo],
+        ]);
+        $check = $folder->residenceChecks()->firstOrFail();
+        $storedPath = $check->photos()->firstOrFail()->path;
+        Storage::disk('local')->assertExists($storedPath);
+
+        $this->actingAs($ci)->delete(route('client-folders.residence-checks.destroy', [$folder, $check]))->assertRedirect();
+
+        $this->assertDatabaseMissing('residence_checks', ['id' => $check->id]);
+        $this->assertDatabaseCount('residence_check_photos', 0);
+        Storage::disk('local')->assertMissing($storedPath);
+    }
+
+    public function test_completion_rule_and_folder_module_status_reflect_saved_checks(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $photo = UploadedFile::fake()->image('Residence Front.jpg', 900, 700)->size(500);
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'photos' => [$photo],
+        ]);
+
+        $result = $folder->completionResults()->whereHas('rule', fn ($query) => $query->where('code', 'residence_business_report'))->firstOrFail();
+        $this->assertTrue($result->is_satisfied);
+        $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->assertSee('1 Residence, 0 Business Check');
+    }
+
+    public function test_official_report_and_batch_outputs_use_saved_checks(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $residencePhoto = UploadedFile::fake()->image('Residence Front.jpg', 900, 700)->size(500);
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'google_maps_link' => 'https://maps.google.com/example', 'remarks' => 'All good', 'photos' => [$residencePhoto],
+        ]);
+        $residenceCheck = $folder->residenceChecks()->firstOrFail();
+
+        $this->actingAs($ci)->get(route('client-folders.generated-reports.index', $folder))->assertOk()->assertSee('Residence & Business Photo Report');
+
+        $preview = $this->actingAs($ci)->get(route('client-folders.residence-business.preview', $folder))->assertOk();
+        $preview->assertSee('https://maps.google.com/example')->assertSee('Applicant Address');
+
+        $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-print', $folder), [
+            'residence_check_ids' => [$residenceCheck->id],
+        ])->assertOk()->assertSee('Applicant Address');
+
+        $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-export-pdf', $folder), [
+            'residence_check_ids' => [$residenceCheck->id],
+        ])->assertOk()->assertHeader('Content-Type', 'application/pdf');
+
+        $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-export-docx', $folder), [
+            'residence_check_ids' => [$residenceCheck->id],
+        ])->assertOk()->assertHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    }
+
+    public function test_residence_and_business_check_encoding_pages_render(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $source = $this->businessSource($folder, 'Sari-Sari Store', 'Poblacion, San Miguel, Bulacan');
+
+        $this->actingAs($ci)->get(route('client-folders.residence-checks.create', $folder))
+            ->assertOk()->assertSee('Residence Check')->assertSee('Google Map');
+
+        $this->actingAs($ci)->get(route('client-folders.business-checks.create', $folder))
+            ->assertOk()->assertSee('Business Check')->assertSee('Sari-Sari Store')->assertSee('Competitors');
+
+        $photo = UploadedFile::fake()->image('Residence Front.jpg', 900, 700)->size(500);
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'photos' => [$photo],
+        ]);
+        $residenceCheck = $folder->residenceChecks()->firstOrFail();
+        $this->actingAs($ci)->get(route('client-folders.residence-checks.edit', [$folder, $residenceCheck]))
+            ->assertOk()->assertSee('Update Residence Check');
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan',
+        ]);
+        $businessCheck = $folder->businessChecks()->firstOrFail();
+        $this->actingAs($ci)->get(route('client-folders.business-checks.edit', [$folder, $businessCheck]))
+            ->assertOk()->assertSee('Update Business Check');
+
+        $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))
+            ->assertOk()->assertSee('Applicant Address')->assertSee('Sari-Sari Store');
+    }
+
+    private function folderFor(User $ci): ClientFolder
+    {
+        return ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+    }
+
+    private function businessSource(ClientFolder $folder, string $name, string $address): IncomeSource
     {
         $template = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
+        $source = $folder->incomeSources()->create(['income_source_template_id' => $template->id, 'template_type' => $template->template_type, 'template_version' => $template->version, 'source_name' => $name, 'business_name' => $name]);
+        $source->businessReport()->create(['business_name' => $name, 'main_business_address' => $address, 'report_category' => 'retail_grocery_water_refilling']);
 
-        return $folder->incomeSources()->create(['income_source_template_id' => $template->id, 'template_type' => $template->template_type, 'template_version' => $template->version, 'source_name' => $name, 'business_name' => $name]);
-    }
-
-    private function completePayload(IncomeSource $source, MediaReference $residenceMedia, MediaReference $businessMedia): array
-    {
-        return ['intent' => 'complete', 'report_date' => now()->toDateString(), 'default_location' => 'Default Address', 'default_subject' => 'Residence and Business Check', 'residence_remarks' => 'Residence confirmed', 'business_remarks' => 'Business confirmed', 'sections' => [
-            ['category' => 'residence', 'subject_party' => 'applicant', 'heading_subject' => 'Residence Check', 'location' => 'Applicant Address', 'google_maps_link' => 'https://maps.google.com/residence', 'remarks' => 'Residence finding', 'sort_order' => 1, 'media' => [$this->mediaRow($residenceMedia, 1, 'Residence Front', 'Front view')]],
-            ['category' => 'business', 'subject_party' => 'applicant', 'heading_subject' => 'Business Check', 'business_name' => $source->business_name, 'income_source_id' => $source->id, 'location' => 'Business Address', 'google_maps_link' => 'https://maps.google.com/business', 'remarks' => 'Business finding', 'sort_order' => 2, 'media' => [$this->mediaRow($businessMedia, 1, 'Business Front', 'Storefront')]],
-        ]];
-    }
-
-    private function mediaRow(MediaReference $media, int $order, ?string $label = null, ?string $caption = null): array
-    {
-        return ['media_reference_id' => $media->id, 'selected' => true, 'output_label' => $label, 'caption' => $caption, 'sort_order' => $order];
+        return $source;
     }
 }

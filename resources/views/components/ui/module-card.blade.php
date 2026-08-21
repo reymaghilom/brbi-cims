@@ -1,4 +1,4 @@
-@props(['title', 'description' => null, 'icon' => 'report', 'href' => null, 'state' => null, 'updatedAt' => null, 'asButton' => false, 'modalId' => null, 'modalUrl' => null])
+@props(['title', 'description' => null, 'icon' => 'report', 'href' => null, 'state' => null, 'badge' => null, 'updatedAt' => null, 'asButton' => false, 'modalId' => null, 'modalUrl' => null, 'openLabel' => 'Open', 'openIcon' => 'open', 'primary' => false])
 
 @php
     $stateValue = $state instanceof BackedEnum ? $state->value : (string) $state;
@@ -9,26 +9,28 @@
         'not_configured' => ['Not Configured', 'bg-progress-soft text-progress'],
         default => ['Not Started', 'bg-surface-muted text-text-muted'],
     };
+    $badgeLabel = $badge ?? $stateLabel;
+    $openButtonClass = $primary ? 'ui-button-primary-compact' : 'ui-button-secondary-compact';
 @endphp
 
-@if($href)
-    <a href="{{ $href }}" @if($modalId) data-modal-open="{{ $modalId }}" @if($modalId === 'business-report-dialog') data-business-report-url="{{ $modalUrl ?? $href }}" @else data-cibi-report-url="{{ $modalUrl ?? $href }}" @endif @endif {{ $attributes->class('group flex min-h-[4.75rem] items-center gap-3 rounded-card bg-surface-muted/65 p-3 transition duration-150 hover:bg-brand-soft/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 sm:p-3.5') }}>
-@elseif($asButton)
-    <button type="button" {{ $attributes->class('group flex min-h-[4.75rem] w-full items-center gap-3 rounded-card bg-surface-muted/65 p-3 text-left transition duration-150 hover:bg-brand-soft/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 sm:p-3.5') }}>
-@else
-    <div {{ $attributes->class('flex min-h-[4.75rem] items-center gap-3 rounded-card bg-surface-muted/65 p-3 sm:p-3.5') }}>
-@endif
+<article {{ $attributes->class('flex h-full flex-col gap-3 rounded-card border border-ui-border bg-surface p-3.5 shadow-card transition duration-150 hover:shadow-float sm:p-4') }}>
+    <div class="flex items-start justify-between gap-3">
         <span class="grid size-10 shrink-0 place-items-center rounded-control bg-brand-soft text-brand-primary"><x-ui.icon :name="$icon" size="size-5" /></span>
-        <div class="min-w-0 flex-1">
-            <h3 class="text-sm font-semibold leading-5 text-brand-sidebar group-hover:text-brand-primary">{{ $title }}</h3>
-            @if($description)<p class="mt-0.5 line-clamp-1 text-xs leading-5 text-text-muted">{{ $description }}</p>@endif
-        </div>
-        @if($state)<span class="inline-flex shrink-0 rounded-full px-2.5 py-1 text-[0.68rem] font-semibold {{ $stateTone }}" data-module-status>{{ $stateLabel }}</span>@endif
-        @if($href || $asButton)<span class="shrink-0 text-text-muted transition group-hover:translate-x-0.5 group-hover:text-brand-primary"><x-ui.icon name="chevron-right" size="size-4" /></span>@endif
-@if($href)
-    </a>
-@elseif($asButton)
-    </button>
-@else
+        @if($state)<span class="inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-[0.68rem] font-semibold {{ $stateTone }}" data-module-status>{{ $badgeLabel }}</span>@endif
     </div>
-@endif
+
+    <div class="min-w-0 flex-1">
+        <h3 class="text-sm font-semibold leading-5 text-brand-sidebar">{{ $title }}</h3>
+        @if($description)<p class="mt-1 line-clamp-2 text-xs leading-5 text-text-muted">{{ $description }}</p>@endif
+        @if($updatedAt)<p class="mt-2 flex items-center gap-1.5 text-[0.68rem] leading-4 text-text-subtle"><x-ui.icon name="clock" size="size-4" />Last updated {{ $updatedAt }}</p>@endif
+    </div>
+
+    <div class="mt-auto flex flex-wrap items-center gap-1 border-t border-ui-border pt-3">
+        @if($href)
+            <a href="{{ $href }}" @if($modalId) data-modal-open="{{ $modalId }}" @if($modalId === 'business-report-dialog') data-business-report-url="{{ $modalUrl ?? $href }}" @else data-cibi-report-url="{{ $modalUrl ?? $href }}" @endif @endif class="{{ $openButtonClass }}"><x-ui.icon :name="$openIcon" size="size-3.5" />{{ $openLabel }}</a>
+        @elseif($asButton)
+            <button type="button" class="{{ $openButtonClass }}"><x-ui.icon :name="$openIcon" size="size-3.5" />{{ $openLabel }}</button>
+        @endif
+        {{ $footer ?? '' }}
+    </div>
+</article>

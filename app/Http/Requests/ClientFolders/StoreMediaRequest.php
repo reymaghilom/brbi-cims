@@ -4,6 +4,7 @@ namespace App\Http\Requests\ClientFolders;
 
 use App\Enums\MediaCategory;
 use App\Models\MediaReference;
+use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Validation\Rule;
@@ -26,6 +27,7 @@ class StoreMediaRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
             'media_form' => ['nullable', 'string'],
             'files' => ['required', 'array', 'min:1', 'max:'.config('cims.media.max_files_per_upload')],
             'files.*' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,mp4', 'max:'.config('cims.media.video_max_kilobytes')],
@@ -84,10 +86,11 @@ class StoreMediaRequest extends FormRequest
     private function validateRelationships(Validator $validator): void
     {
         $folder = $this->route('clientFolder');
-        if (filled($this->input('income_source_id')) && ! $folder->incomeSources()->whereKey($this->integer('income_source_id'))->exists()) {
+        $coMakerId = blank($this->input('co_maker_id')) ? null : (int) $this->input('co_maker_id');
+        if (filled($this->input('income_source_id')) && ! $folder->incomeSources()->where('co_maker_id', $coMakerId)->whereKey($this->integer('income_source_id'))->exists()) {
             $validator->errors()->add('income_source_id', 'The selected income source does not belong to this client folder.');
         }
-        if (filled($this->input('ci_activity_id')) && ! $folder->activities()->whereKey($this->integer('ci_activity_id'))->exists()) {
+        if (filled($this->input('ci_activity_id')) && ! $folder->activities()->where('co_maker_id', $coMakerId)->whereKey($this->integer('ci_activity_id'))->exists()) {
             $validator->errors()->add('ci_activity_id', 'The selected CI activity does not belong to this client folder.');
         }
         if ($this->input('category') !== MediaCategory::Business->value && filled($this->input('income_source_id'))) {

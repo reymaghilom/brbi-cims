@@ -42,7 +42,7 @@
             <tbody>
                 @foreach($employeeFields as $index => $employeeField)
                 <tr>
-                    <td class="business-distributor-employee-cell"><label class="ui-label" for="distributor-{{ $employeeField['key'] }}">{{ $employeeField['label'] }}</label><input id="distributor-{{ $employeeField['key'] }}" class="ui-control" name="template_data[fields][{{ $employeeField['key'] }}]" type="number" min="0" step="any" value="{{ old('template_data.fields.'.$employeeField['key'], data_get($report?->template_data, 'fields.'.$employeeField['key'])) }}"></td>
+                    <td class="business-distributor-employee-cell"><label class="ui-label" for="distributor-{{ $employeeField['key'] }}">{{ $employeeField['label'] }}</label><input id="distributor-{{ $employeeField['key'] }}" class="ui-control" name="template_data[fields][{{ $employeeField['key'] }}]" type="text" value="{{ old('template_data.fields.'.$employeeField['key'], data_get($report?->template_data, 'fields.'.$employeeField['key'])) }}"></td>
                     <td><label class="business-report-choice-option"><input class="business-report-checkbox" name="template_data[fields][inventory_level]" type="radio" value="{{ $inventoryLevels[$index] }}" @checked(strtoupper((string) old('template_data.fields.inventory_level', data_get($report?->template_data, 'fields.inventory_level'))) === $inventoryLevels[$index])><span>{{ $inventoryLevels[$index] }}</span></label></td>
                     <td class="business-distributor-product-category"><div class="business-distributor-product-options">
                         @foreach($productRows[$index] as $productOption)

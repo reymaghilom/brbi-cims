@@ -18,6 +18,80 @@ function setDrawer(open) {
     else toggle.focus();
 }
 
+// Desktop sidebar collapse/expand — same top menu button as the mobile drawer toggle, just a
+// different behavior once the sidebar is permanently pinned (lg breakpoint). State is mirrored
+// onto <html data-sidebar-collapsed> (an inline <script> in layouts/app.blade.php already set
+// this from localStorage before first paint, so there's no expanded-then-collapsed flash) and
+// persisted so it survives refresh and navigation.
+const SIDEBAR_COLLAPSED_KEY = 'brbi-sidebar-collapsed';
+const desktopSidebarMedia = window.matchMedia('(min-width: 1024px)');
+
+function isSidebarCollapsed() {
+    return document.documentElement.hasAttribute('data-sidebar-collapsed');
+}
+
+function syncSidebarToggleButton() {
+    const toggle = document.querySelector('[data-drawer-toggle]');
+    if (!toggle) return;
+
+    if (desktopSidebarMedia.matches) {
+        const collapsed = isSidebarCollapsed();
+        toggle.setAttribute('aria-expanded', String(!collapsed));
+        toggle.setAttribute('aria-label', collapsed ? 'Expand navigation' : 'Collapse navigation');
+    } else {
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-label', 'Open navigation');
+    }
+}
+
+function setSidebarCollapsed(collapsed) {
+    document.documentElement.toggleAttribute('data-sidebar-collapsed', collapsed);
+    syncSidebarToggleButton();
+    document.getElementById('sidebar-tooltip')?.removeAttribute('data-visible');
+    try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+    } catch {
+        // Private browsing / storage disabled — the toggle still works for the session, it just
+        // won't be remembered next visit.
+    }
+}
+
+syncSidebarToggleButton();
+desktopSidebarMedia.addEventListener('change', syncSidebarToggleButton);
+
+// Collapsed-sidebar link tooltips. The sidebar is its own scroll container
+// (overflow-y-auto), and a non-"visible" overflow-y forces overflow-x to compute as "auto"
+// too even when set to "visible" explicitly (see the CSS Overflow spec) — so a tooltip
+// positioned relative to the link itself would get clipped at the sidebar's edge instead of
+// floating past it. One shared #sidebar-tooltip element (a sibling of the sidebar, not a
+// descendant) sidesteps that entirely; it's just repositioned to whichever link is currently
+// hovered/focused.
+function showSidebarTooltip(link) {
+    if (!desktopSidebarMedia.matches || !isSidebarCollapsed()) return;
+    const tooltip = document.getElementById('sidebar-tooltip');
+    const label = link.querySelector('span')?.textContent?.trim();
+    if (!tooltip || !label) return;
+
+    const rect = link.getBoundingClientRect();
+    tooltip.textContent = label;
+    tooltip.style.left = `${rect.right + 10}px`;
+    tooltip.style.top = `${rect.top + rect.height / 2}px`;
+    tooltip.style.transform = 'translateY(-50%)';
+    tooltip.toggleAttribute('data-visible', true);
+}
+
+function hideSidebarTooltip() {
+    document.getElementById('sidebar-tooltip')?.removeAttribute('data-visible');
+}
+
+document.querySelectorAll('#primary-sidebar .ui-sidebar-link').forEach((link) => {
+    link.addEventListener('mouseenter', () => showSidebarTooltip(link));
+    link.addEventListener('mouseleave', hideSidebarTooltip);
+    link.addEventListener('focus', () => showSidebarTooltip(link));
+    link.addEventListener('blur', hideSidebarTooltip);
+});
+desktopSidebarMedia.addEventListener('change', hideSidebarTooltip);
+
 function closeFolderMenus({ restoreFocus = false } = {}) {
     document.querySelectorAll('[data-folder-action-menu]:not([hidden])').forEach((menu) => {
         menu.hidden = true;
@@ -77,7 +151,7 @@ function closeFolderPreview(browser) {
     document.body.classList.remove('overflow-hidden');
 }
 
-function showToast(message, type = 'success') {
+function showToast(message, type = 'success', duration = 4500) {
     const region = document.querySelector('[data-toast-region]');
     if (!region) return;
     const toast = document.createElement('div');
@@ -85,7 +159,30 @@ function showToast(message, type = 'success') {
     toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
     toast.textContent = message;
     region.append(toast);
-    window.setTimeout(() => toast.remove(), 4500);
+    window.setTimeout(() => toast.remove(), duration);
+}
+
+function toggleFolderPreviewPanel(browser) {
+    const layout = browser?.querySelector('[data-folder-browser-layout]');
+    const toggle = browser?.querySelector('[data-folder-preview-toggle]');
+    const label = toggle?.querySelector('[data-folder-preview-toggle-label]');
+    if (!layout || !toggle) return;
+
+    const collapsed = layout.getAttribute('data-panel-collapsed') === 'true';
+    const panelWillBeVisible = collapsed;
+    layout.setAttribute('data-panel-collapsed', String(!collapsed));
+    toggle.setAttribute('aria-expanded', String(collapsed));
+    if (label) label.textContent = panelWillBeVisible ? 'Hide Preview Panel' : 'Show Preview Panel';
+    // "visible" icon (eye-off) shows while the panel IS visible — i.e. what clicking the button
+    // would currently hide; "hidden" icon (eye) shows once it's collapsed instead. Uses
+    // setAttribute/removeAttribute rather than the .hidden IDL property: that property doesn't
+    // reliably reflect onto <svg> elements in every browser, so setting it silently no-ops and
+    // the icon never actually swaps even though the label text updates correctly.
+    const visibleIcon = toggle.querySelector('[data-folder-preview-toggle-icon="visible"]');
+    const hiddenIcon = toggle.querySelector('[data-folder-preview-toggle-icon="hidden"]');
+    const setIconHidden = (icon, hide) => { if (!icon) return; if (hide) icon.setAttribute('hidden', ''); else icon.removeAttribute('hidden'); };
+    setIconHidden(visibleIcon, !panelWillBeVisible);
+    setIconHidden(hiddenIcon, panelWillBeVisible);
 }
 
 function resetFolderPreview(browser) {
@@ -279,6 +376,9 @@ document.addEventListener('click', (event) => {
         if (menu !== activeContextMenu) menu.removeAttribute('open');
     });
 
+    const contextMenuItem = event.target.closest('[data-context-menu] [role="menuitem"]');
+    if (contextMenuItem) contextMenuItem.closest('details[data-context-menu]')?.removeAttribute('open');
+
     const menuTrigger = event.target.closest('[data-folder-menu-trigger]');
     if (menuTrigger) {
         const tile = menuTrigger.closest('[data-folder-shell]')?.querySelector('[data-folder-tile]');
@@ -298,6 +398,12 @@ document.addEventListener('click', (event) => {
         return;
     }
 
+    const previewToggle = event.target.closest('[data-folder-preview-toggle]');
+    if (previewToggle) {
+        toggleFolderPreviewPanel(previewToggle.closest('[data-folder-browser]'));
+        return;
+    }
+
     const folderTile = event.target.closest('[data-folder-tile]');
     if (folderTile && !event.target.closest('a, button, [role="menu"]')) {
         selectClientFolder(folderTile);
@@ -305,7 +411,10 @@ document.addEventListener('click', (event) => {
         closeFolderMenus();
     }
 
-    if (event.target.closest('[data-drawer-toggle]')) setDrawer(true);
+    if (event.target.closest('[data-drawer-toggle]')) {
+        if (desktopSidebarMedia.matches) setSidebarCollapsed(!isSidebarCollapsed());
+        else setDrawer(true);
+    }
     if (event.target.closest('[data-drawer-close], [data-mobile-backdrop]')) setDrawer(false);
 
     const modalTrigger = event.target.closest('[data-modal-open]');
@@ -314,17 +423,23 @@ document.addEventListener('click', (event) => {
         closeFolderMenus();
         const dialog = document.getElementById(modalTrigger.dataset.modalOpen);
         if (dialog instanceof HTMLDialogElement) {
-            const cibiFrame = dialog.querySelector('[data-cibi-report-frame]') || dialog.querySelector('[data-business-report-frame]');
-            const cibiLoading = dialog.querySelector('[data-cibi-report-loading]') || dialog.querySelector('[data-business-report-loading]');
-            const cibiUrl = modalTrigger.dataset.cibiReportUrl || modalTrigger.dataset.businessReportUrl;
+            const cibiFrame = dialog.querySelector('[data-cibi-report-frame]') || dialog.querySelector('[data-business-report-frame]') || dialog.querySelector('[data-check-report-frame]');
+            const cibiLoading = dialog.querySelector('[data-cibi-report-loading]') || dialog.querySelector('[data-business-report-loading]') || dialog.querySelector('[data-check-report-loading]');
+            const cibiUrl = modalTrigger.dataset.cibiReportUrl || modalTrigger.dataset.businessReportUrl || modalTrigger.dataset.checkReportUrl;
             if (cibiFrame instanceof HTMLIFrameElement && cibiUrl) {
                 const requestedUrl = new URL(cibiUrl, window.location.href).href;
-                if (cibiFrame.src !== requestedUrl) {
+                const alwaysReload = dialog.matches('[data-business-report-dialog]') || dialog.matches('[data-check-report-dialog]');
+                const sameUrl = cibiFrame.src === requestedUrl;
+                if (alwaysReload || !sameUrl) {
                     if (cibiLoading) cibiLoading.hidden = false;
                     cibiFrame.addEventListener('load', () => {
                         if (cibiLoading) cibiLoading.hidden = true;
                     }, { once: true });
-                    cibiFrame.src = requestedUrl;
+                    if (alwaysReload && sameUrl && cibiFrame.contentWindow) {
+                        cibiFrame.contentWindow.location.replace(requestedUrl);
+                    } else {
+                        cibiFrame.src = requestedUrl;
+                    }
                 }
             }
             dialog.dataset.returnFocus = modalTrigger.id || '';
@@ -333,11 +448,67 @@ document.addEventListener('click', (event) => {
         }
     }
 
+    const addBusinessNext = event.target.closest('[data-add-business-next]');
+    if (addBusinessNext) {
+        const addBusinessDialog = addBusinessNext.closest('dialog');
+        const templateSelect = addBusinessDialog?.querySelector('[data-add-business-template-select]');
+        const templateError = addBusinessDialog?.querySelector('[data-add-business-template-error]');
+        const reportTrigger = document.getElementById('business-report-trigger');
+        if (templateSelect instanceof HTMLSelectElement) {
+            if (!templateSelect.value) {
+                templateSelect.setAttribute('aria-invalid', 'true');
+                if (templateError) templateError.hidden = false;
+                templateSelect.focus();
+            } else if (reportTrigger) {
+                templateSelect.removeAttribute('aria-invalid');
+                if (templateError) templateError.hidden = true;
+                // The base URL may already carry an active-person query string (?person=co-maker&co_maker_id=…),
+                // so the template id has to be appended with the right separator rather than always "?".
+                const baseUrl = reportTrigger.dataset.businessReportBaseUrl;
+                const separator = baseUrl.includes('?') ? '&' : '?';
+                reportTrigger.dataset.businessReportUrl = `${baseUrl}${separator}income_source_template_id=${encodeURIComponent(templateSelect.value)}`;
+                addBusinessDialog.close();
+                reportTrigger.click();
+            }
+        }
+    }
+
     const modalClose = event.target.closest('[data-modal-close]');
     if (modalClose) modalClose.closest('dialog')?.close();
 
+    // Cancel button rendered inside a Residence/Business Check page loaded in an iframe — the
+    // page itself has no dialog to close (it's not the top-level document), so it reaches through
+    // to the parent window's currently-open dialog instead.
+    const closeParentDialog = event.target.closest('[data-close-parent-dialog]');
+    if (closeParentDialog && window.parent !== window) {
+        window.parent.document.querySelector('dialog[open]')?.close();
+    }
+
     const toastClose = event.target.closest('[data-toast-close]');
     if (toastClose) toastClose.closest('[data-toast]')?.remove();
+});
+
+document.addEventListener('click', (event) => {
+    const downloadButton = event.target.closest('[data-business-download-submit]');
+    if (!downloadButton) return;
+    if (downloadButton.dataset.downloading === 'true') {
+        event.preventDefault();
+        return;
+    }
+    downloadButton.dataset.downloading = 'true';
+    const label = downloadButton.querySelector('[data-download-label]');
+    const originalLabel = label?.textContent ?? '';
+    if (label) label.textContent = 'Preparing…';
+    window.setTimeout(() => { downloadButton.disabled = true; }, 0);
+    window.setTimeout(() => {
+        downloadButton.disabled = false;
+        downloadButton.dataset.downloading = 'false';
+        if (label) label.textContent = originalLabel;
+    }, 2500);
+});
+
+document.querySelectorAll('[data-toast]').forEach((toast) => {
+    window.setTimeout(() => toast.remove(), 3000);
 });
 
 document.addEventListener('dblclick', (event) => {
@@ -385,6 +556,44 @@ window.addEventListener('message', (event) => {
     dialog.dataset.cibiSavedFolder = JSON.stringify(event.data.folder || {});
 });
 
+window.addEventListener('message', (event) => {
+    if (event.origin !== window.location.origin || event.data?.type !== 'brbi:business-saved') return;
+
+    const returnUrl = new URL(event.data.returnUrl, window.location.href);
+    if (returnUrl.origin !== window.location.origin) return;
+
+    const dialog = document.querySelector('[data-business-report-dialog][open]');
+    if (!dialog) return;
+    dialog.dataset.businessSavedReturnUrl = returnUrl.href;
+});
+
+const businessSavedNotify = document.querySelector('[data-business-saved-notify]');
+if (businessSavedNotify && window.parent !== window) {
+    window.parent.postMessage({
+        type: 'brbi:business-saved',
+        returnUrl: businessSavedNotify.dataset.businessSavedReturnUrl,
+    }, window.location.origin);
+}
+
+window.addEventListener('message', (event) => {
+    if (event.origin !== window.location.origin || event.data?.type !== 'brbi:check-saved') return;
+
+    const returnUrl = new URL(event.data.returnUrl, window.location.href);
+    if (returnUrl.origin !== window.location.origin) return;
+
+    const dialog = document.querySelector('[data-check-report-dialog][open]');
+    if (!dialog) return;
+    dialog.dataset.checkSavedReturnUrl = returnUrl.href;
+});
+
+const checkSavedNotify = document.querySelector('[data-check-saved-notify]');
+if (checkSavedNotify && window.parent !== window) {
+    window.parent.postMessage({
+        type: 'brbi:check-saved',
+        returnUrl: checkSavedNotify.dataset.checkSavedReturnUrl,
+    }, window.location.origin);
+}
+
 document.addEventListener('contextmenu', (event) => {
     const tile = event.target.closest('[data-folder-tile]');
     if (!tile || event.target.closest('a, button, [role="menu"]')) return;
@@ -411,6 +620,37 @@ document.querySelectorAll('[data-unsaved-form]').forEach((form) => {
 document.querySelectorAll('dialog').forEach((dialog) => {
     dialog.addEventListener('close', () => {
         dialog.querySelectorAll('video').forEach((video) => video.pause());
+        if (dialog.matches('[data-add-business-dialog]')) {
+            const templateSelect = dialog.querySelector('[data-add-business-template-select]');
+            const templateError = dialog.querySelector('[data-add-business-template-error]');
+            templateSelect?.removeAttribute('aria-invalid');
+            if (templateSelect) templateSelect.value = '';
+            if (templateError) templateError.hidden = true;
+        }
+        if (dialog.matches('[data-business-report-dialog]') && dialog.dataset.businessSavedReturnUrl) {
+            const returnUrl = new URL(dialog.dataset.businessSavedReturnUrl, window.location.href);
+            delete dialog.dataset.businessSavedReturnUrl;
+            const currentUrl = new URL(window.location.href);
+            if (currentUrl.pathname === returnUrl.pathname && currentUrl.search === returnUrl.search) {
+                window.location.reload();
+            } else {
+                window.location.assign(returnUrl.href);
+            }
+            return;
+        }
+
+        if (dialog.matches('[data-check-report-dialog]') && dialog.dataset.checkSavedReturnUrl) {
+            const returnUrl = new URL(dialog.dataset.checkSavedReturnUrl, window.location.href);
+            delete dialog.dataset.checkSavedReturnUrl;
+            const currentUrl = new URL(window.location.href);
+            if (currentUrl.pathname === returnUrl.pathname && currentUrl.search === returnUrl.search) {
+                window.location.reload();
+            } else {
+                window.location.assign(returnUrl.href);
+            }
+            return;
+        }
+
         if (!dialog.matches('[data-cibi-report-dialog]') || !dialog.dataset.cibiSavedReturnUrl) return;
 
         const returnUrl = new URL(dialog.dataset.cibiSavedReturnUrl, window.location.href);
@@ -512,6 +752,24 @@ document.addEventListener('input', (event) => {
         .map((field) => field.value.trim())
         .join('\n');
     valueField.dispatchEvent(new Event('input', { bubbles: true }));
+});
+
+document.addEventListener('change', (event) => {
+    const input = event.target.closest('[data-photo-input]');
+    if (!(input instanceof HTMLInputElement)) return;
+    const wrap = input.closest('div')?.querySelector('[data-photo-preview-wrap]');
+    const img = wrap?.querySelector('[data-photo-preview]');
+    const placeholder = wrap?.querySelector('[data-photo-preview-placeholder]');
+    if (!(img instanceof HTMLImageElement) || !placeholder) return;
+    const file = input.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        img.src = String(reader.result);
+        img.classList.remove('hidden');
+        placeholder.setAttribute('hidden', '');
+    };
+    reader.readAsDataURL(file);
 });
 
 document.addEventListener('change', (event) => {
@@ -1111,4 +1369,545 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
         }
     });
 
+});
+
+document.addEventListener('click', (event) => {
+    const addTrigger = event.target.closest('[data-co-maker-add-trigger]');
+    const editTrigger = event.target.closest('[data-co-maker-edit-trigger]');
+    if (!addTrigger && !editTrigger) return;
+
+    const form = document.querySelector('[data-co-maker-form]');
+    const submit = document.querySelector('[data-co-maker-submit]');
+    const title = document.getElementById('co-maker-dialog-title');
+    const idField = form?.querySelector('[data-co-maker-id-field]');
+    if (!form) return;
+
+    form.reset();
+    if (idField) idField.value = '';
+    form.querySelectorAll('[data-co-maker-error-for]').forEach((error) => {
+        error.textContent = '';
+        error.hidden = true;
+    });
+    form.querySelectorAll('[aria-invalid="true"]').forEach((field) => field.removeAttribute('aria-invalid'));
+
+    if (editTrigger) {
+        // Every edit trigger (header quick-edit, or a specific co-maker's tab menu) carries its
+        // own record's data directly, so the form always loads the exact co-maker that was
+        // clicked — never whichever one happens to be shown elsewhere on the page.
+        const { coMakerId, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix } = editTrigger.dataset;
+        if (idField) idField.value = coMakerId ?? '';
+        form.elements.namedItem('first_name').value = coMakerFirstName ?? '';
+        form.elements.namedItem('middle_name').value = coMakerMiddleName ?? '';
+        form.elements.namedItem('last_name').value = coMakerLastName ?? '';
+        form.elements.namedItem('suffix').value = coMakerSuffix ?? '';
+        if (submit) submit.textContent = 'Update Co-Maker';
+        if (title) title.textContent = 'Edit Co-Maker';
+    } else {
+        if (submit) submit.textContent = 'Save Co-Maker';
+        if (title) title.textContent = 'Add Co-Maker';
+    }
+});
+
+document.addEventListener('submit', async (event) => {
+    const form = event.target.closest('[data-co-maker-form]');
+    if (!form) return;
+    event.preventDefault();
+
+    // Editing an existing co-maker only changes that one record's own details, never the set of
+    // people this folder has, so it's always safe to patch the header/switcher in place with no
+    // reload. Adding one can change that set (the very first co-maker brings the whole
+    // Applicant/Co-Maker switcher section into existence), which isn't safely patchable without
+    // duplicating that section's markup in JS — so an add is instead followed by a short,
+    // automatic reload (not a manual one) once the success toast has had a moment to be seen.
+    const isEditing = Boolean(form.querySelector('[data-co-maker-id-field]')?.value);
+
+    form.querySelectorAll('[data-co-maker-error-for]').forEach((error) => {
+        error.textContent = '';
+        error.hidden = true;
+    });
+    form.querySelectorAll('[aria-invalid="true"]').forEach((field) => field.removeAttribute('aria-invalid'));
+
+    const submit = document.querySelector('[data-co-maker-submit]');
+    submit?.setAttribute('disabled', 'disabled');
+
+    try {
+        const response = await fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        const payload = await response.json();
+
+        if (response.status === 422) {
+            let firstInvalid;
+            Object.entries(payload.errors ?? {}).forEach(([fieldName, messages]) => {
+                const field = form.elements.namedItem(fieldName);
+                const error = form.querySelector(`[data-co-maker-error-for="${fieldName}"]`);
+                if (field instanceof HTMLElement) {
+                    field.setAttribute('aria-invalid', 'true');
+                    firstInvalid ??= field;
+                }
+                if (error) {
+                    error.textContent = messages[0] ?? 'Enter a valid value.';
+                    error.hidden = false;
+                }
+            });
+            firstInvalid?.focus();
+            return;
+        }
+        if (!response.ok) throw new Error(payload.message || 'Co-Maker could not be saved.');
+
+        form.closest('dialog')?.close();
+        showToast(payload.message, 'success', 3000);
+
+        if (isEditing) {
+            const fields = payload.coMaker ?? {};
+            const editedId = String(fields.id ?? '');
+            document.querySelectorAll(`[data-co-maker-display][data-co-maker-id="${editedId}"]`).forEach((display) => {
+                display.querySelector('[data-co-maker-field="full_name"]').textContent = fields.full_name ?? '';
+                display.querySelector('[data-co-maker-field="relationship_to_applicant"]').textContent = fields.relationship_to_applicant ?? '';
+                display.querySelector('[data-co-maker-field="contact_number"]').textContent = fields.contact_number ?? '';
+                display.dataset.coMakerAddress = fields.address ?? '';
+            });
+            document.querySelectorAll(`[data-co-maker-tab="${editedId}"] [data-co-maker-tab-name]`).forEach((name) => {
+                name.textContent = fields.full_name ?? '';
+            });
+        } else {
+            window.setTimeout(() => window.location.reload(), 900);
+        }
+    } catch (error) {
+        showToast(error.message || 'Co-Maker could not be saved. Please retry.', 'error', 3000);
+    } finally {
+        submit?.removeAttribute('disabled');
+    }
+});
+
+document.addEventListener('click', (event) => {
+    const removeTrigger = event.target.closest('[data-co-maker-remove-trigger]');
+    if (!removeTrigger) return;
+
+    // Each remove trigger — the modal footer's (synced when an edit loads) and every co-maker
+    // tab's own menu item — carries its own record's id/name/base-url, so removal always targets
+    // the exact co-maker that was clicked regardless of which one is currently active on screen.
+    const { coMakerId, coMakerFullName, coMakerDestroyBaseUrl } = removeTrigger.dataset;
+    if (!coMakerId || !coMakerDestroyBaseUrl) return;
+
+    const removeDialog = document.getElementById('co-maker-remove-dialog');
+    const removeForm = removeDialog?.querySelector('[data-co-maker-remove-form]');
+    if (!(removeDialog instanceof HTMLDialogElement) || !(removeForm instanceof HTMLFormElement)) return;
+
+    removeForm.action = `${coMakerDestroyBaseUrl}/${coMakerId}`;
+    removeForm.dataset.coMakerRemoveId = coMakerId;
+    removeDialog.querySelector('[data-co-maker-remove-name]').textContent = coMakerFullName || 'this co-maker';
+
+    removeTrigger.closest('dialog')?.close();
+    removeDialog.showModal();
+    removeDialog.querySelector('[data-modal-close], [autofocus]')?.focus();
+});
+
+document.addEventListener('submit', async (event) => {
+    const form = event.target.closest('[data-co-maker-remove-form]');
+    if (!form) return;
+    event.preventDefault();
+
+    const submit = document.querySelector('[data-co-maker-remove-submit]');
+    submit?.setAttribute('disabled', 'disabled');
+
+    try {
+        const response = await fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || 'Co-Maker could not be removed.');
+
+        form.closest('dialog')?.close();
+        showToast(payload.message, 'success', 3000);
+
+        // Removing the currently active co-maker leaves nothing valid for the URL's
+        // ?co_maker_id to point at, so drop back to the plain Applicant view; otherwise
+        // keep the current view and just refresh the tab/header data behind it.
+        const removedId = form.dataset.coMakerRemoveId ?? '';
+        const activeId = new URLSearchParams(window.location.search).get('co_maker_id');
+        window.setTimeout(() => {
+            window.location.href = removedId && removedId === activeId
+                ? window.location.pathname
+                : window.location.href;
+        }, 900);
+    } catch (error) {
+        showToast(error.message || 'Co-Maker could not be removed. Please retry.', 'error', 3000);
+    } finally {
+        submit?.removeAttribute('disabled');
+    }
+});
+
+// Each co-maker tab's ⋮ trigger opens this single, shared, body-level menu instead of an
+// in-place dropdown — the tabs row scrolls horizontally (overflow-x-auto), and per CSS an
+// element with overflow-x set also clips overflow-y, so any menu positioned relative to a tab
+// would get cut off. Positioning it with `fixed` coordinates from getBoundingClientRect(),
+// keyed off whichever trigger was clicked, sidesteps that entirely without touching the tabs
+// row's own overflow behavior.
+let coMakerMenuTrigger = null;
+
+function positionCoMakerActionMenu(menu, trigger) {
+    const margin = 8;
+    const rect = trigger.getBoundingClientRect();
+    const menuWidth = menu.offsetWidth;
+    const menuHeight = menu.offsetHeight;
+
+    let left = rect.right - menuWidth;
+    if (left < margin) left = rect.left;
+    left = Math.min(Math.max(left, margin), window.innerWidth - menuWidth - margin);
+
+    let top = rect.bottom + 6;
+    if (top + menuHeight > window.innerHeight - margin) {
+        top = rect.top - menuHeight - 6;
+    }
+    top = Math.max(top, margin);
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+}
+
+function closeCoMakerActionMenu() {
+    const menu = document.querySelector('[data-co-maker-action-menu]');
+    if (!menu || menu.hidden) return;
+    menu.hidden = true;
+    coMakerMenuTrigger?.setAttribute('aria-expanded', 'false');
+    coMakerMenuTrigger = null;
+}
+
+function openCoMakerActionMenu(trigger) {
+    const menu = document.querySelector('[data-co-maker-action-menu]');
+    if (!menu) return;
+
+    // The menu's Edit/Remove buttons are shared across every co-maker tab, so each open call
+    // re-stamps them with the clicked trigger's own record data — never a stale or mixed one.
+    const editBtn = menu.querySelector('[data-co-maker-edit-trigger]');
+    const removeBtn = menu.querySelector('[data-co-maker-remove-trigger]');
+    const { coMakerId, coMakerFullName, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix, coMakerDestroyBaseUrl } = trigger.dataset;
+
+    if (editBtn instanceof HTMLElement) {
+        editBtn.dataset.coMakerId = coMakerId ?? '';
+        editBtn.dataset.coMakerFirstName = coMakerFirstName ?? '';
+        editBtn.dataset.coMakerMiddleName = coMakerMiddleName ?? '';
+        editBtn.dataset.coMakerLastName = coMakerLastName ?? '';
+        editBtn.dataset.coMakerSuffix = coMakerSuffix ?? '';
+    }
+    if (removeBtn instanceof HTMLElement) {
+        removeBtn.dataset.coMakerId = coMakerId ?? '';
+        removeBtn.dataset.coMakerFullName = coMakerFullName ?? '';
+        removeBtn.dataset.coMakerDestroyBaseUrl = coMakerDestroyBaseUrl ?? '';
+    }
+
+    coMakerMenuTrigger?.setAttribute('aria-expanded', 'false');
+    menu.hidden = false;
+    positionCoMakerActionMenu(menu, trigger);
+    trigger.setAttribute('aria-expanded', 'true');
+    coMakerMenuTrigger = trigger;
+}
+
+document.addEventListener('click', (event) => {
+    const trigger = event.target.closest('[data-co-maker-menu-trigger]');
+    if (trigger) {
+        if (coMakerMenuTrigger === trigger) {
+            closeCoMakerActionMenu();
+        } else {
+            openCoMakerActionMenu(trigger);
+        }
+        return;
+    }
+    // Any other click — outside the menu, or on its own Edit/Remove item — closes it. Edit/Remove
+    // already read the data they need synchronously before this handler runs (same click event).
+    closeCoMakerActionMenu();
+});
+
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && coMakerMenuTrigger) closeCoMakerActionMenu();
+});
+
+window.addEventListener('scroll', () => closeCoMakerActionMenu(), true);
+window.addEventListener('resize', () => closeCoMakerActionMenu());
+
+// Batch Print / Batch Download on the Business / Income Sources list. Purely additive: every
+// existing per-row Edit/Print/Download/Delete action is untouched and keeps working exactly as
+// before — this only reads which row checkboxes are checked and mirrors that into three hidden
+// batch forms (already carrying the folder's current co_maker_id) before submitting them.
+(() => {
+    const panel = document.querySelector('[data-business-batch-panel]');
+    if (!panel) return;
+
+    const selectAll = panel.querySelector('[data-business-select-all]');
+    const countLabel = panel.querySelector('[data-business-selected-count]');
+    const printButton = panel.querySelector('[data-business-print-selected]');
+    const downloadTrigger = panel.querySelector('[data-business-download-selected-trigger]');
+    const summaryCount = panel.querySelector('[data-business-selected-summary-count]');
+    const summaryEmpty = panel.querySelector('[data-business-selected-empty]');
+    const summaryList = panel.querySelector('[data-business-selected-list]');
+    const estimateBox = panel.querySelector('[data-business-selected-estimate-box]');
+    const estimateText = panel.querySelector('[data-business-selected-estimate]');
+
+    const printForm = document.getElementById('business-batch-print-form');
+    const pdfForm = document.getElementById('business-batch-export-pdf-form');
+    const excelForm = document.getElementById('business-batch-export-excel-form');
+
+    const rowCheckboxes = () => [...panel.querySelectorAll('[data-business-select]')];
+    const uniqueRowIds = () => [...new Set(rowCheckboxes().map((checkbox) => checkbox.value))];
+    // Desktop and mobile layouts each render their own checkbox per business id, so a naive
+    // filter would double-count a business selected in both. Dedupe by value (first match wins).
+    const selectedCheckboxes = () => {
+        const seen = new Set();
+        return rowCheckboxes().filter((checkbox) => {
+            if (!checkbox.checked || seen.has(checkbox.value)) return false;
+            seen.add(checkbox.value);
+            return true;
+        });
+    };
+
+    const setDownloadEnabled = (enabled) => {
+        if (!downloadTrigger) return;
+        downloadTrigger.classList.toggle('opacity-55', !enabled);
+        downloadTrigger.classList.toggle('pointer-events-none', !enabled);
+        downloadTrigger.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+        downloadTrigger.tabIndex = enabled ? 0 : -1;
+    };
+
+    const refresh = () => {
+        const selected = selectedCheckboxes();
+        const total = uniqueRowIds().length;
+
+        if (countLabel) countLabel.textContent = `${selected.length} selected`;
+        if (summaryCount) summaryCount.textContent = `${selected.length} report${selected.length === 1 ? '' : 's'} selected`;
+        if (selectAll) {
+            selectAll.checked = total > 0 && selected.length === total;
+            selectAll.indeterminate = selected.length > 0 && selected.length < total;
+        }
+        if (printButton) printButton.toggleAttribute('disabled', selected.length === 0);
+        setDownloadEnabled(selected.length > 0);
+
+        if (summaryEmpty) summaryEmpty.hidden = selected.length > 0;
+        if (summaryList) {
+            summaryList.hidden = selected.length === 0;
+            summaryList.innerHTML = '';
+            selected.forEach((checkbox, index) => {
+                const item = document.createElement('li');
+                item.textContent = `${index + 1}. ${checkbox.dataset.businessName ?? ''}`;
+                summaryList.appendChild(item);
+            });
+        }
+        if (estimateBox && estimateText) {
+            estimateBox.hidden = selected.length === 0;
+            estimateText.textContent = selected.length === 0
+                ? ''
+                : selected.length <= 2
+                    ? 'Short reports will be combined onto one printed page when space allows.'
+                    : `${selected.length} reports selected — output will span as many pages as the combined content naturally needs.`;
+        }
+    };
+
+    const syncBatchForm = (form) => {
+        if (!form) return;
+        form.querySelectorAll('[data-business-batch-id-input]').forEach((input) => input.remove());
+        selectedCheckboxes().forEach((checkbox) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'income_source_ids[]';
+            input.value = checkbox.value;
+            input.dataset.businessBatchIdInput = 'true';
+            form.appendChild(input);
+        });
+    };
+
+    panel.addEventListener('change', (event) => {
+        if (event.target.matches('[data-business-select]')) {
+            refresh();
+        } else if (event.target.matches('[data-business-select-all]')) {
+            rowCheckboxes().forEach((checkbox) => { checkbox.checked = event.target.checked; });
+            refresh();
+        }
+    });
+
+    printButton?.addEventListener('click', () => {
+        if (selectedCheckboxes().length === 0) return;
+        syncBatchForm(printForm);
+        printForm?.submit();
+    });
+
+    panel.querySelectorAll('[data-business-batch-pdf-submit]').forEach((button) => button.addEventListener('click', () => {
+        if (selectedCheckboxes().length === 0) return;
+        syncBatchForm(pdfForm);
+        pdfForm?.submit();
+    }));
+    panel.querySelectorAll('[data-business-batch-excel-submit]').forEach((button) => button.addEventListener('click', () => {
+        if (selectedCheckboxes().length === 0) return;
+        syncBatchForm(excelForm);
+        excelForm?.submit();
+    }));
+
+    refresh();
+})();
+
+// Saved Businesses sorting is server-driven (column-header links / the mobile sort select each
+// carry a full sort+direction URL) — this just navigates when the mobile <select> changes, since
+// a <select> has no native "go to this URL" behavior.
+document.addEventListener('change', (event) => {
+    const select = event.target.closest('[data-business-sort-select]');
+    if (!(select instanceof HTMLSelectElement)) return;
+    window.location.assign(select.value);
+});
+
+// Combined Print Selected / Download Selected on the Residence & Business Report page — same
+// hidden-forms + syncBatchForm pattern as the Business/Income Sources batch panel above, but
+// pooling two independent checkbox groups (Residence Checks, Business Checks) into one combined
+// selection so a batch output can mix records from both tables.
+(() => {
+    const panel = document.querySelector('[data-check-batch-panel]');
+    if (!panel) return;
+
+    const countLabel = panel.querySelector('[data-check-selected-count]');
+    const printButton = panel.querySelector('[data-check-print-selected]');
+    const downloadTrigger = panel.querySelector('[data-check-download-selected-trigger]');
+
+    const printForm = document.getElementById('check-batch-print-form');
+    const pdfForm = document.getElementById('check-batch-export-pdf-form');
+    const docxForm = document.getElementById('check-batch-export-docx-form');
+
+    const selectedResidenceChecks = () => [...document.querySelectorAll('[data-residence-check-select]:checked')];
+    const selectedBusinessChecks = () => [...document.querySelectorAll('[data-business-check-select]:checked')];
+    const selectedCount = () => selectedResidenceChecks().length + selectedBusinessChecks().length;
+
+    const setDownloadEnabled = (enabled) => {
+        if (!downloadTrigger) return;
+        downloadTrigger.classList.toggle('opacity-55', !enabled);
+        downloadTrigger.classList.toggle('pointer-events-none', !enabled);
+        downloadTrigger.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+        downloadTrigger.tabIndex = enabled ? 0 : -1;
+    };
+
+    const refresh = () => {
+        const count = selectedCount();
+        if (countLabel) countLabel.textContent = `${count} selected`;
+        if (printButton) printButton.toggleAttribute('disabled', count === 0);
+        setDownloadEnabled(count > 0);
+    };
+
+    const syncBatchForm = (form) => {
+        if (!form) return;
+        form.querySelectorAll('[data-check-batch-id-input]').forEach((input) => input.remove());
+        selectedResidenceChecks().forEach((checkbox) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'residence_check_ids[]';
+            input.value = checkbox.value;
+            input.dataset.checkBatchIdInput = 'true';
+            form.appendChild(input);
+        });
+        selectedBusinessChecks().forEach((checkbox) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'business_check_ids[]';
+            input.value = checkbox.value;
+            input.dataset.checkBatchIdInput = 'true';
+            form.appendChild(input);
+        });
+    };
+
+    document.addEventListener('change', (event) => {
+        if (event.target.matches('[data-residence-check-select], [data-business-check-select]')) refresh();
+    });
+
+    printButton?.addEventListener('click', () => {
+        if (selectedCount() === 0) return;
+        syncBatchForm(printForm);
+        printForm?.submit();
+    });
+
+    panel.querySelectorAll('[data-check-batch-pdf-submit]').forEach((button) => button.addEventListener('click', () => {
+        if (selectedCount() === 0) return;
+        syncBatchForm(pdfForm);
+        pdfForm?.submit();
+    }));
+    panel.querySelectorAll('[data-check-batch-docx-submit]').forEach((button) => button.addEventListener('click', () => {
+        if (selectedCount() === 0) return;
+        syncBatchForm(docxForm);
+        docxForm?.submit();
+    }));
+
+    refresh();
+})();
+
+// Business Check form: selecting a saved business auto-fills the read-only Location field from
+// that option's own data-location, since Location always reflects whichever business is chosen
+// rather than being independently editable.
+document.addEventListener('change', (event) => {
+    const select = event.target.closest('[data-business-check-income-source-select]');
+    if (!(select instanceof HTMLSelectElement) || !select.closest('[data-business-check-form]')) return;
+    const location = select.selectedOptions[0]?.dataset.location ?? '';
+    const locationField = select.closest('[data-business-check-form]').querySelector('[data-business-check-location]');
+    if (locationField instanceof HTMLInputElement) locationField.value = location;
+});
+
+// Direct multi-file photo upload widget (Residence/Business/Competitor Photos): keeps newly
+// chosen files in a JS-managed array + rebuilt DataTransfer so a removed tile actually stops
+// submitting (a native <input type="file">'s FileList can't be edited directly), and flags
+// removed existing (already-saved) photos into the field's shared removed-ids hidden input
+// instead of touching the file input at all.
+document.querySelectorAll('[data-photo-upload-field]').forEach((field) => {
+    const input = field.querySelector('[data-photo-upload-input]');
+    const trigger = field.querySelector('[data-photo-upload-trigger]');
+    const grid = field.querySelector('[data-photo-upload-grid]');
+    const template = field.querySelector('[data-photo-upload-tile-template]');
+    if (!(input instanceof HTMLInputElement) || !trigger || !grid || !(template instanceof HTMLTemplateElement)) return;
+
+    let files = [];
+
+    const rebuildInputFiles = () => {
+        const transfer = new DataTransfer();
+        files.forEach((file) => transfer.items.add(file));
+        input.files = transfer.files;
+    };
+
+    trigger.addEventListener('click', () => input.click());
+
+    input.addEventListener('change', () => {
+        Array.from(input.files ?? []).forEach((file) => {
+            files.push(file);
+            const tile = template.content.firstElementChild.cloneNode(true);
+            const img = tile.querySelector('img');
+            const reader = new FileReader();
+            reader.onload = () => { img.src = String(reader.result); };
+            reader.readAsDataURL(file);
+            tile.dataset.photoUploadFileName = file.name;
+            grid.appendChild(tile);
+        });
+        rebuildInputFiles();
+    });
+
+    grid.addEventListener('click', (event) => {
+        const removeNew = event.target.closest('[data-photo-upload-remove-new]');
+        if (removeNew) {
+            const tile = removeNew.closest('[data-photo-upload-new-tile]');
+            const name = tile?.dataset.photoUploadFileName;
+            const index = files.findIndex((file) => file.name === name);
+            if (index !== -1) files.splice(index, 1);
+            tile?.remove();
+            rebuildInputFiles();
+            return;
+        }
+
+        const removeExisting = event.target.closest('[data-photo-upload-remove-existing]');
+        if (removeExisting) {
+            const tile = removeExisting.closest('[data-photo-upload-existing-tile]');
+            const photoId = tile?.dataset.photoId;
+            if (photoId) {
+                const removedInput = document.createElement('input');
+                removedInput.type = 'hidden';
+                removedInput.name = `${field.dataset.photoUploadRemovedName}[]`;
+                removedInput.value = photoId;
+                field.appendChild(removedInput);
+            }
+            tile?.remove();
+        }
+    });
 });

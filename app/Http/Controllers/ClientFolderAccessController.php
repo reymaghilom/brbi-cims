@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\ClientFolders\BrowseClientFoldersRequest;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
+use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CibiReportFormData;
 use App\Services\ClientFolders\ClientFolderBrowser;
 use App\Services\ClientFolders\ClientFolderCreationOptions;
@@ -35,10 +36,11 @@ class ClientFolderAccessController extends Controller
     public function show(ClientFolder $clientFolder, ClientFolderOverview $overview, CibiReportFormData $cibiFormData): View
     {
         Gate::authorize('view', $clientFolder);
+        $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
 
-        $data = $overview->for($clientFolder);
+        $data = $overview->for($clientFolder, $activePerson);
 
-        return view('client-folders.show', $data + $cibiFormData->for($data['clientFolder']));
+        return view('client-folders.show', $data + $cibiFormData->for($data['clientFolder'], $activePerson));
     }
 
     public function showIncomeSource(ClientFolder $clientFolder, IncomeSource $incomeSource): View

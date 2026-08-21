@@ -18,7 +18,7 @@
 
     <div class="business-report-table-wrap">
         <table @class(['business-report-table', $tableClass ?? null])>
-            <thead><tr>@foreach($fields as $field)<th scope="col"><span>{{ $field['label'] }}</span>@if(filled($field['guide'] ?? null))<small class="business-report-column-guide">{{ $field['guide'] }}</small>@endif</th>@endforeach<th scope="col" class="business-report-action-heading">Action</th></tr></thead>
+            <thead><tr>@foreach($fields as $field)<th scope="col" @class(['business-operating-days-col' => $field['name'] === 'operating_days_hours'])><span>{{ $field['label'] }}</span>@if(filled($field['guide'] ?? null))<small class="business-report-column-guide">{{ $field['guide'] }}</small>@endif</th>@endforeach<th scope="col" class="business-report-action-heading">Action</th></tr></thead>
             <tbody data-repeater-rows>
                 @foreach($existingRows as $index => $row)
                     @include('client-folders.income-sources._business-repeater-row', ['row' => $row, 'index' => $index, 'template' => false])

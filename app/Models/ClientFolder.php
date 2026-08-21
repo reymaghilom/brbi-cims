@@ -67,6 +67,11 @@ class ClientFolder extends Model
         return $this->hasOne(CibiReport::class);
     }
 
+    public function coMakers(): HasMany
+    {
+        return $this->hasMany(CoMaker::class)->orderBy('id');
+    }
+
     public function incomeSources(): HasMany
     {
         return $this->hasMany(IncomeSource::class);
@@ -75,6 +80,16 @@ class ClientFolder extends Model
     public function residenceBusinessReport(): HasOne
     {
         return $this->hasOne(ResidenceBusinessReport::class);
+    }
+
+    public function residenceChecks(): HasMany
+    {
+        return $this->hasMany(ResidenceCheck::class);
+    }
+
+    public function businessChecks(): HasMany
+    {
+        return $this->hasMany(BusinessCheck::class);
     }
 
     public function activities(): HasMany

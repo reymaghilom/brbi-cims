@@ -11,7 +11,7 @@ class BusinessBranch extends Model
 
     protected function casts(): array
     {
-        return ['is_declared' => 'boolean', 'is_inspected' => 'boolean', 'is_air_conditioned' => 'boolean', 'average_sales_per_shift' => 'decimal:2', 'monthly_rent' => 'decimal:2'];
+        return ['is_declared' => 'boolean', 'is_inspected' => 'boolean', 'is_air_conditioned' => 'boolean'];
     }
 
     public function businessReport(): BelongsTo

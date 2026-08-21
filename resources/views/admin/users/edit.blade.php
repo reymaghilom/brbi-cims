@@ -16,7 +16,7 @@
     @endif
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <form method="POST" action="{{ route('admin.users.update', $managedUser) }}">
+        <form method="POST" action="{{ route('admin.users.update', $managedUser) }}" enctype="multipart/form-data">
             @csrf @method('PUT')
             <x-ui.form-section title="Account information" description="Update basic identity and role information.">@include('admin.users._form')</x-ui.form-section>
             <x-ui.sticky-form-toolbar>Role changes take effect after session invalidation.<x-slot:actions><button class="ui-button-primary">Save changes</button></x-slot:actions></x-ui.sticky-form-toolbar>

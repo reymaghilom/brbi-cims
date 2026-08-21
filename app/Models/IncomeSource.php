@@ -60,4 +60,21 @@ class IncomeSource extends Model
     {
         return $this->hasMany(PhotoReportSection::class);
     }
+
+    /**
+     * The label shown for this business/income source across the Saved Businesses list —
+     * shared by the display view and its column sorting so the two can never disagree.
+     * Requires the `template` relation to be loaded.
+     */
+    public function displayName(): string
+    {
+        return match ($this->template->template_type) {
+            'leasing_agricultural' => 'LEASING OPERATIONS: AGRICULTURAL REAL ESTATE',
+            'leasing_poultry_farm' => 'LEASING OF POULTRY FARM OPERATIONS',
+            'farming_corn' => 'FARMING: CORN PRODUCTION',
+            'farming_sugarcane' => 'FARMING: SUGARCANE PRODUCTION',
+            'remittance_income' => 'REMITTANCE',
+            default => $this->business_name ?: $this->source_name,
+        };
+    }
 }

@@ -17,7 +17,13 @@
             return $row;
         })->all();
     }
-    $rows = count($rows) ? $rows : [[]];
+    // III (Bank / Financial Institution) always shows a minimum of 3 rows so encoders have room
+    // to work in without first clicking "Add" — the extra blank rows are display-only and are
+    // dropped on save (SaveCibiReport never persists a child row that has no id and no filled
+    // field). Every other section (including IV) shows only its actual saved rows, padded up to
+    // exactly 1 blank row only when there are none yet.
+    $minRows = $section === 'bank_accounts' ? 3 : 1;
+    $rows = array_pad($rows, $minRows, []);
     $headers = match($section) {
         'bank_accounts' => ['Institution', 'Branch', 'Year Opened', 'ADB Level', 'CA / SA / Share Capital', 'Remarks', ''],
         'loan_records' => ['Bank / Coop / Branch', 'Original Amount', 'Balance', 'Amortization', 'Granted / Maturity', 'Cycle / Security', 'Performance & Findings', ''],

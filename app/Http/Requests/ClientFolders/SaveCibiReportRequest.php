@@ -4,6 +4,7 @@ namespace App\Http\Requests\ClientFolders;
 
 use App\Enums\PartyType;
 use App\Models\CibiBankAccount;
+use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -27,6 +28,7 @@ class SaveCibiReportRequest extends FormRequest
     public function rules(): array
     {
         $rules = [
+            'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
             'intent' => ['required', Rule::in(['complete'])],
             'start_date' => ['required', 'date', 'before_or_equal:today'],
             'submitted_date' => ['required', 'date', 'after_or_equal:start_date', 'before_or_equal:today'],
@@ -122,7 +124,7 @@ class SaveCibiReportRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator): void {
-            $report = $this->route('clientFolder')->cibiReport;
+            $report = $this->route('clientFolder')->cibiReport()->where('co_maker_id', $this->coMakerId())->first();
             $tables = ['bank_accounts' => 'bankAccounts', 'loan_records' => 'loanRecords', 'credit_checks' => 'creditChecks', 'income_summaries' => 'incomeSourceSummaries', 'legal_findings' => 'legalFindings'];
             foreach ($tables as $input => $relation) {
                 $allowed = $report?->{$relation}()->pluck('id')->map(fn ($id) => (int) $id)->all() ?? [];
@@ -138,7 +140,7 @@ class SaveCibiReportRequest extends FormRequest
             }
             foreach ((array) $this->input('income_summaries', []) as $index => $row) {
                 $sourceId = filled($row['income_source_id'] ?? null) ? (int) $row['income_source_id'] : null;
-                if ($sourceId !== null && ! $this->route('clientFolder')->incomeSources()->whereKey($sourceId)->exists()) {
+                if ($sourceId !== null && ! $this->route('clientFolder')->incomeSources()->where('co_maker_id', $this->coMakerId())->whereKey($sourceId)->exists()) {
                     $validator->errors()->add("income_summaries.$index.income_source_id", 'The selected income source does not belong to this client folder.');
                 }
             }
@@ -164,15 +166,20 @@ class SaveCibiReportRequest extends FormRequest
             $normalized[$field] = $this->normalize($this->input($field));
         }
         $folder = $this->route('clientFolder');
-        $normalized['prepared_by_name'] = $folder->cibiReport?->investigator?->full_name ?? $folder->assignedInvestigator->full_name;
+        $existingReport = $folder->cibiReport()->where('co_maker_id', $this->coMakerId())->first();
+        $normalized['prepared_by_name'] = $existingReport?->investigator?->full_name ?? $folder->assignedInvestigator->full_name;
         foreach (['purpose_remarks', 'negative_credit_findings', 'other_remarks'] as $field) {
             $normalized[$field] = $this->trimmed($this->input($field));
         }
-        $normalized['purpose_other'] = $this->has('purpose_other') ? $this->normalize($this->input('purpose_other')) : $this->route('clientFolder')->cibiReport?->purpose_other;
+        $normalized['purpose_other'] = $this->has('purpose_other') ? $this->normalize($this->input('purpose_other')) : $existingReport?->purpose_other;
         $normalized['amount_applied'] = $this->number($this->input('amount_applied'));
 
+        $activePerson = ActivePersonResolver::resolve($folder, $this->coMakerId());
+        // party_type reflects who this report belongs to, not a user choice — always derived
+        // from the active-person context so URL/form tampering can never reclassify ownership.
+        $normalized['party_type'] = $activePerson ? PartyType::CoMaker->value : PartyType::Borrower->value;
         $personal = (array) $this->input('personal_snapshot', []);
-        $personal['name'] = $this->route('clientFolder')->display_name;
+        $personal['name'] = $activePerson?->full_name ?? $folder->display_name;
         foreach ($personal as $key => $value) {
             $personal[$key] = $key === 'living_with_parents' ? filter_var($value, FILTER_VALIDATE_BOOL) : (is_string($value) ? $this->normalize($value) : $value);
         }
@@ -181,7 +188,7 @@ class SaveCibiReportRequest extends FormRequest
         }
         $personal['monthly_rent'] = ($personal['residence_status'] ?? null) === 'Rented' ? $this->normalize($personal['monthly_rent'] ?? null) : null;
         $personal['residence_status_from'] = in_array($personal['residence_status'] ?? null, ['Mortgaged', 'Rented'], true) ? $this->normalize($personal['residence_status_from'] ?? null) : null;
-        $personal['court_background'] = $this->normalize($personal['court_background'] ?? $this->route('clientFolder')->cibiReport?->personal_snapshot['court_background'] ?? null);
+        $personal['court_background'] = $this->normalize($personal['court_background'] ?? $existingReport?->personal_snapshot['court_background'] ?? null);
         $normalized['personal_snapshot'] = $personal;
 
         if ($this->has('summary_totals')) {
@@ -218,6 +225,11 @@ class SaveCibiReportRequest extends FormRequest
             })->values()->all();
         }
         $this->merge($normalized);
+    }
+
+    private function coMakerId(): ?int
+    {
+        return blank($this->input('co_maker_id')) ? null : (int) $this->input('co_maker_id');
     }
 
     private function rowHasData(array $row): bool

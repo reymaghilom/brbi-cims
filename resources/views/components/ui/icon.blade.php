@@ -18,8 +18,10 @@
         @case('close') <path d="m6 6 12 12M18 6 6 18"/> @break
         @case('chevron-right') <path d="m9 5 7 7-7 7"/> @break
         @case('chevron-down') <path d="m5 9 7 7 7-7"/> @break
+        @case('chevron-up') <path d="m5 15 7-7 7 7"/> @break
         @case('logout') <path d="M10 4H5v16h5M14 8l4 4-4 4m4-4H9"/> @break
         @case('check') <path d="m5 12 4 4L19 6"/> @break
+        @case('check-circle') <circle cx="12" cy="12" r="8.5"/><path d="m8.25 12.25 2.5 2.5 5-5"/> @break
         @case('warning') <path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5m0 3h.01"/> @break
         @case('more') <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/> @break
         @case('search') <circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/> @break
@@ -31,6 +33,14 @@
         @case('calendar') <rect x="3.5" y="5.5" width="17" height="15" rx="2"/><path d="M7.5 3.5v4M16.5 3.5v4M3.5 9.5h17"/> @break
         @case('clock') <circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/> @break
         @case('chart') <path d="M5 20V10M10 20V4M15 20v-7M20 20V7"/> @break
+        @case('eye') <path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7S2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/> @break
+        @case('eye-off') <path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7S2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/><path d="M4 4l16 16"/> @break
+        @case('download') <path d="M12 4v11m0 0-3.5-3.5M12 15l3.5-3.5"/><path d="M4.5 16v2.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V16"/> @break
+        @case('spreadsheet') <rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 4.5v15M15 4.5v15"/> @break
+        @case('plus') <path d="M12 5v14M5 12h14"/> @break
+        @case('printer') <path d="M7 8V3.5h10V8"/><rect x="3.5" y="8" width="17" height="9" rx="1.5"/><rect x="7" y="13.5" width="10" height="7" rx="0.5"/> @break
+        @case('home') <path d="m4 11 8-7 8 7"/><path d="M6 10v9.5h12V10"/><path d="M10 19.5V14h4v5.5"/> @break
+        @case('building') <rect x="5" y="3.5" width="14" height="17" rx="1"/><path d="M8.5 7h1.5M14 7h1.5M8.5 11h1.5M14 11h1.5M8.5 15h1.5M14 15h1.5"/><path d="M10 20.5V17h4v3.5"/> @break
         @default <circle cx="12" cy="12" r="8"/> @break
     @endswitch
 </svg>

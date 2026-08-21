@@ -3,8 +3,9 @@
 @section('title', 'Business Report · '.$clientFolder->display_name)
 
 @php
+    $personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null);
     $report = $incomeSource?->businessReport;
-    $cibiReport = $clientFolder->cibiReport;
+    $cibiReport = $clientFolder->cibiReport()->where('co_maker_id', ($activePerson ?? null)?->id)->first();
     $headerBranch = $incomeSource?->branch_name ?: $cibiReport?->branch_name;
     $headerAccountOfficer = $incomeSource?->account_officer_name ?: $cibiReport?->account_officer_name;
     $headerAmountApplied = $cibiReport?->amount_applied;
@@ -23,7 +24,10 @@
     };
     $headerAmountAppliedDisplay = $formatAmountApplied($headerAmountApplied);
     $headerFormId = $incomeSource ? 'business-report-form' : 'business-template-form';
-    $partyType = $cibiReport?->party_type?->value ?? 'borrower';
+    // Derived from the active person (co_maker_id ownership), not the linked CI/BI report's
+    // stored party_type column — see the matching note in OfficialReportDataBuilder::cibi().
+    $partyType = ($activePerson ?? null) ? 'co_maker' : 'borrower';
+    $nameLabel = ($activePerson ?? null) ? 'NAME OF CO-MAKER:' : 'NAME OF APPLICANT:';
     $tags = $incomeSource?->template?->compatibility_tags ?? [];
     $propertyOptions = $report?->properties?->mapWithKeys(fn ($property) => [$property->id => $property->property_type . ($property->location ? ' - ' . str($property->location)->limit(50) : '')])->all() ?? [];
     $tenants = $report?->properties?->pluck('tenants')->flatten() ?? collect();
@@ -35,12 +39,13 @@
 @endphp
 
 @section('content')
-    <form id="business-template-form" method="POST" action="{{ route('client-folders.income-sources.store', $clientFolder) }}" hidden>@csrf<input type="hidden" name="intent" value="complete"></form>
+    <form id="business-template-form" method="POST" action="{{ route('client-folders.income-sources.store', $clientFolder) }}" hidden>@csrf<input type="hidden" name="intent" value="complete"><input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}"></form>
 
     @if($incomeSource)
         <form id="business-report-form" method="POST" action="{{ route('client-folders.income-sources.business.update', [$clientFolder, $incomeSource]) }}" class="business-encoding-page" data-business-report-form data-unsaved-form>
             @csrf
             @method('PUT')
+            <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
     @else
         <div class="business-encoding-page" data-business-report-form>
     @endif
@@ -64,14 +69,14 @@
 
                 <div class="business-report-header-grid" aria-label="Business Report details">
                     <div class="business-report-header-label">CI-IN CHARGE:</div>
-                    <div class="business-report-header-value business-report-header-readonly">{{ $clientFolder->assignedInvestigator->full_name }}</div>
+                    <div class="business-report-header-value business-report-header-readonly uppercase">{{ $clientFolder->assignedInvestigator->full_name }}</div>
                     <label class="business-report-header-label" for="branch_name">BRANCH:</label>
                     <div class="business-report-header-value"><input id="branch_name" name="branch_name" form="{{ $headerFormId }}" value="{{ old('branch_name', $headerBranch) }}" class="business-report-header-control" readonly aria-readonly="true" @error('branch_name') aria-invalid="true" aria-describedby="branch_name-error" @enderror><x-form.validation-message for="branch_name" /></div>
 
                     <label class="business-report-header-label" for="start_date">START DATE OF CI:</label>
                     <div class="business-report-header-value"><input id="start_date" name="start_date" form="{{ $headerFormId }}" type="date" value="{{ old('start_date', $report?->start_date?->format('Y-m-d')) }}" class="business-report-header-control" @error('start_date') aria-invalid="true" aria-describedby="start_date-error" @enderror><x-form.validation-message for="start_date" /></div>
-                    <div class="business-report-header-label">NAME OF APPLICANT:</div>
-                    <div class="business-report-header-value business-report-header-readonly">{{ $clientFolder->display_name }}</div>
+                    <div class="business-report-header-label">{{ $nameLabel }}</div>
+                    <div class="business-report-header-value business-report-header-readonly">{{ ($activePerson ?? null)?->full_name ?? $clientFolder->display_name }}</div>
 
                     <label class="business-report-header-label" for="submitted_date">DATE SUBMITTED TO CA:</label>
                     <div class="business-report-header-value"><input id="submitted_date" name="submitted_date" form="{{ $headerFormId }}" type="date" value="{{ old('submitted_date', $report?->submitted_date?->format('Y-m-d')) }}" class="business-report-header-control" @error('submitted_date') aria-invalid="true" aria-describedby="submitted_date-error" @enderror><x-form.validation-message for="submitted_date" /></div>
@@ -87,22 +92,31 @@
                 </div>
             </section>
 
-            <section class="business-template-chooser" aria-labelledby="business-template-title" data-business-template-title>
+            @unless($incomeSource)
+            @php
+                $businessTemplatePreselected = filled($preselectedTemplateId) || filled(old('income_source_template_id'));
+            @endphp
+            <section class="business-template-chooser" aria-labelledby="business-template-title" data-business-template-title @if($businessTemplatePreselected) hidden @endif>
+                @unless($businessTemplatePreselected)
                 <div>
                     <h2 id="business-template-title">Please choose Business Template</h2>
                 </div>
+                @endunless
                 <div class="business-template-actions">
                     <label for="income_source_template_id" class="sr-only">Business Template</label>
                     <select id="income_source_template_id" name="income_source_template_id" form="business-template-form" class="business-template-select" data-business-template-select required>
                         <option value="">Please choose Business Template</option>
                         @foreach($businessTemplates as $template)
-                            <option value="{{ $template->id }}" @selected((string) old('income_source_template_id') === (string) $template->id)>{{ $template->name }}</option>
+                            <option value="{{ $template->id }}" @selected((string) old('income_source_template_id', $preselectedTemplateId) === (string) $template->id)>{{ $template->name }}</option>
                         @endforeach
                     </select>
+                    @unless($businessTemplatePreselected)
                     <button type="submit" form="business-template-form" class="business-add-button" @disabled($businessTemplates->isEmpty())><span aria-hidden="true">+</span> Add Business</button>
+                    @endunless
                 </div>
                 <x-form.validation-message for="income_source_template_id" />
             </section>
+            @endunless
 
             <div data-business-template-preview-target hidden></div>
             <div data-current-business-form>
@@ -141,7 +155,7 @@
         :hidden="$incomeSource === null"
     >
         <span class="sr-only">Business Report actions</span>
-        <x-slot:actions><button type="submit" form="{{ $headerFormId }}" name="intent" value="complete" class="ui-button-primary" data-business-save>Save</button></x-slot:actions>
+        <x-slot:actions><button type="submit" form="{{ $headerFormId }}" name="intent" value="complete" class="ui-button-primary" data-business-save>{{ $incomeSource ? 'Update' : 'Save' }}</button></x-slot:actions>
     </x-ui.sticky-form-toolbar>
 
     @foreach($businessTemplates as $previewTemplate)

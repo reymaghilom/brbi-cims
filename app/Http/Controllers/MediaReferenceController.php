@@ -11,6 +11,7 @@ use App\Http\Requests\ClientFolders\StoreMediaRequest;
 use App\Http\Requests\ClientFolders\UpdateMediaRequest;
 use App\Models\ClientFolder;
 use App\Models\MediaReference;
+use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
@@ -38,21 +39,24 @@ class MediaReferenceController extends Controller
     public function index(ClientFolder $clientFolder): View
     {
         Gate::authorize('view', $clientFolder);
+        $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
         $query = $clientFolder->mediaReferences()
+            ->where('co_maker_id', $activePerson?->id)
             ->with(['uploader:id,full_name', 'activities:id,name', 'incomeSource:id,source_name,business_name'])
             ->latest();
         $this->applyFilters($query);
 
         return view('client-folders.media.index', [
             'clientFolder' => $clientFolder,
+            'activePerson' => $activePerson,
             'mediaItems' => $query->paginate(24)->withQueryString(),
             'categories' => MediaCategory::cases(),
-            'activities' => $clientFolder->activities()->orderBy('name')->get(['id', 'name']),
-            'incomeSources' => $clientFolder->incomeSources()->orderBy('sort_order')->get(['id', 'source_name', 'business_name']),
+            'activities' => $clientFolder->activities()->where('co_maker_id', $activePerson?->id)->orderBy('name')->get(['id', 'name']),
+            'incomeSources' => $clientFolder->incomeSources()->where('co_maker_id', $activePerson?->id)->orderBy('sort_order')->get(['id', 'source_name', 'business_name']),
             'counts' => [
-                'all' => $clientFolder->mediaReferences()->count(),
-                'photo' => $clientFolder->mediaReferences()->where('media_type', MediaType::Photo->value)->count(),
-                'video' => $clientFolder->mediaReferences()->where('media_type', MediaType::Video->value)->count(),
+                'all' => $clientFolder->mediaReferences()->where('co_maker_id', $activePerson?->id)->count(),
+                'photo' => $clientFolder->mediaReferences()->where('co_maker_id', $activePerson?->id)->where('media_type', MediaType::Photo->value)->count(),
+                'video' => $clientFolder->mediaReferences()->where('co_maker_id', $activePerson?->id)->where('media_type', MediaType::Video->value)->count(),
             ],
         ]);
     }
@@ -60,27 +64,34 @@ class MediaReferenceController extends Controller
     public function store(StoreMediaRequest $request, ClientFolder $clientFolder, UploadMedia $upload): RedirectResponse
     {
         $records = $upload->execute($request->user(), $clientFolder, $request->validated());
+        $personParams = ActivePersonResolver::queryParams(ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id')));
 
-        return redirect()->route('client-folders.media.index', $clientFolder)->with('status', count($records) === 1 ? 'Media uploaded successfully.' : count($records).' media items uploaded successfully.');
+        return redirect()->route('client-folders.media.index', [$clientFolder] + $personParams)->with('status', count($records) === 1 ? 'Media uploaded successfully.' : count($records).' media items uploaded successfully.');
     }
 
     public function update(UpdateMediaRequest $request, ClientFolder $clientFolder, MediaReference $mediaReference, UpdateMediaMetadata $update): RedirectResponse
     {
         $update->execute($request->user(), $clientFolder, $mediaReference, $request->validated());
+        $personParams = ActivePersonResolver::queryParams(ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id')));
 
-        return redirect()->route('client-folders.media.index', $clientFolder)->with('status', 'Media details updated successfully.');
+        return redirect()->route('client-folders.media.index', [$clientFolder] + $personParams)->with('status', 'Media details updated successfully.');
     }
 
     public function destroy(ClientFolder $clientFolder, MediaReference $mediaReference, RemoveMedia $remove): RedirectResponse
     {
         Gate::authorize('delete', $mediaReference);
+        $personParams = ActivePersonResolver::queryParams($mediaReference->co_maker_id ? $clientFolder->coMakers()->find($mediaReference->co_maker_id) : null);
         $remove->execute(request()->user(), $clientFolder, $mediaReference);
 
-        return redirect()->route('client-folders.media.index', $clientFolder)->with('status', 'Media removed from the active gallery.');
+        return redirect()->route('client-folders.media.index', [$clientFolder] + $personParams)->with('status', 'Media removed from the active gallery.');
     }
 
     public function content(ClientFolder $clientFolder, MediaReference $mediaReference): StreamedResponse
     {
+        // Reads by exact media id — folder-level authorization already fully identifies and
+        // permits the request, so no active-person check is layered on here (thumbnails/inline
+        // previews are also rendered from the person-agnostic global gallery, which has no
+        // "active person" query-string context to check against).
         Gate::authorize('view', $mediaReference);
         $thumbnail = request()->boolean('thumbnail') && filled($mediaReference->thumbnail_path);
         $path = $thumbnail ? $mediaReference->thumbnail_path : $mediaReference->temporary_local_path;

@@ -6,7 +6,7 @@
     <x-ui.breadcrumb :items="[['label' => 'Dashboard', 'url' => route('home')], ['label' => 'Users', 'url' => route('admin.users.index')], ['label' => 'Create user']]" />
     <x-ui.page-header title="Create user" eyebrow="Administration"><x-slot:description>Create an authorized staff account with a temporary password that must be changed after sign-in.</x-slot:description></x-ui.page-header>
 
-    <form method="POST" action="{{ route('admin.users.store') }}" class="max-w-3xl">
+    <form method="POST" action="{{ route('admin.users.store') }}" enctype="multipart/form-data" class="max-w-3xl">
         @csrf
         <x-ui.form-section title="Account information" description="Enter the staff member's identifying information and approved system role.">
             @include('admin.users._form')

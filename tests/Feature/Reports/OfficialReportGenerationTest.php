@@ -13,7 +13,6 @@ use App\Models\ClientFolder;
 use App\Models\GeneratedReport;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
-use App\Models\ResidenceBusinessReport;
 use App\Models\User;
 use App\Services\Reports\Contracts\PdfGenerator;
 use Database\Seeders\ReferenceDataSeeder;
@@ -74,18 +73,18 @@ class OfficialReportGenerationTest extends TestCase
         [$ci, $folder] = $this->cibiContext();
         $dedicated = $this->businessSource($folder);
         $fallback = $this->fallbackSource($folder);
-        ResidenceBusinessReport::factory()->create(['client_folder_id' => $folder->id, 'ci_user_id' => $ci->id]);
+        $folder->residenceChecks()->create(['ci_date' => now(), 'location' => 'Applicant Address', 'ci_user_id' => $ci->id]);
 
         $cases = [
             [OfficialReportType::Cibi, null, 'CREDIT INVESTIGATION'],
-            [OfficialReportType::BusinessIncomeSource, $dedicated, 'OFFICIAL BUSINESS'],
+            [OfficialReportType::BusinessIncomeSource, $dedicated, 'SOURCE OF INCOME VALIDATION'],
             [OfficialReportType::GeneralIncomeSource, $fallback, 'SOURCES OF INCOME'],
             [OfficialReportType::ResidenceBusinessPhoto, null, 'RESIDENCE & BUSINESS'],
         ];
         foreach ($cases as [$type, $source, $text]) {
             $parameters = ['report_type' => $type->value] + ($source ? ['income_source_id' => $source->id] : []);
             $preview = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder] + $parameters))->assertOk()->assertSee($text);
-            if ($type === OfficialReportType::Cibi) {
+            if (in_array($type, [OfficialReportType::Cibi, OfficialReportType::BusinessIncomeSource], true)) {
                 $preview->assertDontSee('Official CI / BI Report')->assertDontSee('Read-only Report Preview');
             } else {
                 $preview->assertSee('8.5 × 13 inches');

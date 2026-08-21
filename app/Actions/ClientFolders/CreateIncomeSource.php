@@ -23,14 +23,17 @@ class CreateIncomeSource
     {
         return DB::transaction(function () use ($actor, $folder, $data): IncomeSource {
             $template = IncomeSourceTemplate::query()->whereKey($data['income_source_template_id'])->where('is_active', true)->firstOrFail();
-            $cibiReport = $folder->cibiReport;
+            $coMakerId = $data['co_maker_id'] ?? null;
+            $cibiReport = $folder->cibiReport()->where('co_maker_id', $coMakerId)->first();
+            $owner = $coMakerId ? $folder->coMakers()->find($coMakerId) : null;
             $source = $folder->incomeSources()->create([
+                'co_maker_id' => $coMakerId,
                 'income_source_template_id' => $template->id,
                 'template_type' => $template->template_type,
                 'template_version' => $template->version,
                 'source_name' => $data['source_name'] ?? '',
                 'business_name' => $data['business_name'] ?? null,
-                'applicant_name_snapshot' => $folder->display_name,
+                'applicant_name_snapshot' => $owner?->full_name ?? $folder->display_name,
                 'branch_name' => $data['branch_name'] ?? $cibiReport?->branch_name,
                 'account_officer_name' => $data['account_officer_name'] ?? $cibiReport?->account_officer_name,
                 'amount_applied' => $data['amount_applied'] ?? $cibiReport?->amount_applied,

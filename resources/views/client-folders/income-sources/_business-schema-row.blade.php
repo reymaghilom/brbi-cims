@@ -7,7 +7,7 @@
             $value = data_get($row, $column['key']);
             $type = $column['type'] ?? 'text';
         @endphp
-        <td>
+        <td @class(['business-operating-days-col' => $column['key'] === 'operating_days_hours'])>
             <label for="{{ $id }}" class="sr-only">{{ $column['label'] }}</label>
             @include('client-folders.income-sources._business-table-control', ['options' => $column['options'] ?? [], 'step' => $column['step'] ?? 'any'])
             <x-form.validation-message :for="$validationName" />

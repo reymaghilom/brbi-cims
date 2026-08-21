@@ -157,7 +157,7 @@ class MediaReferenceTest extends TestCase
         ])->assertSessionHasErrors('ci_activity_id');
     }
 
-    public function test_new_media_is_available_to_activity_and_residence_business_workflows(): void
+    public function test_new_media_is_available_to_activity_workflows(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -171,8 +171,6 @@ class MediaReferenceTest extends TestCase
         ])->assertRedirect();
 
         $this->actingAs($ci)->get(route('client-folders.activities.edit', [$folder, $activity]))
-            ->assertOk()->assertSee('New site evidence');
-        $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))
             ->assertOk()->assertSee('New site evidence');
     }
 

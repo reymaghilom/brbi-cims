@@ -4,6 +4,7 @@ namespace Tests\Feature\Database;
 
 use App\Models\CibiReport;
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use App\Models\DeclaredIncomeSourceItem;
 use App\Models\GeneralIncomeSourceReport;
 use App\Models\GeneratedReport;
@@ -34,13 +35,30 @@ class DatabaseConstraintsTest extends TestCase
         ClientFolder::factory()->create(['folder_number' => $folder->folder_number]);
     }
 
-    public function test_only_one_cibi_report_can_belong_to_a_folder(): void
+    public function test_only_one_cibi_report_can_belong_to_a_folder_per_person(): void
     {
+        // A folder now supports one CI/BI report per person (the Applicant, plus one per
+        // Co-Maker) rather than a single folder-wide report — but each specific person can
+        // still only have one. The Applicant's own report keeps co_maker_id null.
         $folder = ClientFolder::factory()->create();
-        CibiReport::factory()->create(['client_folder_id' => $folder->id]);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Roy Maghilom']);
+        CibiReport::factory()->create(['client_folder_id' => $folder->id, 'co_maker_id' => $coMaker->id]);
 
         $this->expectException(QueryException::class);
-        CibiReport::factory()->create(['client_folder_id' => $folder->id]);
+        CibiReport::factory()->create(['client_folder_id' => $folder->id, 'co_maker_id' => $coMaker->id]);
+    }
+
+    public function test_multiple_co_makers_can_each_have_their_own_cibi_report(): void
+    {
+        $folder = ClientFolder::factory()->create();
+        $coMaker1 = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Roy Maghilom']);
+        $coMaker2 = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Juan Dela Cruz']);
+
+        CibiReport::factory()->create(['client_folder_id' => $folder->id, 'co_maker_id' => null]);
+        CibiReport::factory()->create(['client_folder_id' => $folder->id, 'co_maker_id' => $coMaker1->id]);
+        CibiReport::factory()->create(['client_folder_id' => $folder->id, 'co_maker_id' => $coMaker2->id]);
+
+        $this->assertSame(3, CibiReport::where('client_folder_id', $folder->id)->count());
     }
 
     public function test_fallback_contribution_ranks_are_unique_within_the_report(): void

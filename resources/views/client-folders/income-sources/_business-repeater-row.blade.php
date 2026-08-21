@@ -13,7 +13,7 @@
                 $value = filter_var($value, FILTER_VALIDATE_BOOL) ? 'Y' : 'N';
             }
         @endphp
-        <td>
+        <td @class(['business-operating-days-col' => $field['name'] === 'operating_days_hours'])>
             @if($loop->first)
                 <input type="hidden" name="{{ $section }}[{{ $index }}][id]" value="{{ $rowId }}">
                 <input type="hidden" name="{{ $section }}[{{ $index }}][_delete]" value="{{ data_get($row, '_delete', 0) }}" data-delete-field>

@@ -16,6 +16,12 @@
         ])->all();
     }
     $propertyRows = count((array) $propertyRows) ? array_values($propertyRows) : array_fill(0, 3, []);
+    // The Update/Edit form must always show at least 3 rows, same as a brand-new report — the
+    // line above only fills in blanks when nothing was saved at all, so a table with 1 or 2
+    // saved properties is padded here too.
+    if (count($propertyRows) < 3) {
+        $propertyRows = array_merge($propertyRows, array_fill(0, 3 - count($propertyRows), []));
+    }
 
     $hasSavedProperties = $records->isNotEmpty();
     $declaredCount = $hasSavedProperties ? $report?->properties_declared : null;
@@ -26,9 +32,9 @@
 
 <section class="business-report-section business-non-agricultural-properties scroll-mt-4" data-repeater="properties" data-empty-row-remove-without-confirmation>
     <div class="business-property-summary" aria-label="Property inspection totals">
-        <label><span class="ui-label">TOTAL PROPERTIES DECLARED:</span><input class="ui-control" name="properties_declared" type="number" min="0" value="{{ old('properties_declared', $declaredCount) }}"></label>
-        <label><span class="ui-label">TOTAL PROPERTIES INSPECTED:</span><input class="ui-control" name="properties_inspected" type="number" min="0" value="{{ old('properties_inspected', $inspectedCount) }}"></label>
-        <label><span class="ui-label">TOTAL PROP NOT INSPECTED:</span><input class="ui-control" name="properties_not_inspected" type="number" min="0" value="{{ old('properties_not_inspected', $notInspectedCount) }}"></label>
+        <label><span class="ui-label">TOTAL PROPERTIES DECLARED:</span><input class="ui-control" name="properties_declared" type="text" value="{{ old('properties_declared', $declaredCount) }}"></label>
+        <label><span class="ui-label">TOTAL PROPERTIES INSPECTED:</span><input class="ui-control" name="properties_inspected" type="text" value="{{ old('properties_inspected', $inspectedCount) }}"></label>
+        <label><span class="ui-label">TOTAL PROP NOT INSPECTED:</span><input class="ui-control" name="properties_not_inspected" type="text" value="{{ old('properties_not_inspected', $notInspectedCount) }}"></label>
         <label class="business-property-summary-reason"><span class="ui-label">REASON NOT INSPECTED:</span><input class="ui-control" name="properties_reason_not_inspected" type="text" value="{{ old('properties_reason_not_inspected', $notInspectedReason) }}" data-property-summary-reason></label>
     </div>
 

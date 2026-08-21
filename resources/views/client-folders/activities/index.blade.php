@@ -3,16 +3,18 @@
 @section('title', 'CI Activities')
 
 @section('content')
+    @php($personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null))
+
     <x-ui.breadcrumb :items="[
         ['label' => 'Dashboard', 'url' => route('home')],
         ['label' => 'Client Folders', 'url' => route('client-folders.index')],
-        ['label' => $clientFolder->display_name, 'url' => route('client-folders.show', $clientFolder)],
+        ['label' => $clientFolder->display_name, 'url' => route('client-folders.show', [$clientFolder] + $personParams)],
         ['label' => 'CI Activities'],
     ]" />
 
     <x-ui.page-header title="CI Activities">
-        <x-slot:description>Complete the required field-investigation checklist for {{ $clientFolder->display_name }}. Activity states remain internal and do not replace the folder's On Progress or Completed status.</x-slot:description>
-        <x-slot:actions><a href="{{ route('client-folders.show', $clientFolder) }}" class="ui-button-secondary">Back to Folder</a></x-slot:actions>
+        <x-slot:description>Complete the required field-investigation checklist for {{ ($activePerson ?? null) ? $activePerson->full_name : $clientFolder->display_name }}. Activity states remain internal and do not replace the folder's On Progress or Completed status.</x-slot:description>
+        <x-slot:actions><a href="{{ route('client-folders.show', [$clientFolder] + $personParams) }}" class="ui-button-secondary">Back to Folder</a></x-slot:actions>
     </x-ui.page-header>
 
     @if($activities->isEmpty())
@@ -49,7 +51,7 @@
 
                     <div class="mt-auto flex flex-col gap-3 border-t border-ui-border pt-4 sm:flex-row sm:items-center sm:justify-between">
                         <p class="text-xs text-text-muted">Updated {{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y g:i A') }}</p>
-                        <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity]) }}" class="ui-button-primary">Edit Activity</a>
+                        <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}" class="ui-button-primary">Edit Activity</a>
                     </div>
                 </article>
             @endforeach

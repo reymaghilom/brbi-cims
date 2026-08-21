@@ -8,39 +8,49 @@ use App\Enums\RecordState;
 use App\Models\AuditLog;
 use App\Models\ClientCompletionResult;
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use App\Services\Progress\RequiredItemsProgressCalculator;
 
 class ClientFolderOverview
 {
     public function __construct(private readonly RequiredItemsProgressCalculator $progressCalculator) {}
 
-    public function for(ClientFolder $folder): array
+    public function for(ClientFolder $folder, ?CoMaker $activePerson = null): array
     {
+        $personId = $activePerson?->id;
         $folder = ClientFolder::query()
             ->with([
                 'assignedInvestigator:id,full_name',
                 'information:id,client_folder_id,completion_state,updated_at',
-                'cibiReport:id,client_folder_id,state,updated_at',
-                'residenceBusinessReport:id,client_folder_id,state,updated_at',
+                'cibiReport' => fn ($query) => $query->where('co_maker_id', $personId)->select('id', 'client_folder_id', 'co_maker_id', 'state', 'updated_at'),
+                'coMakers:id,client_folder_id,full_name,first_name,middle_name,last_name,relationship_to_applicant,contact_number,address',
             ])
             ->withCount([
-                'incomeSources',
-                'incomeSources as completed_income_sources_count' => fn ($query) => $query->where('state', RecordState::Complete),
-                'activities',
-                'activities as completed_activities_count' => fn ($query) => $query->where('status', ActivityStatus::Completed),
-                'activities as started_activities_count' => fn ($query) => $query->where('status', '!=', ActivityStatus::NotStarted),
-                'activities as required_activities_count' => fn ($query) => $query->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
-                'activities as completed_required_activities_count' => fn ($query) => $query->where('status', ActivityStatus::Completed)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
-                'activities as started_required_activities_count' => fn ($query) => $query->where('status', '!=', ActivityStatus::NotStarted)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
-                'mediaReferences',
-                'generatedReports',
-                'generatedReports as completed_generated_reports_count' => fn ($query) => $query->where('status', GenerationStatus::Completed),
+                'incomeSources' => fn ($query) => $query->where('co_maker_id', $personId),
+                'incomeSources as completed_income_sources_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('state', RecordState::Complete),
+                'residenceChecks' => fn ($query) => $query->where('co_maker_id', $personId),
+                'businessChecks' => fn ($query) => $query->where('co_maker_id', $personId),
+                'activities' => fn ($query) => $query->where('co_maker_id', $personId),
+                'activities as completed_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', ActivityStatus::Completed),
+                'activities as started_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', '!=', ActivityStatus::NotStarted),
+                'activities as required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
+                'activities as completed_required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', ActivityStatus::Completed)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
+                'activities as started_required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', '!=', ActivityStatus::NotStarted)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
+                'mediaReferences' => fn ($query) => $query->where('co_maker_id', $personId),
+                'generatedReports' => fn ($query) => $query->where('co_maker_id', $personId),
+                'generatedReports as completed_generated_reports_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', GenerationStatus::Completed),
+                // Dormant modules (no real UI yet) stay folder-level/unscoped — see decision #1.
                 'driveReferences',
                 'telegramMessages',
                 'attachments',
             ])
             ->withMax([
-                'incomeSources', 'activities', 'mediaReferences', 'generatedReports',
+                'incomeSources' => fn ($query) => $query->where('co_maker_id', $personId),
+                'residenceChecks' => fn ($query) => $query->where('co_maker_id', $personId),
+                'businessChecks' => fn ($query) => $query->where('co_maker_id', $personId),
+                'activities' => fn ($query) => $query->where('co_maker_id', $personId),
+                'mediaReferences' => fn ($query) => $query->where('co_maker_id', $personId),
+                'generatedReports' => fn ($query) => $query->where('co_maker_id', $personId),
                 'driveReferences', 'telegramMessages', 'attachments',
             ], 'updated_at')
             ->findOrFail($folder->id);
@@ -86,7 +96,7 @@ class ClientFolderOverview
             $this->module('client-information', 'Client Information', 'user', $this->singleState($folder->information?->completion_state), $folder->information ? 'Client profile record available.' : 'No client information has been encoded.', $folder->information?->updated_at),
             $this->module('cibi-report', 'CI / BI Report', 'report', $this->singleState($folder->cibiReport?->state), $folder->cibiReport ? 'Official CI / BI report record available.' : 'No CI / BI report has been started.', $folder->cibiReport?->updated_at),
             $this->module('income-sources', 'Business / Income Sources', 'folder', $this->collectionState($folder->income_sources_count, $folder->completed_income_sources_count), null, $folder->income_sources_max_updated_at),
-            $this->module('residence-business', 'Residence & Business Report', 'media', $this->singleState($folder->residenceBusinessReport?->state), $folder->residenceBusinessReport ? 'Residence and business report record available.' : 'No residence and business report has been started.', $folder->residenceBusinessReport?->updated_at),
+            $this->module('residence-business', 'Residence & Business Report', 'media', $this->residenceBusinessState($folder), $this->residenceBusinessDescription($folder), $this->latest($folder->residence_checks_max_updated_at, $folder->business_checks_max_updated_at)),
             $this->module('activities', 'CI Activities', 'activity', $this->activityState($folder), $this->activityDescription($folder), $folder->activities_max_updated_at),
             $this->module('media', 'Photos & Videos', 'media', $folder->media_references_count > 0 ? 'available' : 'not_started', $this->countDescription($folder->media_references_count, 'media item'), $folder->media_references_max_updated_at),
             $this->module('generated-reports', 'Generated Reports', 'report', $this->collectionState($folder->generated_reports_count, $folder->completed_generated_reports_count), $this->countDescription($folder->generated_reports_count, 'generated report'), $folder->generated_reports_max_updated_at),
@@ -113,6 +123,29 @@ class ClientFolderOverview
             $completed === $total => 'completed',
             default => 'in_progress',
         };
+    }
+
+    private function residenceBusinessState(ClientFolder $folder): string
+    {
+        return match (true) {
+            $folder->residence_checks_count === 0 && $folder->business_checks_count === 0 => 'not_started',
+            $folder->residence_checks_count === 0 => 'in_progress',
+            default => 'completed',
+        };
+    }
+
+    private function residenceBusinessDescription(ClientFolder $folder): string
+    {
+        $total = $folder->residence_checks_count + $folder->business_checks_count;
+
+        return $total === 0
+            ? 'No Residence or Business Checks have been saved.'
+            : "{$folder->residence_checks_count} Residence, {$folder->business_checks_count} Business Check".($total === 1 ? '' : 's').' saved.';
+    }
+
+    private function latest(mixed ...$values): mixed
+    {
+        return collect($values)->filter()->sortDesc()->first();
     }
 
     private function activityState(ClientFolder $folder): string

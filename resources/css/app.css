@@ -63,11 +63,16 @@
     .ui-button-primary { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-control bg-brand-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-primary-hover focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-55; }
     .ui-button-secondary { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-control border border-ui-border-strong bg-surface px-4 py-2.5 text-sm font-semibold text-text-main transition hover:border-brand-primary hover:bg-brand-soft focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-55; }
     .ui-button-danger { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-control bg-danger px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-danger-hover focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-55; }
+    .ui-button-primary-compact { @apply inline-flex min-h-8 items-center justify-center gap-1 whitespace-nowrap rounded-control bg-brand-primary px-1.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-primary-hover focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-55; }
+    .ui-button-secondary-compact { @apply inline-flex min-h-8 items-center justify-center gap-1 whitespace-nowrap rounded-control border border-ui-border-strong bg-surface px-1.5 py-1.5 text-xs font-semibold text-text-main transition hover:border-brand-primary hover:bg-brand-soft focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-55; }
+    .ui-button-danger-compact { @apply inline-flex min-h-8 items-center justify-center gap-1 whitespace-nowrap rounded-control border border-ui-border-strong bg-surface px-1.5 py-1.5 text-xs font-semibold text-danger transition hover:border-danger hover:bg-danger-soft focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-55; }
+    .ui-action-icon-button { @apply inline-flex size-9 shrink-0 items-center justify-center rounded-control border border-ui-border-strong bg-surface transition disabled:cursor-not-allowed disabled:opacity-55; }
+    .ui-action-icon-button-neutral { @apply text-brand-primary hover:border-brand-primary hover:bg-brand-soft; }
+    .ui-action-icon-button-danger { @apply text-danger hover:border-danger hover:bg-danger-soft; }
     .ui-icon-button { @apply inline-flex size-11 items-center justify-center rounded-control text-text-muted transition hover:bg-brand-soft hover:text-brand-primary; }
     .ui-sidebar-link { @apply relative flex min-h-11 items-center gap-3 overflow-hidden rounded-control px-3 py-2.5 text-sm font-medium text-white/75 transition-colors duration-200 hover:bg-white/10 hover:text-white; }
     .ui-sidebar-link > svg { @apply size-5 shrink-0; }
     .ui-sidebar-link-active, .ui-sidebar-link-active:hover { @apply bg-brand-sidebar-hover font-semibold text-white; }
-    .ui-sidebar-link-active::before { content: ""; position: absolute; inset-block: .55rem; left: 0; width: 3px; border-radius: 0 999px 999px 0; background: var(--color-brand-soft); }
     .ui-page-title { @apply text-2xl font-semibold tracking-tight text-text-main; }
     .ui-section-title { @apply text-lg font-semibold text-text-main; }
     .ui-table-wrap { @apply overflow-x-auto rounded-card border border-ui-border bg-surface shadow-card; }
@@ -88,7 +93,15 @@
     .client-folder-name { @apply mt-2 line-clamp-2 min-h-9 w-full text-[0.8rem] font-semibold leading-[1.1rem] text-text-main; }
     .client-folder-selection { @apply absolute left-2.5 top-2.5 hidden size-5 place-items-center rounded-full border border-brand-primary bg-brand-primary text-white; }
     .client-folder-tile[aria-selected="true"] .client-folder-selection { @apply grid; }
-    .client-folder-menu-trigger { @apply absolute right-1.5 top-1.5 z-10 inline-flex size-9 items-center justify-center rounded-control text-text-muted opacity-70 transition hover:bg-surface hover:text-brand-primary hover:opacity-100 focus-visible:opacity-100; }
+    .client-folder-menu-trigger { @apply absolute right-1.5 top-1.5 z-10; }
+    /* Shared "noticeable but not oversized" 3-dot action button — used for both the Client
+       Folder card menu trigger and the Co-Maker tab menu trigger, so the two visually belong to
+       the same design system. Full opacity at rest (no faint/opacity-based default) with a
+       light neutral background so it always reads as clickable; hover and the open
+       (aria-expanded="true") state both use the same brand-soft/brand-primary pairing already
+       used elsewhere for "selected" affordances in this app. */
+    .ui-dots-trigger { @apply inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-transparent bg-surface-muted text-text-muted transition hover:border-ui-border-strong hover:bg-brand-soft hover:text-brand-primary focus-visible:bg-brand-soft focus-visible:text-brand-primary; }
+    .ui-dots-trigger[aria-expanded="true"] { @apply bg-brand-soft text-brand-primary; }
     .client-folder-menu { @apply absolute right-2 top-10 z-30 min-w-52 rounded-card border border-ui-border bg-surface p-1.5 text-left shadow-float; }
     .client-folder-menu[data-menu-position="fixed"] { @apply fixed right-auto top-auto; }
     .client-folder-menu-item { @apply flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-sm font-semibold text-text-main transition hover:bg-brand-soft hover:text-brand-primary focus:bg-brand-soft focus:text-brand-primary focus:outline-none; }
@@ -114,6 +127,7 @@
     .cibi-data-grid dd { @apply mt-1 min-h-4 font-medium text-text-main; }
     .cibi-field-error { @apply mt-1.5 text-xs font-medium text-danger; }
     .cibi-modal-dialog [aria-invalid="true"] { @apply border-danger ring-2 ring-danger/10; }
+    #add-business-template-dialog [aria-invalid="true"] { @apply border-danger ring-2 ring-danger/10; }
     .cibi-entry-table { @apply border-collapse bg-surface text-xs; }
     .cibi-entry-table th { @apply whitespace-nowrap border-b border-r border-ui-border bg-surface-muted px-2 py-2 text-left font-semibold text-brand-sidebar last:border-r-0; }
     .cibi-entry-table td { @apply min-w-32 border-b border-r border-ui-border p-2 align-top last:border-r-0; }
@@ -392,6 +406,24 @@
     .business-puj-units-table th:nth-child(8) { width: 10%; }
     .business-puj-units-table th:nth-child(9) { width: 22%; }
     .business-puj-units-table th:nth-child(10) { width: 3rem; }
+    .business-leasing-agricultural-properties-table { min-width: 72rem; table-layout: fixed; }
+    .business-leasing-agricultural-properties-table th:nth-child(1) { width: 26%; }
+    .business-leasing-agricultural-properties-table th:nth-child(2) { width: 16%; }
+    .business-leasing-agricultural-properties-table th:nth-child(3) { width: 10%; }
+    .business-leasing-agricultural-properties-table th:nth-child(4) { width: 6%; }
+    .business-leasing-agricultural-properties-table th:nth-child(5) { width: 12%; }
+    .business-leasing-agricultural-properties-table th:nth-child(6) { width: 12%; }
+    .business-leasing-agricultural-properties-table th:nth-child(7) { width: 18%; }
+    .business-leasing-agricultural-properties-table th:nth-child(8) { width: 3rem; }
+    .business-leasing-poultry-farm-table { min-width: 72rem; table-layout: fixed; }
+    .business-leasing-poultry-farm-table th:nth-child(1) { width: 30%; }
+    .business-leasing-poultry-farm-table th:nth-child(2) { width: 15%; }
+    .business-leasing-poultry-farm-table th:nth-child(3) { width: 5%; }
+    .business-leasing-poultry-farm-table th:nth-child(4),
+    .business-leasing-poultry-farm-table th:nth-child(5) { width: 8%; }
+    .business-leasing-poultry-farm-table th:nth-child(6) { width: 10%; }
+    .business-leasing-poultry-farm-table th:nth-child(7) { width: 21%; }
+    .business-leasing-poultry-farm-table th:nth-child(8) { width: 3rem; }
     .business-trucking-units-table,
     .business-distributor-units-table { min-width: 76rem; table-layout: fixed; }
     .business-trucking-units-table th,
@@ -404,14 +436,15 @@
     .business-trucking-col-action { width: 3rem; }
     .business-property-summary { display: grid; grid-template-columns: repeat(3, minmax(10.5rem, .85fr)) minmax(22rem, 2.35fr); border-top: 1px solid #d8d3c6; border-left: 1px solid #d8d3c6; background: #fffdf9; }
     .business-property-summary > label { display: grid; min-width: 0; grid-template-columns: minmax(8rem, 1fr) minmax(3rem, auto); align-items: center; border-right: 1px solid #d8d3c6; border-bottom: 1px solid #d8d3c6; }
+    .business-property-summary > label.business-property-summary-reason { grid-template-columns: auto minmax(0, 1fr); }
     .business-property-summary > label > .ui-label { margin: 0; padding: .35rem .4rem; }
     .business-property-summary .ui-control { align-self: stretch; min-height: 1.9rem; border: 0; border-left: 1px solid #d8d3c6; padding: .25rem .4rem; font-size: .72rem; font-weight: 400; }
     .business-property-inspection-table { min-width: 68rem; table-layout: fixed; }
     .business-property-inspection-table th:nth-child(1) { width: 20%; }
-    .business-property-inspection-table th:nth-child(2) { width: 8%; }
+    .business-property-inspection-table th:nth-child(2) { width: 5%; }
     .business-property-inspection-table th:nth-child(3),
-    .business-property-inspection-table th:nth-child(4) { width: 8%; }
-    .business-property-inspection-table th:nth-child(5) { width: 21%; }
+    .business-property-inspection-table th:nth-child(4) { width: 6%; }
+    .business-property-inspection-table th:nth-child(5) { width: 28%; }
     .business-property-inspection-table th:nth-child(6) { width: 29%; }
     .business-property-inspection-table th:nth-child(7) { width: 6%; }
     .business-property-inspection-table th:nth-child(8) { width: 3rem; }
@@ -458,7 +491,19 @@
     .business-pharmacy-products-observations { display: grid; grid-template-columns: minmax(18rem, .7fr) minmax(30rem, 1.8fr); align-items: start; gap: .75rem; padding: .65rem .85rem .85rem; }
     .business-pharmacy-products-panel,
     .business-pharmacy-observations-panel { min-width: 0; }
-    .business-pharmacy-products-table { min-width: 24rem; table-layout: fixed; }
+    .business-pharmacy-products-table { min-width: 0; table-layout: fixed; }
+    .business-pharmacy-products-table th:nth-child(1),
+    .business-pharmacy-products-table td:nth-child(1) { width: 62%; min-width: 0; }
+    .business-pharmacy-products-table th:nth-child(2),
+    .business-pharmacy-products-table td:nth-child(2) { width: 28%; min-width: 0; }
+    .business-pharmacy-products-table td:nth-child(1) .ui-control,
+    .business-pharmacy-products-table td:nth-child(2) .ui-control { width: 100%; white-space: normal; }
+    /* The products panel and the (taller) observations panel sit side by side in a grid that
+       doesn't stretch its columns to equal height, so the shared section border-bottom lands
+       below the taller observations panel instead of right under the products table. This
+       closes the products table's own bottom edge for every template using it (Pharmacy,
+       General Merchandise, Buy & Sell Dry Goods, Retail). */
+    .business-pharmacy-products-table { border-bottom: 1px solid #d8d3c6; }
     .business-meatshop-inventory-table { min-width: 68rem; table-layout: fixed; }
     .business-meatshop-inventory-table th:nth-child(1) { width: 16%; }
     .business-meatshop-inventory-table th:nth-child(2) { width: 12%; }
@@ -481,12 +526,113 @@
     .business-remittance-question-error { grid-column: 2; }
     .business-retail-observation-control { min-width: 0; border-right: 1px solid #d8d3c6; border-bottom: 1px solid #d8d3c6; }
     .business-retail-observation-control > .ui-control { min-height: 100%; border: 0; border-radius: 0; padding: .35rem .45rem; }
+    .business-retail-branches-table th:nth-child(1),
+    .business-retail-branches-table td:nth-child(1) { min-width: 15rem; }
+    .business-retail-branches-table th:nth-child(2),
+    .business-retail-branches-table td:nth-child(2),
+    .business-retail-branches-table th:nth-child(3),
+    .business-retail-branches-table td:nth-child(3) { min-width: 3.5rem; width: 3.5rem; }
+    .business-retail-branches-table th:nth-child(4),
+    .business-retail-branches-table td:nth-child(4) { min-width: 2.75rem; width: 2.75rem; }
+    .business-retail-branches-table th:nth-child(5),
+    .business-retail-branches-table td:nth-child(5) { min-width: 15rem; }
+    .business-retail-branches-table th:nth-child(6),
+    .business-retail-branches-table td:nth-child(6),
+    .business-retail-branches-table th:nth-child(7),
+    .business-retail-branches-table td:nth-child(7) { min-width: 4rem; width: 4rem; }
     .business-pharmacy-suppliers-table { min-width: 48rem; table-layout: fixed; }
     .business-pharmacy-suppliers-table th:nth-child(1) { width: 18%; }
     .business-pharmacy-suppliers-table th:nth-child(2) { width: 20%; }
     .business-pharmacy-suppliers-table th:nth-child(3) { width: 9%; }
     .business-pharmacy-suppliers-table th:nth-child(4) { width: 48%; }
     .business-pharmacy-suppliers-table th:nth-child(5) { width: 3rem; }
+    /* Shared "Summary of Branches Inspected" width behavior for every schema-driven template
+       that has this table (Pharmacy/Drugstore, General Merchandise/Hardware/Auto Parts, Buy &
+       Sell Dry Goods, Meatshop Store, Restaurant/Food Stall): Location and Operating Days &
+       Hours (columns 1 and 5) are the widest fields; Front (SQM), Total SQM (columns 2-3) and
+       Aircon Y/N (column 4) stay compact. */
+    .business-pharmacy-drugstore-branches-table th:nth-child(1),
+    .business-pharmacy-drugstore-branches-table td:nth-child(1),
+    .business-general-merchandise-branches-table th:nth-child(1),
+    .business-general-merchandise-branches-table td:nth-child(1),
+    .business-buy-sell-dry-goods-branches-table th:nth-child(1),
+    .business-buy-sell-dry-goods-branches-table td:nth-child(1),
+    .business-meatshop-branches-table th:nth-child(1),
+    .business-meatshop-branches-table td:nth-child(1),
+    .business-restaurant-branches-table th:nth-child(1),
+    .business-restaurant-branches-table td:nth-child(1) { min-width: 15rem; }
+    .business-pharmacy-drugstore-branches-table th:nth-child(2),
+    .business-pharmacy-drugstore-branches-table td:nth-child(2),
+    .business-pharmacy-drugstore-branches-table th:nth-child(3),
+    .business-pharmacy-drugstore-branches-table td:nth-child(3),
+    .business-general-merchandise-branches-table th:nth-child(2),
+    .business-general-merchandise-branches-table td:nth-child(2),
+    .business-general-merchandise-branches-table th:nth-child(3),
+    .business-general-merchandise-branches-table td:nth-child(3),
+    .business-buy-sell-dry-goods-branches-table th:nth-child(2),
+    .business-buy-sell-dry-goods-branches-table td:nth-child(2),
+    .business-buy-sell-dry-goods-branches-table th:nth-child(3),
+    .business-buy-sell-dry-goods-branches-table td:nth-child(3),
+    .business-meatshop-branches-table th:nth-child(2),
+    .business-meatshop-branches-table td:nth-child(2),
+    .business-meatshop-branches-table th:nth-child(3),
+    .business-meatshop-branches-table td:nth-child(3),
+    .business-restaurant-branches-table th:nth-child(2),
+    .business-restaurant-branches-table td:nth-child(2),
+    .business-restaurant-branches-table th:nth-child(3),
+    .business-restaurant-branches-table td:nth-child(3) { min-width: 3.5rem; width: 3.5rem; }
+    .business-pharmacy-drugstore-branches-table th:nth-child(4),
+    .business-pharmacy-drugstore-branches-table td:nth-child(4),
+    .business-general-merchandise-branches-table th:nth-child(4),
+    .business-general-merchandise-branches-table td:nth-child(4),
+    .business-buy-sell-dry-goods-branches-table th:nth-child(4),
+    .business-buy-sell-dry-goods-branches-table td:nth-child(4),
+    .business-meatshop-branches-table th:nth-child(4),
+    .business-meatshop-branches-table td:nth-child(4),
+    .business-restaurant-branches-table th:nth-child(4),
+    .business-restaurant-branches-table td:nth-child(4) { min-width: 2.75rem; width: 2.75rem; }
+    .business-pharmacy-drugstore-branches-table th:nth-child(5),
+    .business-pharmacy-drugstore-branches-table td:nth-child(5),
+    .business-general-merchandise-branches-table th:nth-child(5),
+    .business-general-merchandise-branches-table td:nth-child(5),
+    .business-buy-sell-dry-goods-branches-table th:nth-child(5),
+    .business-buy-sell-dry-goods-branches-table td:nth-child(5),
+    .business-meatshop-branches-table th:nth-child(5),
+    .business-meatshop-branches-table td:nth-child(5),
+    .business-restaurant-branches-table th:nth-child(5),
+    .business-restaurant-branches-table td:nth-child(5) { min-width: 15rem; }
+    /* Applied wherever a Business Template's "Summary of Branches Inspected" table has an
+       Operating Days & Hours column (Pharmacy/Drugstore, General Merchandise/Hardware/Auto
+       Parts, Buy & Sell Dry Goods, Meatshop Store, Restaurant/Food Stall, Retail, and the
+       legacy Business Source Validation template) — wide enough for e.g. "MONDAY - SUNDAY
+       (8AM - 5PM)" without truncation. */
+    .business-operating-days-col { min-width: 13.5rem; }
+    /* Farming: Corn Production's "Summary of Properties Inspected" — Location & Size of Land
+       gets most of the available width (long address/location text), Total HA, Owned/Rented/
+       Prenda, and the annual rent field stay compact. */
+    .business-farming-corn-farms-table th:nth-child(1),
+    .business-farming-corn-farms-table td:nth-child(1) { min-width: 18rem; }
+    .business-farming-corn-farms-table th:nth-child(2),
+    .business-farming-corn-farms-table td:nth-child(2) { min-width: 3.5rem; width: 3.5rem; }
+    .business-farming-corn-farms-table th:nth-child(3),
+    .business-farming-corn-farms-table td:nth-child(3) { min-width: 5rem; width: 5rem; }
+    .business-farming-corn-farms-table th:nth-child(4),
+    .business-farming-corn-farms-table td:nth-child(4) { min-width: 5rem; width: 5rem; }
+    /* Farming: Sugarcane Production's "Summary of Properties Inspected" — same approach as
+       Farming: Corn Production above, with an extra Ratoon Cycle column (position 3) also
+       kept compact. */
+    .business-farming-sugarcane-farms-table th:nth-child(1),
+    .business-farming-sugarcane-farms-table td:nth-child(1) { min-width: 18rem; }
+    .business-farming-sugarcane-farms-table th:nth-child(2),
+    .business-farming-sugarcane-farms-table td:nth-child(2),
+    .business-farming-sugarcane-farms-table th:nth-child(3),
+    .business-farming-sugarcane-farms-table td:nth-child(3) { min-width: 3.5rem; width: 3.5rem; }
+    .business-farming-sugarcane-farms-table th:nth-child(4),
+    .business-farming-sugarcane-farms-table td:nth-child(4),
+    .business-farming-sugarcane-farms-table th:nth-child(5),
+    .business-farming-sugarcane-farms-table td:nth-child(5),
+    .business-farming-sugarcane-farms-table th:nth-child(6),
+    .business-farming-sugarcane-farms-table td:nth-child(6) { min-width: 5rem; width: 5rem; }
     .business-report-checkbox { width: .9rem; height: .9rem; margin-top: .4rem; border-color: #6b7684; color: var(--color-brand-primary); accent-color: var(--color-brand-primary); }
     .business-report-choice-group { display: flex; min-height: 1.9rem; flex-wrap: wrap; align-items: center; justify-content: center; gap: .3rem .65rem; }
     .business-report-choice-option { display: inline-flex; align-items: center; gap: .3rem; color: #26303c; font-size: .75rem; font-weight: 500; line-height: 1.25; }
@@ -590,6 +736,8 @@
     .client-folder-preview-panel { @apply static z-auto h-full min-h-0 w-auto translate-x-0 overflow-visible border-l border-ui-border bg-surface-muted/45 shadow-none; }
     .client-folder-preview-content { min-height: 100%; }
     .client-folder-preview-backdrop { display: none !important; }
+    .client-folder-browser-layout[data-panel-collapsed="true"] { grid-template-columns: minmax(0, 1fr); }
+    .client-folder-browser-layout[data-panel-collapsed="true"] .client-folder-preview-panel { display: none; }
 }
 
 @media (max-width: 639px) {
@@ -623,3 +771,49 @@
 @media (prefers-reduced-motion: reduce) {
     *, ::before, ::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* Desktop sidebar collapse (layouts/app.blade.php's [data-drawer-toggle] button, driven by
+   setSidebarCollapsed() in app.js). Unlayered on purpose — every rule here needs to beat
+   Tailwind's own lg:pl-64 / hidden utilities regardless of source order, which only unlayered
+   CSS is guaranteed to do against another @layer (utilities always wins on layer precedence
+   alone, before specificity is even considered); every existing responsive block in this file
+   already lives unlayered below the @layer components close for the same reason. Scoped to the
+   lg breakpoint only — below it the existing off-canvas drawer behavior is untouched, and
+   [data-sidebar-collapsed] is never even set on mobile (see the inline script in
+   layouts/app.blade.php and desktopSidebarMedia in app.js). */
+#primary-sidebar, #app-content-wrapper { transition: width .16s ease, padding-left .16s ease; }
+.ui-sidebar-brand-compact { display: none; }
+@media (min-width: 1024px) {
+    html[data-sidebar-collapsed] #primary-sidebar { width: 4.75rem; }
+    html[data-sidebar-collapsed] #app-content-wrapper { padding-left: 4.75rem; }
+
+    html[data-sidebar-collapsed] #primary-sidebar .ui-sidebar-brand { display: flex; justify-content: center; }
+    html[data-sidebar-collapsed] #primary-sidebar .ui-sidebar-brand-full { display: none; }
+    html[data-sidebar-collapsed] #primary-sidebar .ui-sidebar-brand-compact { display: block; }
+
+    html[data-sidebar-collapsed] #primary-sidebar .ui-sidebar-section-label,
+    html[data-sidebar-collapsed] #primary-sidebar .ui-sidebar-footer { display: none; }
+
+    html[data-sidebar-collapsed] #primary-sidebar nav { padding-inline: .75rem; }
+    html[data-sidebar-collapsed] #primary-sidebar .ui-sidebar-link { justify-content: center; padding-inline: 0; }
+    /* The label <span> itself stays in the DOM either way (screen readers always get it as the
+       link's accessible name) — only its visible text is hidden here. The floating tooltip on
+       hover/focus is a separate element (#sidebar-tooltip, controlled from app.js), not this
+       span: the sidebar is its own scrollable container (overflow-y-auto), and per the CSS
+       overflow spec a non-"visible" overflow-y forces overflow-x to compute as "auto" too even
+       when set to "visible" explicitly — so anything positioned relative to a link here gets
+       clipped at the sidebar's own edge instead of floating past it. */
+    html[data-sidebar-collapsed] #primary-sidebar .ui-sidebar-link > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+
+/* Shared floating tooltip for the collapsed sidebar — one element reused for whichever link is
+   currently hovered/focused, positioned in app.js via getBoundingClientRect() (see
+   showSidebarTooltip()) so it renders above the page instead of being clipped by the sidebar's
+   own scroll container. */
+#sidebar-tooltip {
+    position: fixed; z-index: 60; white-space: nowrap; pointer-events: none;
+    border-radius: .375rem; background: #111827; padding: .4rem .65rem;
+    font-size: .75rem; font-weight: 600; color: #fff; box-shadow: var(--shadow-float);
+    opacity: 0; visibility: hidden; transition: opacity .12s ease;
+}
+#sidebar-tooltip[data-visible] { opacity: 1; visibility: visible; }

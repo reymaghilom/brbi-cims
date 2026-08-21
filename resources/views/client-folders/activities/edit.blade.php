@@ -3,22 +3,25 @@
 @section('title', $activity->name)
 
 @section('content')
+    @php($personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null))
+
     <x-ui.breadcrumb :items="[
         ['label' => 'Client Folders', 'url' => route('client-folders.index')],
-        ['label' => $clientFolder->display_name, 'url' => route('client-folders.show', $clientFolder)],
-        ['label' => 'CI Activities', 'url' => route('client-folders.activities.index', $clientFolder)],
+        ['label' => $clientFolder->display_name, 'url' => route('client-folders.show', [$clientFolder] + $personParams)],
+        ['label' => 'CI Activities', 'url' => route('client-folders.activities.index', [$clientFolder] + $personParams)],
         ['label' => $activity->name],
     ]" />
 
     <x-ui.page-header :title="$activity->name">
         <x-slot:description>Record the field result and preserve an auditable, append-only note history.</x-slot:description>
-        <x-slot:actions><x-ui.status-badge :status="$activity->status" /><a href="{{ route('client-folders.activities.index', $clientFolder) }}" class="ui-button-secondary">All Activities</a></x-slot:actions>
+        <x-slot:actions><x-ui.status-badge :status="$activity->status" /><a href="{{ route('client-folders.activities.index', [$clientFolder] + $personParams) }}" class="ui-button-secondary">All Activities</a></x-slot:actions>
     </x-ui.page-header>
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(20rem,0.7fr)]">
         <form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}" class="min-w-0 space-y-6" data-unsaved-form>
             @csrf
             @method('PUT')
+            <input type="hidden" name="co_maker_id" value="{{ $activePerson->id ?? '' }}">
 
             <x-ui.form-section title="Activity Status and Visit" description="Visit details are optional for Not Started activities. Completed activities require visit date, visited by, and remarks.">
                 <x-form.select name="status" label="Internal Activity Status" :options="collect($statuses)->mapWithKeys(fn ($status) => [$status->value => str($status->value)->replace('_', ' ')->title()->toString()])->all()" :selected="$activity->status->value" required />
@@ -70,7 +73,7 @@
                 @if($activity->mediaReferences->isEmpty())
                     <div class="mt-4 rounded-control bg-surface-subtle p-4 text-sm leading-6 text-text-muted">
                         <p>No supporting media references are linked.</p>
-                        <a href="{{ route('client-folders.media.index', $clientFolder) }}" class="mt-2 inline-flex font-semibold text-brand-primary hover:underline">Manage Photos &amp; Videos</a>
+                        <a href="{{ route('client-folders.media.index', [$clientFolder] + $personParams) }}" class="mt-2 inline-flex font-semibold text-brand-primary hover:underline">Manage Photos &amp; Videos</a>
                     </div>
                 @else
                     <ul class="mt-4 divide-y divide-ui-border overflow-hidden rounded-card border border-ui-border">

@@ -18,7 +18,7 @@ class SaveBusinessIncomeSource
 {
     private const SOURCE_FIELDS = ['source_name', 'business_name', 'contribution_rank', 'estimated_monthly_contribution', 'is_primary', 'branch_name', 'account_officer_name'];
 
-    private const REPORT_FIELDS = ['business_name', 'report_category', 'start_date', 'submitted_date', 'main_business_address', 'previous_business_address', 'previous_business_address_length_of_stay', 'reason_for_transfer', 'registered_owner', 'relationship_to_borrower', 'year_established', 'length_of_stay_months', 'monthly_rent', 'ownership_type', 'rented_from', 'business_type', 'scale', 'informant', 'report_remarks', 'template_data'];
+    private const REPORT_FIELDS = ['business_name', 'report_category', 'start_date', 'submitted_date', 'main_business_address', 'previous_business_address', 'previous_business_address_length_of_stay', 'reason_for_transfer', 'registered_owner', 'relationship_to_borrower', 'year_established', 'length_of_stay_months', 'monthly_rent', 'ownership_type', 'rented_from', 'business_type', 'scale', 'informant', 'report_remarks', 'template_data', 'branches_declared', 'branches_inspected', 'branches_not_inspected', 'branches_reason_not_inspected'];
 
     private const SECTIONS = [
         'branches' => ['branches', ['location', 'is_declared', 'is_inspected', 'reason_not_inspected', 'frontage_meters', 'total_area_square_meters', 'is_air_conditioned', 'operating_days_hours', 'shifts_count', 'employees_per_shift', 'average_sales_per_shift', 'inventory_level', 'monthly_rent', 'years_in_area', 'nearby_brands'], 'location'],
@@ -60,8 +60,6 @@ class SaveBusinessIncomeSource
             $report->update([
                 'properties_declared' => $report->properties()->where('is_declared', true)->count(),
                 'properties_inspected' => $report->properties()->where('is_inspected', true)->count(),
-                'branches_declared' => $report->branches()->where('is_declared', true)->count(),
-                'branches_inspected' => $report->branches()->where('is_inspected', true)->count(),
             ]);
             $this->completion->evaluateSource($source->load('template', 'businessReport'));
             $this->completion->evaluateFolder($folder);

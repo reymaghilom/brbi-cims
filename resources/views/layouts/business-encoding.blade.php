@@ -15,6 +15,9 @@
         <div class="fixed right-4 top-4 z-[70] w-[calc(100%-2rem)] max-w-sm space-y-3 sm:right-6" data-toast-region aria-live="polite">
             @if(session('status'))<x-ui.toast type="success" :message="session('status')" />@endif
         </div>
+        @if(session('status') && isset($clientFolder))
+            <span hidden data-business-saved-notify data-business-saved-return-url="{{ route('client-folders.income-sources.manage', [$clientFolder] + \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null)) }}"></span>
+        @endif
 
         @yield('content')
     </main>

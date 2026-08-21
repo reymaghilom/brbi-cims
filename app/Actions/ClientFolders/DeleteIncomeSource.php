@@ -9,7 +9,6 @@ use App\Models\User;
 use App\Services\ClientFolders\IncomeSourcesCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 
 class DeleteIncomeSource
 {
@@ -17,21 +16,17 @@ class DeleteIncomeSource
 
     public function execute(User $actor, ClientFolder $folder, IncomeSource $source): void
     {
-        $references = collect(['mediaReferences', 'generatedReports', 'cibiSummaries', 'photoReportSections'])
-            ->filter(fn (string $relation): bool => $source->{$relation}()->exists());
-        if ($references->isNotEmpty()) {
-            throw ValidationException::withMessages(['income_source' => 'This income source cannot be removed while it is linked to media, generated reports, CI / BI summaries, or photo-report sections.']);
-        }
-
         DB::transaction(function () use ($actor, $folder, $source): void {
-            $source->delete();
+            $sourceId = $source->id;
+            $templateType = $source->template_type;
+            $source->forceDelete();
             $this->completion->evaluateFolder($folder);
             $this->progress->recalculate($folder);
             AuditLog::create([
                 'user_id' => $actor->id, 'client_folder_id' => $folder->id,
                 'action' => 'income_source.deleted', 'module' => 'income_sources',
-                'description' => 'An income source was moved out of the active folder.',
-                'metadata' => ['income_source_id' => $source->id, 'template_type' => $source->template_type],
+                'description' => 'An income source was permanently deleted.',
+                'metadata' => ['income_source_id' => $sourceId, 'template_type' => $templateType],
                 'ip_address' => request()?->ip(), 'user_agent' => request()?->userAgent(),
             ]);
         });
