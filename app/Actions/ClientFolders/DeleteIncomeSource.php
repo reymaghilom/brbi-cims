@@ -19,16 +19,20 @@ class DeleteIncomeSource
         DB::transaction(function () use ($actor, $folder, $source): void {
             $sourceId = $source->id;
             $templateType = $source->template_type;
-            $source->forceDelete();
-            $this->completion->evaluateFolder($folder);
-            $this->progress->recalculate($folder);
+            $coMakerId = $source->co_maker_id;
+            $displayName = $source->displayName();
+
             AuditLog::create([
                 'user_id' => $actor->id, 'client_folder_id' => $folder->id,
                 'action' => 'income_source.deleted', 'module' => 'income_sources',
-                'description' => 'An income source was permanently deleted.',
-                'metadata' => ['income_source_id' => $sourceId, 'template_type' => $templateType],
+                'description' => 'A business/income source was permanently deleted.',
+                'metadata' => ['income_source_id' => $sourceId, 'co_maker_id' => $coMakerId, 'template_type' => $templateType, 'display_name' => $displayName],
                 'ip_address' => request()?->ip(), 'user_agent' => request()?->userAgent(),
             ]);
+
+            $source->forceDelete();
+            $this->completion->evaluateFolder($folder);
+            $this->progress->recalculate($folder);
         });
     }
 }

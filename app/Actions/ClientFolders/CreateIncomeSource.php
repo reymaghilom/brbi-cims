@@ -39,6 +39,7 @@ class CreateIncomeSource
                 'amount_applied' => $data['amount_applied'] ?? $cibiReport?->amount_applied,
                 'state' => RecordState::Draft,
                 'last_edited_by' => $actor->id,
+                'created_by' => $actor->id,
                 'revision' => 1,
                 'sort_order' => ((int) $folder->incomeSources()->max('sort_order')) + 1,
             ]);
@@ -61,7 +62,7 @@ class CreateIncomeSource
                 'user_id' => $actor->id, 'client_folder_id' => $folder->id,
                 'action' => 'income_source.created', 'module' => 'income_sources',
                 'description' => 'An income source was created.',
-                'metadata' => ['income_source_id' => $source->id, 'template_type' => $source->template_type, 'template_version' => $source->template_version],
+                'metadata' => ['income_source_id' => $source->id, 'co_maker_id' => $source->co_maker_id, 'template_type' => $source->template_type, 'template_version' => $source->template_version, 'display_name' => $source->displayName()],
                 'ip_address' => request()?->ip(), 'user_agent' => request()?->userAgent(),
             ]);
 

@@ -8,6 +8,7 @@
     @if($errors->any())<div class="mb-6 rounded-card border border-danger/30 bg-danger-soft p-4 text-sm text-danger" role="alert"><strong>Please correct the highlighted fields.</strong> No changes were saved.</div>@endif
     <form method="POST" action="{{ route('client-folders.income-sources.general.update', [$clientFolder, $incomeSource]) }}" class="space-y-6" data-unsaved-form>
         @csrf @method('PUT')
+        <input type="hidden" name="expected_revision" value="{{ $incomeSource->revision }}">
         <x-ui.form-section title="Report Header" description="Account Officer is report data only and does not affect folder ownership.">
             <x-form.input name="source_name" label="Record Name" :value="$incomeSource->source_name" required />
             <x-form.input name="applicant_name_snapshot" label="Applicant Name" :value="$incomeSource->applicant_name_snapshot" />

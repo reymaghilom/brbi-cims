@@ -23,13 +23,49 @@ class ClientFolder extends Model
         return ['status' => ClientFolderStatus::class, 'progress_percent' => 'decimal:2', 'completed_at' => 'datetime'];
     }
 
+    /**
+     * All active (non-trashed) folders are a shared CI team workspace: any known-role user
+     * may see them, so this is a no-op passthrough kept for its existing call sites.
+     * Trashed/recycled folders keep the original restrictive behavior — see scopeAccessibleToTrashed().
+     */
     public function scopeAccessibleTo(Builder $query, User $user): Builder
+    {
+        return $query;
+    }
+
+    /**
+     * Restrictive listing scope used only for trashed/recycled folders (recycle bin), which
+     * intentionally did not adopt the shared-workspace access model.
+     */
+    public function scopeAccessibleToTrashed(Builder $query, User $user): Builder
     {
         if ($user->role === UserRole::CreditInvestigator) {
             $query->where($query->qualifyColumn('assigned_ci_id'), $user->id);
         }
 
         return $query;
+    }
+
+    /**
+     * Single chokepoint for folder-level authorization, shared by ClientFolderPolicy and
+     * ClientFolderResourcePolicy. Any Credit Investigator may access any active folder
+     * (shared CI team workspace); trashed folders keep the original single-assignee rule.
+     */
+    public function isAccessibleBy(User $user): bool
+    {
+        if ($user->role === UserRole::Administrator) {
+            return true;
+        }
+
+        if ($user->role !== UserRole::CreditInvestigator) {
+            return false;
+        }
+
+        if ($this->trashed()) {
+            return $this->assigned_ci_id === $user->id;
+        }
+
+        return true;
     }
 
     public function assignedInvestigator(): BelongsTo
@@ -65,6 +101,16 @@ class ClientFolder extends Model
     public function cibiReport(): HasOne
     {
         return $this->hasOne(CibiReport::class);
+    }
+
+    /**
+     * A folder can hold more than one CI/BI report (one per co-maker, via the composite
+     * client_folder_id+co_maker_id unique key) — this plural relation exists so route
+     * scopeBindings() can resolve {clientFolder}/{cibiReport} by Laravel's naming convention.
+     */
+    public function cibiReports(): HasMany
+    {
+        return $this->hasMany(CibiReport::class);
     }
 
     public function coMakers(): HasMany

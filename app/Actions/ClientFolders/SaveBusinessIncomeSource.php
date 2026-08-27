@@ -3,16 +3,19 @@
 namespace App\Actions\ClientFolders;
 
 use App\Enums\RecordState;
+use App\Exceptions\NoChangesDetectedException;
 use App\Models\AuditLog;
 use App\Models\BusinessReport;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
 use App\Models\User;
+use App\Services\ClientFolders\CiParticipantService;
 use App\Services\ClientFolders\IncomeSourcesCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class SaveBusinessIncomeSource
 {
@@ -28,19 +31,33 @@ class SaveBusinessIncomeSource
         'competitors' => ['competitors', ['name', 'location', 'notes'], 'name'],
     ];
 
-    public function __construct(private readonly IncomeSourcesCompletionEvaluator $completion, private readonly ClientProgressService $progress) {}
+    public function __construct(
+        private readonly IncomeSourcesCompletionEvaluator $completion,
+        private readonly ClientProgressService $progress,
+        private readonly CiParticipantService $participants,
+        private readonly UpdateIncomeSourceContributors $updateContributors,
+    ) {}
 
     public function execute(User $actor, ClientFolder $folder, IncomeSource $source, array $data): IncomeSource
     {
         return DB::transaction(function () use ($actor, $folder, $source, $data): IncomeSource {
+            if (filled($data['expected_revision'] ?? null) && (int) $data['expected_revision'] !== $source->revision) {
+                throw ValidationException::withMessages([
+                    'expected_revision' => 'This record has been updated by another CI. Please review the latest version before saving.',
+                ]);
+            }
+
+            // Present the moment this Action starts if it's running as part of the very first
+            // save (right after CreateIncomeSource, same request) — no-change detection never
+            // applies to that first save, only to later edits of an already-saved record.
+            $isFirstSave = $source->wasRecentlyCreated;
+
             $source->fill(Arr::only($data, self::SOURCE_FIELDS));
-            $source->state = $data['intent'] === 'complete' ? RecordState::Complete : RecordState::Draft;
-            $source->last_edited_by = $actor->id;
-            $source->revision++;
-            $source->save();
+            $sourceFieldsChanged = $source->isDirty(self::SOURCE_FIELDS);
 
             $report = $source->businessReport()->firstOrCreate([], ['business_name' => $source->business_name ?: $source->source_name, 'report_category' => $source->template->business_category ?: $source->template->name]);
             $report->fill(Arr::only($data, self::REPORT_FIELDS));
+            $reportFieldsChanged = $report->isDirty(self::REPORT_FIELDS);
             $report->save();
             $tags = $source->template->businessReportSchema() !== [] ? [] : ($source->template->compatibility_tags ?? []);
             $changes = [];
@@ -57,6 +74,32 @@ class SaveBusinessIncomeSource
                 $changes['properties'] = $this->sync($report->properties(), $data['properties'] ?? [], ['property_type', 'is_declared', 'is_inspected', 'reason_not_inspected', 'units_available', 'units_with_tenants', 'location', 'area_square_meters', 'has_contract', 'remarks'], 'property_type');
             }
 
+            $childrenChanged = collect($changes)->contains(fn (array $c): bool => $c['created'] > 0 || $c['updated'] > 0 || $c['deleted'] > 0);
+
+            // The companion CI picker submits contributor_ids alongside every save (see
+            // UpdateBusinessIncomeSourceRequest's contributor_ids_present marker), so the primary
+            // creator's own no-change semantics must not fire just because the picker was present
+            // in the request — only an actual add/remove counts as a change here. This is only a
+            // read-only preview: the actual sync happens further below, after $source->save() —
+            // UpdateIncomeSourceContributors::execute() ends with $source->refresh(), which would
+            // otherwise silently discard the source_name/business_name/etc. fill() above before
+            // they're ever persisted.
+            $companionIds = array_key_exists('contributor_ids', $data) ? array_map('intval', (array) $data['contributor_ids']) : null;
+            $participantsChanged = $companionIds !== null && $this->participants->wouldChangeCompanions($source, $companionIds);
+
+            if (! $isFirstSave && ! $sourceFieldsChanged && ! $reportFieldsChanged && ! $childrenChanged && ! $participantsChanged) {
+                throw new NoChangesDetectedException('Nothing changed. No updates were saved to the database.');
+            }
+
+            $source->state = $data['intent'] === 'complete' ? RecordState::Complete : RecordState::Draft;
+            $source->last_edited_by = $actor->id;
+            $source->revision++;
+            $source->save();
+
+            if ($companionIds !== null) {
+                $this->updateContributors->execute($actor, $folder, $source, $companionIds);
+            }
+
             $report->update([
                 'properties_declared' => $report->properties()->where('is_declared', true)->count(),
                 'properties_inspected' => $report->properties()->where('is_inspected', true)->count(),
@@ -68,14 +111,14 @@ class SaveBusinessIncomeSource
                 'user_id' => $actor->id, 'client_folder_id' => $folder->id,
                 'action' => 'business_report.updated', 'module' => 'income_sources',
                 'description' => 'A dedicated business report was updated.',
-                'metadata' => ['income_source_id' => $source->id, 'business_report_id' => $report->id, 'revision' => $source->revision, 'state' => $source->state->value, 'child_changes' => $changes],
+                'metadata' => ['income_source_id' => $source->id, 'co_maker_id' => $source->co_maker_id, 'business_report_id' => $report->id, 'revision' => $source->revision, 'state' => $source->state->value, 'child_changes' => $changes, 'display_name' => $source->displayName()],
                 'ip_address' => request()?->ip(), 'user_agent' => request()?->userAgent(),
             ]);
             AuditLog::create([
                 'user_id' => $actor->id, 'client_folder_id' => $folder->id,
                 'action' => 'income_source.updated', 'module' => 'income_sources',
                 'description' => 'An income source was updated.',
-                'metadata' => ['income_source_id' => $source->id, 'template_type' => $source->template_type, 'revision' => $source->revision, 'state' => $source->state->value],
+                'metadata' => ['income_source_id' => $source->id, 'co_maker_id' => $source->co_maker_id, 'template_type' => $source->template_type, 'revision' => $source->revision, 'state' => $source->state->value],
                 'ip_address' => request()?->ip(), 'user_agent' => request()?->userAgent(),
             ]);
 
@@ -86,7 +129,14 @@ class SaveBusinessIncomeSource
     private function sync(HasMany $relation, array $rows, array $fields, string $required): array
     {
         $changes = ['created' => 0, 'updated' => 0, 'deleted' => 0];
-        if ($relation->getRelated()->getTable() === 'business_observations') {
+        $isObservations = $relation->getRelated()->getTable() === 'business_observations';
+        $originalCodes = [];
+        if ($isObservations) {
+            // A row's observation_code has to move out of the way via a temporary value first so
+            // two rows can safely swap codes without a unique-constraint collision — captured here
+            // (before that happens) so real changes can still be told apart from a same-code
+            // resubmission once the temp value is fixed back up below.
+            $originalCodes = $relation->get()->pluck('observation_code', 'id')->all();
             $relation->whereIn('id', collect($rows)->pluck('id')->filter())->get()->each(fn ($row) => $row->update(['observation_code' => '__pending_'.$row->id]));
         }
         foreach ($rows as $index => $row) {
@@ -95,8 +145,19 @@ class SaveBusinessIncomeSource
             $payload = Arr::only($row, $fields) + ['sort_order' => $index + 1];
             if ($id) {
                 $model = $relation->findOrFail($id);
-                $delete ? $model->delete() : $model->update($payload);
-                $changes[$delete ? 'deleted' : 'updated']++;
+                if ($delete) {
+                    $model->delete();
+                    $changes['deleted']++;
+                    continue;
+                }
+                $model->fill($payload);
+                $meaningfullyChanged = $isObservations
+                    ? $model->isDirty(array_diff($fields, ['observation_code'])) || ($originalCodes[$id] ?? null) !== ($payload['observation_code'] ?? null)
+                    : $model->isDirty();
+                $model->save();
+                if ($meaningfullyChanged) {
+                    $changes['updated']++;
+                }
             } elseif (! $delete && filled($row[$required] ?? null)) {
                 $relation->create($payload);
                 $changes['created']++;
@@ -119,11 +180,16 @@ class SaveBusinessIncomeSource
                 abort_if($tenant === null, 404);
                 if ($delete) {
                     $tenant->delete();
+                    $changes['deleted']++;
                 } else {
                     $tenant->business_property_id = $property->id;
-                    $tenant->fill($payload)->save();
+                    $tenant->fill($payload);
+                    $meaningfullyChanged = $tenant->isDirty();
+                    $tenant->save();
+                    if ($meaningfullyChanged) {
+                        $changes['updated']++;
+                    }
                 }
-                $changes[$delete ? 'deleted' : 'updated']++;
             } elseif (! $delete && $property && filled($row['tenant_name'] ?? null)) {
                 $property->tenants()->create($payload);
                 $changes['created']++;

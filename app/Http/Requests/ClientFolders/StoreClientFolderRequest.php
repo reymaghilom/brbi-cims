@@ -19,7 +19,7 @@ class StoreClientFolderRequest extends FormRequest
     {
         $assignmentRules = $this->user()->role === UserRole::Administrator
             ? [
-                'required',
+                'nullable',
                 'integer',
                 Rule::exists('users', 'id')->where(fn ($query) => $query
                     ->where('role', UserRole::CreditInvestigator->value)

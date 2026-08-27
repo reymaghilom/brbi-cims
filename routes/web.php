@@ -10,6 +10,7 @@ use App\Http\Controllers\Auth\RequiredPasswordChangeController;
 use App\Http\Controllers\BusinessCheckController;
 use App\Http\Controllers\CiActivityController;
 use App\Http\Controllers\CibiReportController;
+use App\Http\Controllers\CibiSignatoryReassignmentController;
 use App\Http\Controllers\ClientFolderAccessController;
 use App\Http\Controllers\ClientFolderController;
 use App\Http\Controllers\ClientFolderLiveSearchController;
@@ -20,6 +21,7 @@ use App\Http\Controllers\ClientFolderSuggestionController;
 use App\Http\Controllers\ClientInformationController;
 use App\Http\Controllers\CoMakerController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\EditingPresenceController;
 use App\Http\Controllers\GeneratedReportController;
 use App\Http\Controllers\IncomeSourceController;
 use App\Http\Controllers\MediaReferenceController;
@@ -43,6 +45,9 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
 
     Route::middleware('password.changed')->group(function (): void {
         Route::get('/', DashboardController::class)->name('home');
+
+        Route::post('/editing-presence/heartbeat', [EditingPresenceController::class, 'heartbeat'])->name('editing-presence.heartbeat');
+        Route::post('/editing-presence/release', [EditingPresenceController::class, 'release'])->name('editing-presence.release');
 
         Route::view('/ci-activities', 'module-placeholder', ['title' => 'CI Activities'])->name('ci-activities.index');
         Route::view('/reports', 'module-placeholder', ['title' => 'Reports'])->name('reports.index');
@@ -97,16 +102,26 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
             ->name('client-folders.cibi-report.export-pdf');
         Route::post('/client-folders/{clientFolder}/cibi-report/export-excel', [GeneratedReportController::class, 'exportCibiExcel'])
             ->name('client-folders.cibi-report.export-excel');
+        Route::post('/client-folders/{clientFolder}/cibi-report/{cibiReport}/reassign-signatory', [CibiSignatoryReassignmentController::class, 'store'])
+            ->scopeBindings()
+            ->name('client-folders.cibi-report.reassign-signatory');
+        Route::get('/client-folders/{clientFolder}/cibi-report/{cibiReport}/history', [CibiSignatoryReassignmentController::class, 'history'])
+            ->scopeBindings()
+            ->name('client-folders.cibi-report.history');
         Route::get('/client-folders/{clientFolder}/income-sources', [IncomeSourceController::class, 'launch'])->name('client-folders.income-sources.index');
         Route::get('/client-folders/{clientFolder}/income-sources/manage', [IncomeSourceController::class, 'index'])->name('client-folders.income-sources.manage');
         Route::get('/client-folders/{clientFolder}/income-sources/new', [IncomeSourceController::class, 'selectTemplate'])->name('client-folders.income-sources.select-template');
         Route::get('/client-folders/{clientFolder}/income-sources/create', [IncomeSourceController::class, 'create'])->name('client-folders.income-sources.create');
         Route::post('/client-folders/{clientFolder}/income-sources', [IncomeSourceController::class, 'store'])->name('client-folders.income-sources.store');
+        // Static "quick-create" segment must be registered before the {incomeSource} wildcard
+        // routes below — same reason as the income-sources batch routes further down.
+        Route::post('/client-folders/{clientFolder}/income-sources/quick-create', [IncomeSourceController::class, 'quickCreate'])->name('client-folders.income-sources.quick-create');
         Route::get('/client-folders/{clientFolder}/income-sources/{incomeSource}', [IncomeSourceController::class, 'show'])->scopeBindings()->name('client-folders.income-sources.show');
         Route::get('/client-folders/{clientFolder}/income-sources/{incomeSource}/edit', [IncomeSourceController::class, 'edit'])->scopeBindings()->name('client-folders.income-sources.edit');
         Route::post('/client-folders/{clientFolder}/income-sources/{incomeSource}/businesses', [IncomeSourceController::class, 'addBusiness'])->scopeBindings()->name('client-folders.income-sources.businesses.store');
         Route::put('/client-folders/{clientFolder}/income-sources/{incomeSource}/general', [IncomeSourceController::class, 'updateGeneral'])->scopeBindings()->name('client-folders.income-sources.general.update');
         Route::put('/client-folders/{clientFolder}/income-sources/{incomeSource}/business', [IncomeSourceController::class, 'updateBusiness'])->scopeBindings()->name('client-folders.income-sources.business.update');
+        Route::put('/client-folders/{clientFolder}/income-sources/{incomeSource}/contributors', [IncomeSourceController::class, 'updateContributors'])->scopeBindings()->name('client-folders.income-sources.contributors.update');
         // Registered before the {incomeSource}/export-* routes below: those wildcard routes
         // share the exact same two-segment shape (X/export-pdf, X/export-excel), so if a
         // "batch/export-pdf" route were registered after them, Laravel's router — which tries
@@ -130,12 +145,16 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::get('/client-folders/{clientFolder}/residence-checks/create', [ResidenceCheckController::class, 'create'])->name('client-folders.residence-checks.create');
         Route::get('/client-folders/{clientFolder}/residence-checks/{residenceCheck}/edit', [ResidenceCheckController::class, 'edit'])->scopeBindings()->name('client-folders.residence-checks.edit');
         Route::get('/client-folders/{clientFolder}/residence-checks/{residenceCheck}/photos/{photo}', [ResidenceCheckController::class, 'photo'])->scopeBindings()->name('client-folders.residence-checks.photo');
+        Route::get('/client-folders/{clientFolder}/residence-checks/{residenceCheck}/map-screenshot', [ResidenceCheckController::class, 'mapScreenshot'])->scopeBindings()->name('client-folders.residence-checks.map-screenshot');
         Route::post('/client-folders/{clientFolder}/residence-checks', [ResidenceCheckController::class, 'store'])->name('client-folders.residence-checks.store');
+        Route::put('/client-folders/{clientFolder}/residence-checks/{residenceCheck}/contributors', [ResidenceCheckController::class, 'updateContributors'])->scopeBindings()->name('client-folders.residence-checks.contributors.update');
         Route::delete('/client-folders/{clientFolder}/residence-checks/{residenceCheck}', [ResidenceCheckController::class, 'destroy'])->scopeBindings()->name('client-folders.residence-checks.destroy');
         Route::get('/client-folders/{clientFolder}/business-checks/create', [BusinessCheckController::class, 'create'])->name('client-folders.business-checks.create');
         Route::get('/client-folders/{clientFolder}/business-checks/{businessCheck}/edit', [BusinessCheckController::class, 'edit'])->scopeBindings()->name('client-folders.business-checks.edit');
         Route::get('/client-folders/{clientFolder}/business-checks/{businessCheck}/photos/{photo}', [BusinessCheckController::class, 'photo'])->scopeBindings()->name('client-folders.business-checks.photo');
+        Route::get('/client-folders/{clientFolder}/business-checks/{businessCheck}/map-screenshot', [BusinessCheckController::class, 'mapScreenshot'])->scopeBindings()->name('client-folders.business-checks.map-screenshot');
         Route::post('/client-folders/{clientFolder}/business-checks', [BusinessCheckController::class, 'store'])->name('client-folders.business-checks.store');
+        Route::put('/client-folders/{clientFolder}/business-checks/{businessCheck}/contributors', [BusinessCheckController::class, 'updateContributors'])->scopeBindings()->name('client-folders.business-checks.contributors.update');
         Route::delete('/client-folders/{clientFolder}/business-checks/{businessCheck}', [BusinessCheckController::class, 'destroy'])->scopeBindings()->name('client-folders.business-checks.destroy');
         Route::get('/client-folders/{clientFolder}/generated-reports', [GeneratedReportController::class, 'index'])->name('client-folders.generated-reports.index');
         Route::get('/client-folders/{clientFolder}/generated-reports/preview', [GeneratedReportController::class, 'preview'])->name('client-folders.generated-reports.preview');

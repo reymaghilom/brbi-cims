@@ -12,7 +12,7 @@ class RouteAuthorizationTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_credit_investigator_cannot_access_another_investigators_folder_by_direct_url(): void
+    public function test_credit_investigator_can_access_another_investigators_folder_by_direct_url(): void
     {
         $ci = User::factory()->create();
         $otherCi = User::factory()->create();
@@ -20,20 +20,20 @@ class RouteAuthorizationTest extends TestCase
         $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id]);
 
         $this->actingAs($ci)->get(route('client-folders.show', $ownFolder))->assertOk();
-        $this->actingAs($ci)->get(route('client-folders.show', $otherFolder))->assertForbidden();
+        $this->actingAs($ci)->get(route('client-folders.show', $otherFolder))->assertOk();
     }
 
-    public function test_ci_folder_index_does_not_leak_other_assignments(): void
+    public function test_ci_folder_index_shows_all_active_folder_assignments(): void
     {
         $ci = User::factory()->create();
         $otherCi = User::factory()->create();
         ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'VISIBLE CLIENT']);
-        ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'HIDDEN CLIENT']);
+        ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'SHARED WORKSPACE CLIENT']);
 
         $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('VISIBLE CLIENT')
-            ->assertDontSee('HIDDEN CLIENT');
+            ->assertSee('SHARED WORKSPACE CLIENT');
     }
 
     public function test_administrator_can_access_active_folder_but_deleted_folder_is_not_in_normal_contents_route(): void

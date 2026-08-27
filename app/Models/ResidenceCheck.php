@@ -2,12 +2,14 @@
 
 namespace App\Models;
 
+use App\Services\ClientFolders\Contracts\HasCiParticipants;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class ResidenceCheck extends Model
+class ResidenceCheck extends Model implements HasCiParticipants
 {
     use HasFactory;
 
@@ -15,7 +17,7 @@ class ResidenceCheck extends Model
 
     protected function casts(): array
     {
-        return ['ci_date' => 'date'];
+        return ['ci_date' => 'date', 'latitude' => 'decimal:7', 'longitude' => 'decimal:7'];
     }
 
     public function clientFolder(): BelongsTo
@@ -33,8 +35,39 @@ class ResidenceCheck extends Model
         return $this->belongsTo(User::class, 'ci_user_id');
     }
 
+    public function updater(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'updated_by');
+    }
+
     public function photos(): HasMany
     {
         return $this->hasMany(ResidenceCheckPhoto::class)->orderBy('sort_order')->orderBy('id');
+    }
+
+    public function mapScreenshotUploader(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'map_screenshot_uploaded_by');
+    }
+
+    public function hasMapScreenshot(): bool
+    {
+        return filled($this->map_screenshot_path) || $this->hasCloudMapScreenshot();
+    }
+
+    /** True once the saved Map Screenshot was uploaded to Cloudinary (new uploads only — a historical screenshot keeps resolving through `map_screenshot_path` on local storage instead). */
+    public function hasCloudMapScreenshot(): bool
+    {
+        return filled($this->map_screenshot_cloud_public_id);
+    }
+
+    public function contributors(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'residence_check_contributors')->withPivot('position')->withTimestamps();
+    }
+
+    public function ciPrimaryUserId(): ?int
+    {
+        return $this->ci_user_id;
     }
 }

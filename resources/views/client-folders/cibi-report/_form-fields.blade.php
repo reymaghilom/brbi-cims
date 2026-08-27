@@ -4,7 +4,10 @@
         <img src="{{ asset('assets/branding/binhi-rural-bank-wordmark.png') }}" alt="Binhi Rural Bank Inc." class="h-auto w-40 shrink-0 object-contain sm:w-44">
     </div>
     <div class="cibi-excel-metadata mt-3 grid sm:grid-cols-2">
-        <div><span class="ui-label">CI-In Charge</span><p class="cibi-readonly-field uppercase">{{ $report?->investigator?->full_name ?? $clientFolder->assignedInvestigator->full_name }}</p></div>
+        <div>
+            <span class="ui-label">CI-In Charge</span>
+            <p class="cibi-readonly-field uppercase">{{ $report?->investigator?->full_name ?? auth()->user()?->full_name ?? '—' }}</p>
+        </div>
         <x-form.input name="branch_name" label="Branch" :value="$report?->branch_name" required />
         <x-form.input name="start_date" label="Start Date of CI" type="date" :value="$report?->start_date?->format('Y-m-d')" required />
         <x-form.input name="account_officer_name" label="Account Officer" :value="$report?->account_officer_name" required />
@@ -30,7 +33,7 @@
     <div class="cibi-section-heading cibi-personal-heading"><h2 id="validated-personal-title">I. Validated Personal Information</h2></div>
     <p class="cibi-section-note">Note: All names shall be in "Last Name, First Name, Middle Name" format.</p>
     <div class="cibi-excel-grid grid sm:grid-cols-2 lg:grid-cols-3">
-        <div class="sm:col-span-2"><label for="personal-snapshot-name-display" class="ui-label">Name of Client</label><input id="personal-snapshot-name-display" value="{{ data_get($personalSnapshot, 'name', $clientFolder->display_name) }}" class="ui-control bg-surface-muted" readonly aria-readonly="true"><input type="hidden" name="personal_snapshot[name]" value="{{ data_get($personalSnapshot, 'name', $clientFolder->display_name) }}"><x-form.validation-message for="personal_snapshot.name" /></div>
+        <div class="sm:col-span-2"><label for="personal-snapshot-name-display" class="ui-label">{{ ($activePerson ?? null) ? 'NAME OF COMAKER:' : 'NAME OF CLIENT:' }}</label><input id="personal-snapshot-name-display" value="{{ data_get($personalSnapshot, 'name', $clientFolder->display_name) }}" class="ui-control bg-surface-muted" readonly aria-readonly="true"><input type="hidden" name="personal_snapshot[name]" value="{{ data_get($personalSnapshot, 'name', $clientFolder->display_name) }}"><x-form.validation-message for="personal_snapshot.name" /></div>
         <x-form.input name="personal_snapshot.age" input-name="personal_snapshot[age]" label="Age" type="number" min="0" max="150" :value="data_get($personalSnapshot, 'age')" required />
         <x-form.input name="personal_snapshot.spouse_name" input-name="personal_snapshot[spouse_name]" label="Spouse's Name" :value="data_get($personalSnapshot, 'spouse_name')" class="sm:col-span-2" />
         <x-form.input name="personal_snapshot.spouse_age" input-name="personal_snapshot[spouse_age]" label="Spouse Age" type="number" min="0" max="150" :value="data_get($personalSnapshot, 'spouse_age')" />
@@ -86,4 +89,4 @@
 
 @include('client-folders.cibi-report._official-table', ['section' => 'income_summaries', 'title' => 'V. Income Sources Validation', 'addLabel' => 'Add Income Source', 'records' => $report?->incomeSourceSummaries ?? collect()])
 
-<section id="remarks-section" class="cibi-paper-section cibi-signatories scroll-mt-24"><div class="cibi-excel-grid grid sm:grid-cols-2"><div class="cibi-prepared-by"><span class="ui-label">Prepared By</span><p class="cibi-encoding-signatory-name uppercase" aria-label="Prepared by Credit Investigator">{{ $report?->investigator?->full_name ?? $clientFolder->assignedInvestigator->full_name }}</p><input type="hidden" name="prepared_by_name" value="{{ $report?->investigator?->full_name ?? $clientFolder->assignedInvestigator->full_name }}"><p class="cibi-signatory-role">CREDIT INVESTIGATOR</p></div><div><label for="noted_by_name" class="ui-label">Noted By</label><input id="noted_by_name" name="noted_by_name" value="{{ old('noted_by_name', $report?->noted_by_name) }}" class="ui-control bg-surface-muted" readonly aria-readonly="true"><x-form.validation-message for="noted_by_name" /><p class="cibi-signatory-role">CA1</p></div></div></section>
+<section id="remarks-section" class="cibi-paper-section cibi-signatories scroll-mt-24"><div class="cibi-excel-grid grid sm:grid-cols-2"><div class="cibi-prepared-by"><span class="ui-label">Prepared By</span><p class="cibi-encoding-signatory-name uppercase" aria-label="Prepared by Credit Investigator">{{ $report?->investigator?->full_name ?? auth()->user()?->full_name ?? '—' }}</p><input type="hidden" name="prepared_by_name" value="{{ $report?->investigator?->full_name ?? auth()->user()?->full_name }}"><p class="cibi-signatory-role">CREDIT INVESTIGATOR</p></div><div><label for="noted_by_name" class="ui-label">Noted By</label><input id="noted_by_name" name="noted_by_name" value="{{ old('noted_by_name', $report?->noted_by_name) }}" class="ui-control bg-surface-muted" readonly aria-readonly="true"><x-form.validation-message for="noted_by_name" /><p class="cibi-signatory-role">CA1</p></div></div></section>

@@ -3,14 +3,16 @@
 namespace App\Models;
 
 use App\Enums\RecordState;
+use App\Services\ClientFolders\Contracts\HasCiParticipants;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-class IncomeSource extends Model
+class IncomeSource extends Model implements HasCiParticipants
 {
     use HasFactory, SoftDeletes;
 
@@ -24,6 +26,31 @@ class IncomeSource extends Model
     public function clientFolder(): BelongsTo
     {
         return $this->belongsTo(ClientFolder::class);
+    }
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function lastEditor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'last_edited_by');
+    }
+
+    public function contributors(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'income_source_contributors')->withPivot('position')->withTimestamps();
+    }
+
+    /**
+     * Falls back to the owning ClientFolder's creator for legacy rows saved before this
+     * IncomeSource had its own created_by column — a real, already-known actor rather than a
+     * guess, so old business reports never end up with a blank primary CI.
+     */
+    public function ciPrimaryUserId(): ?int
+    {
+        return $this->created_by ?? $this->clientFolder?->created_by;
     }
 
     public function template(): BelongsTo

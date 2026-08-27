@@ -3,6 +3,7 @@
 namespace App\Services\Reports;
 
 use App\Models\ClientFolder;
+use App\Services\Media\ReportMediaResolver;
 use App\Services\Reports\Data\ReportRenderOptions;
 use Dompdf\Dompdf;
 use Dompdf\Options;
@@ -16,30 +17,42 @@ use Dompdf\Options;
  */
 class ResidenceBusinessCheckBatchPdfExporter
 {
+    public function __construct(private readonly ReportMediaResolver $mediaResolver) {}
+
     /** @param  array<int, array<string, mixed>>  $photoSections */
     public function generate(ClientFolder $folder, array $photoSections, string $title): string
     {
-        $html = view('reports.official.residence-business-check-batch', [
-            'photoSections' => $photoSections,
-            'pdfMode' => true,
-            'title' => $title,
-            'clientFolder' => $folder,
-            'personParams' => [],
-        ])->render();
+        try {
+            // Downloads any Cloudinary-backed item's bytes into a temp file right here, only now
+            // that a PDF genuinely needs them — see ReportMediaResolver's own docblock.
+            $photoSections = $this->mediaResolver->resolve($photoSections);
 
-        $options = new Options;
-        $options->set('defaultFont', 'DejaVu Sans');
-        $options->set('isRemoteEnabled', false);
-        $options->set('isPhpEnabled', false);
-        $options->set('chroot', [storage_path('app/private'), public_path()]);
-        $options->set('defaultMediaType', 'print');
+            $html = view('reports.official.residence-business-check-batch', [
+                'photoSections' => $photoSections,
+                'pdfMode' => true,
+                'title' => $title,
+                'clientFolder' => $folder,
+                'personParams' => [],
+            ])->render();
 
-        $render = ReportRenderOptions::brbiDefault();
-        $dompdf = new Dompdf($options);
-        $dompdf->setPaper([0, 0, $render->widthInches * 72, $render->heightInches * 72]);
-        $dompdf->loadHtml($html, 'UTF-8');
-        $dompdf->render();
+            $options = new Options;
+            $options->set('defaultFont', 'DejaVu Sans');
+            $options->set('isRemoteEnabled', false);
+            $options->set('isPhpEnabled', false);
+            $options->set('chroot', [storage_path('app/private'), public_path()]);
+            $options->set('defaultMediaType', 'print');
 
-        return $dompdf->output();
+            $render = ReportRenderOptions::brbiDefault();
+            $dompdf = new Dompdf($options);
+            $dompdf->setPaper([0, 0, $render->widthInches * 72, $render->heightInches * 72]);
+            $dompdf->loadHtml($html, 'UTF-8');
+            $dompdf->render();
+
+            return $dompdf->output();
+        } finally {
+            // Dompdf reads image bytes synchronously during render() above, so it's already safe
+            // to remove the resolver's temp files here — see ReportMediaResolver's own docblock.
+            $this->mediaResolver->cleanup();
+        }
     }
 }

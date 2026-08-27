@@ -28,6 +28,7 @@ class UpdateGeneralIncomeSourceRequest extends FormRequest
 
         return [
             'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
+            'expected_revision' => ['nullable', 'integer', 'min:0'],
             'intent' => ['required', Rule::in(['stay', 'return', 'complete'])],
             'source_name' => ['required', 'string', 'max:255'],
             'applicant_name_snapshot' => [Rule::requiredIf($complete), 'nullable', 'string', 'max:255'],

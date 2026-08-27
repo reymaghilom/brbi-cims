@@ -33,14 +33,18 @@ class ClientFolderAccessController extends Controller
         ]);
     }
 
-    public function show(ClientFolder $clientFolder, ClientFolderOverview $overview, CibiReportFormData $cibiFormData): View
+    public function show(ClientFolder $clientFolder, ClientFolderOverview $overview, CibiReportFormData $cibiFormData, ClientFolderCreationOptions $creationOptions): View
     {
         Gate::authorize('view', $clientFolder);
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
 
         $data = $overview->for($clientFolder, $activePerson);
 
-        return view('client-folders.show', $data + $cibiFormData->for($data['clientFolder'], $activePerson));
+        return view('client-folders.show', $data + $cibiFormData->for($data['clientFolder'], $activePerson) + [
+            // Empty for any non-Administrator — creditInvestigatorsFor() self-guards, so this
+            // never costs a query for the common (non-admin) case.
+            'reassignmentCandidates' => $creationOptions->creditInvestigatorsFor(request()->user()),
+        ]);
     }
 
     public function showIncomeSource(ClientFolder $clientFolder, IncomeSource $incomeSource): View

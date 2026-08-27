@@ -13,6 +13,7 @@ use App\Models\CibiReport;
 use App\Models\ClientAddress;
 use App\Models\ClientFolder;
 use App\Models\ClientInformation;
+use App\Models\CoMaker;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
@@ -32,7 +33,7 @@ class CibiReportTest extends TestCase
         $this->seed(ReferenceDataSeeder::class);
     }
 
-    public function test_access_is_limited_to_admin_and_assigned_ci_and_deleted_folders_are_unavailable(): void
+    public function test_access_is_shared_across_admin_and_any_ci_but_deleted_folders_are_unavailable(): void
     {
         $admin = User::factory()->administrator()->create();
         $assigned = User::factory()->create();
@@ -41,10 +42,251 @@ class CibiReportTest extends TestCase
 
         $this->actingAs($admin)->get(route('client-folders.cibi-report.edit', $folder))->assertOk();
         $this->actingAs($assigned)->get(route('client-folders.cibi-report.edit', $folder))->assertOk();
-        $this->actingAs($other)->get(route('client-folders.cibi-report.edit', $folder))->assertForbidden();
-        $this->actingAs($other)->put(route('client-folders.cibi-report.update', $folder), $this->payload())->assertForbidden();
+        $this->actingAs($other)->get(route('client-folders.cibi-report.edit', $folder))->assertOk();
+        $this->actingAs($other)->put(route('client-folders.cibi-report.update', $folder), $this->payload())->assertRedirect();
         $folder->delete();
         $this->actingAs($admin)->get(route('client-folders.cibi-report.edit', $folder->id))->assertNotFound();
+    }
+
+    public function test_signatory_is_the_first_saving_actor_and_stays_immutable_on_later_saves_by_others(): void
+    {
+        $folderCreator = User::factory()->create();
+        $firstSaver = User::factory()->create();
+        $secondSaver = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $folderCreator->id]);
+
+        $this->actingAs($firstSaver)->put(route('client-folders.cibi-report.update', $folder), $this->payload())->assertRedirect();
+        $report = CibiReport::where('client_folder_id', $folder->id)->sole();
+        $this->assertSame($firstSaver->id, $report->ci_in_charge_id);
+        $this->assertSame($firstSaver->id, $report->created_by);
+
+        $this->actingAs($secondSaver)->put(route('client-folders.cibi-report.update', $folder), $this->payload())->assertRedirect();
+        $report->refresh();
+        $this->assertSame($firstSaver->id, $report->ci_in_charge_id);
+        $this->assertSame($firstSaver->id, $report->created_by);
+    }
+
+    public function test_non_admin_cannot_reassign_an_existing_signatory(): void
+    {
+        $ci = User::factory()->create();
+        $newSignatory = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $this->payload());
+        $report = CibiReport::where('client_folder_id', $folder->id)->sole();
+
+        $this->actingAs($ci)->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
+            'new_signatory_id' => $newSignatory->id,
+            'reason' => 'Attempted reassignment by a non-admin.',
+        ])->assertForbidden();
+
+        $this->assertSame($ci->id, $report->fresh()->ci_in_charge_id);
+    }
+
+    public function test_admin_can_reassign_signatory_with_required_reason_and_preserves_created_by(): void
+    {
+        $ci = User::factory()->create();
+        $newSignatory = User::factory()->create();
+        $admin = User::factory()->administrator()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $this->payload());
+        $report = CibiReport::where('client_folder_id', $folder->id)->sole();
+
+        $this->actingAs($admin)->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
+            'reason' => 'Original investigator resigned.',
+        ])->assertSessionHasErrors('new_signatory_id');
+
+        $this->actingAs($admin)->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
+            'new_signatory_id' => $newSignatory->id,
+            'reason' => 'Original investigator resigned.',
+        ])->assertRedirect();
+
+        $report->refresh();
+        $this->assertSame($newSignatory->id, $report->ci_in_charge_id);
+        $this->assertSame($ci->id, $report->created_by);
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'cibi_report.signatory_reassigned',
+            'client_folder_id' => $folder->id,
+            'user_id' => $admin->id,
+        ]);
+    }
+
+    public function test_reassignment_requires_a_reason_and_history_is_visible_to_any_folder_accessible_ci(): void
+    {
+        $ci = User::factory()->create();
+        $other = User::factory()->create();
+        $newSignatory = User::factory()->create();
+        $admin = User::factory()->administrator()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $this->payload());
+        $report = CibiReport::where('client_folder_id', $folder->id)->sole();
+
+        $this->actingAs($admin)->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
+            'new_signatory_id' => $newSignatory->id,
+        ])->assertSessionHasErrors('reason');
+
+        $this->actingAs($admin)->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
+            'new_signatory_id' => $newSignatory->id,
+            'reason' => 'Transferred to another branch.',
+        ])->assertRedirect();
+
+        $this->actingAs($other)->get(route('client-folders.cibi-report.history', [$folder, $report]))
+            ->assertOk()
+            ->assertSee('Transferred to another branch.')
+            ->assertSee($admin->full_name);
+    }
+
+    public function test_concurrent_save_with_stale_revision_is_rejected(): void
+    {
+        $ci = User::factory()->create();
+        $other = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $this->payload());
+        $report = CibiReport::where('client_folder_id', $folder->id)->sole();
+        $this->assertSame(1, $report->revision);
+
+        // The other CI opened the form at revision 1 and saves first, advancing it to 2.
+        $this->actingAs($other)->put(route('client-folders.cibi-report.update', $folder), $this->payload() + ['expected_revision' => 1])->assertRedirect();
+        $this->assertSame(2, $report->fresh()->revision);
+
+        // The original CI's stale form (still expecting revision 1) must be rejected, not silently overwritten.
+        $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $this->payload() + ['expected_revision' => 1])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('expected_revision');
+    }
+
+    public function test_conflict_message_names_the_last_editor_when_available(): void
+    {
+        $ci = User::factory()->create();
+        $other = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $this->payload());
+        $report = CibiReport::where('client_folder_id', $folder->id)->sole();
+
+        $this->actingAs($other)->put(route('client-folders.cibi-report.update', $folder), $this->payload() + ['expected_revision' => 1])->assertRedirect();
+
+        $response = $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $this->payload() + ['expected_revision' => 1])
+            ->assertStatus(422);
+
+        $this->assertSame(
+            "{$other->full_name} updated this report while you were editing. Please review the latest version before saving again.",
+            $response->json('errors.expected_revision.0'),
+        );
+    }
+
+    public function test_unchanged_applicant_cibi_resubmission_reports_no_changes_without_bumping_revision_or_auditing(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $this->payload());
+        $report = CibiReport::where('client_folder_id', $folder->id)->sole();
+        $originalRevision = $report->revision;
+        $originalLastEditedBy = $report->last_edited_by;
+        $originalCiInCharge = $report->ci_in_charge_id;
+        $originalCreatedBy = $report->created_by;
+
+        $other = User::factory()->create();
+        $resubmission = $this->withChildIds($this->payload(), $report);
+        $response = $this->actingAs($other)->putJson(route('client-folders.cibi-report.update', $folder), $resubmission + ['expected_revision' => $report->revision])
+            ->assertOk();
+
+        $this->assertTrue($response->json('no_change'));
+        $this->assertStringContainsString('No changes detected', $response->json('message'));
+
+        $report->refresh();
+        $this->assertSame($originalRevision, $report->revision);
+        $this->assertSame($originalLastEditedBy, $report->last_edited_by);
+        $this->assertSame($originalCiInCharge, $report->ci_in_charge_id);
+        $this->assertSame($originalCreatedBy, $report->created_by);
+        $this->assertDatabaseMissing('audit_logs', ['client_folder_id' => $folder->id, 'action' => 'cibi_report.updated']);
+    }
+
+    public function test_unchanged_co_maker_cibi_resubmission_reports_no_changes_without_bumping_revision_or_auditing(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER PERSON']);
+        $payload = $this->payload() + ['co_maker_id' => $coMaker->id];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload);
+        $report = CibiReport::where('client_folder_id', $folder->id)->where('co_maker_id', $coMaker->id)->sole();
+
+        $resubmission = $this->withChildIds($payload, $report);
+        $response = $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $resubmission + ['expected_revision' => $report->revision])
+            ->assertOk();
+
+        $this->assertTrue($response->json('no_change'));
+        $this->assertSame(1, $report->fresh()->revision);
+        $this->assertDatabaseMissing('audit_logs', ['client_folder_id' => $folder->id, 'action' => 'cibi_report.updated']);
+
+        // A truly different exact Co-Maker's own report must never be touched by this check.
+        $otherCoMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'ANOTHER CO MAKER']);
+        $this->assertDatabaseMissing('cibi_reports', ['client_folder_id' => $folder->id, 'co_maker_id' => $otherCoMaker->id]);
+    }
+
+    public function test_real_cibi_change_still_updates_normally_after_no_change_detection_was_added(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $this->payload());
+        $report = CibiReport::where('client_folder_id', $folder->id)->sole();
+
+        $payload = $this->payload();
+        $payload['other_remarks'] = 'A genuinely different remark.';
+        $response = $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $payload + ['expected_revision' => $report->revision])
+            ->assertOk();
+
+        $this->assertFalse((bool) $response->json('no_change'));
+        $this->assertSame(2, $report->fresh()->revision);
+        $this->assertSame('A genuinely different remark.', $report->fresh()->other_remarks);
+        $this->assertDatabaseHas('audit_logs', ['client_folder_id' => $folder->id, 'action' => 'cibi_report.updated']);
+    }
+
+    public function test_stale_revision_conflict_still_wins_over_no_change_detection(): void
+    {
+        $ci = User::factory()->create();
+        $other = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $this->payload());
+        $report = CibiReport::where('client_folder_id', $folder->id)->sole();
+
+        // The other CI makes a real change first, advancing the revision.
+        $advancedPayload = $this->payload();
+        $advancedPayload['other_remarks'] = 'Advanced by another CI.';
+        $this->actingAs($other)->put(route('client-folders.cibi-report.update', $folder), $advancedPayload + ['expected_revision' => 1])->assertRedirect();
+        $this->assertSame(2, $report->fresh()->revision);
+
+        // The original CI's form is still byte-for-byte identical to what THEY originally loaded
+        // (unchanged from their perspective) but is now stale — the conflict must win, not a
+        // false "no changes" pass-through that would silently discard the other CI's real edit.
+        $response = $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $this->payload() + ['expected_revision' => 1])
+            ->assertStatus(422);
+
+        $this->assertNull($response->json('no_change'));
+        $response->assertJsonValidationErrors('expected_revision');
+        $this->assertSame('Advanced by another CI.', $report->fresh()->other_remarks);
+    }
+
+    public function test_two_cis_racing_to_create_the_same_brand_new_report_do_not_silently_overwrite_each_other(): void
+    {
+        $first = User::factory()->create();
+        $second = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $first->id]);
+
+        // Both CIs opened the CI/BI form while no report existed yet, so both forms carry a blank
+        // expected_revision — the second save must still be rejected, not silently overwrite the
+        // report the first CI just created.
+        $this->actingAs($first)->put(route('client-folders.cibi-report.update', $folder), $this->payload())->assertRedirect();
+        $report = CibiReport::where('client_folder_id', $folder->id)->sole();
+        $this->assertSame(1, $report->revision);
+
+        $response = $this->actingAs($second)->putJson(route('client-folders.cibi-report.update', $folder), $this->payload())
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('expected_revision');
+
+        $this->assertSame(
+            "{$first->full_name} updated this report while you were editing. Please review the latest version before saving again.",
+            $response->json('errors.expected_revision.0'),
+        );
+        $this->assertSame(1, $report->fresh()->revision);
     }
 
     public function test_client_information_is_reused_read_only_without_creating_report_on_get(): void
@@ -58,6 +300,176 @@ class CibiReportTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()
             ->assertSee('DELA CRUZ, JUAN')->assertSee('MARIA DELA CRUZ')->assertSee('123 Main Street')->assertDontSee('Existing Retail Store')->assertSee('Validated Personal Information');
         $this->assertDatabaseCount('cibi_reports', 0);
+    }
+
+    public function test_applicant_cibi_shows_name_of_client_label_and_the_folders_own_last_first_middle_format(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'DELA CRUZ, JUAN SANTOS']);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+
+        $this->assertStringContainsString('NAME OF CLIENT:', $content);
+        $this->assertStringNotContainsString('NAME OF COMAKER:', $content);
+        $this->assertStringContainsString('name="personal_snapshot[name]" value="DELA CRUZ, JUAN SANTOS"', $content);
+    }
+
+    public function test_co_maker_cibi_shows_name_of_co_maker_label_and_last_first_middle_format_from_structured_fields(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        // full_name deliberately stored in the older "First Middle Last" order used everywhere
+        // else in the app — the CI/BI report must never display this raw column directly, only
+        // the Last/First/Middle composition built from the structured name parts below.
+        $coMaker = CoMaker::create([
+            'client_folder_id' => $folder->id, 'full_name' => 'JUAN SANTOS DELA CRUZ',
+            'first_name' => 'Juan', 'middle_name' => 'Santos', 'last_name' => 'Dela Cruz',
+        ]);
+
+        $content = $this->actingAs($ci)
+            ->get(route('client-folders.cibi-report.edit', $folder).'?person=co-maker&co_maker_id='.$coMaker->id)
+            ->assertOk()->getContent();
+
+        $this->assertStringContainsString('NAME OF COMAKER:', $content);
+        $this->assertStringNotContainsString('NAME OF CLIENT:', $content);
+        $this->assertStringContainsString('name="personal_snapshot[name]" value="Dela Cruz, Juan Santos"', $content);
+        $this->assertStringNotContainsString('value="JUAN SANTOS DELA CRUZ"', $content);
+    }
+
+    public function test_co_maker_without_structured_name_parts_falls_back_to_full_name_instead_of_crashing(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'LEGACY CO MAKER']);
+
+        $content = $this->actingAs($ci)
+            ->get(route('client-folders.cibi-report.edit', $folder).'?person=co-maker&co_maker_id='.$coMaker->id)
+            ->assertOk()->getContent();
+
+        $this->assertStringContainsString('name="personal_snapshot[name]" value="LEGACY CO MAKER"', $content);
+    }
+
+    public function test_new_applicant_cibi_starts_with_three_default_rows_in_every_repeater_without_persisting_anything(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+
+        foreach (['bank_accounts', 'loan_records'] as $section) {
+            $this->assertSame(3, $this->countRepeaterRows($content, $section), $section);
+        }
+        // V. Income Sources Validation starts with just 1 blank starter row, not 3.
+        $this->assertSame(1, $this->countRepeaterRows($content, 'income_summaries'));
+
+        // Opening the brand-new form must never persist a report or any child rows — the starter
+        // rows are display-only defaults, dropped on save unless the encoder actually fills one in.
+        $this->assertDatabaseCount('cibi_reports', 0);
+        $this->assertDatabaseCount('cibi_bank_accounts', 0);
+        $this->assertDatabaseCount('cibi_loan_records', 0);
+        $this->assertDatabaseCount('cibi_income_sources', 0);
+    }
+
+    public function test_new_co_maker_cibi_starts_with_three_default_rows_and_stays_scoped_to_that_co_maker(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $target = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'TARGET CO MAKER']);
+        $other = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'OTHER CO MAKER']);
+
+        $content = $this->actingAs($ci)
+            ->get(route('client-folders.cibi-report.edit', $folder).'?person=co-maker&co_maker_id='.$target->id)
+            ->assertOk()->getContent();
+
+        foreach (['bank_accounts', 'loan_records'] as $section) {
+            $this->assertSame(3, $this->countRepeaterRows($content, $section), $section);
+        }
+        $this->assertSame(1, $this->countRepeaterRows($content, 'income_summaries'));
+        $this->assertDatabaseCount('cibi_reports', 0);
+
+        // A saved Applicant report with 1 real bank row must never bleed into, or be affected by,
+        // the other Co-Maker's brand-new (unsaved) form — independent scoping stays intact.
+        $applicantReport = CibiReport::factory()->create(['client_folder_id' => $folder->id, 'co_maker_id' => null, 'ci_in_charge_id' => $ci->id]);
+        $applicantReport->bankAccounts()->create(['institution' => 'Applicant Only Bank', 'sort_order' => 1]);
+
+        $otherContent = $this->actingAs($ci)
+            ->get(route('client-folders.cibi-report.edit', $folder).'?person=co-maker&co_maker_id='.$other->id)
+            ->assertOk()->getContent();
+
+        $this->assertSame(3, $this->countRepeaterRows($otherContent, 'bank_accounts'));
+        $this->assertStringNotContainsString('Applicant Only Bank', $otherContent);
+        $this->assertDatabaseCount('cibi_reports', 1);
+    }
+
+    public function test_existing_saved_cibi_report_loads_its_real_rows_padded_only_up_to_three(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $report = CibiReport::factory()->create(['client_folder_id' => $folder->id, 'ci_in_charge_id' => $ci->id]);
+        $report->bankAccounts()->create(['institution' => 'Real Saved Bank', 'sort_order' => 1]);
+        $report->bankAccounts()->create(['institution' => 'Second Saved Bank', 'sort_order' => 2]);
+        $report->loanRecords()->create(['institution' => 'Loan One', 'sort_order' => 1]);
+        $report->loanRecords()->create(['institution' => 'Loan Two', 'sort_order' => 2]);
+        $report->loanRecords()->create(['institution' => 'Loan Three', 'sort_order' => 3]);
+        $report->loanRecords()->create(['institution' => 'Loan Four', 'sort_order' => 4]);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+
+        $this->assertStringContainsString('Real Saved Bank', $content);
+        $this->assertStringContainsString('Second Saved Bank', $content);
+        // 2 real rows padded up to the 3-row minimum — never truncated, never duplicated.
+        $this->assertSame(3, $this->countRepeaterRows($content, 'bank_accounts'));
+        // 4 real rows already exceed the minimum — no padding added, all 4 still render.
+        $this->assertSame(4, $this->countRepeaterRows($content, 'loan_records'));
+        $this->assertStringContainsString('Loan Four', $content);
+
+        // Merely opening the edit page for an existing report must not create any new child rows.
+        $this->assertSame(2, $report->bankAccounts()->count());
+        $this->assertSame(4, $report->loanRecords()->count());
+    }
+
+    public function test_existing_saved_income_summaries_load_their_real_rows_without_forcing_a_single_default(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $report = CibiReport::factory()->create(['client_folder_id' => $folder->id, 'ci_in_charge_id' => $ci->id]);
+        $report->incomeSourceSummaries()->create(['source_name' => 'Saved Income One', 'sort_order' => 1]);
+        $report->incomeSourceSummaries()->create(['source_name' => 'Saved Income Two', 'sort_order' => 2]);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+
+        $this->assertStringContainsString('Saved Income One', $content);
+        $this->assertStringContainsString('Saved Income Two', $content);
+        // 2 real saved rows — never truncated back to 1, never padded with an extra blank row.
+        $this->assertSame(2, $this->countRepeaterRows($content, 'income_summaries'));
+        $this->assertSame(2, $report->incomeSourceSummaries()->count());
+    }
+
+    public function test_bank_loan_and_income_remarks_textareas_use_the_same_compact_row_height(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+
+        // A tall multi-row textarea forces every shorter sibling input in the same table row to
+        // stretch to match it (native table row-height equalization) — keeping all three
+        // remarks/findings textareas at the same compact height keeps rows in Sections II, IV,
+        // and V uniformly compact instead of one section being visibly loose relative to another.
+        $this->assertStringContainsString('aria-label="Relevant remarks" name="bank_accounts[0][relevant_remarks]" rows="2"', $content);
+        $this->assertStringContainsString('aria-label="Payment performance and relevant findings" name="loan_records[0][combined_findings]" rows="2"', $content);
+        $this->assertStringContainsString('aria-label="Key information" name="income_summaries[0][key_information]" rows="2"', $content);
+    }
+
+    private function countRepeaterRows(string $content, string $section): int
+    {
+        $start = strpos($content, 'id="'.$section.'-section"');
+        $this->assertNotFalse($start, "Missing section: $section");
+        $rowsStart = strpos($content, 'data-repeater-rows', $start);
+        $rowsEnd = strpos($content, '</tbody>', $rowsStart);
+        $body = substr($content, $rowsStart, $rowsEnd - $rowsStart);
+
+        return substr_count($body, '<tr data-repeater-row');
     }
 
     public function test_create_saves_one_report_and_all_repeatable_sections(): void
@@ -92,6 +504,7 @@ class CibiReportTest extends TestCase
             ['institution' => 'Second Bank', 'branch' => 'North'],
         ];
         $payload['loan_records'] = [['id' => $loan->id, '_delete' => '1']];
+        $payload['expected_revision'] = 1;
 
         $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
 
@@ -112,6 +525,7 @@ class CibiReportTest extends TestCase
         $bank = $report->bankAccounts()->sole();
         $payload = $this->payload();
         $payload['bank_accounts'] = [['id' => $bank->id, '_delete' => '1']];
+        $payload['expected_revision'] = 1;
 
         $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $payload)
             ->assertOk()
@@ -145,6 +559,7 @@ class CibiReportTest extends TestCase
         $payload['bank_accounts'][0]['institution'] = 'First Bank Updated';
         $payload['bank_accounts'][2]['id'] = $rowIds[2];
         $payload['bank_accounts'][2]['institution'] = 'Second Bank Updated';
+        $payload['expected_revision'] = 1;
         $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $payload)
             ->assertOk()
             ->assertJsonPath('message', 'CI/BI Report updated successfully.')
@@ -167,6 +582,7 @@ class CibiReportTest extends TestCase
         $payload = $this->payload();
         $payload['bank_accounts'][0]['id'] = $deletedId;
         $payload['bank_accounts'][0]['institution'] = 'Recovered Bank Row';
+        $payload['expected_revision'] = 1;
 
         $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $payload)
             ->assertOk()
@@ -251,7 +667,7 @@ class CibiReportTest extends TestCase
         $foreignBank = CibiBankAccount::create(['cibi_report_id' => $otherReport->id, 'institution' => 'Foreign Bank']);
 
         try {
-            app(SaveCibiReport::class)->execute($ci, $folder, array_replace($this->payload(), ['bank_accounts' => [['id' => $foreignBank->id, 'institution' => 'Forged']]]));
+            app(SaveCibiReport::class)->execute($ci, $folder, array_replace($this->payload(), ['bank_accounts' => [['id' => $foreignBank->id, 'institution' => 'Forged']], 'expected_revision' => 1]));
             $this->fail('Expected child ownership failure.');
         } catch (ValidationException $exception) {
             $this->assertSame('This entry does not belong to this CI / BI report.', $exception->errors()['bank_accounts.0.id'][0]);
@@ -388,6 +804,7 @@ class CibiReportTest extends TestCase
         ]);
         $payload = $this->payload();
         $payload['branch_name'] = 'UPDATED BRANCH';
+        $payload['expected_revision'] = 4;
 
         $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $payload)
             ->assertOk()
@@ -421,6 +838,10 @@ class CibiReportTest extends TestCase
                 $payload[$section][$index]['id'] = $id;
             }
         }
+        $payload['expected_revision'] = 1;
+        // A genuine edit, not a byte-for-byte resubmission — no-change detection would otherwise
+        // correctly reject an identical second save rather than bump the revision.
+        $payload['other_remarks'] = 'Second save remark.';
 
         $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $payload)
             ->assertOk()
@@ -732,6 +1153,7 @@ class CibiReportTest extends TestCase
         $payload['bank_accounts'][0]['capital_share_text'] = 'Share capital only';
         $payload['loan_records'][0]['cycle_label'] = 'Renewal';
         $payload['loan_records'][0]['combined_findings'] = 'Prompt payer; no adverse findings';
+        $payload['expected_revision'] = 1;
 
         $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $payload)->assertOk()
             ->assertJsonPath('report.institutions_checked', 8)
@@ -890,6 +1312,29 @@ class CibiReportTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()
             ->assertSee('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;', false)
             ->assertDontSee('<script>alert("x")</script>', false);
+    }
+
+    /**
+     * A payload() fixture has no idea which database ids its single-row sections were saved as —
+     * without wiring them back in, resubmitting the exact same values would still look like a
+     * brand-new row to create (no id), not an unchanged existing one.
+     */
+    private function withChildIds(array $payload, CibiReport $report): array
+    {
+        $ids = [
+            'bank_accounts' => $report->bankAccounts()->orderBy('sort_order')->pluck('id')->all(),
+            'loan_records' => $report->loanRecords()->orderBy('sort_order')->pluck('id')->all(),
+            'credit_checks' => $report->creditChecks()->orderBy('sort_order')->pluck('id')->all(),
+            'income_summaries' => $report->incomeSourceSummaries()->orderBy('sort_order')->pluck('id')->all(),
+            'legal_findings' => $report->legalFindings()->orderBy('sort_order')->pluck('id')->all(),
+        ];
+        foreach ($ids as $section => $sectionIds) {
+            foreach ($sectionIds as $index => $id) {
+                $payload[$section][$index]['id'] = $id;
+            }
+        }
+
+        return $payload;
     }
 
     private function payload(string $intent = 'complete'): array

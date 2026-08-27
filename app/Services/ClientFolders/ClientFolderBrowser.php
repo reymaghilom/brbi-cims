@@ -16,7 +16,7 @@ class ClientFolderBrowser
 
         $query = ClientFolder::query()
             ->accessibleTo($user)
-            ->with(['assignedInvestigator:id,full_name'])
+            ->with(['assignedInvestigator:id,full_name', 'creator:id,full_name', 'updater:id,full_name'])
             ->select([
                 'id',
                 'folder_number',
@@ -24,6 +24,8 @@ class ClientFolderBrowser
                 'last_name',
                 'first_name',
                 'assigned_ci_id',
+                'created_by',
+                'updated_by',
                 'status',
                 'progress_percent',
                 'created_at',

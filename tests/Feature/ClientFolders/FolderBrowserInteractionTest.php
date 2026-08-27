@@ -21,20 +21,20 @@ class FolderBrowserInteractionTest extends TestCase
             ->assertSessionHasErrors('context');
     }
 
-    public function test_live_search_returns_reflowable_authorized_folder_markup_without_folder_numbers(): void
+    public function test_live_search_returns_reflowable_folder_markup_across_the_shared_workspace_without_folder_numbers(): void
     {
         $ci = User::factory()->create();
         $otherCi = User::factory()->create();
         ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'MARIA SANTOS', 'folder_number' => 'PRIVATE-NUMBER-1']);
         ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'JUAN REYES', 'folder_number' => 'PRIVATE-NUMBER-2']);
-        ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'MARICEL PRIVATE', 'folder_number' => 'PRIVATE-NUMBER-3']);
+        ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'MARICEL SHARED', 'folder_number' => 'PRIVATE-NUMBER-3']);
 
         $this->actingAs($ci)
             ->get(route('client-folders.live-search', ['search' => 'MAR', 'context' => 'dashboard']))
             ->assertOk()
             ->assertSee('MARIA SANTOS')
             ->assertDontSee('JUAN REYES')
-            ->assertDontSee('MARICEL PRIVATE')
+            ->assertSee('MARICEL SHARED')
             ->assertDontSee('PRIVATE-NUMBER-1')
             ->assertDontSee('PRIVATE-NUMBER-2')
             ->assertDontSee('PRIVATE-NUMBER-3')
@@ -82,11 +82,23 @@ class FolderBrowserInteractionTest extends TestCase
         $administrator = User::factory()->administrator()->create();
         $assignedCi = User::factory()->create();
 
+        // No mandatory Primary CI at folder level — an Administrator may leave it unassigned.
         $this->actingAs($administrator)
             ->postJson(route('client-folders.store'), [
                 'last_name' => 'Santos',
                 'first_name' => 'Ana',
                 'middle_name' => 'Reyes',
+            ])
+            ->assertCreated();
+        $this->assertNull(ClientFolder::sole()->assigned_ci_id);
+        ClientFolder::sole()->forceDelete();
+
+        $this->actingAs($administrator)
+            ->postJson(route('client-folders.store'), [
+                'last_name' => 'Santos',
+                'first_name' => 'Ana',
+                'middle_name' => 'Reyes',
+                'assigned_ci_id' => $administrator->id,
             ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('assigned_ci_id');
@@ -118,17 +130,17 @@ class FolderBrowserInteractionTest extends TestCase
         $this->assertTrue(ClientFolder::withTrashed()->findOrFail($folder->id)->trashed());
     }
 
-    public function test_ajax_actions_preserve_cross_ci_authorization(): void
+    public function test_ajax_actions_allow_any_ci_to_act_on_a_folder_assigned_to_another_ci(): void
     {
         $assigned = User::factory()->create();
         $otherCi = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $assigned->id]);
 
         $this->actingAs($otherCi)
-            ->patchJson(route('client-folders.update-name', $folder), ['display_name' => 'FORGED'])
-            ->assertForbidden();
+            ->patchJson(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED BY OTHER CI'])
+            ->assertOk();
         $this->actingAs($otherCi)
             ->deleteJson(route('client-folders.destroy', $folder))
-            ->assertForbidden();
+            ->assertOk();
     }
 }

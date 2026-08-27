@@ -33,23 +33,23 @@
             </div>
         </x-ui.form-section>
 
-        <x-ui.form-section title="Primary Credit Investigator" description="One primary investigator owns the folder in the initial BRBI workflow." class="mt-6">
+        <x-ui.form-section title="Credit Investigator" description="Client Folders are a shared workspace — every Credit Investigator can open and work on any active folder." class="mt-6">
             @if(auth()->user()->role === App\Enums\UserRole::Administrator)
                 <div class="sm:col-span-2">
-                    <label for="assigned_ci_id" class="ui-label">Assigned Credit Investigator <span class="text-danger" aria-hidden="true">*</span></label>
-                    <select id="assigned_ci_id" name="assigned_ci_id" class="ui-control" required aria-describedby="assigned_ci_id-help assigned_ci_id-error">
-                        <option value="">Select an active Credit Investigator</option>
+                    <label for="assigned_ci_id" class="ui-label">Credit Investigator <span class="font-normal text-text-muted">(optional)</span></label>
+                    <select id="assigned_ci_id" name="assigned_ci_id" class="ui-control" aria-describedby="assigned_ci_id-help assigned_ci_id-error">
+                        <option value="">Leave unassigned</option>
                         @foreach($creditInvestigators as $investigator)
                             <option value="{{ $investigator->id }}" @selected((string) old('assigned_ci_id') === (string) $investigator->id)>{{ $investigator->full_name }}{{ $investigator->employee_id ? ' — '.$investigator->employee_id : '' }}</option>
                         @endforeach
                     </select>
-                    <p id="assigned_ci_id-help" class="ui-help">Only active Credit Investigator accounts are available.</p>
+                    <p id="assigned_ci_id-help" class="ui-help">This does not restrict who can access the folder — it is informational only.</p>
                     @error('assigned_ci_id')<p id="assigned_ci_id-error" class="mt-2 text-sm font-semibold text-danger" role="alert">{{ $message }}</p>@enderror
                 </div>
             @else
                 <div class="rounded-card border border-brand-primary/20 bg-brand-soft p-4 sm:col-span-2">
-                    <p class="text-sm font-semibold text-brand-primary">This folder will be assigned to your account.</p>
-                    <p class="mt-1 text-sm text-text-muted">{{ auth()->user()->full_name }}</p>
+                    <p class="text-sm font-semibold text-brand-primary">You'll be recorded as the creator of this folder.</p>
+                    <p class="mt-1 text-sm text-text-muted">{{ auth()->user()->full_name }} · every Credit Investigator can still open and work on it.</p>
                 </div>
             @endif
         </x-ui.form-section>

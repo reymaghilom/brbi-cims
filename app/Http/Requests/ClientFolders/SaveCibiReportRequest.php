@@ -29,6 +29,7 @@ class SaveCibiReportRequest extends FormRequest
     {
         $rules = [
             'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
+            'expected_revision' => ['nullable', 'integer', 'min:0'],
             'intent' => ['required', Rule::in(['complete'])],
             'start_date' => ['required', 'date', 'before_or_equal:today'],
             'submitted_date' => ['required', 'date', 'after_or_equal:start_date', 'before_or_equal:today'],
@@ -167,7 +168,7 @@ class SaveCibiReportRequest extends FormRequest
         }
         $folder = $this->route('clientFolder');
         $existingReport = $folder->cibiReport()->where('co_maker_id', $this->coMakerId())->first();
-        $normalized['prepared_by_name'] = $existingReport?->investigator?->full_name ?? $folder->assignedInvestigator->full_name;
+        $normalized['prepared_by_name'] = $existingReport?->investigator?->full_name ?? $this->user()->full_name;
         foreach (['purpose_remarks', 'negative_credit_findings', 'other_remarks'] as $field) {
             $normalized[$field] = $this->trimmed($this->input($field));
         }

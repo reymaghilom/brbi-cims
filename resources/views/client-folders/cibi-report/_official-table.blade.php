@@ -17,12 +17,11 @@
             return $row;
         })->all();
     }
-    // III (Bank / Financial Institution) always shows a minimum of 3 rows so encoders have room
-    // to work in without first clicking "Add" — the extra blank rows are display-only and are
-    // dropped on save (SaveCibiReport never persists a child row that has no id and no filled
-    // field). Every other section (including IV) shows only its actual saved rows, padded up to
-    // exactly 1 blank row only when there are none yet.
-    $minRows = $section === 'bank_accounts' ? 3 : 1;
+    // III (Bank) and IV (Loan) always show a minimum of 3 rows so encoders have room to work in
+    // without first clicking "Add". V (Income Sources Validation) starts with just 1 — the extra
+    // blank rows are display-only either way and are dropped on save (SaveCibiReport never
+    // persists a child row that has no id and no filled field).
+    $minRows = $section === 'income_summaries' ? 1 : 3;
     $rows = array_pad($rows, $minRows, []);
     $headers = match($section) {
         'bank_accounts' => ['Institution', 'Branch', 'Year Opened', 'ADB Level', 'CA / SA / Share Capital', 'Remarks', ''],

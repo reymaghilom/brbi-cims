@@ -26,7 +26,7 @@
                     :title="$clientFolder->display_name"
                     :number="$clientFolder->folder_number"
                     :deleted-at="$clientFolder->deleted_at->timezone(config('cims.display_timezone'))->format('M j, Y g:i A')"
-                    :assigned-ci="$clientFolder->assignedInvestigator->full_name"
+                    :assigned-ci="$clientFolder->assignedInvestigator?->full_name ?? '—'"
                     :deleted-by="$clientFolder->deletedBy?->full_name"
                     :restore-action="auth()->user()->can('restore', $clientFolder) ? route('recycle-bin.restore', $clientFolder) : null"
                     :purge-action="auth()->user()->can('forceDelete', $clientFolder) ? route('recycle-bin.destroy', $clientFolder) : null"

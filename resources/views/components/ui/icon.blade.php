@@ -24,6 +24,7 @@
         @case('check-circle') <circle cx="12" cy="12" r="8.5"/><path d="m8.25 12.25 2.5 2.5 5-5"/> @break
         @case('warning') <path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5m0 3h.01"/> @break
         @case('more') <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/> @break
+        @case('more-vertical') <circle cx="12" cy="5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.2" fill="currentColor" stroke="none"/> @break
         @case('search') <circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/> @break
         @case('open') <path d="M4 7.5h6l2 2h8v9H4v-11Z"/><path d="m13 14 2-2 2 2m-2-2v5"/> @break
         @case('edit') <path d="m4 20 4.2-1 10.4-10.4a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m13.8 7.4 3 3"/> @break
@@ -41,6 +42,9 @@
         @case('printer') <path d="M7 8V3.5h10V8"/><rect x="3.5" y="8" width="17" height="9" rx="1.5"/><rect x="7" y="13.5" width="10" height="7" rx="0.5"/> @break
         @case('home') <path d="m4 11 8-7 8 7"/><path d="M6 10v9.5h12V10"/><path d="M10 19.5V14h4v5.5"/> @break
         @case('building') <rect x="5" y="3.5" width="14" height="17" rx="1"/><path d="M8.5 7h1.5M14 7h1.5M8.5 11h1.5M14 11h1.5M8.5 15h1.5M14 15h1.5"/><path d="M10 20.5V17h4v3.5"/> @break
+        @case('pin') <path d="M12 21s7-7.58 7-12A7 7 0 0 0 5 9c0 4.42 7 12 7 12Z"/><circle cx="12" cy="9" r="2.5"/> @break
+        @case('upload') <path d="M12 20V9m0 0-3.5 3.5M12 9l3.5 3.5"/><path d="M4.5 16v2.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V16"/> @break
+        @case('locate') <circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/> @break
         @default <circle cx="12" cy="12" r="8"/> @break
     @endswitch
 </svg>

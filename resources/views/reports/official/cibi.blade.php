@@ -44,7 +44,7 @@
 </tbody></table>
 <table class="cibi-form-table cibi-personal"><tbody>
 <tr class="cibi-section-bar cibi-section-left"><th colspan="8">I. VALIDATED PERSONAL INFORMATION <small>(NOTE: All names shall be in "Last Name, First Name, Middle Name" format.)</small></th></tr>
-<tr><th>NAME OF CLIENT:</th><td colspan="5">{{ $document['client_name'] }}</td><th>AGE:</th><td>{{ $na($personal['age'] ?? null) }}</td></tr>
+<tr><th>{{ $cibi['name_label'] }}</th><td colspan="5">{{ $document['client_name'] }}</td><th>AGE:</th><td>{{ $na($personal['age'] ?? null) }}</td></tr>
 <tr><th>SPOUSE'S NAME:</th><td colspan="5">{{ $na($personal['spouse_name'] ?? null) }}</td><th>AGE:</th><td>{{ $na($personal['spouse_age'] ?? null) }}</td></tr>
 <tr><th>PRESENT ADDRESS:</th><td colspan="5">{{ $na($personal['present_address'] ?? null) }}</td><th>LENGTH OF STAY:</th><td>{{ $na($personal['length_of_stay_months'] ?? null) }}</td></tr>
 <tr><td colspan="4" class="cibi-options"><div class="cibi-choice-list"><span>{{ $choice($personal['residence_status'] ?? null, 'Owned', 'OWNED') }}</span><span>{{ $choice($personal['residence_status'] ?? null, 'Mortgaged', 'MORTGAGED') }}</span><span>{{ $choice($personal['residence_status'] ?? null, 'Rented', 'RENTED') }}</span><span>{{ $choice($personal['residence_status'] ?? null, 'Living with Parents', 'LIVING WITH PARENTS') }}</span></div></td><th>FROM:</th><td>{{ $na($personal['residence_status_from'] ?? null) }}</td><th>MONTHLY RENT:</th><td>{{ $na($personal['monthly_rent'] ?? null) }}</td></tr>

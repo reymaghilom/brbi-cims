@@ -29,7 +29,7 @@ class MediaReferenceTest extends TestCase
         Storage::fake('local');
     }
 
-    public function test_media_pages_are_scoped_to_the_administrator_or_assigned_investigator(): void
+    public function test_media_pages_are_shared_across_the_administrator_and_any_credit_investigator(): void
     {
         $assigned = User::factory()->create();
         $other = User::factory()->create();
@@ -37,15 +37,15 @@ class MediaReferenceTest extends TestCase
         $folder = $this->folderFor($assigned);
         $otherFolder = $this->folderFor($other);
         MediaReference::factory()->create(['client_folder_id' => $folder->id, 'uploaded_by' => $assigned->id, 'label' => 'Authorized Evidence']);
-        MediaReference::factory()->create(['client_folder_id' => $otherFolder->id, 'uploaded_by' => $other->id, 'label' => 'Private Foreign Evidence']);
+        MediaReference::factory()->create(['client_folder_id' => $otherFolder->id, 'uploaded_by' => $other->id, 'label' => 'Shared Workspace Evidence']);
 
         $this->actingAs($assigned)->get(route('client-folders.media.index', $folder))
-            ->assertOk()->assertSee('Authorized Evidence')->assertDontSee('Private Foreign Evidence');
+            ->assertOk()->assertSee('Authorized Evidence')->assertDontSee('Shared Workspace Evidence');
         $this->actingAs($assigned)->get(route('media.index'))
-            ->assertOk()->assertSee('Authorized Evidence')->assertDontSee('Private Foreign Evidence');
-        $this->actingAs($assigned)->get(route('client-folders.media.index', $otherFolder))->assertForbidden();
+            ->assertOk()->assertSee('Authorized Evidence')->assertSee('Shared Workspace Evidence');
+        $this->actingAs($assigned)->get(route('client-folders.media.index', $otherFolder))->assertOk();
         $this->actingAs($admin)->get(route('media.index'))
-            ->assertOk()->assertSee('Authorized Evidence')->assertSee('Private Foreign Evidence');
+            ->assertOk()->assertSee('Authorized Evidence')->assertSee('Shared Workspace Evidence');
     }
 
     public function test_image_upload_uses_private_safe_storage_thumbnail_and_audit_log(): void
@@ -174,7 +174,7 @@ class MediaReferenceTest extends TestCase
             ->assertOk()->assertSee('New site evidence');
     }
 
-    public function test_preview_download_update_and_remove_reject_forged_folder_or_foreign_ci_access(): void
+    public function test_preview_download_update_and_remove_reject_forged_folder_combinations(): void
     {
         $first = User::factory()->create();
         $second = User::factory()->create();
@@ -189,7 +189,8 @@ class MediaReferenceTest extends TestCase
         Storage::disk('local')->put('client-media/file.jpg', 'protected');
 
         $this->get(route('client-folders.media.content', [$firstFolder, $media]))->assertRedirect(route('login'));
-        $this->actingAs($second)->get(route('client-folders.media.content', [$firstFolder, $media]))->assertForbidden();
+        // Any CI may view media in the shared workspace — only mismatched folder/media combinations are rejected below.
+        $this->actingAs($second)->get(route('client-folders.media.content', [$firstFolder, $media]))->assertOk();
         $this->actingAs($first)->get(route('client-folders.media.content', [$secondFolder, $media]))->assertNotFound();
         $this->actingAs($first)->get(route('client-folders.media.download', [$secondFolder, $media]))->assertNotFound();
         $this->actingAs($first)->patch(route('client-folders.media.update', [$secondFolder, $media]), ['category' => 'other'])->assertNotFound();

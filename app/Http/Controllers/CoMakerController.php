@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Actions\ClientFolders\RemoveCoMaker;
 use App\Actions\ClientFolders\SaveCoMaker;
+use App\Exceptions\NoChangesDetectedException;
 use App\Http\Requests\ClientFolders\SaveCoMakerRequest;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
@@ -17,7 +18,18 @@ class CoMakerController extends Controller
     public function store(SaveCoMakerRequest $request, ClientFolder $clientFolder, SaveCoMaker $action): RedirectResponse|JsonResponse
     {
         $isEdit = filled($request->validated('co_maker_id'));
-        $coMaker = $action->execute($request->user(), $clientFolder, $request->validated());
+
+        try {
+            $coMaker = $action->execute($request->user(), $clientFolder, $request->validated());
+        } catch (NoChangesDetectedException $e) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => $e->getMessage(), 'no_change' => true]);
+            }
+
+            return redirect()->route('client-folders.show', $clientFolder)
+                ->with('status', $e->getMessage())->with('statusType', 'info');
+        }
+
         $message = $isEdit ? 'Co-Maker updated successfully.' : 'Co-Maker added successfully.';
 
         if ($request->expectsJson()) {

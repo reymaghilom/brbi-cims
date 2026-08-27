@@ -23,7 +23,7 @@ class PolicyMatrixTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_folder_backed_policies_follow_administrator_and_assigned_ci_access(): void
+    public function test_folder_backed_policies_are_shared_across_administrator_and_any_ci(): void
     {
         $administrator = User::factory()->administrator()->create();
         $assignedCi = User::factory()->create();
@@ -35,11 +35,11 @@ class PolicyMatrixTest extends TestCase
         foreach ($resources as $resource) {
             $this->assertTrue(Gate::forUser($administrator)->allows('view', $resource), $resource::class.' should be visible to Administrator.');
             $this->assertTrue(Gate::forUser($assignedCi)->allows('update', $resource), $resource::class.' should be editable by assigned CI.');
-            $this->assertFalse(Gate::forUser($otherCi)->allows('view', $resource), $resource::class.' leaked to another CI.');
+            $this->assertTrue(Gate::forUser($otherCi)->allows('view', $resource), $resource::class.' should be visible to any CI in the shared workspace.');
         }
     }
 
-    public function test_folder_policy_allows_expected_operations_and_reserves_permanent_delete(): void
+    public function test_folder_policy_allows_expected_operations_and_reserves_permanent_delete_and_restore(): void
     {
         $administrator = User::factory()->administrator()->create();
         $assignedCi = User::factory()->create();
@@ -52,7 +52,9 @@ class PolicyMatrixTest extends TestCase
         $this->assertTrue(Gate::forUser($assignedCi)->allows('delete', $folder));
         $this->assertFalse(Gate::forUser($assignedCi)->allows('forceDelete', $folder));
         $this->assertFalse(Gate::forUser($assignedCi)->allows('restore', $folder));
-        $this->assertFalse(Gate::forUser($otherCi)->allows('view', $folder));
+        $this->assertTrue(Gate::forUser($otherCi)->allows('view', $folder));
+        $this->assertFalse(Gate::forUser($otherCi)->allows('restore', $folder));
+        $this->assertFalse(Gate::forUser($otherCi)->allows('forceDelete', $folder));
         $this->assertTrue(Gate::forUser($assignedCi)->allows('create', ClientFolder::class));
     }
 

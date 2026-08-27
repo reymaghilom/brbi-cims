@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Actions\ClientFolders\RenameClientFolder;
+use App\Exceptions\NoChangesDetectedException;
 use App\Http\Requests\ClientFolders\RenameClientFolderRequest;
 use App\Models\ClientFolder;
 use Illuminate\Http\JsonResponse;
@@ -21,7 +22,16 @@ class ClientFolderNameController extends Controller
 
     public function update(RenameClientFolderRequest $request, ClientFolder $clientFolder, RenameClientFolder $action): RedirectResponse|JsonResponse
     {
-        $action->execute($request->user(), $clientFolder, $request->validated('display_name'));
+        try {
+            $action->execute($request->user(), $clientFolder, $request->validated('display_name'));
+        } catch (NoChangesDetectedException $e) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => $e->getMessage(), 'no_change' => true]);
+            }
+
+            return redirect()->route('client-folders.show', $clientFolder)
+                ->with('status', $e->getMessage())->with('statusType', 'info');
+        }
 
         if ($request->expectsJson()) {
             return response()->json([

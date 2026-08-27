@@ -24,7 +24,7 @@ class CreateClientFolder
         return DB::transaction(function () use ($actor, $data): ClientFolder {
             $assignedCiId = $actor->role === UserRole::CreditInvestigator
                 ? $actor->id
-                : (int) $data['assigned_ci_id'];
+                : (filled($data['assigned_ci_id'] ?? null) ? (int) $data['assigned_ci_id'] : null);
 
             $folder = ClientFolder::create([
                 'folder_number' => $this->numbers->next(now()->timezone(config('cims.display_timezone'))->year),

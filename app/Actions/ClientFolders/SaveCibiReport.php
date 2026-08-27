@@ -4,10 +4,12 @@ namespace App\Actions\ClientFolders;
 
 use App\Enums\PartyType;
 use App\Enums\RecordState;
+use App\Exceptions\NoChangesDetectedException;
 use App\Models\AuditLog;
 use App\Models\CibiReport;
 use App\Models\ClientFolder;
 use App\Models\User;
+use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CibiReportCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -34,6 +36,8 @@ class SaveCibiReport
     public function __construct(
         private readonly CibiReportCompletionEvaluator $completion,
         private readonly ClientProgressService $progress,
+        private readonly SyncResidenceCheckLocation $syncLocation,
+        private readonly SyncResidenceCheckCiDate $syncCiDate,
     ) {}
 
     public function execute(User $actor, ClientFolder $folder, array $data): CibiReport
@@ -41,23 +45,79 @@ class SaveCibiReport
         return DB::transaction(function () use ($actor, $folder, $data): CibiReport {
             $report = $folder->cibiReport()->firstOrNew(['co_maker_id' => $data['co_maker_id'] ?? null]);
             $created = ! $report->exists;
+
+            if (! $created) {
+                // A blank expected_revision means the form was opened when no report existed yet
+                // (firstOrNew found nothing at page-load time). If a report now exists here, someone
+                // else's save created it in the meantime — that is itself a conflict, since this
+                // submission's baseline (an empty report) is no longer the true baseline.
+                $baselineConflict = blank($data['expected_revision'] ?? null)
+                    || (int) $data['expected_revision'] !== $report->revision;
+
+                if ($baselineConflict) {
+                    $editorName = $report->lastEditor?->full_name;
+                    $message = $editorName
+                        ? "{$editorName} updated this report while you were editing. Please review the latest version before saving again."
+                        : 'This CI/BI Report was updated by another user while you were editing. Please review the latest version before saving again.';
+
+                    throw ValidationException::withMessages(['expected_revision' => $message]);
+                }
+            }
+
             $report->fill(Arr::only($data, self::REPORT_FIELDS));
-            $report->ci_in_charge_id = $report->ci_in_charge_id ?: $folder->assigned_ci_id;
             $report->party_type = $data['party_type'] ?? PartyType::Borrower->value;
+
+            $changes = [];
+            if (! $created) {
+                // Existing report: it already has an id, so children can be synced (and their
+                // real changes measured) before deciding whether to touch the parent record at
+                // all — sync() only ever writes a child row that's actually dirty, so running it
+                // here is safe regardless of the outcome below.
+                $fieldsChanged = $report->isDirty(array_merge(self::REPORT_FIELDS, ['party_type']));
+                foreach (self::CHILDREN as $input => [$relation, $fields]) {
+                    if (array_key_exists($input, $data)) {
+                        $changes[$input] = $this->sync($input, $report->{$relation}(), $data[$input], $fields);
+                    }
+                }
+                $childrenChanged = collect($changes)->contains(fn (array $c): bool => $c['created'] > 0 || $c['updated'] > 0 || $c['deleted'] > 0);
+
+                if (! $fieldsChanged && ! $childrenChanged) {
+                    throw new NoChangesDetectedException();
+                }
+            }
+
+            // The CI who first saves the report becomes its official signatory; later saves by
+            // other investigators must never reassign it (only an Administrator reassignment can).
+            $report->ci_in_charge_id = $report->ci_in_charge_id ?: $actor->id;
+            $report->created_by = $report->created_by ?: $actor->id;
             $report->last_edited_by = $actor->id;
             $report->revision = $created ? 1 : $report->revision + 1;
             $report->state = RecordState::Complete;
             $report->save();
 
-            $changes = [];
-            foreach (self::CHILDREN as $input => [$relation, $fields]) {
-                if (array_key_exists($input, $data)) {
-                    $changes[$input] = $this->sync($input, $report->{$relation}(), $data[$input], $fields);
+            if ($created) {
+                // A brand-new report has no prior state to compare against — no-change detection
+                // never applies to creates, so children are simply synced normally here instead.
+                foreach (self::CHILDREN as $input => [$relation, $fields]) {
+                    if (array_key_exists($input, $data)) {
+                        $changes[$input] = $this->sync($input, $report->{$relation}(), $data[$input], $fields);
+                    }
                 }
             }
 
             $this->completion->evaluate($report);
             $this->progress->recalculate($folder);
+
+            // Only the Applicant's own CI/BI Report feeds Residence Check's address resolution
+            // (PersonAddressResolver deliberately never consults a Co-Maker's CI/BI snapshot —
+            // co_makers.address is their sole authoritative source), so a Co-Maker's CI/BI save
+            // has nothing to synchronize for Location. CI Date is different: every person's own
+            // CI/BI Report Start Date is their Residence Check's CI Date source, Applicant and
+            // Co-Maker alike, so that sync always runs here.
+            if ($report->co_maker_id === null) {
+                $this->syncLocation->execute($folder, null);
+            }
+            $this->syncCiDate->execute($folder, ActivePersonResolver::resolve($folder, $report->co_maker_id));
 
             AuditLog::create([
                 'user_id' => $actor->id,
@@ -65,7 +125,7 @@ class SaveCibiReport
                 'action' => $created ? 'cibi_report.created' : 'cibi_report.updated',
                 'module' => 'cibi_report',
                 'description' => $created ? 'A CI / BI report was created.' : 'A CI / BI report was updated.',
-                'metadata' => ['report_id' => $report->id, 'revision' => $report->revision, 'state' => $report->state->value, 'child_changes' => $changes],
+                'metadata' => ['report_id' => $report->id, 'co_maker_id' => $report->co_maker_id, 'revision' => $report->revision, 'state' => $report->state->value, 'child_changes' => $changes],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
             ]);

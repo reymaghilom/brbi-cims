@@ -19,6 +19,7 @@ class SaveClientInformation
         private readonly ClientNameFormatter $names,
         private readonly ClientInformationCompletionEvaluator $completion,
         private readonly ClientProgressService $progress,
+        private readonly SyncResidenceCheckLocation $syncLocation,
     ) {}
 
     public function execute(User $actor, ClientFolder $folder, array $data): ClientInformation
@@ -42,6 +43,13 @@ class SaveClientInformation
             $changedAddressTypes = $this->syncAddresses($folder, $data['addresses'] ?? []);
             $this->completion->evaluate($folder, $information);
             $this->progress->recalculate($folder);
+
+            // The structured "present" address is only ever PersonAddressResolver's fallback
+            // (a CI/BI Report's own present_address wins when one exists), but Residence Check
+            // must still stay in sync for folders relying on this fallback.
+            if (in_array(AddressType::Present->value, $changedAddressTypes, true)) {
+                $this->syncLocation->execute($folder, null);
+            }
 
             AuditLog::create([
                 'user_id' => $actor->id,

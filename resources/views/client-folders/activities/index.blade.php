@@ -39,6 +39,7 @@
                     <dl class="mt-5 grid gap-x-5 gap-y-3 text-sm sm:grid-cols-2">
                         <div><dt class="font-semibold text-text-muted">Visit date</dt><dd class="mt-0.5">{{ $activity->visit_date?->timezone(config('cims.display_timezone'))->format('M j, Y') ?? 'Not recorded' }}</dd></div>
                         <div><dt class="font-semibold text-text-muted">Time</dt><dd class="mt-0.5">{{ $activity->time_in ? substr($activity->time_in, 0, 5) : '—' }} to {{ $activity->time_out ? substr($activity->time_out, 0, 5) : '—' }}</dd></div>
+                        <div><dt class="font-semibold text-text-muted">Assigned CI</dt><dd class="mt-0.5">{{ $activity->assignedInvestigator?->full_name ?? 'Unassigned' }}</dd></div>
                         <div><dt class="font-semibold text-text-muted">Visited by</dt><dd class="mt-0.5">{{ $activity->visited_by ?: 'Not recorded' }}</dd></div>
                         <div><dt class="font-semibold text-text-muted">Person met / contact</dt><dd class="mt-0.5">{{ $activity->person_met_contact ?: 'Not recorded' }}</dd></div>
                         <div><dt class="font-semibold text-text-muted">Notes</dt><dd class="mt-0.5">{{ $activity->notes_count }} recorded</dd></div>

@@ -53,6 +53,13 @@ return [
             'username' => env('DB_USERNAME', 'root'),
             'password' => env('DB_PASSWORD', ''),
             'unix_socket' => env('DB_SOCKET', ''),
+            // Without this, MySQL's own session time_zone is left at the server's own default
+            // (often "SYSTEM", i.e. whatever OS timezone the DB host happens to have) — completely
+            // independent of APP_TIMEZONE (UTC). That mismatch is what made DB-level
+            // CURRENT_TIMESTAMP defaults (used by AuditLog, which has no PHP-side timestamps)
+            // silently disagree with every other timestamp in the app. Forcing UTC here guarantees
+            // MySQL's own NOW()/CURRENT_TIMESTAMP matches APP_TIMEZONE exactly.
+            'timezone' => '+00:00',
             'charset' => env('DB_CHARSET', 'utf8mb4'),
             'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
             'prefix' => '',

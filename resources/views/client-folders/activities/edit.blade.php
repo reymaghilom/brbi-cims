@@ -22,9 +22,19 @@
             @csrf
             @method('PUT')
             <input type="hidden" name="co_maker_id" value="{{ $activePerson->id ?? '' }}">
+            <input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at?->toISOString() }}">
+
+            <div data-editing-presence data-editing-type="ci_activity" data-editing-id="{{ $activity->id }}" data-editing-label="Activity">
+                <div data-editing-presence-banner hidden role="status" class="flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft p-3 text-sm text-progress">
+                    <x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" />
+                    <span data-editing-presence-text></span>
+                </div>
+            </div>
+            <x-ui.record-meta :updated-by="$activity->updater?->full_name" :updated-at="$activity->updated_at" />
 
             <x-ui.form-section title="Activity Status and Visit" description="Visit details are optional for Not Started activities. Completed activities require visit date, visited by, and remarks.">
                 <x-form.select name="status" label="Internal Activity Status" :options="collect($statuses)->mapWithKeys(fn ($status) => [$status->value => str($status->value)->replace('_', ' ')->title()->toString()])->all()" :selected="$activity->status->value" required />
+                <x-form.select name="assigned_ci_id" label="Assigned CI" :options="$activeCreditInvestigators->pluck('full_name', 'id')->all()" :selected="$activity->assigned_ci_id" placeholder="Unassigned" help="Indicates responsibility only — every Credit Investigator can still view and work on this activity." />
                 <x-form.input name="visit_date" label="Visit Date" type="date" :value="$activity->visit_date?->format('Y-m-d')" />
                 <x-form.input name="time_in" label="Time In" type="time" :value="$activity->time_in ? substr($activity->time_in, 0, 5) : null" />
                 <x-form.input name="time_out" label="Time Out" type="time" :value="$activity->time_out ? substr($activity->time_out, 0, 5) : null" />

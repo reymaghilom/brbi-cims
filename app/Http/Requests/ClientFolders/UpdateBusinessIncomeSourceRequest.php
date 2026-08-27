@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests\ClientFolders;
 
+use App\Enums\UserRole;
+use App\Enums\UserStatus;
 use App\Models\IncomeSourceTemplate;
 use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
@@ -43,11 +45,24 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
         $hiddenProfileFields = (array) data_get($schema, 'hidden_profile_fields', []);
         $rules = [
             'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
+            'expected_revision' => ['nullable', 'integer', 'min:0'],
+            'contributor_ids' => ['sometimes', 'array', 'max:10'],
+            'contributor_ids.*' => [
+                'integer',
+                'distinct',
+                Rule::exists('users', 'id')->where(fn ($query) => $query
+                    ->where('role', UserRole::CreditInvestigator->value)
+                    ->where('status', UserStatus::Active->value)),
+            ],
             'intent' => ['required', Rule::in(['stay', 'return', 'complete'])],
             'source_name' => ['required', 'string', 'max:255'], 'business_name' => ['required', 'string', 'max:255'],
             'contribution_rank' => ['nullable', 'integer', 'min:1', 'max:65535'], 'estimated_monthly_contribution' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'], 'is_primary' => ['nullable', 'boolean'],
             'branch_name' => ['nullable', 'string', 'max:255'], 'account_officer_name' => ['nullable', 'string', 'max:255'],
-            'start_date' => ['nullable', 'date', 'before_or_equal:today'], 'submitted_date' => ['nullable', 'date', 'before_or_equal:today'],
+            // "Start Date of CI" is the authoritative shared CI Date also used by Business Check
+            // (see BusinessCheckController::form()'s $currentCiDate and SaveBusinessCheck's
+            // write-back) — required under the same condition as main_business_address below,
+            // since a business needing a full profile can't be considered checked without either.
+            'start_date' => [Rule::requiredIf($requiresProfile), 'nullable', 'date', 'before_or_equal:today'], 'submitted_date' => ['nullable', 'date', 'before_or_equal:today'],
             'report_category' => ['required', 'string', 'max:80'], 'main_business_address' => [Rule::requiredIf($requiresProfile), 'nullable', 'string', 'max:10000'],
             'previous_business_address' => ['nullable', 'string', 'max:10000'], 'previous_business_address_length_of_stay' => ['nullable', 'string', 'max:100'], 'reason_for_transfer' => ['nullable', 'string', 'max:10000'],
             'registered_owner' => [Rule::requiredIf($complete && $requiresProfile && ! $ownerOptional && ! in_array('registered_owner', $hiddenProfileFields, true)), 'nullable', 'string', 'max:255'], 'relationship_to_borrower' => ['nullable', 'string', 'max:255'],
@@ -117,6 +132,7 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             'report_remarks.required' => 'Business / Income Source Details are required before saving this report.',
             'business_name.required' => 'Business Name is required before saving this report.',
             'main_business_address.required' => 'Main Business Address is required before saving this report.',
+            'start_date.required' => 'CI Date (Start Date of CI) is required before saving this report.',
             'year_established.required' => 'Year Established is required before saving this report.',
             'template_data.fields.income_sources.required' => 'Please select at least one business/income source.',
             'template_data.fields.income_sources.min' => 'Please select at least one business/income source.',
@@ -178,6 +194,22 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        // The companion CI picker always renders this marker alongside its contributor_ids[]
+        // hidden inputs, even when zero companions are selected — without it, an all-removed
+        // submission would arrive with no contributor_ids key at all (browsers don't send empty
+        // arrays), which is indistinguishable from "the companion picker wasn't part of this
+        // submission" and would leave the last-saved companion list untouched instead of cleared.
+        if ($this->boolean('contributor_ids_present')) {
+            $this->merge([
+                'contributor_ids' => collect((array) $this->input('contributor_ids', []))
+                    ->filter(fn ($value): bool => filled($value))
+                    ->map(fn ($value): int => (int) $value)
+                    ->unique()
+                    ->values()
+                    ->all(),
+            ]);
+        }
+
         $data = ['is_primary' => filter_var($this->input('is_primary', false), FILTER_VALIDATE_BOOL)];
         foreach (['source_name', 'business_name', 'report_category', 'registered_owner', 'relationship_to_borrower', 'ownership_type', 'rented_from', 'previous_business_address_length_of_stay', 'business_type', 'scale', 'informant'] as $field) {
             $data[$field] = $this->short($this->input($field));

@@ -48,6 +48,33 @@ class BusinessBatchExportTest extends TestCase
             ->assertSee(route('client-folders.income-sources.batch-export-excel', $folder), false);
     }
 
+    public function test_each_saved_businesses_download_dropdown_is_the_floating_context_menu_scoped_to_its_own_record(): void
+    {
+        [$ci, $folder, $truck] = $this->createSource('leasing_truck_equipment');
+        [, , $agri] = $this->createSource('leasing_agricultural', $ci, $folder);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))->assertOk()->getContent();
+
+        // Every Download dropdown (batch + one per saved business, table and card variants) uses
+        // the shared floating context-menu component — the panel carries the JS positioning hook
+        // that keeps it anchored to its own trigger instead of participating in normal document
+        // flow inside the table's overflow-x-auto wrapper.
+        $this->assertGreaterThanOrEqual(5, substr_count($content, 'data-context-menu-panel'));
+
+        // Each business's own row/card is scoped between its "Edit business" trigger and the
+        // next one — its Download menu must submit only that exact business's own export forms,
+        // never another business's, even when multiple are saved side by side.
+        $truckRowStart = strpos($content, 'aria-label="Edit '.$truck->displayName().'"');
+        $agriRowStart = strpos($content, 'aria-label="Edit '.$agri->displayName().'"');
+        $this->assertNotFalse($truckRowStart);
+        $this->assertNotFalse($agriRowStart);
+        [$firstStart, $secondStart] = $truckRowStart < $agriRowStart ? [$truckRowStart, $agriRowStart] : [$agriRowStart, $truckRowStart];
+        $firstRow = substr($content, $firstStart, $secondStart - $firstStart);
+        $firstIsTruck = $firstStart === $truckRowStart;
+        $this->assertStringContainsString('business-'.($firstIsTruck ? $truck->id : $agri->id).'-export-pdf-form', $firstRow);
+        $this->assertStringNotContainsString('business-'.($firstIsTruck ? $agri->id : $truck->id).'-export-pdf-form', $firstRow);
+    }
+
     public function test_manage_page_with_no_saved_businesses_shows_the_empty_state_and_no_batch_panel(): void
     {
         $ci = User::factory()->create();
@@ -237,6 +264,7 @@ class BusinessBatchExportTest extends TestCase
             'source_name' => 'Co-Maker Business',
             'business_name' => 'Co-Maker Trucking',
             'main_business_address' => 'Co-Maker Street',
+            'start_date' => '2026-01-01',
             'year_established' => 2018,
             'co_maker_id' => $coMaker->id,
         ])->assertRedirect();
@@ -263,7 +291,7 @@ class BusinessBatchExportTest extends TestCase
         $this->assertSame(1, substr_count($coMakerHtml, 'class="business-batch-item"'));
     }
 
-    public function test_another_ci_cannot_batch_export_a_folder_they_are_not_assigned_to(): void
+    public function test_another_ci_can_batch_export_a_folder_they_are_not_assigned_to(): void
     {
         [$ci, $folder, $truck] = $this->createSource('leasing_truck_equipment');
         [, , $agri] = $this->createSource('leasing_agricultural', $ci, $folder);
@@ -271,7 +299,7 @@ class BusinessBatchExportTest extends TestCase
 
         $this->actingAs($other)
             ->post(route('client-folders.income-sources.batch-print', $folder), ['income_source_ids' => [$truck->id, $agri->id]])
-            ->assertForbidden();
+            ->assertOk();
     }
 
     private function createSource(string $templateType, ?User $ci = null, ?ClientFolder $folder = null): array
@@ -284,6 +312,7 @@ class BusinessBatchExportTest extends TestCase
             'source_name' => 'Income Source',
             'business_name' => 'Sample Business',
             'main_business_address' => 'Main Street',
+            'start_date' => '2026-01-01',
             'year_established' => 2015,
         ]);
 

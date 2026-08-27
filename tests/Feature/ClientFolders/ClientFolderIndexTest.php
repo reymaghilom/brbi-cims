@@ -33,35 +33,35 @@ class ClientFolderIndexTest extends TestCase
             ->assertDontSee('DELETED PRIVATE CLIENT');
     }
 
-    public function test_credit_investigator_sees_only_assigned_folders_and_no_cross_ci_statistics(): void
+    public function test_credit_investigator_sees_all_active_folders_regardless_of_assignment(): void
     {
         $ci = User::factory()->create();
         $otherCi = User::factory()->create();
         ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'AUTHORIZED CLIENT']);
-        ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'PRIVATE OTHER CLIENT']);
+        ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'SHARED WORKSPACE CLIENT']);
 
         $response = $this->actingAs($ci)->get(route('client-folders.index'));
 
         $response->assertOk()
             ->assertSee('AUTHORIZED CLIENT')
-            ->assertDontSee('PRIVATE OTHER CLIENT')
-            ->assertSee('Showing 1&ndash;1 of 1', false);
-        $this->assertSame(1, $response->viewData('clientFolders')->total());
+            ->assertSee('SHARED WORKSPACE CLIENT')
+            ->assertSee('Showing 1&ndash;2 of 2', false);
+        $this->assertSame(2, $response->viewData('clientFolders')->total());
     }
 
-    public function test_search_matches_client_name_only_inside_authorized_scope(): void
+    public function test_search_matches_client_name_across_all_active_folders(): void
     {
         $ci = User::factory()->create();
         $otherCi = User::factory()->create();
         ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'SANTOS, MARIA', 'folder_number' => 'BRBI-CI-2026-71001']);
         ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'REYES, JUAN', 'folder_number' => 'BRBI-CI-2026-71002']);
-        ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'SANTOS, PRIVATE', 'folder_number' => 'BRBI-CI-2026-71999']);
+        ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'SANTOS, SHARED', 'folder_number' => 'BRBI-CI-2026-71999']);
 
         $this->actingAs($ci)->get(route('client-folders.index', ['search' => 'SANTOS']))
             ->assertOk()
             ->assertSee('SANTOS, MARIA')
             ->assertDontSee('REYES, JUAN')
-            ->assertDontSee('SANTOS, PRIVATE');
+            ->assertSee('SANTOS, SHARED');
 
         $this->actingAs($ci)->get(route('client-folders.index', ['search' => '71002']))
             ->assertOk()
@@ -274,7 +274,7 @@ class ClientFolderIndexTest extends TestCase
 
         $this->actingAs($activeCi)->get(route('client-folders.index'))
             ->assertOk()
-            ->assertSee('This folder will be assigned to your account.')
+            ->assertSee("You'll be recorded as the creator of this folder.", false)
             ->assertDontSee('name="assigned_ci_id"', false);
     }
 
@@ -345,9 +345,9 @@ class ClientFolderIndexTest extends TestCase
         $queryCount = count(DB::getQueryLog());
         DB::disableQueryLog();
 
-        $this->assertLessThanOrEqual(3, $queryCount);
+        $this->assertLessThanOrEqual(4, $queryCount);
         $this->assertTrue($folders->getCollection()->every(
-            fn (ClientFolder $folder): bool => $folder->relationLoaded('assignedInvestigator'),
+            fn (ClientFolder $folder): bool => $folder->relationLoaded('assignedInvestigator') && $folder->relationLoaded('creator'),
         ));
     }
 }

@@ -8,6 +8,8 @@ use App\Models\CoMaker;
 
 class CibiReportFormData
 {
+    public function __construct(private readonly ClientNameFormatter $names) {}
+
     public function for(ClientFolder $clientFolder, ?CoMaker $activePerson = null): array
     {
         // Reload the report relation because the folder overview intentionally selects
@@ -15,12 +17,12 @@ class CibiReportFormData
         // incomeSources are constrained to the active person — a Co-Maker's CI/BI form must
         // never load the Applicant's saved report (or vice versa, or another Co-Maker's).
         $clientFolder->load([
-            'assignedInvestigator:id,full_name',
             'information',
             'addresses',
             'incomeSources' => fn ($query) => $query->select(['id', 'client_folder_id', 'co_maker_id', 'source_name'])->where('co_maker_id', $activePerson?->id),
             'cibiReport' => fn ($query) => $query->where('co_maker_id', $activePerson?->id),
             'cibiReport.investigator:id,full_name',
+            'cibiReport.creator:id,full_name',
             'cibiReport.bankAccounts',
             'cibiReport.loanRecords',
             'cibiReport.creditChecks',
@@ -31,7 +33,7 @@ class CibiReportFormData
         $personalSnapshot = array_replace(
             $this->personalDefaults($clientFolder, $activePerson),
             $clientFolder->cibiReport?->personal_snapshot ?? [],
-            ['name' => $activePerson?->full_name ?? $clientFolder->display_name],
+            ['name' => $this->officialName($clientFolder, $activePerson)],
         );
         foreach (['spouse_name', 'present_address', 'residence_status_from', 'monthly_rent', 'length_of_stay_months', 'other_residences', 'previous_address', 'parents_address', 'previous_address_length_of_stay_months', 'separated_year', 'vehicles_owned', 'contact_details', 'other_remarks'] as $field) {
             if (strcasecmp(trim((string) ($personalSnapshot[$field] ?? '')), 'N/A') === 0) {
@@ -71,7 +73,7 @@ class CibiReportFormData
         // would for the Applicant before their own profile was ever filled in.
         if ($activePerson) {
             return [
-                'name' => $activePerson->full_name,
+                'name' => $this->officialName($clientFolder, $activePerson),
                 'age' => null, 'spouse_name' => null, 'spouse_age' => null,
                 'present_address' => $activePerson->address,
                 'length_of_stay_months' => null, 'residence_status' => null, 'residence_status_from' => null,
@@ -127,5 +129,29 @@ class CibiReportFormData
             'contact_details' => collect([$information?->contact_number, $information?->email])->filter()->implode(' / ') ?: null,
             'other_remarks' => $information?->other_remarks,
         ];
+    }
+
+    /**
+     * The Applicant's stored display_name is already composed "Last, First Middle [Suffix]" via
+     * ClientNameFormatter at folder creation/rename time. A Co-Maker's own stored full_name is a
+     * plain "First Middle Last [Suffix]" string used everywhere else (tabs, menus, audit trail) —
+     * left untouched here — so the CI/BI report's own "Name of Co-Maker" field is composed fresh
+     * from the Co-Maker's structured name parts with the same shared formatter instead.
+     */
+    private function officialName(ClientFolder $clientFolder, ?CoMaker $activePerson): string
+    {
+        if (! $activePerson) {
+            return $clientFolder->display_name;
+        }
+
+        // Structured name parts are backfilled for every Co-Maker saved through the normal
+        // Add/Edit flow, but a record created another way (a factory, direct seeding) could still
+        // only have full_name set — fall back to it rather than risk a formatting failure on
+        // fields that were never captured.
+        if (blank($activePerson->last_name) || blank($activePerson->first_name)) {
+            return $activePerson->full_name;
+        }
+
+        return $this->names->format($activePerson->last_name, $activePerson->first_name, $activePerson->middle_name, $activePerson->suffix);
     }
 }

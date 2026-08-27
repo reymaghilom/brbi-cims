@@ -151,13 +151,29 @@ function closeFolderPreview(browser) {
     document.body.classList.remove('overflow-hidden');
 }
 
+// Same data-toast/data-toast-close markup as the server-rendered <x-ui.toast> component (see
+// resources/views/components/ui/toast.blade.php) so a client-triggered toast looks and behaves
+// identically — including the existing delegated [data-toast-close] click handler above, which
+// works on either one already.
 function showToast(message, type = 'success', duration = 4500) {
     const region = document.querySelector('[data-toast-region]');
     if (!region) return;
+    const toneClass = { error: 'border-danger/25 bg-danger-soft text-danger', info: 'border-progress/25 bg-progress-soft text-progress' }[type]
+        ?? 'border-success/25 bg-success-soft text-success';
     const toast = document.createElement('div');
-    toast.className = `rounded-card border px-4 py-3 text-sm font-semibold shadow-float ${type === 'error' ? 'border-danger/25 bg-danger-soft text-danger' : 'border-success/25 bg-success-soft text-success'}`;
+    toast.dataset.toast = '';
+    toast.className = `flex items-start gap-3 rounded-card border p-4 text-sm font-semibold shadow-float ${toneClass}`;
     toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
-    toast.textContent = message;
+    const text = document.createElement('p');
+    text.className = 'min-w-0 flex-1';
+    text.textContent = message;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.dataset.toastClose = '';
+    close.className = '-m-2 rounded p-2';
+    close.setAttribute('aria-label', 'Dismiss message');
+    close.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" class="size-4 shrink-0"><path d="m6 6 12 12M18 6 6 18"/></svg>';
+    toast.append(text, close);
     region.append(toast);
     window.setTimeout(() => toast.remove(), duration);
 }
@@ -192,6 +208,7 @@ function resetFolderPreview(browser) {
     }
     closeFolderPreview(browser);
 }
+
 
 function initializeClientSearch(search) {
     const input = search.querySelector('[data-client-search-input]');
@@ -330,6 +347,11 @@ document.addEventListener('submit', async (event) => {
             showToast(payload.message);
             browser?.dispatchEvent(new CustomEvent('folder-browser:refresh'));
         } else if (form.matches('[data-folder-rename-form]')) {
+            dialog?.close();
+            if (payload.no_change) {
+                showToast(payload.message, 'info', 3500);
+                return;
+            }
             const folderId = form.dataset.folderId;
             const newName = payload.folder.display_name;
             document.querySelectorAll(`[data-folder-name-for="${folderId}"]`).forEach((element) => {
@@ -345,7 +367,6 @@ document.addEventListener('submit', async (event) => {
             const tile = document.querySelector(`[data-folder-shell][data-folder-id="${folderId}"] [data-folder-tile]`);
             if (tile) tile.setAttribute('aria-label', tile.getAttribute('aria-label').replace(/^.*?(?=, (?:On Progress|Completed),)/, newName));
             form.querySelector('[name="display_name"]').value = newName;
-            dialog?.close();
             showToast(payload.message);
         } else {
             const folderId = form.dataset.folderId;
@@ -368,6 +389,74 @@ document.addEventListener('submit', async (event) => {
     } finally {
         submit?.removeAttribute('disabled');
     }
+});
+
+// [data-context-menu]'s panel is CSS `position: absolute` by default, which any ancestor with
+// non-visible overflow (e.g. the Saved Businesses table's `overflow-x-auto` wrapper) clips or
+// folds back into scrollable content instead of letting it float freely. On open, switch it to
+// `position: fixed` computed from the trigger's own screen position — immune to ancestor overflow
+// — flipping above the trigger when there isn't room below, and clamped horizontally to the
+// viewport. This mirrors the existing co-maker action menu's positioning approach further below,
+// generalized for every context menu instance instead of one bespoke implementation per feature.
+document.addEventListener('toggle', (event) => {
+    const details = event.target;
+    if (!(details instanceof HTMLDetailsElement) || !details.matches('[data-context-menu]')) return;
+    const panel = details.querySelector('[data-context-menu-panel]');
+    const summary = details.querySelector('summary');
+    if (!panel || !summary) return;
+
+    if (!details.open) {
+        panel.style.removeProperty('position');
+        panel.style.removeProperty('top');
+        panel.style.removeProperty('left');
+        panel.style.removeProperty('right');
+        panel.style.removeProperty('margin-top');
+        return;
+    }
+
+    const margin = 8;
+    const rect = summary.getBoundingClientRect();
+    const panelWidth = panel.offsetWidth;
+    const panelHeight = panel.offsetHeight;
+
+    let left = rect.right - panelWidth;
+    if (left < margin) left = rect.left;
+    left = Math.min(Math.max(left, margin), window.innerWidth - panelWidth - margin);
+
+    let top = rect.bottom + 6;
+    if (top + panelHeight > window.innerHeight - margin) {
+        top = rect.top - panelHeight - 6;
+    }
+    top = Math.max(top, margin);
+
+    // `position: fixed` is normally relative to the true viewport — but the header account
+    // menu's panel sits inside <header class="... backdrop-blur">, and a backdrop-filter
+    // ancestor becomes the containing block for fixed-position descendants, same as
+    // `filter`/`transform` would. Left uncorrected, the left/top values above (computed against
+    // the true viewport) land relative to the header's own box instead, offsetting the whole
+    // panel — including the Logout button — by however far the header sits from the left edge,
+    // which is exactly the sidebar's current width. That pushes it off-screen when the sidebar
+    // is expanded (256px) but not when collapsed (76px), which is why Logout only appeared to
+    // work in one state. Probing where a (0, 0) fixed position actually lands reveals whichever
+    // containing block is really in effect — zero offset when it's the viewport (every other
+    // context menu in the app), non-zero when an ancestor like the header intercepts it — so the
+    // same code positions correctly either way.
+    panel.style.position = 'fixed';
+    panel.style.left = '0px';
+    panel.style.top = '0px';
+    panel.style.right = 'auto';
+    const origin = panel.getBoundingClientRect();
+
+    panel.style.left = `${left - origin.left}px`;
+    panel.style.top = `${top - origin.top}px`;
+    panel.style.marginTop = '0';
+}, true);
+
+window.addEventListener('scroll', () => {
+    document.querySelectorAll('details[data-context-menu][open]').forEach((menu) => menu.removeAttribute('open'));
+}, true);
+window.addEventListener('resize', () => {
+    document.querySelectorAll('details[data-context-menu][open]').forEach((menu) => menu.removeAttribute('open'));
 });
 
 document.addEventListener('click', (event) => {
@@ -442,10 +531,22 @@ document.addEventListener('click', (event) => {
                     }
                 }
             }
+            // The shared check-report-dialog is reused for both Residence and Business Checks —
+            // its title must reflect whichever one is actually open right now, and reset back to
+            // the generic default (never left showing "Residence Check" for a Business Check
+            // opened afterward, or vice versa) whenever a trigger doesn't specify one.
+            const titleHeading = dialog.querySelector('[data-check-report-title-heading]');
+            if (titleHeading) {
+                titleHeading.textContent = modalTrigger.dataset.checkReportTitle || titleHeading.dataset.checkReportDefaultTitle || titleHeading.textContent;
+            }
             dialog.dataset.returnFocus = modalTrigger.id || '';
             dialog.showModal();
             dialog.querySelector('[data-modal-close], [autofocus]')?.focus();
         }
+        // A modal-open trigger is a single, self-contained action — never let the same click also
+        // be evaluated against unrelated concerns (Co-Maker triggers, reassign-confirm flow, etc.)
+        // registered further down in this same delegated handler.
+        return;
     }
 
     const addBusinessNext = event.target.closest('[data-add-business-next]');
@@ -475,6 +576,37 @@ document.addEventListener('click', (event) => {
 
     const modalClose = event.target.closest('[data-modal-close]');
     if (modalClose) modalClose.closest('dialog')?.close();
+
+    // CI/BI Reassign Signatory: two-step flow — the data-entry dialog's "Reassign Signatory"
+    // button never submits directly. It validates the form, copies the current/new signatory
+    // names into the second (confirm) dialog, then swaps dialogs. Only the confirm dialog's own
+    // "Yes, Reassign" button actually submits the form the first dialog built.
+    const cibiReassignContinue = event.target.closest('[data-cibi-reassign-continue]');
+    if (cibiReassignContinue) {
+        const form = document.getElementById(cibiReassignContinue.dataset.cibiReassignContinue);
+        if (form instanceof HTMLFormElement && form.reportValidity()) {
+            const select = form.querySelector('[data-cibi-reassign-select]');
+            const currentText = form.querySelector('[data-cibi-reassign-current]')?.textContent.trim() ?? '';
+            const newText = select instanceof HTMLSelectElement ? (select.options[select.selectedIndex]?.text ?? '') : '';
+            const confirmDialog = document.getElementById(form.id.replace(/-form$/, '-confirm'));
+            if (confirmDialog instanceof HTMLDialogElement) {
+                const fromEl = confirmDialog.querySelector('[data-cibi-reassign-confirm-from]');
+                const toEl = confirmDialog.querySelector('[data-cibi-reassign-confirm-to]');
+                if (fromEl) fromEl.textContent = currentText;
+                if (toEl) toEl.textContent = newText;
+                confirmDialog.dataset.cibiReassignFormId = form.id;
+                cibiReassignContinue.closest('dialog')?.close();
+                confirmDialog.showModal();
+            }
+        }
+    }
+
+    const cibiReassignConfirmSubmit = event.target.closest('[data-cibi-reassign-confirm-submit]');
+    if (cibiReassignConfirmSubmit) {
+        const confirmDialog = cibiReassignConfirmSubmit.closest('dialog');
+        const form = confirmDialog?.dataset.cibiReassignFormId ? document.getElementById(confirmDialog.dataset.cibiReassignFormId) : null;
+        if (form instanceof HTMLFormElement) form.requestSubmit();
+    }
 
     // Cancel button rendered inside a Residence/Business Check page loaded in an iframe — the
     // page itself has no dialog to close (it's not the top-level document), so it reaches through
@@ -507,8 +639,14 @@ document.addEventListener('click', (event) => {
     }, 2500);
 });
 
+// Auto-dismiss for every server-rendered toast (the session('status')/statusType flash — e.g. the
+// Residence & Business Report page's own confirmation after a Residence Check save/update) — the
+// manual [data-toast-close] button above still works regardless. ~4s applies uniformly rather than
+// only to success messages: there's no existing per-type/per-page toast timer to hook into without
+// building a whole second toast system, and 4s is strictly longer than the previous 3s, so no
+// error/no-change/Cloudinary-failure message loses visible time versus before.
 document.querySelectorAll('[data-toast]').forEach((toast) => {
-    window.setTimeout(() => toast.remove(), 3000);
+    window.setTimeout(() => toast.remove(), 4000);
 });
 
 document.addEventListener('dblclick', (event) => {
@@ -584,6 +722,27 @@ window.addEventListener('message', (event) => {
     const dialog = document.querySelector('[data-check-report-dialog][open]');
     if (!dialog) return;
     dialog.dataset.checkSavedReturnUrl = returnUrl.href;
+    // Unlike CI/BI Report and Business Report (which stay open for continued multi-section
+    // editing), a Residence/Business Check is a single-shot save — closing immediately and
+    // refreshing the list behind it is the whole point, so there's no reason to wait for a manual
+    // close first. A toast shown right here, a moment before this same reload navigates away,
+    // would just be thrown away with the rest of the DOM — so whenever the sender includes one
+    // (both Business Check's redirect-based save, via [data-check-saved-notify] below, and
+    // Residence Check's own AJAX save, straight from its XHR JSON response), it's stashed in
+    // sessionStorage and picked up by the page-load check further down, after the reload actually
+    // lands. Residence Check deliberately does NOT rely on session()->flash() surviving until that
+    // reload instead — an unrelated request landing in between (e.g. the editing-presence
+    // heartbeat's own 30s interval) can age it out first, which is exactly what made this toast
+    // disappear intermittently before the message started traveling through this same relay.
+    if (event.data.message) {
+        try {
+            sessionStorage.setItem('brbi:pending-toast', JSON.stringify({ message: event.data.message, type: event.data.statusType || 'success' }));
+        } catch {
+            // Storage can be unavailable (private browsing, quota) — losing the toast is fine, the
+            // save itself already succeeded.
+        }
+    }
+    dialog.close();
 });
 
 const checkSavedNotify = document.querySelector('[data-check-saved-notify]');
@@ -591,7 +750,26 @@ if (checkSavedNotify && window.parent !== window) {
     window.parent.postMessage({
         type: 'brbi:check-saved',
         returnUrl: checkSavedNotify.dataset.checkSavedReturnUrl,
+        message: checkSavedNotify.dataset.checkSavedMessage,
+        statusType: checkSavedNotify.dataset.checkSavedStatusType,
     }, window.location.origin);
+}
+
+// Companion to the sessionStorage stash above — runs on every page load (top-level only; the
+// dialog's own iframe reload is never where this should surface) so the success toast survives
+// the parent's post-save reload instead of depending on a server-side session flash still being
+// present for that exact next request.
+if (window.parent === window) {
+    try {
+        const pending = sessionStorage.getItem('brbi:pending-toast');
+        if (pending) {
+            sessionStorage.removeItem('brbi:pending-toast');
+            const { message, type } = JSON.parse(pending);
+            if (message) showToast(message, type || 'success');
+        }
+    } catch {
+        // Malformed or inaccessible storage — nothing to show, nothing to break.
+    }
 }
 
 document.addEventListener('contextmenu', (event) => {
@@ -605,13 +783,36 @@ document.addEventListener('contextmenu', (event) => {
     openFolderMenu(menu, tile.closest('[data-folder-shell]')?.querySelector('[data-folder-menu-trigger]'), { x: event.clientX, y: event.clientY });
 });
 
+// Unsaved-changes guard: compares a normalized snapshot of the form's actual field values against
+// the baseline captured right after this script runs (i.e. after all server-rendered/Blade
+// hydration is already in the DOM) — not a `dirty = true` flag flipped on every 'input'/'change'.
+// That distinction is what makes programmatic updates (companion CI add/remove rebuilding hidden
+// inputs, the Business Check quick-add flow appending+selecting a new <option>, a photo removal
+// appending a removed-id hidden input, etc.) behave correctly either way: if they land the form
+// back on its original values, closing is silently allowed; if they leave it different from
+// baseline, that's exactly the "real change" this guard exists to protect. FormData naturally
+// covers every field type that matters here (text/select/textarea, checkboxes, hidden inputs added
+// or mutated at runtime, and file inputs — serialized below by name+size+lastModified since File
+// objects themselves aren't comparable).
 document.querySelectorAll('[data-unsaved-form]').forEach((form) => {
-    let dirty = false;
-    form.addEventListener('input', (event) => { if (event.target.form === form) dirty = true; });
-    form.addEventListener('submit', () => { dirty = false; });
-    form.addEventListener('unsaved-form-reset', () => { dirty = false; });
+    // An empty <input type="file"> contributes a placeholder File whose `lastModified` is the
+    // current timestamp at read time (not a fixed value) — normalized to a constant marker here so
+    // an untouched file field doesn't look "changed" purely because time passed between snapshots.
+    const snapshotForm = () => JSON.stringify([...new FormData(form).entries()].map(([key, value]) => (
+        value instanceof File ? [key, value.size === 0 ? 'file:none' : `file:${value.name}:${value.size}:${value.lastModified}`] : [key, value]
+    )));
+
+    let baseline = snapshotForm();
+    let saved = false;
+
+    form.addEventListener('submit', () => { saved = true; });
+    // Dispatched whenever the current form state should become the new "nothing to lose" baseline
+    // without actually having been saved — e.g. the Business/Residence Check Cancel button (see
+    // [data-close-parent-dialog] below) fires this so a discarded edit can't resurface as a stale
+    // warning the next time this same iframe document gets reloaded for another record.
+    form.addEventListener('unsaved-form-reset', () => { baseline = snapshotForm(); saved = false; });
     window.addEventListener('beforeunload', (event) => {
-        if (!dirty) return;
+        if (saved || snapshotForm() === baseline) return;
         event.preventDefault();
         event.returnValue = '';
     });
@@ -620,6 +821,22 @@ document.querySelectorAll('[data-unsaved-form]').forEach((form) => {
 document.querySelectorAll('dialog').forEach((dialog) => {
     dialog.addEventListener('close', () => {
         dialog.querySelectorAll('video').forEach((video) => video.pause());
+
+        // The Residence/Business Check iframe is never actually unloaded when this dialog closes
+        // (native <dialog>.close() just hides it — the same document, and its own unsaved-changes
+        // baseline, stays alive in memory) — whether it closed via the in-form Cancel button, the
+        // dialog's own X, Escape, or a successful save. Resetting its baseline here on every close,
+        // not only a deliberate Cancel, is what stops an edit abandoned that way from resurfacing as
+        // a "leave site" warning later, when reopening this same dialog for a different record
+        // forces that stale iframe to actually navigate. A close right after a genuine save is a
+        // no-op here — the form's own 'submit' listener already brought the baseline in line with
+        // what was just submitted.
+        if (dialog.matches('[data-check-report-dialog]')) {
+            dialog.querySelector('[data-check-report-frame]')?.contentDocument
+                ?.querySelectorAll('[data-unsaved-form]')
+                .forEach((form) => form.dispatchEvent(new Event('unsaved-form-reset')));
+        }
+
         if (dialog.matches('[data-add-business-dialog]')) {
             const templateSelect = dialog.querySelector('[data-add-business-template-select]');
             const templateError = dialog.querySelector('[data-add-business-template-error]');
@@ -697,6 +914,121 @@ repeaterRemoveDialog?.querySelector('[data-repeater-remove-confirm]')?.addEventL
     removeRepeaterRow(row, repeater);
 });
 repeaterRemoveDialog?.addEventListener('close', () => { pendingRepeaterRemoval = null; });
+
+// Companion CI picker — shared by every "primary CI + companions" form (Business Report,
+// Business Check, and any future one): the modal's checkboxes are a local staging area only —
+// nothing is written back until "Add Selected" is clicked, and the actual save still happens
+// through that record's own normal Save/Update submit (contributor_ids[] hidden inputs point at
+// that form via the `form` attribute, so they post alongside every other field). Each instance is
+// wired up independently via its own [data-companion-ci-picker] wrapper carrying which dialog id
+// it opens, so multiple pickers (one per page) never interfere with each other.
+document.querySelectorAll('[data-companion-ci-container]').forEach((container) => {
+    const dialogId = container.closest('[data-companion-ci-picker]')?.dataset.companionDialogId;
+    const dialog = dialogId ? document.getElementById(dialogId) : null;
+    if (!(dialog instanceof HTMLDialogElement)) return;
+    const headerFormId = container.dataset.headerFormId;
+    const participantList = container.querySelector('[data-companion-participant-list]');
+    const hiddenInputs = container.querySelector('[data-companion-hidden-inputs]');
+    if (!participantList || !hiddenInputs) return;
+
+    const selectedIds = () => [...hiddenInputs.querySelectorAll('input[name="contributor_ids[]"]')].map((input) => input.value);
+
+    // Renders "/ Name ×" for each companion, inline after the (always-present, separately
+    // markup'd) primary name — e.g. "REY MAGHILOM / ANTHONY YONG × / MARK DELA CRUZ ×".
+    const renderParticipants = (ids) => {
+        participantList.innerHTML = '';
+        ids.forEach((id) => {
+            const option = dialog.querySelector(`[data-companion-option][data-user-id="${id}"]`);
+            const fullName = option?.dataset.fullName ?? '';
+            const item = document.createElement('span');
+            item.className = 'flex items-center gap-1';
+            item.dataset.companionParticipant = '';
+            item.dataset.userId = id;
+            const separator = document.createElement('span');
+            separator.setAttribute('aria-hidden', 'true');
+            separator.textContent = '/';
+            const name = document.createElement('span');
+            name.dataset.fullName = '';
+            name.textContent = fullName;
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-danger/40 bg-danger-soft text-[0.7rem] font-bold normal-case leading-none text-danger transition hover:border-danger hover:bg-danger hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/40';
+            remove.dataset.companionRemove = '';
+            remove.setAttribute('aria-label', `Remove ${fullName}`);
+            remove.innerHTML = '&times;';
+            item.append(separator, name, remove);
+            participantList.appendChild(item);
+        });
+    };
+
+    const setSelection = (ids) => {
+        hiddenInputs.innerHTML = '';
+        ids.forEach((id) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'contributor_ids[]';
+            input.value = id;
+            if (headerFormId) input.setAttribute('form', headerFormId);
+            hiddenInputs.appendChild(input);
+        });
+        renderParticipants(ids);
+        // Programmatic DOM changes don't fire a native `input` event on their own — nudge the
+        // unsaved-changes tracker on data-unsaved-form so leaving the page after only touching
+        // companions still warns, same as editing any other field. The always-present marker
+        // input is used as the event target since its `form` property resolves correctly
+        // (dispatching directly on the <form> element wouldn't — forms have no `.form` property).
+        container.querySelector('input[name="contributor_ids_present"]')?.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+
+    container.addEventListener('click', (event) => {
+        const removeTrigger = event.target.closest('[data-companion-remove]');
+        if (!removeTrigger) return;
+        const id = removeTrigger.closest('[data-companion-participant]')?.dataset.userId;
+        if (!id) return;
+        const checkbox = dialog.querySelector(`[data-companion-checkbox][value="${id}"]`);
+        if (checkbox instanceof HTMLInputElement) checkbox.checked = false;
+        setSelection(selectedIds().filter((existingId) => existingId !== id));
+    });
+
+    dialog.querySelector('[data-companion-confirm]')?.addEventListener('click', () => {
+        const chosen = [...dialog.querySelectorAll('[data-companion-checkbox]:checked')].map((checkbox) => checkbox.value);
+        setSelection(chosen);
+        dialog.close();
+    });
+});
+
+// Every time a picker opens, discard whatever was toggled the last time it was cancelled and
+// re-sync its checkboxes from the currently confirmed (saved-in-form) companion list instead.
+document.addEventListener('click', (event) => {
+    const trigger = event.target.closest('[data-companion-dialog-trigger]');
+    if (!trigger) return;
+    const picker = trigger.closest('[data-companion-ci-picker]');
+    const dialogId = picker?.dataset.companionDialogId;
+    const dialog = dialogId ? document.getElementById(dialogId) : null;
+    const container = picker?.querySelector('[data-companion-ci-container]');
+    if (!(dialog instanceof HTMLDialogElement) || !container) return;
+    const selected = [...container.querySelectorAll('[data-companion-hidden-inputs] input[name="contributor_ids[]"]')].map((input) => input.value);
+    dialog.querySelectorAll('[data-companion-checkbox]').forEach((checkbox) => { checkbox.checked = selected.includes(checkbox.value); });
+    dialog.querySelectorAll('[data-companion-option]').forEach((option) => { option.hidden = false; });
+    const search = dialog.querySelector('[data-companion-search]');
+    if (search) search.value = '';
+    const searchEmpty = dialog.querySelector('[data-companion-search-empty]');
+    if (searchEmpty) searchEmpty.hidden = true;
+});
+
+document.querySelector('[data-companion-search]')?.addEventListener('input', (event) => {
+    const dialog = event.target.closest('dialog');
+    if (!dialog) return;
+    const value = event.target.value.trim().toLowerCase();
+    let visibleCount = 0;
+    dialog.querySelectorAll('[data-companion-option]').forEach((option) => {
+        const matches = (option.dataset.searchName || '').includes(value);
+        option.hidden = !matches;
+        if (matches) visibleCount++;
+    });
+    const searchEmpty = dialog.querySelector('[data-companion-search-empty]');
+    if (searchEmpty) searchEmpty.hidden = visibleCount !== 0;
+});
 
 const initializeBusinessRepeaters = (scope = document) => scope.querySelectorAll('[data-repeater]').forEach((repeater) => {
     if (repeater.dataset.repeaterReady) return;
@@ -1238,7 +1570,9 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
             const htmlName = htmlFieldName(key);
             const field = form.querySelector(`[name="${CSS.escape(htmlName)}"]`)
                 || form.querySelector(`[name="${CSS.escape(htmlName + '[]')}"]`);
-            if (!field) return;
+            // A hidden field (e.g. expected_revision) can't usefully receive an inline error or
+            // focus — its message is already shown prominently in the error summary banner above.
+            if (!field || field.type === 'hidden') return;
             const id = `${field.id || key.replaceAll('.', '-')}-error`;
             const error = document.createElement('p');
             error.id = id;
@@ -1256,12 +1590,13 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
         (firstInvalid || errorSummary)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     };
 
-    const showToast = (message) => {
+    const showToast = (message, type = 'success', duration = 2500) => {
         const region = document.querySelector('[data-toast-region]');
         if (!region) return;
+        const toneClass = type === 'info' ? 'border-progress/25 bg-progress-soft text-progress' : 'border-success/25 bg-success-soft text-success';
         const toast = document.createElement('div');
         toast.dataset.toast = '';
-        toast.className = 'flex items-start gap-3 rounded-card border border-success/25 bg-success-soft p-4 text-success shadow-card';
+        toast.className = `flex items-start gap-3 rounded-card border p-4 shadow-card ${toneClass}`;
         toast.setAttribute('role', 'status');
         const text = document.createElement('p');
         text.className = 'min-w-0 flex-1 text-sm font-semibold';
@@ -1274,11 +1609,13 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
         close.textContent = '×';
         toast.append(text, close);
         region.append(toast);
-        window.setTimeout(() => toast.remove(), 2500);
+        window.setTimeout(() => toast.remove(), duration);
     };
 
     const updateOverview = (payload) => {
         form.querySelector('[data-cibi-revision]')?.replaceChildren(String(payload.report.revision));
+        const expectedRevisionInput = form.querySelector('[data-cibi-expected-revision]');
+        if (expectedRevisionInput) expectedRevisionInput.value = String(payload.report.revision);
         Object.entries(payload.report.child_ids || {}).forEach(([section, ids]) => {
             const repeater = form.querySelector(`[data-repeater="${CSS.escape(section)}"]`);
             const rows = [...(repeater?.querySelector('[data-repeater-rows]')?.children || [])];
@@ -1348,7 +1685,16 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
             });
             const payload = await response.json();
             if (!response.ok) {
-                showErrors(payload.errors || {}, payload.message || 'The report could not be saved.');
+                // A revision conflict is the one validation error the user must see prominently —
+                // its field (expected_revision) is hidden, so the generic top-level message would
+                // otherwise hide the specific "updated by another user" wording entirely.
+                const conflictMessage = payload.errors?.expected_revision?.[0];
+                showErrors(payload.errors || {}, conflictMessage || payload.message || 'The report could not be saved.');
+                return;
+            }
+
+            if (payload.no_change) {
+                showToast(payload.message, 'info', 3500);
                 return;
             }
 
@@ -1394,12 +1740,13 @@ document.addEventListener('click', (event) => {
         // Every edit trigger (header quick-edit, or a specific co-maker's tab menu) carries its
         // own record's data directly, so the form always loads the exact co-maker that was
         // clicked — never whichever one happens to be shown elsewhere on the page.
-        const { coMakerId, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix } = editTrigger.dataset;
+        const { coMakerId, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix, coMakerAddress } = editTrigger.dataset;
         if (idField) idField.value = coMakerId ?? '';
         form.elements.namedItem('first_name').value = coMakerFirstName ?? '';
         form.elements.namedItem('middle_name').value = coMakerMiddleName ?? '';
         form.elements.namedItem('last_name').value = coMakerLastName ?? '';
         form.elements.namedItem('suffix').value = coMakerSuffix ?? '';
+        form.elements.namedItem('address').value = coMakerAddress ?? '';
         if (submit) submit.textContent = 'Update Co-Maker';
         if (title) title.textContent = 'Edit Co-Maker';
     } else {
@@ -1412,14 +1759,6 @@ document.addEventListener('submit', async (event) => {
     const form = event.target.closest('[data-co-maker-form]');
     if (!form) return;
     event.preventDefault();
-
-    // Editing an existing co-maker only changes that one record's own details, never the set of
-    // people this folder has, so it's always safe to patch the header/switcher in place with no
-    // reload. Adding one can change that set (the very first co-maker brings the whole
-    // Applicant/Co-Maker switcher section into existence), which isn't safely patchable without
-    // duplicating that section's markup in JS — so an add is instead followed by a short,
-    // automatic reload (not a manual one) once the success toast has had a moment to be seen.
-    const isEditing = Boolean(form.querySelector('[data-co-maker-id-field]')?.value);
 
     form.querySelectorAll('[data-co-maker-error-for]').forEach((error) => {
         error.textContent = '';
@@ -1458,23 +1797,19 @@ document.addEventListener('submit', async (event) => {
         if (!response.ok) throw new Error(payload.message || 'Co-Maker could not be saved.');
 
         form.closest('dialog')?.close();
+
+        if (payload.no_change) {
+            showToast(payload.message, 'info', 3500);
+            return;
+        }
+
         showToast(payload.message, 'success', 3000);
 
-        if (isEditing) {
-            const fields = payload.coMaker ?? {};
-            const editedId = String(fields.id ?? '');
-            document.querySelectorAll(`[data-co-maker-display][data-co-maker-id="${editedId}"]`).forEach((display) => {
-                display.querySelector('[data-co-maker-field="full_name"]').textContent = fields.full_name ?? '';
-                display.querySelector('[data-co-maker-field="relationship_to_applicant"]').textContent = fields.relationship_to_applicant ?? '';
-                display.querySelector('[data-co-maker-field="contact_number"]').textContent = fields.contact_number ?? '';
-                display.dataset.coMakerAddress = fields.address ?? '';
-            });
-            document.querySelectorAll(`[data-co-maker-tab="${editedId}"] [data-co-maker-tab-name]`).forEach((name) => {
-                name.textContent = fields.full_name ?? '';
-            });
-        } else {
-            window.setTimeout(() => window.location.reload(), 900);
-        }
+        // A reload after either add or edit is what keeps Recent Activity showing the fresh
+        // co_maker.added/updated entry immediately — an in-place DOM patch (the previous approach
+        // for edits) only ever touched the tab/header display fields and left the Recent Activity
+        // panel showing stale, pre-edit data until a manual refresh.
+        window.setTimeout(() => window.location.reload(), 900);
     } catch (error) {
         showToast(error.message || 'Co-Maker could not be saved. Please retry.', 'error', 3000);
     } finally {
@@ -1586,7 +1921,7 @@ function openCoMakerActionMenu(trigger) {
     // re-stamps them with the clicked trigger's own record data — never a stale or mixed one.
     const editBtn = menu.querySelector('[data-co-maker-edit-trigger]');
     const removeBtn = menu.querySelector('[data-co-maker-remove-trigger]');
-    const { coMakerId, coMakerFullName, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix, coMakerDestroyBaseUrl } = trigger.dataset;
+    const { coMakerId, coMakerFullName, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix, coMakerAddress, coMakerDestroyBaseUrl } = trigger.dataset;
 
     if (editBtn instanceof HTMLElement) {
         editBtn.dataset.coMakerId = coMakerId ?? '';
@@ -1594,6 +1929,7 @@ function openCoMakerActionMenu(trigger) {
         editBtn.dataset.coMakerMiddleName = coMakerMiddleName ?? '';
         editBtn.dataset.coMakerLastName = coMakerLastName ?? '';
         editBtn.dataset.coMakerSuffix = coMakerSuffix ?? '';
+        editBtn.dataset.coMakerAddress = coMakerAddress ?? '';
     }
     if (removeBtn instanceof HTMLElement) {
         removeBtn.dataset.coMakerId = coMakerId ?? '';
@@ -1748,14 +2084,83 @@ window.addEventListener('resize', () => closeCoMakerActionMenu());
     refresh();
 })();
 
-// Saved Businesses sorting is server-driven (column-header links / the mobile sort select each
-// carry a full sort+direction URL) — this just navigates when the mobile <select> changes, since
-// a <select> has no native "go to this URL" behavior.
-document.addEventListener('change', (event) => {
-    const select = event.target.closest('[data-business-sort-select]');
-    if (!(select instanceof HTMLSelectElement)) return;
-    window.location.assign(select.value);
-});
+// Instant client-side table sorting, shared by the Saved Businesses table and the Residence &
+// Business page's Business Checks table: clicking a column's label or its ↑/↓ control reorders
+// the existing <tr> nodes in place (no reload, no request), which naturally preserves each row's
+// checkbox state and action menus since the same DOM nodes are moved rather than re-rendered.
+// Each table scrolls horizontally on narrow viewports (min-w on the <table>, overflow-x-auto on
+// its wrapper) instead of collapsing to an alternate layout, so this same logic applies unchanged
+// on desktop, tablet, and mobile.
+function initSortableTable(table) {
+    const tbody = table.querySelector('tbody');
+    const headers = [...table.querySelectorAll('[data-sort-th]')];
+    let current = { key: null, direction: null };
+
+    // Blank/— values always sort last, in both ascending and descending order, so the multiplier
+    // is applied only to the real comparison and never to the blank-placement branches.
+    const compareValues = (aRaw, bRaw, type, multiplier) => {
+        const aBlank = !aRaw;
+        const bBlank = !bRaw;
+        if (aBlank && bBlank) return 0;
+        if (aBlank) return 1;
+        if (bBlank) return -1;
+
+        let cmp;
+        if (type === 'date') cmp = new Date(aRaw) - new Date(bRaw);
+        else if (type === 'number') cmp = parseFloat(aRaw) - parseFloat(bRaw);
+        else cmp = aRaw.localeCompare(bRaw, undefined, { sensitivity: 'base' });
+        return cmp * multiplier;
+    };
+
+    const setActiveIndicator = (key, direction) => {
+        current = { key, direction };
+        headers.forEach((th) => {
+            th.setAttribute('aria-sort', th.dataset.sortTh === key ? (direction === 'asc' ? 'ascending' : 'descending') : 'none');
+        });
+        table.querySelectorAll('[data-sort-toggle]').forEach((label) => {
+            label.classList.toggle('text-brand-primary', label.dataset.sortKey === key);
+        });
+        table.querySelectorAll('[data-sort-btn]').forEach((button) => {
+            const isActive = button.dataset.sortKey === key && button.dataset.sortDir === direction;
+            button.classList.toggle('text-brand-primary', isActive);
+            button.classList.toggle('text-text-muted/40', !isActive);
+        });
+    };
+
+    const applySort = (key, type, direction) => {
+        const rowDatasetKey = `sort${key.charAt(0).toUpperCase()}${key.slice(1)}`;
+        const rows = [...tbody.querySelectorAll('tr')];
+        const multiplier = direction === 'asc' ? 1 : -1;
+
+        rows.sort((a, b) => compareValues(a.dataset[rowDatasetKey], b.dataset[rowDatasetKey], type, multiplier));
+
+        rows.forEach((row) => tbody.appendChild(row));
+        setActiveIndicator(key, direction);
+    };
+
+    // Delegated on the table (not one listener per button) so a click anywhere inside a button —
+    // including on its inner, pointer-events-none icon — always resolves to the button via
+    // closest(), regardless of how the buttons were rendered or re-rendered.
+    table.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-sort-btn]');
+        if (button) {
+            applySort(button.dataset.sortKey, button.dataset.sortType, button.dataset.sortDir);
+            return;
+        }
+
+        // Clicking the header label itself (not just the ↑/↓ control) toggles direction: first
+        // click on a column sorts ascending, clicking the same column's label again flips to
+        // descending, and so on — while the individual chevrons above always force one explicit
+        // direction regardless of the current toggle state.
+        const label = event.target.closest('[data-sort-toggle]');
+        if (!label) return;
+        const key = label.dataset.sortKey;
+        const direction = current.key === key && current.direction === 'asc' ? 'desc' : 'asc';
+        applySort(key, label.dataset.sortType, direction);
+    });
+}
+
+document.querySelectorAll('[data-business-sort-table], [data-check-sort-table]').forEach(initSortableTable);
 
 // Combined Print Selected / Download Selected on the Residence & Business Report page — same
 // hidden-forms + syncBatchForm pattern as the Business/Income Sources batch panel above, but
@@ -1766,13 +2171,17 @@ document.addEventListener('change', (event) => {
     if (!panel) return;
 
     const countLabel = panel.querySelector('[data-check-selected-count]');
+    const summaryCount = panel.querySelector('[data-check-selected-summary-count]');
     const printButton = panel.querySelector('[data-check-print-selected]');
     const downloadTrigger = panel.querySelector('[data-check-download-selected-trigger]');
+    const selectAllButton = panel.querySelector('[data-check-select-all]');
+    const clearSelectionButton = panel.querySelector('[data-check-clear-selection]');
 
     const printForm = document.getElementById('check-batch-print-form');
     const pdfForm = document.getElementById('check-batch-export-pdf-form');
     const docxForm = document.getElementById('check-batch-export-docx-form');
 
+    const allCheckboxes = () => [...document.querySelectorAll('[data-residence-check-select], [data-business-check-select]')];
     const selectedResidenceChecks = () => [...document.querySelectorAll('[data-residence-check-select]:checked')];
     const selectedBusinessChecks = () => [...document.querySelectorAll('[data-business-check-select]:checked')];
     const selectedCount = () => selectedResidenceChecks().length + selectedBusinessChecks().length;
@@ -1787,7 +2196,8 @@ document.addEventListener('change', (event) => {
 
     const refresh = () => {
         const count = selectedCount();
-        if (countLabel) countLabel.textContent = `${count} selected`;
+        if (countLabel) countLabel.textContent = String(count);
+        if (summaryCount) summaryCount.textContent = String(count);
         if (printButton) printButton.toggleAttribute('disabled', count === 0);
         setDownloadEnabled(count > 0);
     };
@@ -1813,8 +2223,32 @@ document.addEventListener('change', (event) => {
         });
     };
 
+    // A single row's Print/Download icon reuses the exact same batch routes/forms as the top
+    // toolbar — it just seeds the id list with only that one record instead of reading it from
+    // checkbox state, so no dedicated single-record route is needed.
+    const submitSingle = (form, kind, id) => {
+        if (!form) return;
+        form.querySelectorAll('[data-check-batch-id-input]').forEach((input) => input.remove());
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = kind === 'residence' ? 'residence_check_ids[]' : 'business_check_ids[]';
+        input.value = id;
+        input.dataset.checkBatchIdInput = 'true';
+        form.appendChild(input);
+        form.submit();
+    };
+
     document.addEventListener('change', (event) => {
         if (event.target.matches('[data-residence-check-select], [data-business-check-select]')) refresh();
+    });
+
+    selectAllButton?.addEventListener('click', () => {
+        allCheckboxes().forEach((checkbox) => { checkbox.checked = true; });
+        refresh();
+    });
+    clearSelectionButton?.addEventListener('click', () => {
+        allCheckboxes().forEach((checkbox) => { checkbox.checked = false; });
+        refresh();
     });
 
     printButton?.addEventListener('click', () => {
@@ -1834,31 +2268,145 @@ document.addEventListener('change', (event) => {
         docxForm?.submit();
     }));
 
+    panel.querySelectorAll('[data-check-row-print]').forEach((button) => button.addEventListener('click', () => {
+        submitSingle(printForm, button.dataset.checkKind, button.dataset.checkId);
+    }));
+    panel.querySelectorAll('[data-check-row-pdf-submit]').forEach((button) => button.addEventListener('click', () => {
+        submitSingle(pdfForm, button.dataset.checkKind, button.dataset.checkId);
+    }));
+    panel.querySelectorAll('[data-check-row-docx-submit]').forEach((button) => button.addEventListener('click', () => {
+        submitSingle(docxForm, button.dataset.checkKind, button.dataset.checkId);
+    }));
+
     refresh();
 })();
 
 // Business Check form: selecting a saved business auto-fills the read-only Location field from
 // that option's own data-location, since Location always reflects whichever business is chosen
-// rather than being independently editable.
+// rather than being independently editable. It also swaps the one helper line under the field
+// between its default instructional text and the "Business Report available" / "not yet created"
+// status (Applicant flow only — the element is absent for Co-Maker) — a single line always, never
+// both stacked, to keep the section compact.
 document.addEventListener('change', (event) => {
     const select = event.target.closest('[data-business-check-income-source-select]');
     if (!(select instanceof HTMLSelectElement) || !select.closest('[data-business-check-form]')) return;
-    const location = select.selectedOptions[0]?.dataset.location ?? '';
-    const locationField = select.closest('[data-business-check-form]').querySelector('[data-business-check-location]');
+    const option = select.selectedOptions[0];
+    const form = select.closest('[data-business-check-form]');
+    const location = option?.dataset.location ?? '';
+    const locationField = form.querySelector('[data-business-check-location]');
     if (locationField instanceof HTMLInputElement) locationField.value = location;
+    // CI Date is the other value shared with this business's Business Report (start_date, "Start
+    // Date of CI") — same pattern as Location above: refreshed to match whichever business is
+    // currently selected, editable afterward, and only actually written back on Save.
+    const ciDate = option?.dataset.ciDate ?? '';
+    const ciDateField = form.querySelector('[data-business-check-ci-date]');
+    if (ciDateField instanceof HTMLInputElement && ciDate) ciDateField.value = ciDate;
+
+    const helper = document.querySelector('[data-business-source-helper]');
+    if (!helper) return;
+    if (helper.dataset.defaultText === undefined) helper.dataset.defaultText = helper.textContent;
+    if (!option || !option.value) {
+        helper.textContent = helper.dataset.defaultText;
+        helper.classList.remove('text-success');
+        helper.classList.add('text-text-muted');
+        return;
+    }
+    const complete = option.dataset.reportComplete === '1';
+    helper.textContent = complete ? 'Business Report available' : 'Business Report not yet created';
+    helper.classList.toggle('text-success', complete);
+    helper.classList.toggle('text-text-muted', !complete);
+});
+
+// "+ Add Business" quick-create (Applicant only): creates the shared IncomeSource/BusinessReport
+// shell via a small AJAX endpoint, then appends+selects the new option locally — no page reload,
+// and the Business Check form itself is never auto-submitted by this action.
+document.querySelector('[data-quick-add-business-confirm]')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-quick-add-business-confirm]');
+    const dialog = button.closest('dialog');
+    const nameField = dialog.querySelector('[data-quick-add-business-name]');
+    const templateField = dialog.querySelector('[data-quick-add-business-template]');
+    const locationField = dialog.querySelector('[data-quick-add-business-location]');
+    const errorBox = dialog.querySelector('[data-quick-add-business-error]');
+    const showError = (message) => {
+        if (!errorBox) return;
+        errorBox.textContent = message;
+        errorBox.hidden = false;
+    };
+
+    const name = nameField?.value.trim() ?? '';
+    const templateId = templateField?.value ?? '';
+    const location = locationField?.value.trim() ?? '';
+    if (!name) { showError('Business Name is required.'); nameField?.focus(); return; }
+    if (!templateId) { showError('Business Type / Income Source is required.'); templateField?.focus(); return; }
+    if (!location) { showError('Business location is required.'); locationField?.focus(); return; }
+    if (errorBox) errorBox.hidden = true;
+
+    const token = document.querySelector('#business-check-form input[name="_token"]')?.value;
+    button.disabled = true;
+    try {
+        const response = await fetch(button.dataset.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token ?? '' },
+            body: JSON.stringify({ business_name: name, income_source_template_id: templateId, location }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const firstError = payload?.errors ? Object.values(payload.errors)[0]?.[0] : null;
+            showError(firstError || payload?.message || 'Unable to add this business. Please try again.');
+            return;
+        }
+
+        const select = document.querySelector('[data-business-check-income-source-select]');
+        if (select instanceof HTMLSelectElement) {
+            const option = document.createElement('option');
+            option.value = payload.id;
+            option.textContent = payload.name;
+            // Reflects what the server actually saved as the shared business address (payload.location),
+            // not the raw locally-typed value — the two only ever differ if the save itself failed,
+            // and this option's data-location is what every later selection re-reads Location from.
+            option.dataset.location = payload.location ?? '';
+            option.dataset.reportComplete = '0';
+            select.appendChild(option);
+            select.value = String(payload.id);
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        nameField.value = '';
+        templateField.value = '';
+        if (locationField) locationField.value = '';
+        dialog.close();
+    } catch {
+        showError('Unable to add this business. Please check your connection and try again.');
+    } finally {
+        button.disabled = false;
+    }
+});
+
+// Reset the quick-add form's error state (not its fields — Cancel discarding typed values is
+// expected either way) whenever the dialog closes, so a stale error doesn't linger next time.
+document.querySelector('[data-quick-add-business-dialog]')?.addEventListener('close', (event) => {
+    const errorBox = event.target.querySelector('[data-quick-add-business-error]');
+    if (errorBox) errorBox.hidden = true;
 });
 
 // Direct multi-file photo upload widget (Residence/Business/Competitor Photos): keeps newly
 // chosen files in a JS-managed array + rebuilt DataTransfer so a removed tile actually stops
 // submitting (a native <input type="file">'s FileList can't be edited directly), and flags
 // removed existing (already-saved) photos into the field's shared removed-ids hidden input
-// instead of touching the file input at all.
-document.querySelectorAll('[data-photo-upload-field]').forEach((field) => {
+// instead of touching the file input at all. The drag-and-drop zone, live count, and per-file
+// Preview link are optional — they only activate when a field's own markup includes them (only
+// the Residence Check form does), so this stays a no-op enhancement for every other caller of
+// this same generic widget (Business/Competitor Photos) rather than a behavior change for them.
+const initializePhotoUploadField = (field) => {
+    if (field.dataset.photoUploadReady) return;
+    field.dataset.photoUploadReady = 'true';
     const input = field.querySelector('[data-photo-upload-input]');
-    const trigger = field.querySelector('[data-photo-upload-trigger]');
+    const triggers = field.querySelectorAll('[data-photo-upload-trigger]');
     const grid = field.querySelector('[data-photo-upload-grid]');
     const template = field.querySelector('[data-photo-upload-tile-template]');
-    if (!(input instanceof HTMLInputElement) || !trigger || !grid || !(template instanceof HTMLTemplateElement)) return;
+    const dropzone = field.querySelector('[data-photo-upload-dropzone]');
+    const count = field.querySelector('[data-photo-upload-count]');
+    if (!(input instanceof HTMLInputElement) || triggers.length === 0 || !grid || !(template instanceof HTMLTemplateElement)) return;
 
     let files = [];
 
@@ -1868,21 +2416,50 @@ document.querySelectorAll('[data-photo-upload-field]').forEach((field) => {
         input.files = transfer.files;
     };
 
-    trigger.addEventListener('click', () => input.click());
+    // Only the real photo tiles count toward the total — the dropzone and a trailing "Add More"
+    // or count tile are decorative grid cells, not photos, so they're excluded from both this
+    // tally and from where a newly added tile gets inserted (always just before that trailing
+    // tile, so it stays last regardless of how many photos have been added this session).
+    const updateCount = () => {
+        if (count) count.textContent = String(grid.querySelectorAll('[data-photo-upload-existing-tile], [data-photo-upload-new-tile]').length);
+    };
 
-    input.addEventListener('change', () => {
-        Array.from(input.files ?? []).forEach((file) => {
+    const addFiles = (fileList) => {
+        const trailingTile = grid.querySelector('[data-photo-upload-count-tile], [data-photo-upload-add-more-tile]');
+        Array.from(fileList ?? []).forEach((file) => {
+            if (!file.type.startsWith('image/')) return;
             files.push(file);
             const tile = template.content.firstElementChild.cloneNode(true);
             const img = tile.querySelector('img');
-            const reader = new FileReader();
-            reader.onload = () => { img.src = String(reader.result); };
-            reader.readAsDataURL(file);
+            const objectUrl = URL.createObjectURL(file);
+            img.src = objectUrl;
             tile.dataset.photoUploadFileName = file.name;
-            grid.appendChild(tile);
+            tile.dataset.photoUploadObjectUrl = objectUrl;
+            const previewLink = tile.querySelector('[data-photo-upload-preview-new]');
+            if (previewLink instanceof HTMLAnchorElement) previewLink.href = objectUrl;
+            if (trailingTile) grid.insertBefore(tile, trailingTile); else grid.appendChild(tile);
         });
         rebuildInputFiles();
-    });
+        updateCount();
+    };
+
+    triggers.forEach((trigger) => trigger.addEventListener('click', () => input.click()));
+    input.addEventListener('change', () => addFiles(input.files));
+
+    if (dropzone) {
+        ['dragover', 'dragenter'].forEach((eventName) => dropzone.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            dropzone.classList.add('border-brand-primary', 'bg-brand-soft/40');
+        }));
+        ['dragleave', 'dragend'].forEach((eventName) => dropzone.addEventListener(eventName, () => {
+            dropzone.classList.remove('border-brand-primary', 'bg-brand-soft/40');
+        }));
+        dropzone.addEventListener('drop', (event) => {
+            event.preventDefault();
+            dropzone.classList.remove('border-brand-primary', 'bg-brand-soft/40');
+            addFiles(event.dataTransfer?.files);
+        });
+    }
 
     grid.addEventListener('click', (event) => {
         const removeNew = event.target.closest('[data-photo-upload-remove-new]');
@@ -1891,8 +2468,10 @@ document.querySelectorAll('[data-photo-upload-field]').forEach((field) => {
             const name = tile?.dataset.photoUploadFileName;
             const index = files.findIndex((file) => file.name === name);
             if (index !== -1) files.splice(index, 1);
+            if (tile?.dataset.photoUploadObjectUrl) URL.revokeObjectURL(tile.dataset.photoUploadObjectUrl);
             tile?.remove();
             rebuildInputFiles();
+            updateCount();
             return;
         }
 
@@ -1908,6 +2487,364 @@ document.querySelectorAll('[data-photo-upload-field]').forEach((field) => {
                 field.appendChild(removedInput);
             }
             tile?.remove();
+            updateCount();
+        }
+    });
+};
+
+document.querySelectorAll('[data-photo-upload-field]').forEach(initializePhotoUploadField);
+
+// Business Photos "Photo Groups" repeater: each card is its own caption + multi-file
+// photo-upload-field (initializePhotoUploadField above); this only ever handles adding/removing
+// whole GROUP cards. Removal follows the exact same id/_delete convention as every other repeater
+// in this codebase (see removeRepeaterRow) but deliberately skips the generic
+// repeaterRemoveDialog confirmation — a group can hold staged-but-unsaved file uploads that
+// heuristic can't see, and the deletion itself is already safely deferred until a successful save
+// commits (SaveBusinessCheck::syncPhotoGroups), so there's nothing a confirm dialog would protect
+// here that isn't already recoverable by just not saving.
+document.querySelectorAll('[data-photo-group-repeater]').forEach((repeater) => {
+    if (repeater.dataset.photoGroupReady) return;
+    repeater.dataset.photoGroupReady = 'true';
+    const rows = repeater.querySelector('[data-photo-group-rows]');
+    const template = repeater.querySelector('[data-photo-group-template]');
+    let nextIndex = rows?.children.length ?? 0;
+
+    rows?.querySelectorAll('[data-photo-upload-field]').forEach(initializePhotoUploadField);
+
+    repeater.querySelector('[data-photo-group-add]')?.addEventListener('click', () => {
+        if (!rows || !template) return;
+        const row = template.content.firstElementChild?.cloneNode(true);
+        if (!row) return;
+        [row, ...row.querySelectorAll('*')].forEach((element) => {
+            [...element.attributes].forEach((attribute) => {
+                if (attribute.value.includes('__INDEX__')) element.setAttribute(attribute.name, attribute.value.replaceAll('__INDEX__', String(nextIndex)));
+            });
+        });
+        // The heading's "Photo Group N" number is display-only text, not a form value the generic
+        // attribute-replacement loop above touches — set directly from this row's own position.
+        const numberEl = row.querySelector('[data-photo-group-number]');
+        if (numberEl) numberEl.textContent = String(nextIndex + 1);
+        nextIndex++;
+        rows.append(row);
+        row.querySelectorAll('[data-photo-upload-field]').forEach(initializePhotoUploadField);
+        row.querySelector('textarea')?.focus();
+        row.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    repeater.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-photo-group-remove]');
+        if (!button) return;
+        const row = button.closest('[data-photo-group-row]');
+        if (!row) return;
+        const id = row.querySelector('input[name$="[id]"]')?.value;
+        if (id) {
+            row.querySelector('[data-delete-field]').value = '1';
+            row.hidden = true;
+        } else {
+            row.remove();
+        }
+        repeater.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+});
+
+// Residence Check's single-file, replace-in-place Google Map screenshot upload: unlike the
+// multi-file photo widget above, there's only ever one file, so a newly chosen/dropped file just
+// replaces whatever is already in the native input, and "Remove" clears it while flagging the
+// removal to the backend via a hidden field (the server can't otherwise tell "no new file" apart
+// from "remove the existing one").
+document.querySelectorAll('[data-map-screenshot-field]').forEach((field) => {
+    const input = field.querySelector('[data-map-screenshot-input]');
+    const removeFlag = field.querySelector('[data-map-screenshot-remove-flag]');
+    const dropzone = field.querySelector('[data-map-screenshot-dropzone]');
+    const previewWrap = field.querySelector('[data-map-screenshot-preview-wrap]');
+    const previewImg = field.querySelector('[data-map-screenshot-preview-img]');
+    if (!(input instanceof HTMLInputElement)) return;
+
+    let objectUrl = null;
+
+    const setFile = (file) => {
+        if (!file || !file.type.startsWith('image/')) return;
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        input.files = transfer.files;
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = URL.createObjectURL(file);
+        if (previewImg) previewImg.src = objectUrl;
+        if (previewWrap) previewWrap.hidden = false;
+        // Once a screenshot is selected/previewed, the compact dropzone steps aside in favor of
+        // the preview's own Replace Screenshot button — no need for both at once.
+        if (dropzone) dropzone.hidden = true;
+        if (removeFlag) removeFlag.value = '0';
+    };
+
+    input.addEventListener('change', () => setFile(input.files?.[0]));
+
+    field.querySelectorAll('[data-map-screenshot-replace]').forEach((button) => button.addEventListener('click', () => input.click()));
+    field.querySelectorAll('[data-map-screenshot-remove]').forEach((button) => button.addEventListener('click', () => {
+        input.value = '';
+        if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+        if (previewWrap) previewWrap.hidden = true;
+        if (dropzone) dropzone.hidden = false;
+        if (removeFlag) removeFlag.value = '1';
+    }));
+
+    if (dropzone) {
+        ['dragover', 'dragenter'].forEach((eventName) => dropzone.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            dropzone.classList.add('border-brand-primary', 'bg-brand-soft/50');
+        }));
+        ['dragleave', 'dragend'].forEach((eventName) => dropzone.addEventListener(eventName, () => {
+            dropzone.classList.remove('border-brand-primary', 'bg-brand-soft/50');
+        }));
+        dropzone.addEventListener('drop', (event) => {
+            event.preventDefault();
+            dropzone.classList.remove('border-brand-primary', 'bg-brand-soft/50');
+            setFile(event.dataTransfer?.files?.[0]);
+        });
+    }
+});
+
+// Residence Check Save/Update: still submitted via XMLHttpRequest rather than a plain form POST —
+// that's what lets the JSON response drive the working parent success toast (see the brbi:check-saved
+// postMessage below) instead of a redirect the closing modal would race. There is deliberately no
+// upload percentage or progress bar here: only a disabled button + spinner + a status line below it
+// (same [data-*-save-status] pattern as Business Check's own form), chosen from the exact same DOM
+// state the server validates against. The normal
+// multipart-POST-and-redirect flow (SaveResidenceCheckRequest, SaveResidenceCheck — both completely
+// unchanged) is preserved as the non-JS fallback: this listener always preventDefault()s and
+// resubmits via XHR with an explicit `Accept: application/json` header, which is exactly the same
+// signal Laravel's own ValidationException JSON rendering already keys off (Request::expectsJson())
+// — ResidenceCheckController::store() only takes a different (JSON, never a redirect) response
+// branch when that header is present; without JavaScript the browser's native submission never
+// sends it, so the controller falls through to its original redirect behavior untouched.
+document.querySelectorAll('[data-residence-check-form]').forEach((form) => {
+    // Idempotent-init guard (same convention as initializePhotoUploadField's photoUploadReady,
+    // the repeater's repeaterReady, etc.) — belt-and-braces against this whole block ever running
+    // twice for the same <form> (e.g. a script re-execution) and attaching a second independent
+    // 'submit' listener, which would otherwise double-fire the XHR/upload for a single real submit.
+    if (form.dataset.residenceCheckSubmitReady) return;
+    form.dataset.residenceCheckSubmitReady = 'true';
+
+    const submitButton = document.querySelector('[data-residence-check-submit]');
+    if (!(submitButton instanceof HTMLButtonElement)) return;
+
+    // Same separate status region + generic "Saving…" button label as Business Check's own
+    // [data-business-check-form] submit handler — kept in sync with that one intentionally so the
+    // two forms feel like the same application module.
+    const setButtonBusy = () => {
+        submitButton.disabled = true;
+        submitButton.setAttribute('aria-busy', 'true');
+        submitButton.querySelector('[data-residence-check-submit-icon]')?.classList.add('hidden');
+        submitButton.querySelector('[data-residence-check-submit-spinner]')?.classList.remove('hidden');
+        const text = submitButton.querySelector('[data-residence-check-submit-text]');
+        if (text) text.textContent = 'Saving…';
+    };
+    const resetButton = () => {
+        delete form.dataset.submitting;
+        submitButton.disabled = false;
+        submitButton.removeAttribute('aria-busy');
+        submitButton.querySelector('[data-residence-check-submit-icon]')?.classList.remove('hidden');
+        submitButton.querySelector('[data-residence-check-submit-spinner]')?.classList.add('hidden');
+        const text = submitButton.querySelector('[data-residence-check-submit-text]');
+        if (text) text.textContent = submitButton.dataset.residenceCheckSubmitLabel ?? (text?.textContent || '');
+        const status = document.querySelector('[data-residence-check-save-status]');
+        status?.classList.add('hidden');
+    };
+
+    form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        // Belt-and-braces alongside the button's own disabled state: a data-attribute guard on the
+        // form itself catches a second submit attempt regardless of how it was triggered (a second
+        // click before the button visually disables, Enter in a text field, form.requestSubmit()
+        // from elsewhere) — none of those depend on the submit *button*'s own state the way a
+        // native click on a disabled button already does.
+        if (form.dataset.submitting === 'true' || submitButton.disabled) return;
+        form.dataset.submitting = 'true';
+
+        const photoInput = form.querySelector('[data-photo-upload-input]');
+        const hasNewPhotos = photoInput instanceof HTMLInputElement && (photoInput.files?.length ?? 0) > 0;
+        const mapScreenshotInput = form.querySelector('[data-map-screenshot-input]');
+        const hasNewMapScreenshot = mapScreenshotInput instanceof HTMLInputElement && (mapScreenshotInput.files?.length ?? 0) > 0;
+
+        setButtonBusy();
+
+        const status = document.querySelector('[data-residence-check-save-status]');
+        const statusText = status?.querySelector('[data-residence-check-save-status-text]');
+        const statusHelper = status?.querySelector('[data-residence-check-save-status-helper]');
+        if (status && statusText) {
+            status.classList.remove('hidden');
+            if (hasNewPhotos || hasNewMapScreenshot) {
+                statusText.textContent = 'Uploading media to cloud storage…';
+                if (statusHelper) statusHelper.hidden = false;
+            } else {
+                statusText.textContent = 'Saving Residence Check…';
+                if (statusHelper) statusHelper.hidden = true;
+            }
+        }
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', form.action);
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+
+        xhr.addEventListener('load', () => {
+            let payload = null;
+            try {
+                payload = JSON.parse(xhr.responseText);
+            } catch {
+                payload = null;
+            }
+
+            if (xhr.status === 200 && payload?.result === 'success') {
+                // Left disabled/busy deliberately — the modal is about to close via the
+                // brbi:check-saved message below, tearing this whole iframe down. The success
+                // message itself was already flashed into the session by the controller (same
+                // 'status'/'statusType' keys the non-JS redirect path always used) — the reloaded
+                // listing page on the other side of that message picks it up and renders the toast
+                // itself, so it isn't repeated here.
+                if (window.parent !== window) {
+                    window.parent.postMessage({ type: 'brbi:check-saved', returnUrl: payload.return_url, message: payload.message, statusType: payload.status_type }, window.location.origin);
+                }
+                return;
+            }
+
+            resetButton();
+            if (xhr.status === 200 && payload?.result === 'no_change') {
+                showToast(payload.message, 'info');
+                return;
+            }
+            if (xhr.status === 502 && payload?.result === 'cloud_failure') {
+                showToast(payload.message, 'error');
+                return;
+            }
+            if (xhr.status === 422 && payload?.errors) {
+                const firstMessage = Object.values(payload.errors).flat()[0];
+                showToast(firstMessage || 'Please correct the highlighted fields. No changes were saved.', 'error');
+                return;
+            }
+            // Anything else (an unexpected server error, a malformed response) never surfaces its
+            // own raw text/exception details — only this generic, safe retry message.
+            showToast('Residence Check could not be saved. Please check your connection and try again.', 'error');
+        });
+
+        xhr.addEventListener('error', () => {
+            resetButton();
+            showToast('Residence Check could not be saved. Please check your connection and try again.', 'error');
+        });
+
+        xhr.send(new FormData(form));
+    });
+});
+
+// Live character counter for a textarea, paired with its own maxlength attribute so the
+// displayed limit always matches what's actually enforced.
+document.querySelectorAll('[data-char-counter-field]').forEach((field) => {
+    const input = field.querySelector('[data-char-counter-input]');
+    const value = field.querySelector('[data-char-counter-value]');
+    if (!(input instanceof HTMLTextAreaElement) || !value) return;
+    input.addEventListener('input', () => { value.textContent = String(input.value.length); });
+});
+
+document.querySelectorAll('[data-editing-presence]').forEach((node) => {
+    const type = node.dataset.editingType;
+    const id = node.dataset.editingId;
+    const label = node.dataset.editingLabel || 'record';
+    const token = node.querySelector('input[name="_token"]')?.value
+        || document.querySelector('input[name="_token"]')?.value;
+    if (!type || !id || !token) return;
+
+    const banner = node.querySelector('[data-editing-presence-banner]');
+    const text = node.querySelector('[data-editing-presence-text]');
+    const renderPresence = (otherEditors) => {
+        if (!banner || !text) return;
+        if (otherEditors && otherEditors.length > 0) {
+            const names = otherEditors.map((editor) => editor.name);
+            const who = names.length === 1
+                ? names[0]
+                : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+            const verb = names.length === 1 ? 'is' : 'are';
+            banner.hidden = false;
+            text.textContent = `${who} ${verb} currently editing this ${label}.`;
+        } else {
+            banner.hidden = true;
+        }
+    };
+
+    const ping = async () => {
+        try {
+            const response = await fetch('/editing-presence/heartbeat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token },
+                body: JSON.stringify({ type, id }),
+            });
+            if (!response.ok) return;
+            renderPresence((await response.json()).other_editors);
+        } catch {
+            // Best-effort presence signal — a failed heartbeat should never block editing.
+        }
+    };
+
+    ping();
+    const interval = window.setInterval(ping, 30000);
+
+    window.addEventListener('beforeunload', () => {
+        window.clearInterval(interval);
+        navigator.sendBeacon?.('/editing-presence/release', new Blob([JSON.stringify({ type, id, _token: token })], { type: 'application/json' }));
+    }, { once: true });
+});
+
+// A required field failing server validation (e.g. Business Check's Location/CI Date) is only
+// actually visible if the accordion section containing it happens to already be open — generic
+// fix: any <details> holding an aria-invalid field from the just-rendered @error() state is
+// forced open, and the first such field gets focus, regardless of which page/section it's in.
+document.querySelectorAll('[aria-invalid="true"]').forEach((field) => {
+    const details = field.closest('details:not([open])');
+    if (details) details.open = true;
+});
+document.querySelector('[aria-invalid="true"]')?.focus();
+
+// Business Check's required-photo validation error: same temporary toast as Residence Check's own
+// (XHR-driven) missing-photo error, surfaced here instead from a marker left by the server-rendered
+// redirect (see the [data-business-check-photo-error] span in business-checks/form.blade.php). The
+// accordion-open and field-level message already happen server-side/via the aria-invalid handling
+// above — this only adds the toast, and only once per page load (one marker, one toast).
+document.querySelectorAll('[data-business-check-photo-error]').forEach((node) => {
+    showToast(node.dataset.businessCheckPhotoError, 'error');
+});
+
+// Business Check Save/Update: a plain form POST + server redirect (never converted to XHR — see
+// Residence Check's own submit handler above for why that's a bigger, unrelated change), so this
+// only ever needs to cover the visual gap for however long that round trip takes. Browsers don't
+// dispatch 'submit' at all when native required-field validation blocks it, so a loading state
+// here can never show for that case; a real server-side failure instead redirects back to a fresh,
+// un-disabled copy of this same form, which is what "restores" the button — nothing to reset by
+// hand either way.
+document.querySelectorAll('[data-business-check-form]').forEach((form) => {
+    form.addEventListener('submit', () => {
+        const submitButton = document.querySelector('[data-business-check-submit]');
+        if (!(submitButton instanceof HTMLButtonElement) || submitButton.disabled) return;
+        submitButton.disabled = true;
+        submitButton.querySelector('[data-business-check-submit-icon]')?.classList.add('hidden');
+        submitButton.querySelector('[data-business-check-submit-spinner]')?.classList.remove('hidden');
+        const text = submitButton.querySelector('[data-business-check-submit-text]');
+        if (text) text.textContent = 'Saving…';
+
+        const hasNewPhotos = (form.querySelector('input[name="business_photos[]"]')?.files?.length ?? 0) > 0
+            || (form.querySelector('input[name="competitor_photos[]"]')?.files?.length ?? 0) > 0
+            || [...form.querySelectorAll('input[data-photo-upload-input][name^="photo_groups"]')].some((input) => (input.files?.length ?? 0) > 0);
+        const hasNewMapScreenshot = (form.querySelector('input[name="map_screenshot"]')?.files?.length ?? 0) > 0;
+
+        const status = document.querySelector('[data-business-check-save-status]');
+        const statusText = status?.querySelector('[data-business-check-save-status-text]');
+        const statusHelper = status?.querySelector('[data-business-check-save-status-helper]');
+        if (!status || !statusText) return;
+        status.classList.remove('hidden');
+        if (hasNewPhotos || hasNewMapScreenshot) {
+            statusText.textContent = 'Uploading media to cloud storage…';
+            if (statusHelper) statusHelper.hidden = false;
+        } else {
+            statusText.textContent = 'Saving Business Check…';
+            if (statusHelper) statusHelper.hidden = true;
         }
     });
 });

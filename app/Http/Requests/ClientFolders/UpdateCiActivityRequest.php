@@ -3,6 +3,8 @@
 namespace App\Http\Requests\ClientFolders;
 
 use App\Enums\ActivityStatus;
+use App\Enums\UserRole;
+use App\Enums\UserStatus;
 use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -28,6 +30,14 @@ class UpdateCiActivityRequest extends FormRequest
     {
         return [
             'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
+            'assigned_ci_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('users', 'id')->where(fn ($query) => $query
+                    ->where('role', UserRole::CreditInvestigator->value)
+                    ->where('status', UserStatus::Active->value)),
+            ],
+            'expected_updated_at' => ['nullable', 'date'],
             'status' => ['required', Rule::enum(ActivityStatus::class)],
             'visit_date' => ['nullable', 'date', 'before_or_equal:today', Rule::requiredIf($this->input('status') === ActivityStatus::Completed->value)],
             'time_in' => ['nullable', 'date_format:H:i'],
@@ -60,6 +70,7 @@ class UpdateCiActivityRequest extends FormRequest
         foreach (['remarks', 'supporting_reference'] as $field) {
             $normalized[$field] = $this->trimmed($this->input($field));
         }
+        $normalized['assigned_ci_id'] = filled($this->input('assigned_ci_id')) ? (int) $this->input('assigned_ci_id') : null;
 
         $this->merge($normalized);
     }

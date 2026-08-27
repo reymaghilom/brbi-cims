@@ -1,0 +1,234 @@
+<?php
+
+namespace Tests\Feature\ClientFolders;
+
+use App\Models\BusinessCheck;
+use App\Models\ClientFolder;
+use App\Models\IncomeSource;
+use App\Models\IncomeSourceTemplate;
+use App\Models\User;
+use App\Services\Media\CloudinaryMediaStorage;
+use App\Services\Media\ReportMediaResolver;
+use App\Services\Reports\OfficialReportDataBuilder;
+use Database\Seeders\ReferenceDataSeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
+use Tests\TestCase;
+
+/**
+ * Business Check PDF/DOCX showed "Image unavailable" / "Media reference: <uuid>.jpg (image content
+ * unavailable)" for every cloud-backed photo because ReportMediaResolver::resolve() was still
+ * written against the pre-pagination data shape (a flat `photo_groups` key, each group's own
+ * `photos`) — OfficialReportDataBuilder::businessCheckSection() had since moved to pre-chunked
+ * `photo_pages`/`competitor_photo_pages` (each entry {caption, photos}) for the strict 2-per-page
+ * rule, so the resolver's array_key_exists('photo_groups', ...) check never matched anything and
+ * every Business Photo, Photo Group photo, and Competitor Photo kept its null image_path all the
+ * way to the PDF/DOCX renderers. Map Screenshot was never affected (its own `google_map` key never
+ * changed shape) — these tests cover all four to prove the fix and guard against it drifting again.
+ * Web Preview is untouched by any of this: it renders straight from `web_url`, never through this
+ * resolver at all.
+ */
+class BusinessCheckReportMediaResolutionTest extends TestCase
+{
+    use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->seed(ReferenceDataSeeder::class);
+        Storage::fake('local');
+    }
+
+    /**
+     * Direct test of the fixed method itself, using OfficialReportDataBuilder's own real output
+     * shape (not a hand-built array) so this fails again if the two ever drift apart. Covers the
+     * default Business Photos group, an additional Photo Group, Competitor Photos, and the Map
+     * Screenshot in one pass.
+     */
+    public function test_resolver_downloads_every_cloud_backed_business_check_media_item_into_a_real_local_file(): void
+    {
+        [$ci, $folder, $source] = $this->setUpBusiness();
+        $check = $folder->businessChecks()->create([
+            'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan', 'ci_user_id' => $ci->id,
+            'map_screenshot_file_name' => 'map.png', 'map_screenshot_cloud_public_id' => 'cloud-map', 'map_screenshot_cloud_resource_type' => 'image', 'map_screenshot_cloud_delivery_type' => 'authenticated',
+        ]);
+        $defaultGroup = $check->photoGroups()->create(['caption' => null, 'sort_order' => 0]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'business', 'cloud-default') + ['business_check_photo_group_id' => $defaultGroup->id]);
+        $extraGroup = $check->photoGroups()->create(['caption' => 'Storeroom at the back', 'sort_order' => 1]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'business', 'cloud-extra-group') + ['business_check_photo_group_id' => $extraGroup->id]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'competitor', 'cloud-competitor'));
+
+        $this->mock(CloudinaryMediaStorage::class, function ($mock) {
+            $mock->shouldReceive('deliveryUrl')->andReturnUsing(fn (string $publicId) => "https://res.cloudinary.com/demo/image/authenticated/s--signed--/{$publicId}.jpg");
+        });
+        Http::fake(['res.cloudinary.com/*' => Http::response('fake-image-bytes', 200)]);
+
+        $photoSection = app(OfficialReportDataBuilder::class)->businessCheckSection($check->fresh(['photoGroups.photos', 'photos', 'incomeSource']), 'Test Person');
+        $resolver = app(ReportMediaResolver::class);
+        [$resolved] = $resolver->resolve([$photoSection]);
+
+        $businessPhotoPaths = collect($resolved['photo_pages'])->flatMap(fn ($page) => $page['photos'])->pluck('image_path')->all();
+        $competitorPhotoPaths = collect($resolved['competitor_photo_pages'])->flatMap(fn ($page) => $page['photos'])->pluck('image_path')->all();
+        $mapPath = $resolved['google_map']['image_path'];
+
+        $this->assertCount(2, $businessPhotoPaths, 'Both the default group photo and the additional group photo must be present.');
+        foreach ($businessPhotoPaths as $path) {
+            $this->assertNotNull($path);
+            $this->assertFileExists($path);
+        }
+        $this->assertCount(1, $competitorPhotoPaths);
+        $this->assertNotNull($competitorPhotoPaths[0]);
+        $this->assertFileExists($competitorPhotoPaths[0]);
+        $this->assertNotNull($mapPath);
+        $this->assertFileExists($mapPath);
+
+        $resolver->cleanup();
+        $this->assertFileDoesNotExist($businessPhotoPaths[0]);
+    }
+
+    public function test_the_docx_export_actually_embeds_a_cloud_backed_business_photo_instead_of_a_media_reference_fallback(): void
+    {
+        [$ci, $folder, $source] = $this->setUpBusiness();
+        $check = $folder->businessChecks()->create([
+            'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan', 'ci_user_id' => $ci->id,
+        ]);
+        $group = $check->photoGroups()->create(['caption' => null, 'sort_order' => 0]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'business', 'cloud-docx-photo') + ['business_check_photo_group_id' => $group->id]);
+
+        $this->mock(CloudinaryMediaStorage::class, function ($mock) {
+            $mock->shouldReceive('deliveryUrl')->once()->with('cloud-docx-photo', 'authenticated')
+                ->andReturn('https://res.cloudinary.com/demo/image/authenticated/s--signed--/cloud-docx-photo.jpg');
+        });
+        // A tiny but genuinely valid 1x1 GIF — embedImage() needs real, decodable image bytes, not
+        // just any 200 response, to actually add it to the DOCX rather than falling through to the
+        // "image content unavailable" text.
+        $pixelGif = base64_decode('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==');
+        Http::fake(['res.cloudinary.com/*' => Http::response($pixelGif, 200)]);
+
+        $response = $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-export-docx', $folder), [
+            'business_check_ids' => [$check->id],
+        ])->assertOk();
+
+        $docxPath = tempnam(sys_get_temp_dir(), 'docx').'.docx';
+        file_put_contents($docxPath, $response->streamedContent());
+        $zip = new \ZipArchive();
+        $zip->open($docxPath);
+        $documentXml = $zip->getFromName('word/document.xml');
+        $mediaEntries = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $name = $zip->getNameIndex($i);
+            if ($name !== false && str_starts_with($name, 'word/media/')) {
+                $mediaEntries[] = $name;
+            }
+        }
+        $zip->close();
+        unlink($docxPath);
+
+        $this->assertNotEmpty($mediaEntries, 'The cloud-backed photo must actually be embedded as a media part in the DOCX.');
+        $this->assertStringNotContainsString('image content unavailable', $documentXml);
+        $this->assertStringNotContainsString('Media reference', $documentXml);
+    }
+
+    public function test_the_pdf_export_succeeds_for_a_business_check_with_cloud_backed_media(): void
+    {
+        [$ci, $folder, $source] = $this->setUpBusiness();
+        $check = $folder->businessChecks()->create([
+            'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan', 'ci_user_id' => $ci->id,
+        ]);
+        $group = $check->photoGroups()->create(['caption' => null, 'sort_order' => 0]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'business', 'cloud-pdf-photo') + ['business_check_photo_group_id' => $group->id]);
+
+        $this->mock(CloudinaryMediaStorage::class, function ($mock) {
+            $mock->shouldReceive('deliveryUrl')->once()->with('cloud-pdf-photo', 'authenticated')
+                ->andReturn('https://res.cloudinary.com/demo/image/authenticated/s--signed--/cloud-pdf-photo.jpg');
+        });
+        $pixelGif = base64_decode('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==');
+        Http::fake(['res.cloudinary.com/*' => Http::response($pixelGif, 200)]);
+
+        $response = $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-export-pdf', $folder), [
+            'business_check_ids' => [$check->id],
+        ]);
+
+        $response->assertOk()->assertHeader('Content-Type', 'application/pdf');
+        $this->assertGreaterThan(1000, strlen($response->streamedContent()), 'A PDF that actually embedded an image is meaningfully larger than an empty/error page.');
+    }
+
+    /** Regression guard: a historical (local-disk) photo never had a null image_path to begin with, so it must keep rendering exactly as before — untouched by this fix. */
+    public function test_existing_local_business_photo_still_resolves_without_any_cloud_download(): void
+    {
+        [$ci, $folder, $source] = $this->setUpBusiness();
+        $check = $folder->businessChecks()->create([
+            'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan', 'ci_user_id' => $ci->id,
+        ]);
+        // OfficialReportDataBuilder::safeMediaPath() checks storage_path('app/private/...') directly
+        // rather than going through the Storage facade, so — unlike every other test in this file —
+        // this one fixture has to land on that real path instead of Storage::fake('local')'s own
+        // sandboxed root, or safeMediaPath() would never find it regardless of this fix.
+        $realPath = storage_path('app/private/business/photos/local.jpg');
+        @mkdir(dirname($realPath), 0755, true);
+        file_put_contents($realPath, UploadedFile::fake()->image('local.jpg', 200, 200)->get());
+        $group = $check->photoGroups()->create(['caption' => null, 'sort_order' => 0]);
+        $check->photos()->create([
+            'category' => 'business', 'file_name' => 'local.jpg', 'path' => 'business/photos/local.jpg', 'thumbnail_path' => null,
+            'mime_type' => 'image/jpeg', 'byte_size' => 500, 'checksum' => md5('local'), 'sort_order' => 0, 'uploaded_by' => $ci->id,
+            'business_check_photo_group_id' => $group->id,
+        ]);
+
+        $this->mock(CloudinaryMediaStorage::class, function ($mock) {
+            $mock->shouldNotReceive('deliveryUrl');
+        });
+        Http::fake();
+
+        try {
+            $photoSection = app(OfficialReportDataBuilder::class)->businessCheckSection($check->fresh(['photoGroups.photos', 'photos', 'incomeSource']), 'Test Person');
+            [$resolved] = app(ReportMediaResolver::class)->resolve([$photoSection]);
+
+            $path = $resolved['photo_pages'][0]['photos'][0]['image_path'];
+            $this->assertNotNull($path);
+            $this->assertFileExists($path);
+            Http::assertNothingSent();
+        } finally {
+            @unlink($realPath);
+        }
+    }
+
+    /** @param  'business'|'competitor'  $category */
+    private function cloudPhotoRow(int $uploadedBy, string $category, string $publicId): array
+    {
+        return [
+            'category' => $category, 'file_name' => $publicId.'.jpg', 'path' => null, 'thumbnail_path' => null,
+            'mime_type' => 'image/jpeg', 'byte_size' => 500, 'checksum' => md5($publicId), 'sort_order' => 0, 'uploaded_by' => $uploadedBy,
+            'cloud_public_id' => $publicId, 'cloud_resource_type' => 'image', 'cloud_delivery_type' => 'authenticated',
+        ];
+    }
+
+    /** @return array{0: User, 1: ClientFolder, 2: IncomeSource} */
+    private function setUpBusiness(): array
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $source = $this->businessSource($folder, 'Sari-Sari Store', 'Poblacion, San Miguel, Bulacan');
+
+        return [$ci, $folder, $source];
+    }
+
+    private function folderFor(User $ci): ClientFolder
+    {
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
+        $folder->addresses()->create(['address_type' => 'present', 'address_line_1' => 'Applicant Address']);
+        $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => now()->toDateString()]);
+
+        return $folder;
+    }
+
+    private function businessSource(ClientFolder $folder, string $name, string $address): IncomeSource
+    {
+        $template = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
+        $source = $folder->incomeSources()->create(['income_source_template_id' => $template->id, 'template_type' => $template->template_type, 'template_version' => $template->version, 'source_name' => $name, 'business_name' => $name]);
+        $source->businessReport()->create(['business_name' => $name, 'main_business_address' => $address, 'report_category' => 'retail_grocery_water_refilling']);
+
+        return $source;
+    }
+}

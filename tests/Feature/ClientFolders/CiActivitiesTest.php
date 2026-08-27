@@ -26,21 +26,58 @@ class CiActivitiesTest extends TestCase
         $this->seed(ReferenceDataSeeder::class);
     }
 
-    public function test_admin_and_assigned_ci_can_access_but_other_ci_cannot(): void
+    public function test_admin_and_any_ci_can_access_the_shared_activity_workspace(): void
     {
         $admin = User::factory()->administrator()->create();
         $assigned = User::factory()->create();
         $other = User::factory()->create();
         [$folder, $activity] = $this->folderWithActivities($assigned);
         [$otherFolder, $otherActivity] = $this->folderWithActivities($other);
-        $otherActivity->update(['visited_by' => 'PRIVATE OTHER CI VISITOR']);
+        $otherActivity->update(['visited_by' => 'OTHER FOLDER VISITOR']);
 
         $this->actingAs($admin)->get(route('client-folders.activities.index', $folder))->assertOk();
-        $this->actingAs($assigned)->get(route('client-folders.activities.index', $folder))->assertOk()->assertDontSee('PRIVATE OTHER CI VISITOR');
+        $this->actingAs($assigned)->get(route('client-folders.activities.index', $folder))->assertOk()->assertDontSee('OTHER FOLDER VISITOR');
         $this->actingAs($assigned)->get(route('client-folders.activities.edit', [$folder, $activity]))->assertOk();
-        $this->actingAs($other)->get(route('client-folders.activities.index', $folder))->assertForbidden();
-        $this->actingAs($other)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload())->assertForbidden();
+        $this->actingAs($other)->get(route('client-folders.activities.index', $folder))->assertOk();
+        $this->actingAs($other)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload())->assertRedirect();
         $this->assertNotSame($folder->id, $otherFolder->id);
+    }
+
+    public function test_assigned_ci_can_be_changed_without_restricting_other_ci_visibility(): void
+    {
+        $ci = User::factory()->create();
+        $assignee = User::factory()->create();
+        $other = User::factory()->create();
+        [$folder, $activity] = $this->folderWithActivities($ci);
+
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload() + ['assigned_ci_id' => $assignee->id])
+            ->assertRedirect();
+        $activity->refresh();
+        $this->assertSame($assignee->id, $activity->assigned_ci_id);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'ci_activity.assignment_changed', 'client_folder_id' => $folder->id]);
+
+        // Assignment is informational only — every CI can still view and act on the activity.
+        $this->actingAs($other)->get(route('client-folders.activities.edit', [$folder, $activity]))->assertOk();
+
+        // Saving again without changing the assignment must not fire a second assignment-changed event.
+        $this->actingAs($assignee)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload() + ['assigned_ci_id' => $assignee->id]);
+        $this->assertSame(1, AuditLog::where('action', 'ci_activity.assignment_changed')->count());
+    }
+
+    public function test_ci_activity_concurrent_save_with_stale_updated_at_is_rejected(): void
+    {
+        $ci = User::factory()->create();
+        $other = User::factory()->create();
+        [$folder, $activity] = $this->folderWithActivities($ci);
+        $staleTimestamp = $activity->updated_at->toISOString();
+
+        $this->travel(1)->minutes();
+        $this->actingAs($other)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload() + ['expected_updated_at' => $staleTimestamp])
+            ->assertRedirect();
+
+        $this->actingAs($ci)->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload() + ['expected_updated_at' => $staleTimestamp])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('expected_updated_at');
     }
 
     public function test_deleted_folder_is_unavailable_and_forged_nested_activity_is_rejected(): void

@@ -30,6 +30,16 @@ class CibiReport extends Model
         return $this->belongsTo(User::class, 'ci_in_charge_id');
     }
 
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function lastEditor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'last_edited_by');
+    }
+
     public function bankAccounts(): HasMany
     {
         return $this->hasMany(CibiBankAccount::class);

@@ -11,11 +11,14 @@ use App\Models\CoMaker;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\ResidenceCheck;
+use App\Services\ClientFolders\CiParticipantService;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 class OfficialReportDataBuilder
 {
+    public function __construct(private readonly CiParticipantService $participants) {}
+
     /** @return array<string, mixed> */
     public function build(ClientFolder $folder, OfficialReportType $type, ?IncomeSource $source = null, ?CoMaker $activePerson = null): array
     {
@@ -98,6 +101,7 @@ class OfficialReportDataBuilder
             // saved as 'co_maker' while still being the Applicant's own (co_maker_id null) row,
             // so trusting the column alone could show the wrong checkmark on a legacy report.
             'party_type' => $activePerson ? 'co_maker' : 'borrower',
+            'name_label' => $activePerson ? 'NAME OF COMAKER:' : 'NAME OF CLIENT:',
             'risk_level' => $report->ci_risk_level,
             'personal' => collect($report->personal_snapshot ?? [])->map(fn ($value) => $this->na($value))->all(),
             'purpose_codes' => $report->purpose_codes ?? [],
@@ -191,6 +195,10 @@ class OfficialReportDataBuilder
         abort_if($report === null, 422, 'Save the business report before generating an official output.');
         $cibiReport = $folder->cibiReport()->where('co_maker_id', $source->co_maker_id)->first();
         $personName = $source->applicant_name_snapshot ?: $folder->display_name;
+        // Authoritative CI In-Charge for the official Business Report: the exact IncomeSource's
+        // saved primary creator plus companions, in saved order — never the folder's own
+        // (unrelated) assigned_ci_id, and never Business Check's separate participant list.
+        $ciInCharge = $this->participants->fullNames($source);
 
         $data = $this->base($folder, OfficialReportType::BusinessIncomeSource, $personName);
         $data['title'] = strtoupper($source->template->name);
@@ -199,7 +207,7 @@ class OfficialReportDataBuilder
         $data['source_revision'] = $source->revision;
         $data['template_version'] = $source->template_version;
         $data['header'] = [
-            ['CI in Charge', strtoupper((string) $folder->assignedInvestigator?->full_name)], ['Branch', $source->branch_name ?: $cibiReport?->branch_name],
+            ['CI in Charge', strtoupper($ciInCharge)], ['Branch', $source->branch_name ?: $cibiReport?->branch_name],
             ['Start Date of CI', $this->date($report->start_date)], [$source->co_maker_id ? 'Co-Maker Name' : 'Applicant Name', $personName],
             ['Date Submitted to CA', $this->date($report->submitted_date)], ['Account Officer', $source->account_officer_name ?: $cibiReport?->account_officer_name],
             // Derived from the business report's own owner (co_maker_id), not the linked CI/BI
@@ -210,7 +218,7 @@ class OfficialReportDataBuilder
         $data['business'] = [
             'template_type' => $source->template_type,
             'section_title' => strtoupper($source->template->name),
-            'ci_in_charge' => strtoupper($this->na($folder->assignedInvestigator?->full_name)),
+            'ci_in_charge' => strtoupper($this->na($ciInCharge)),
             'branch' => $this->na($source->branch_name ?: $cibiReport?->branch_name),
             'start_date' => $this->shortDate($report->start_date),
             'applicant_name' => $personName,
@@ -335,8 +343,8 @@ class OfficialReportDataBuilder
     private function residenceBusiness(ClientFolder $folder, ?CoMaker $activePerson = null): array
     {
         $personId = $activePerson?->id;
-        $residenceChecks = $folder->residenceChecks()->where('co_maker_id', $personId)->with('photos')->orderBy('ci_date')->orderBy('id')->get();
-        $businessChecks = $folder->businessChecks()->where('co_maker_id', $personId)->with(['photos', 'incomeSource:id,source_name,business_name,income_source_template_id', 'incomeSource.template:id,template_type'])->orderBy('ci_date')->orderBy('id')->get();
+        $residenceChecks = $folder->residenceChecks()->where('co_maker_id', $personId)->with(['photos', 'investigator:id,full_name'])->orderBy('ci_date')->orderBy('id')->get();
+        $businessChecks = $folder->businessChecks()->where('co_maker_id', $personId)->with(['photos', 'photoGroups.photos', 'incomeSource:id,source_name,business_name,income_source_template_id', 'incomeSource.template:id,template_type'])->orderBy('ci_date')->orderBy('id')->get();
         abort_if($residenceChecks->isEmpty() && $businessChecks->isEmpty(), 422, 'Save at least one Residence Check or Business Check before generating an official output.');
         $personName = $activePerson?->full_name ?? $folder->display_name;
 
@@ -350,52 +358,212 @@ class OfficialReportDataBuilder
         return $data;
     }
 
-    /** Maps one saved Residence Check into the shared `photo_sections` element shape consumed by the HTML/PDF preview and the DOCX generator. Public so batch print/export can reuse it without duplicating the mapping. */
+    /**
+     * Maps one saved Residence Check into the shared `photo_sections` element shape consumed by
+     * the HTML/PDF preview and the DOCX generator. Public so batch print/export can reuse it
+     * without duplicating the mapping.
+     *
+     * Every media item carries an `image_path` (a local absolute file path — the only thing
+     * Dompdf/PhpWord can embed for PDF/DOCX directly; null for a Cloudinary-backed item until
+     * ReportMediaResolver downloads it on demand, right before a PDF/DOCX render actually needs
+     * it), a `web_url` (this app's own authorized photo-serving route — redirects straight to a
+     * signed Cloudinary URL when the item is cloud-backed, or streams the local file otherwise; a
+     * raw Windows/private-storage path or Cloudinary public_id is meaningless as an `<img src>` on
+     * its own), and — only for a Cloudinary-backed item — a `cloud` descriptor ReportMediaResolver
+     * needs to fetch it. Local-storage photos use the full-resolution original (falling back to the
+     * 640x480 thumbnail only if the original is missing); Cloudinary photos use the already-
+     * optimized stored master (see CloudinaryMediaStorage) — never a raw UUID filename as the
+     * visible caption either way.
+     *
+     * The Google Map evidence is the saved Map Screenshot alone — never generated from
+     * latitude/longitude, never a live Google API call — and returned separately as `google_map`
+     * so it renders on its own dedicated page instead of mixed in with the Residence Pictures.
+     */
     public function residenceCheckSection(ResidenceCheck $check, string $personName): array
     {
+        $media = $check->photos->map(fn ($photo) => [
+            'caption' => $photo->caption,
+            'media_type' => 'photo',
+            'image_path' => $photo->isCloud() ? null : $this->safeMediaPath($photo->path ?: $photo->thumbnail_path),
+            'cloud' => $this->cloudDescriptor($photo->isCloud(), $photo->cloud_public_id, $photo->cloud_resource_type, $photo->cloud_delivery_type),
+            'web_url' => route('client-folders.residence-checks.photo', [$check->client_folder_id, $check->id, $photo->id]),
+        ])->all();
+
         return [
             'category' => 'Residence',
             'subject' => $personName,
+            'party_label' => $check->co_maker_id ? 'Co-Maker Name' : 'Applicant Name',
             'heading' => 'Residence Check',
             'location' => $check->location,
             'business_name' => null,
             'income_source' => null,
             'map' => $check->google_maps_link,
+            'google_map' => $this->googleMapEvidence($check),
             'remarks' => $check->remarks,
-            'media' => $check->photos->map(fn ($photo) => [
-                'label' => $photo->caption ?: $photo->file_name,
-                'caption' => $photo->caption,
-                'file_name' => $photo->file_name,
-                'media_type' => 'photo',
-                'image_path' => $this->safeMediaPath($photo->thumbnail_path ?: $photo->path),
-            ])->all(),
+            'ci_date' => $this->date($check->ci_date),
+            // Residence Check's own saved participant list (primary CI first, then companions in
+            // saved order), first names only — e.g. "Juan / Pedro / Maria". Never derived from the
+            // folder's assigned_ci_id, whoever last updated the record, or any other check's own
+            // participant list.
+            'ci' => $this->participants->firstNames($check),
+            'media' => $media,
         ];
     }
 
-    /** Maps one saved Business Check into the shared `photo_sections` element shape; business + competitor photos are combined into one media list, each competitor photo's label prefixed so it's distinguishable in the rendered output. Public so batch print/export can reuse it without duplicating the mapping. */
+    /**
+     * Resolves this Residence Check's saved Map Screenshot (if any) into the `google_map` shape —
+     * the same convention BusinessCheck's own evidence resolver returns. `web_url` is set whenever
+     * the screenshot exists in the database, the same convention as every Residence Picture's own
+     * `web_url` below, since the authorized route it points at does its own proper
+     * (Storage-disk-aware) existence check on request rather than the raw local-filesystem check
+     * `image_path` needs for Dompdf/PhpWord to embed it directly.
+     *
+     * @return array{image_path: ?string, cloud: ?array, web_url: ?string}|null
+     */
+    private function googleMapEvidence(ResidenceCheck $check): ?array
+    {
+        if (! $check->hasMapScreenshot()) {
+            return null;
+        }
+
+        return [
+            'image_path' => $check->hasCloudMapScreenshot() ? null : $this->safeMediaPath($check->map_screenshot_path ?: $check->map_screenshot_thumbnail_path),
+            'cloud' => $this->cloudDescriptor($check->hasCloudMapScreenshot(), $check->map_screenshot_cloud_public_id, $check->map_screenshot_cloud_resource_type, $check->map_screenshot_cloud_delivery_type),
+            'web_url' => route('client-folders.residence-checks.map-screenshot', [$check->client_folder_id, $check->id]),
+        ];
+    }
+
+    /**
+     * Maps one saved Business Check into the shared `photo_sections` element shape. Business
+     * Photos render as `photo_groups` (one entry per saved BusinessCheckPhotoGroup, its own
+     * optional caption shown once above its own photos — matching the real-world report format
+     * this feature was built from), with any historical ungrouped photo (saved before Photo Groups
+     * existed) appended as its own caption-less trailing group so nothing saved before this feature
+     * ever disappears from the report. Competitors stay a completely separate concept — never a
+     * Photo Group — with their own optional caption (Competitor Remarks) and photo list, rendered
+     * after every Photo Group. Public so batch print/export can reuse it without duplicating the
+     * mapping.
+     */
     public function businessCheckSection(BusinessCheck $check, string $personName): array
     {
-        $remarks = filled($check->competitor_remarks)
-            ? trim(($check->remarks ? $check->remarks."\n\n" : '').'Competitor Remarks: '.$check->competitor_remarks)
-            : $check->remarks;
+        $mapPhoto = fn ($photo) => [
+            'file_name' => $photo->file_name,
+            'media_type' => 'photo',
+            // Cloudinary photos have no separately-stored thumbnail asset to prefer — the report
+            // always embeds the already-optimized stored master (see CloudinaryMediaStorage).
+            'image_path' => $photo->isCloud() ? null : $this->safeMediaPath($photo->thumbnail_path ?: $photo->path),
+            'cloud' => $this->cloudDescriptor($photo->isCloud(), $photo->cloud_public_id, $photo->cloud_resource_type, $photo->cloud_delivery_type),
+            // Full (never thumbnail) delivery for the Web Preview — same convention as Residence
+            // Check's own photo mapping — so a Cloudinary-backed photo still renders large there
+            // instead of falling through to a null local $image_path (PDF/DOCX always use
+            // $image_path directly and never consult this).
+            'web_url' => route('client-folders.business-checks.photo', [$check->client_folder_id, $check->id, $photo->id]),
+        ];
+
+        $groupedPhotoIds = [];
+        $photoGroups = $check->photoGroups->map(function ($group) use ($mapPhoto, &$groupedPhotoIds) {
+            $groupedPhotoIds = [...$groupedPhotoIds, ...$group->photos->pluck('id')->all()];
+
+            return ['caption' => $group->caption, 'photos' => $group->photos->map($mapPhoto)->all()];
+        })->all();
+
+        $legacyPhotos = $check->photos->filter(fn ($photo) => $photo->category?->value === 'business' && ! in_array($photo->id, $groupedPhotoIds, true));
+        if ($legacyPhotos->isNotEmpty()) {
+            $photoGroups[] = ['caption' => null, 'photos' => $legacyPhotos->map($mapPhoto)->values()->all()];
+        }
+
+        $competitorPhotos = $check->photos->filter(fn ($photo) => $photo->category?->value === 'competitor')->map($mapPhoto)->values()->all();
 
         return [
             'category' => 'Business',
             'subject' => $personName,
+            // Same convention as Residence Check's own party_label — a Business Check can belong to
+            // either the Applicant or a specific Co-Maker's own business.
+            'party_label' => $check->co_maker_id ? 'Co-Maker Name' : 'Applicant Name',
             'heading' => 'Business Check',
             'location' => $check->location,
+            'ci_date' => $this->date($check->ci_date),
             'business_name' => $check->incomeSource?->displayName() ?? $check->incomeSource?->business_name,
             'income_source' => $check->incomeSource?->source_name,
-            'map' => $check->google_maps_link,
-            'remarks' => $remarks,
-            'media' => $check->photos->map(fn ($photo) => [
-                'label' => trim(($photo->category?->value === 'competitor' ? 'Competitor - ' : '').($photo->caption ?: $photo->file_name)),
-                'caption' => $photo->caption,
-                'file_name' => $photo->file_name,
-                'media_type' => 'photo',
-                'image_path' => $this->safeMediaPath($photo->thumbnail_path ?: $photo->path),
-            ])->all(),
+            // The Business Check form's own "Google Maps Link" input was removed — historical
+            // records saved before that removal may still carry a custom link, which stays
+            // meaningful here; anything saved from now on falls back to Location instead of going
+            // blank.
+            'map' => $check->google_maps_link ?: $check->location,
+            'google_map' => $this->businessMapEvidence($check),
+            'remarks' => $check->remarks,
+            // Business Check's own saved participant list (primary CI first, then companions in
+            // saved order) — first names only, per the existing Residence Check CI convention.
+            // Never derived from Business Report's participants or the folder's assigned_ci_id.
+            'ci' => $this->participants->firstNames($check),
+            // Every Business Photo (default/first group, then each additional Photo Group in saved
+            // order) pre-chunked to at most 2 photos per "page" — one shared source of truth so
+            // Web/PDF/DOCX can never disagree on where a page boundary falls. A group's caption
+            // (when it has one) rides along on the same page as its own first photo(s), never
+            // repeated on that same group's continuation page(s), and never left stranded alone —
+            // see paginateBusinessPhotos().
+            'photo_pages' => $this->paginateBusinessPhotos($photoGroups),
+            'competitor_caption' => $check->competitor_remarks,
+            'competitor_photos' => $competitorPhotos,
+            // Same pagination as Business Photos, kept as its own list since Competitors is a
+            // separate report section (after Map Screenshot, never mixed with Business Photos).
+            'competitor_photo_pages' => $this->paginateBusinessPhotos([['caption' => $check->competitor_remarks, 'photos' => $competitorPhotos]]),
         ];
+    }
+
+    /**
+     * Chunks each group's photos into pages of at most 2 — a group's own caption (if any) is
+     * attached only to that group's first page, never repeated on its continuation pages, and a
+     * group's pages always start fresh (never sharing a page with another group's photos), so a
+     * caption is never left alone without at least one of its own photos on the same page.
+     *
+     * @param  list<array{caption: ?string, photos: list<array<string, mixed>>}>  $groups
+     * @return list<array{caption: ?string, photos: list<array<string, mixed>>}>
+     */
+    private function paginateBusinessPhotos(array $groups): array
+    {
+        $pages = [];
+        foreach ($groups as $group) {
+            if ($group['photos'] === []) {
+                continue;
+            }
+            foreach (array_chunk($group['photos'], 2) as $index => $chunk) {
+                $pages[] = ['caption' => $index === 0 ? $group['caption'] : null, 'photos' => $chunk];
+            }
+        }
+
+        return $pages;
+    }
+
+    /**
+     * Resolves this Business Check's saved Map Screenshot (if any) into the same `google_map`
+     * shape ResidenceCheck's own evidence resolver returns — rendered on its own dedicated page by
+     * the shared photo-sections partial/DOCX builder, never mixed in with the Business Pictures,
+     * and never shown as a raw filename.
+     *
+     * @return array{image_path: ?string, web_url: ?string}|null
+     */
+    private function businessMapEvidence(BusinessCheck $check): ?array
+    {
+        if (! $check->hasMapScreenshot()) {
+            return null;
+        }
+
+        return [
+            'image_path' => $check->hasCloudMapScreenshot() ? null : $this->safeMediaPath($check->map_screenshot_path ?: $check->map_screenshot_thumbnail_path),
+            'cloud' => $this->cloudDescriptor($check->hasCloudMapScreenshot(), $check->map_screenshot_cloud_public_id, $check->map_screenshot_cloud_resource_type, $check->map_screenshot_cloud_delivery_type),
+            'web_url' => route('client-folders.business-checks.map-screenshot', [$check->client_folder_id, $check->id]),
+        ];
+    }
+
+    /** @return array{public_id: string, resource_type: ?string, delivery_type: ?string}|null */
+    private function cloudDescriptor(bool $isCloud, ?string $publicId, ?string $resourceType, ?string $deliveryType): ?array
+    {
+        if (! $isCloud || blank($publicId)) {
+            return null;
+        }
+
+        return ['public_id' => $publicId, 'resource_type' => $resourceType, 'delivery_type' => $deliveryType];
     }
 
     private function safeMediaPath(?string $path): ?string

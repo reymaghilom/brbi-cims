@@ -10,6 +10,7 @@ use App\Models\AuditLog;
 use App\Models\BusinessReport;
 use App\Models\CibiReport;
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use App\Models\GeneratedReport;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
@@ -66,6 +67,58 @@ class OfficialReportGenerationTest extends TestCase
         $this->assertStringContainsString('SAVED CLIENT', $documentXml);
         $this->assertStringNotContainsString('VALIDATED SNAPSHOT NAME', $documentXml);
         $this->assertSame('BRBI_'.$folder->folder_number.'_SAVED-CLIENT_CI-BI-Report_v1.pdf', basename($pdf->private_file_reference));
+    }
+
+    public function test_applicant_cibi_download_pdf_returns_a_successful_valid_pdf_response(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+
+        $this->actingAs($ci)->post(route('client-folders.cibi-report.export-pdf', $folder))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+    }
+
+    public function test_co_maker_cibi_download_pdf_returns_a_successful_valid_pdf_response(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'SAVED CLIENT']);
+        $coMaker = $folder->coMakers()->create(['full_name' => 'CO MAKER SAVED']);
+        $report = CibiReport::factory()->create([
+            'client_folder_id' => $folder->id, 'co_maker_id' => $coMaker->id, 'ci_in_charge_id' => $ci->id,
+            'start_date' => '2026-08-01', 'submitted_date' => '2026-08-02', 'branch_name' => 'Main',
+            'account_officer_name' => 'AO Name', 'ci_risk_level' => 'low', 'purpose_codes' => ['working_capital'],
+            'prepared_by_name' => 'Investigator', 'revision' => 1, 'state' => RecordState::Complete,
+        ]);
+        $report->incomeSourceSummaries()->create(['source_name' => 'Co-Maker Income', 'monthly_amount' => 15000, 'sort_order' => 1]);
+
+        $this->actingAs($ci)->post(route('client-folders.cibi-report.export-pdf', $folder), ['co_maker_id' => $coMaker->id])
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+    }
+
+    public function test_cibi_pdf_export_does_not_change_the_stored_signatory(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+        $signatoryId = $folder->cibiReport->ci_in_charge_id;
+
+        $this->actingAs($ci)->post(route('client-folders.cibi-report.export-pdf', $folder))->assertOk();
+
+        $this->assertSame($signatoryId, $folder->cibiReport->fresh()->ci_in_charge_id);
+    }
+
+    public function test_cibi_pdf_export_tolerates_null_optional_report_values(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'MINIMAL CLIENT']);
+        // Only the fields legally required to reach the Complete state are set — no bank
+        // accounts, no legal findings, no income summaries, no personal snapshot overrides.
+        CibiReport::factory()->create([
+            'client_folder_id' => $folder->id, 'ci_in_charge_id' => $ci->id, 'state' => RecordState::Complete,
+        ]);
+
+        $this->actingAs($ci)->post(route('client-folders.cibi-report.export-pdf', $folder))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
     }
 
     public function test_all_four_report_families_preview_and_generate_from_saved_data(): void
@@ -167,6 +220,69 @@ class OfficialReportGenerationTest extends TestCase
         $report = GeneratedReport::where('report_type', 'cibi')->where('format', ReportFormat::Pdf)->sole();
         $this->assertSame(GenerationStatus::Completed, $report->status);
         $this->assertSame('%PDF', substr(Storage::disk('local')->get($report->private_file_reference), 0, 4));
+    }
+
+    public function test_applicant_cibi_web_output_shows_name_of_client_label(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+
+        // The web Preview and PDF export share the same reports.official.cibi template (PDF is
+        // that same HTML rendered through Dompdf), so this single assertion covers both surfaces.
+        $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))
+            ->assertOk()
+            ->assertSee('NAME OF CLIENT:')
+            ->assertDontSee('NAME OF COMAKER:');
+    }
+
+    public function test_co_maker_cibi_web_output_shows_name_of_comaker_label(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER PERSON']);
+        $report = CibiReport::factory()->create([
+            'client_folder_id' => $folder->id, 'co_maker_id' => $coMaker->id, 'ci_in_charge_id' => $ci->id,
+            'start_date' => '2026-08-01', 'submitted_date' => '2026-08-02', 'branch_name' => 'Main', 'account_officer_name' => 'AO Name',
+            'ci_risk_level' => 'low', 'purpose_codes' => ['working_capital'], 'prepared_by_name' => 'Investigator', 'state' => RecordState::Complete,
+            'personal_snapshot' => ['name' => $coMaker->full_name, 'civil_status' => 'Married', 'material_cost_level' => 'Medium', 'reputation' => 'Good', 'barangay_findings' => 'No Legal Cases', 'court_background_status' => 'No Legal Cases', 'lifestyle' => 'Modest'],
+        ]);
+        $report->incomeSourceSummaries()->create(['source_name' => 'Saved Income', 'monthly_amount' => 25000, 'sort_order' => 1]);
+        $report->legalFindings()->create(['source_level' => 'barangay', 'result' => 'Clear', 'sort_order' => 1]);
+
+        $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi', 'co_maker_id' => $coMaker->id]))
+            ->assertOk()
+            ->assertSee('NAME OF COMAKER:')
+            ->assertDontSee('NAME OF CLIENT:');
+    }
+
+    #[RunInSeparateProcess]
+    public function test_applicant_and_co_maker_cibi_excel_output_use_the_correct_name_label(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+
+        $applicantResponse = $this->actingAs($ci)->post(route('client-folders.cibi-report.export-excel', $folder))->assertOk();
+        $this->assertSame('NAME OF CLIENT:', $this->excelCellValue($applicantResponse->streamedContent(), 'C11'));
+
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER PERSON']);
+        $coMakerReport = CibiReport::factory()->create([
+            'client_folder_id' => $folder->id, 'co_maker_id' => $coMaker->id, 'ci_in_charge_id' => $ci->id,
+            'start_date' => '2026-08-01', 'submitted_date' => '2026-08-02', 'branch_name' => 'Main', 'account_officer_name' => 'AO Name',
+            'ci_risk_level' => 'low', 'purpose_codes' => ['working_capital'], 'prepared_by_name' => 'Investigator', 'state' => RecordState::Complete,
+            'personal_snapshot' => ['name' => $coMaker->full_name],
+        ]);
+        $coMakerReport->incomeSourceSummaries()->create(['source_name' => 'Saved Income', 'monthly_amount' => 25000, 'sort_order' => 1]);
+
+        $coMakerResponse = $this->actingAs($ci)->post(route('client-folders.cibi-report.export-excel', $folder), ['co_maker_id' => $coMaker->id])->assertOk();
+        $this->assertSame('NAME OF COMAKER:', $this->excelCellValue($coMakerResponse->streamedContent(), 'C11'));
+    }
+
+    private function excelCellValue(string $bytes, string $cell): ?string
+    {
+        $temporary = tempnam(sys_get_temp_dir(), 'xlsx-test-');
+        file_put_contents($temporary, $bytes);
+        $sheet = IOFactory::load($temporary)->getSheetByName('CI REPORT - CIBI');
+        unlink($temporary);
+
+        return $sheet?->getCell($cell)->getValue();
     }
 
     #[RunInSeparateProcess]
@@ -327,9 +443,9 @@ class OfficialReportGenerationTest extends TestCase
         [, $otherFolder] = $this->cibiContext();
         $otherSource = $this->businessSource($otherFolder);
 
-        $this->actingAs($other)->get(route('client-folders.generated-reports.index', $folder))->assertForbidden();
-        $this->actingAs($other)->post(route('client-folders.generated-reports.store', $folder), ['report_type' => 'cibi', 'format' => 'pdf'])->assertForbidden();
-        $this->actingAs($other)->post(route('client-folders.cibi-report.export-excel', $folder))->assertForbidden();
+        $this->actingAs($other)->get(route('client-folders.generated-reports.index', $folder))->assertOk();
+        $this->actingAs($other)->post(route('client-folders.generated-reports.store', $folder), ['report_type' => 'cibi', 'format' => 'pdf'])->assertRedirect();
+        $this->actingAs($other)->post(route('client-folders.cibi-report.export-excel', $folder))->assertOk();
         $this->actingAs($administrator)->get(route('client-folders.generated-reports.index', $folder))->assertOk();
         $this->actingAs($assigned)->post(route('client-folders.generated-reports.store', $folder), ['report_type' => 'business_income_source', 'format' => 'pdf', 'income_source_id' => $otherSource->id])->assertNotFound();
 

@@ -20,7 +20,7 @@ class RemoveMedia
                 'action' => 'media.removed',
                 'module' => 'media',
                 'description' => 'A media evidence item was moved out of the active gallery.',
-                'metadata' => ['media_reference_id' => $media->id, 'media_type' => $media->media_type->value, 'category' => $media->category->value],
+                'metadata' => ['media_reference_id' => $media->id, 'co_maker_id' => $media->co_maker_id, 'media_type' => $media->media_type->value, 'category' => $media->category->value],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
             ]);

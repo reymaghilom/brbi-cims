@@ -30,6 +30,11 @@
                 <input id="co-maker-suffix" name="suffix" class="ui-control" maxlength="30" placeholder="JR., SR., III" value="{{ old('suffix') }}" aria-describedby="co-maker-suffix-error">
                 <p id="co-maker-suffix-error" class="mt-2 text-sm font-semibold text-danger" role="alert" data-co-maker-error-for="suffix" @if(! $errors->has('suffix')) hidden @endif>{{ $errors->first('suffix') }}</p>
             </div>
+            <div class="sm:col-span-2">
+                <label for="co-maker-address" class="ui-label">Address <span class="text-danger" aria-hidden="true">*</span></label>
+                <textarea id="co-maker-address" name="address" class="ui-control" rows="3" required maxlength="2000" placeholder="House No./Street, Barangay, City/Municipality, Province" autocomplete="street-address" aria-describedby="co-maker-address-error">{{ old('address') }}</textarea>
+                <p id="co-maker-address-error" class="mt-2 text-sm font-semibold text-danger" role="alert" data-co-maker-error-for="address" @if(! $errors->has('address')) hidden @endif>{{ $errors->first('address') }}</p>
+            </div>
         </div>
     </form>
 

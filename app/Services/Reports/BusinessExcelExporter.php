@@ -6,6 +6,7 @@ use App\Enums\OfficialReportType;
 use App\Models\BusinessReport;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
+use App\Services\ClientFolders\CiParticipantService;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -115,7 +116,7 @@ class BusinessExcelExporter
     /** Schema `tables.branches.*` column keys (differ from the retail section's Eloquent attribute names) mapped to the shared branches-table columns. */
     private const SCHEMA_BRANCH_COLUMNS = ['C' => 'location', 'G' => 'frontage', 'H' => 'total_area', 'I' => 'air_conditioned', 'J' => 'operating_days_hours', 'M' => 'shifts', 'N' => 'employees_per_shift', 'P' => 'average_sales_per_shift', 'R' => 'inventory_level', 'T' => 'monthly_rent', 'V' => 'years_in_area', 'X' => 'nearby_brands'];
 
-    public function __construct(private readonly OfficialReportDataBuilder $dataBuilder) {}
+    public function __construct(private readonly OfficialReportDataBuilder $dataBuilder, private readonly CiParticipantService $participants) {}
 
     public function generate(ClientFolder $folder, IncomeSource $source): string
     {
@@ -648,9 +649,10 @@ class BusinessExcelExporter
 
         $report = $source->businessReport;
         $cibiReport = $folder->cibiReport()->where('co_maker_id', $source->co_maker_id)->first();
-        $folder->loadMissing('assignedInvestigator:id,full_name');
 
-        $this->setOrNa($sheet, 'G', 6, mb_strtoupper((string) $folder->assignedInvestigator?->full_name));
+        // Authoritative CI In-Charge: the exact IncomeSource's saved primary creator plus
+        // companions, in saved order — never the folder's own assigned_ci_id.
+        $this->setOrNa($sheet, 'G', 6, mb_strtoupper($this->participants->fullNames($source)));
         $this->setOrNa($sheet, 'T', 6, $source->branch_name ?: $cibiReport?->branch_name);
         $this->setDate($sheet, 'G', 7, $report?->start_date);
         // O7 is a single (unmerged) label cell reading "NAME OF APPLICANT:" in the reference

@@ -6,20 +6,31 @@ use App\Actions\ClientFolders\CreateIncomeSource;
 use App\Actions\ClientFolders\DeleteIncomeSource;
 use App\Actions\ClientFolders\SaveBusinessIncomeSource;
 use App\Actions\ClientFolders\SaveGeneralIncomeSource;
+use App\Actions\ClientFolders\UpdateIncomeSourceContributors;
+use App\Exceptions\NoChangesDetectedException;
+use App\Http\Requests\ClientFolders\QuickCreateIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\StoreIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\UpdateBusinessIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\UpdateGeneralIncomeSourceRequest;
+use App\Http\Requests\ClientFolders\UpdateIncomeSourceContributorsRequest;
+use App\Enums\UserRole;
+use App\Enums\UserStatus;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
+use App\Models\User;
 use App\Services\ClientFolders\ActivePersonResolver;
+use App\Services\ClientFolders\CiParticipantService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
 class IncomeSourceController extends Controller
 {
+    public function __construct(private readonly CiParticipantService $participants) {}
+
     public function launch(ClientFolder $clientFolder): View
     {
         Gate::authorize('view', $clientFolder);
@@ -74,6 +85,37 @@ class IncomeSourceController extends Controller
         return redirect()->route('client-folders.income-sources.edit', [$clientFolder, $source] + $personParams)->with('status', 'Business Report saved successfully.');
     }
 
+    /**
+     * "+ Add Business" quick-create used from the Business Check form (Applicant only for now)
+     * when the business hasn't been created through the normal Business Report flow yet. Creates
+     * the exact same shared IncomeSource/BusinessReport shell as the full flow (CreateIncomeSource
+     * is reused as-is, unmodified) — never a Business-Check-only text field, never a duplicate
+     * identity, never a fake "completed" report. It stays in RecordState::Draft exactly like any
+     * other freshly created business until someone completes it through Business / Income Sources.
+     *
+     * The modal's own Location field is set as an extra step right here (not inside
+     * CreateIncomeSource) — it becomes the new BusinessReport's main_business_address, the one
+     * authoritative business address Business Check and Business Report both read from, so a
+     * business quick-added from Business Check already shows the same address if/when a Business
+     * Report is opened for it later.
+     */
+    public function quickCreate(QuickCreateIncomeSourceRequest $request, ClientFolder $clientFolder, CreateIncomeSource $create): JsonResponse
+    {
+        $data = $request->validated();
+        $source = $create->execute($request->user(), $clientFolder, [
+            'income_source_template_id' => $data['income_source_template_id'],
+            'source_name' => $data['business_name'],
+            'business_name' => $data['business_name'],
+            'co_maker_id' => $data['co_maker_id'] ?? null,
+        ]);
+
+        if (filled($data['location'] ?? null)) {
+            $source->businessReport?->update(['main_business_address' => $data['location']]);
+        }
+
+        return response()->json(['id' => $source->id, 'name' => $source->displayName(), 'location' => $source->businessReport?->main_business_address]);
+    }
+
     public function show(ClientFolder $clientFolder, IncomeSource $incomeSource): RedirectResponse
     {
         Gate::authorize('view', $incomeSource);
@@ -120,18 +162,36 @@ class IncomeSourceController extends Controller
 
     public function updateGeneral(UpdateGeneralIncomeSourceRequest $request, ClientFolder $clientFolder, IncomeSource $incomeSource, SaveGeneralIncomeSource $save): RedirectResponse
     {
-        $save->execute($request->user(), $clientFolder, $incomeSource, $request->validated());
         $activePerson = ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id'));
+
+        try {
+            $save->execute($request->user(), $clientFolder, $incomeSource, $request->validated());
+        } catch (NoChangesDetectedException $e) {
+            return $this->afterSave($request->string('intent')->toString(), $clientFolder, $incomeSource, $e->getMessage(), $activePerson, 'info');
+        }
 
         return $this->afterSave($request->string('intent')->toString(), $clientFolder, $incomeSource, 'Income source report saved successfully.', $activePerson);
     }
 
     public function updateBusiness(UpdateBusinessIncomeSourceRequest $request, ClientFolder $clientFolder, IncomeSource $incomeSource, SaveBusinessIncomeSource $save): RedirectResponse
     {
-        $save->execute($request->user(), $clientFolder, $incomeSource, $request->validated());
         $activePerson = ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id'));
 
+        try {
+            $save->execute($request->user(), $clientFolder, $incomeSource, $request->validated());
+        } catch (NoChangesDetectedException $e) {
+            return $this->afterSave($request->string('intent')->toString(), $clientFolder, $incomeSource, $e->getMessage(), $activePerson, 'info');
+        }
+
         return $this->afterSave($request->string('intent')->toString(), $clientFolder, $incomeSource, 'Business Report updated successfully.', $activePerson);
+    }
+
+    public function updateContributors(UpdateIncomeSourceContributorsRequest $request, ClientFolder $clientFolder, IncomeSource $incomeSource, UpdateIncomeSourceContributors $update): RedirectResponse
+    {
+        $update->execute($request->user(), $clientFolder, $incomeSource, $request->validated('contributor_ids', []));
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $incomeSource->co_maker_id);
+
+        return $this->afterSave('stay', $clientFolder, $incomeSource, 'Contributors updated successfully.', $activePerson);
     }
 
     public function destroy(ClientFolder $clientFolder, IncomeSource $incomeSource, DeleteIncomeSource $delete): RedirectResponse
@@ -143,14 +203,14 @@ class IncomeSourceController extends Controller
         return redirect()->route('client-folders.income-sources.manage', [$clientFolder] + $personParams)->with('status', 'Business deleted successfully.');
     }
 
-    private function afterSave(string $intent, ClientFolder $folder, IncomeSource $source, string $message, ?CoMaker $activePerson): RedirectResponse
+    private function afterSave(string $intent, ClientFolder $folder, IncomeSource $source, string $message, ?CoMaker $activePerson, string $statusType = 'success'): RedirectResponse
     {
         $personParams = ActivePersonResolver::queryParams($activePerson);
         $route = $intent === 'return'
             ? route('client-folders.income-sources.manage', [$folder] + $personParams)
             : route('client-folders.income-sources.edit', [$folder, $source] + $personParams);
 
-        return redirect($route)->with('status', $message);
+        return redirect($route)->with('status', $message)->with('statusType', $statusType);
     }
 
     private function dedicatedSources(ClientFolder $folder, ?CoMaker $activePerson, ?string $sort = null, string $sortDirection = 'asc')
@@ -193,6 +253,7 @@ class IncomeSourceController extends Controller
             $incomeSource->load([
                 'template', 'businessReport.properties.tenants', 'businessReport.branches', 'businessReport.products',
                 'businessReport.suppliers', 'businessReport.observations', 'businessReport.competitors',
+                'creator:id,full_name', 'lastEditor:id,full_name', 'contributors:id,full_name',
             ]);
         }
         $businesses = $this->dedicatedSources($clientFolder, $activePerson);
@@ -208,7 +269,23 @@ class IncomeSourceController extends Controller
         $businessTemplates = $this->activeBusinessTemplates();
         $preselectedTemplateId = $incomeSource ? null : request()->query('income_source_template_id');
 
-        return view('client-folders.income-sources.business-edit', compact('clientFolder', 'incomeSource', 'businesses', 'businessTemplates', 'suppressLegacyBusinessUi', 'preselectedTemplateId', 'activePerson'));
+        // A not-yet-created business has no IncomeSource to derive a primary CI from — the
+        // primary is simply whoever is currently encoding it, exactly as the existing (unrelated)
+        // CI In-Charge display already assumes for a brand-new business.
+        $primaryCiId = $incomeSource ? $incomeSource->ciPrimaryUserId() : auth()->id();
+        $companions = $incomeSource
+            ? $this->participants->orderedParticipants($incomeSource)->reject(fn (User $user): bool => (int) $user->id === (int) $primaryCiId)->values()
+            : collect();
+        // The primary CI is never a valid companion choice — excluded here entirely (not just
+        // disabled in the UI) so the modal's candidate list can never even present them.
+        $activeCreditInvestigators = User::query()
+            ->where('role', UserRole::CreditInvestigator)
+            ->where('status', UserStatus::Active)
+            ->where('id', '!=', $primaryCiId)
+            ->orderBy('full_name')
+            ->get(['id', 'full_name']);
+
+        return view('client-folders.income-sources.business-edit', compact('clientFolder', 'incomeSource', 'businesses', 'businessTemplates', 'suppressLegacyBusinessUi', 'preselectedTemplateId', 'activePerson', 'activeCreditInvestigators', 'companions'));
     }
 
     private function activeBusinessTemplates()

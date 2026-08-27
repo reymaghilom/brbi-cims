@@ -17,18 +17,17 @@ class ClientFolderSuggestionTest extends TestCase
             ->assertUnauthorized();
     }
 
-    public function test_credit_investigator_receives_only_assigned_matching_client_names(): void
+    public function test_credit_investigator_receives_matching_client_names_across_all_active_folders(): void
     {
         $ci = User::factory()->create();
         $otherCi = User::factory()->create();
         ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'REASAN MARK GURA', 'folder_number' => 'SECRET-100']);
-        ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'REALYN PRIVATE CRUZ', 'folder_number' => 'SECRET-200']);
+        ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'REALYN SHARED CRUZ', 'folder_number' => 'SECRET-200']);
 
         $this->actingAs($ci)
             ->getJson(route('client-folders.suggestions', ['q' => 'rea']))
             ->assertOk()
-            ->assertExactJson(['suggestions' => ['REASAN MARK GURA']])
-            ->assertDontSee('REALYN PRIVATE CRUZ')
+            ->assertJson(['suggestions' => ['REALYN SHARED CRUZ', 'REASAN MARK GURA']])
             ->assertDontSee('SECRET-100')
             ->assertDontSee('SECRET-200');
     }

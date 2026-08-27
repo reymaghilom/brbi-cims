@@ -24,7 +24,7 @@ class ClientInformationTest extends TestCase
         $this->seed(ReferenceDataSeeder::class);
     }
 
-    public function test_access_is_limited_to_administrator_and_assigned_ci(): void
+    public function test_access_is_shared_between_administrator_and_any_credit_investigator(): void
     {
         $admin = User::factory()->administrator()->create();
         $assigned = User::factory()->create();
@@ -33,8 +33,8 @@ class ClientInformationTest extends TestCase
 
         $this->actingAs($admin)->get(route('client-folders.client-information.edit', $folder))->assertOk();
         $this->actingAs($assigned)->get(route('client-folders.client-information.edit', $folder))->assertOk();
-        $this->actingAs($other)->get(route('client-folders.client-information.edit', $folder))->assertForbidden();
-        $this->actingAs($other)->put(route('client-folders.client-information.update', $folder), $this->payload())->assertForbidden();
+        $this->actingAs($other)->get(route('client-folders.client-information.edit', $folder))->assertOk();
+        $this->actingAs($other)->put(route('client-folders.client-information.update', $folder), $this->payload())->assertRedirect();
     }
 
     public function test_soft_deleted_folder_is_unavailable(): void

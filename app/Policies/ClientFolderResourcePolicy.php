@@ -65,7 +65,6 @@ abstract class ClientFolderResourcePolicy
 
     protected function canAccessFolder(User $user, ?ClientFolder $clientFolder): bool
     {
-        return $clientFolder !== null
-            && ($this->isAdministrator($user) || $clientFolder->assigned_ci_id === $user->id);
+        return $clientFolder !== null && $clientFolder->isAccessibleBy($user);
     }
 }

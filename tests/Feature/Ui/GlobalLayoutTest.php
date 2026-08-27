@@ -108,6 +108,51 @@ class GlobalLayoutTest extends TestCase
         $this->assertSame([32, 32], array_slice(getimagesize(public_path('assets/branding/favicon-leaf-32x32.png')), 0, 2));
     }
 
+    public function test_logout_trigger_is_isolated_from_the_dropdown_it_lives_inside(): void
+    {
+        $ci = User::factory()->create();
+
+        $content = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+
+        // Every other submit-type menuitem in the app (Download PDF/Excel, etc.) already
+        // references an external form via the button's own form="" attribute rather than
+        // nesting a <form> directly inside the closing dropdown — Logout must follow the same
+        // proven pattern, since closing the <details> on menuitem click hides its own content
+        // immediately and a <form> nested inside that content can have its submission silently
+        // cancelled by the browser.
+        $this->assertMatchesRegularExpression('/<button type="submit" form="logout-form"[^>]*role="menuitem"[^>]*>.*?Logout/s', $content);
+
+        $menuStart = strpos($content, 'data-context-menu');
+        $menuEnd = strpos($content, '</details>', $menuStart);
+        $dropdownRegion = substr($content, $menuStart, $menuEnd - $menuStart);
+        $this->assertStringNotContainsString('<form', $dropdownRegion, 'The logout form must live outside the dropdown, not nested inside it.');
+
+        $this->assertStringContainsString('id="logout-form" method="POST" action="'.route('logout').'"', $content);
+    }
+
+    public function test_logout_form_does_not_become_a_third_flex_item_that_would_push_the_profile_control_off_the_right_edge(): void
+    {
+        $ci = User::factory()->create();
+
+        $content = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+
+        // The header row is `flex ... justify-between` with exactly two children (greeting,
+        // account menu) so the account menu stays pinned to the far right — a bare, empty
+        // logout <form> living inside that same row would silently become a third flex item and
+        // shift the visible profile control away from the right edge, even though the form
+        // itself renders nothing visible.
+        $headerRowStart = strpos($content, 'class="flex min-h-16 items-center justify-between');
+        $this->assertNotFalse($headerRowStart);
+        $headerRowEnd = strpos($content, '</header>', $headerRowStart);
+        $formPos = strpos($content, 'id="logout-form"', $headerRowStart);
+        $this->assertNotFalse($formPos);
+        $rowCloseTagPos = strpos($content, "</div>\n", $headerRowStart);
+
+        $this->assertGreaterThan($rowCloseTagPos, $formPos, 'logout-form must be positioned after the flex row closes, not inside it.');
+        $this->assertLessThan($headerRowEnd, $formPos);
+        $this->assertStringContainsString('id="logout-form" method="POST" action="'.route('logout').'" class="hidden"', $content);
+    }
+
     public function test_topbar_renders_professional_greeting_avatar_role_label_and_logout_only_account_menu(): void
     {
         $ci = User::factory()->create(['full_name' => 'Reasan Mark Q. Gura']);

@@ -2,6 +2,7 @@
 
 namespace App\Actions\ClientFolders;
 
+use App\Exceptions\NoChangesDetectedException;
 use App\Models\AuditLog;
 use App\Models\ClientFolder;
 use App\Models\User;
@@ -11,9 +12,13 @@ class RenameClientFolder
 {
     public function execute(User $actor, ClientFolder $folder, string $displayName): void
     {
+        if ($displayName === $folder->display_name) {
+            throw new NoChangesDetectedException();
+        }
+
         DB::transaction(function () use ($actor, $folder, $displayName): void {
             $previousName = $folder->display_name;
-            $folder->update(['display_name' => $displayName]);
+            $folder->update(['display_name' => $displayName, 'updated_by' => $actor->id]);
 
             AuditLog::create([
                 'user_id' => $actor->id,

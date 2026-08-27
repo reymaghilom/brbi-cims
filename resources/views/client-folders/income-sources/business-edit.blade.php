@@ -46,6 +46,7 @@
             @csrf
             @method('PUT')
             <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
+            <input type="hidden" name="expected_revision" value="{{ $incomeSource->revision }}">
     @else
         <div class="business-encoding-page" data-business-report-form>
     @endif
@@ -69,7 +70,35 @@
 
                 <div class="business-report-header-grid" aria-label="Business Report details">
                     <div class="business-report-header-label">CI-IN CHARGE:</div>
-                    <div class="business-report-header-value business-report-header-readonly uppercase">{{ $clientFolder->assignedInvestigator->full_name }}</div>
+                    {{-- New (unsaved) business: CI In-Charge is whoever is currently authenticated
+                         and creating it, never the folder's own (unrelated, static) assigned
+                         investigator. Existing business: its actual recorded creator (or '—' for
+                         a legacy row saved before creator tracking existed) — editing it later
+                         must never silently reassign who originally created it to whichever CI
+                         happens to be editing it now. --}}
+                    <div class="business-report-header-value business-report-header-readonly">
+                        <div class="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1.5" data-companion-ci-picker data-companion-dialog-id="business-companion-ci-dialog">
+                            <div class="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs uppercase" data-companion-ci-container data-header-form-id="{{ $headerFormId }}">
+                                <span class="font-semibold" data-ci-primary-name>{{ $incomeSource ? ($incomeSource->creator?->full_name ?? '—') : auth()->user()->full_name }}</span>
+                                <span class="flex flex-wrap items-center gap-x-1.5" data-companion-participant-list>
+                                    @foreach($companions as $companion)
+                                        <span class="flex items-center gap-1" data-companion-participant data-user-id="{{ $companion->id }}">
+                                            <span aria-hidden="true">/</span>
+                                            <span data-full-name>{{ $companion->full_name }}</span>
+                                            <button type="button" class="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-danger/40 bg-danger-soft text-[0.7rem] font-bold normal-case leading-none text-danger transition hover:border-danger hover:bg-danger hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/40" data-companion-remove aria-label="Remove {{ $companion->full_name }}">&times;</button>
+                                        </span>
+                                    @endforeach
+                                </span>
+                                <div data-companion-hidden-inputs hidden>
+                                    @foreach($companions as $companion)
+                                        <input type="hidden" name="contributor_ids[]" value="{{ $companion->id }}" form="{{ $headerFormId }}">
+                                    @endforeach
+                                </div>
+                                <input type="hidden" name="contributor_ids_present" value="1" form="{{ $headerFormId }}">
+                            </div>
+                            <button type="button" class="ui-button-secondary-compact shrink-0" data-modal-open="business-companion-ci-dialog" data-companion-dialog-trigger><span aria-hidden="true">+</span> Add CI</button>
+                        </div>
+                    </div>
                     <label class="business-report-header-label" for="branch_name">BRANCH:</label>
                     <div class="business-report-header-value"><input id="branch_name" name="branch_name" form="{{ $headerFormId }}" value="{{ old('branch_name', $headerBranch) }}" class="business-report-header-control" readonly aria-readonly="true" @error('branch_name') aria-invalid="true" aria-describedby="branch_name-error" @enderror><x-form.validation-message for="branch_name" /></div>
 
@@ -91,6 +120,15 @@
                     <div class="business-report-header-value"><input id="amount_applied" type="text" value="{{ $headerAmountAppliedDisplay }}" class="business-report-header-control" readonly aria-readonly="true"></div>
                 </div>
             </section>
+
+            @if($incomeSource)
+                <div data-editing-presence data-editing-type="income_source" data-editing-id="{{ $incomeSource->id }}" data-editing-label="Business Report">
+                    <div data-editing-presence-banner hidden role="status" class="mt-3 flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft p-3 text-sm text-progress">
+                        <x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" />
+                        <span data-editing-presence-text></span>
+                    </div>
+                </div>
+            @endif
 
             @unless($incomeSource)
             @php
@@ -187,5 +225,25 @@
     <x-ui.modal id="business-template-switch-dialog" title="Switch Business Template?" size="max-w-md" data-business-template-switch-dialog>
         <p class="text-sm leading-6 text-text-muted">You have unsaved data in the current Business Report. Switching templates may cause this data to be lost. Do you want to continue?</p>
         <x-slot:footer><button type="button" class="ui-button-secondary" data-modal-close>Cancel</button><button type="button" class="ui-button-primary" data-business-template-switch-confirm>Continue</button></x-slot:footer>
+    </x-ui.modal>
+
+    <x-ui.modal id="business-companion-ci-dialog" title="Add Companion CI" description="Select one or more active Credit Investigators to add as companions on this Business Report." size="max-w-md" data-companion-ci-dialog>
+        <label for="business-companion-ci-search" class="sr-only">Search Credit Investigator</label>
+        <input type="search" id="business-companion-ci-search" class="ui-control mb-3" placeholder="Search by name..." autocomplete="off" data-companion-search>
+        <div class="flex max-h-64 flex-col gap-2 overflow-y-auto pr-1" data-companion-option-list>
+            @forelse($activeCreditInvestigators as $candidate)
+                <label class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-control border border-ui-border bg-surface px-3.5 py-2 text-sm font-medium hover:border-brand-primary hover:bg-brand-soft" data-companion-option data-user-id="{{ $candidate->id }}" data-full-name="{{ $candidate->full_name }}" data-search-name="{{ mb_strtolower($candidate->full_name) }}">
+                    <input type="checkbox" class="size-4 border-ui-border-strong text-brand-primary focus:ring-brand-primary" value="{{ $candidate->id }}" data-companion-checkbox>
+                    <span>{{ $candidate->full_name }}</span>
+                </label>
+            @empty
+                <p class="text-sm text-text-muted">No other active Credit Investigators available.</p>
+            @endforelse
+        </div>
+        <p class="mt-2 text-xs text-text-muted" data-companion-search-empty hidden>No matching Credit Investigator found.</p>
+        <x-slot:footer>
+            <button type="button" class="ui-button-secondary" data-modal-close>Cancel</button>
+            <button type="button" class="ui-button-primary" data-companion-confirm>Add Selected</button>
+        </x-slot:footer>
     </x-ui.modal>
 @endsection

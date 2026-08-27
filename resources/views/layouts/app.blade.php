@@ -104,14 +104,22 @@
                             <x-ui.icon name="chevron-down" size="size-4" class="text-text-muted" />
                         </span>
                     </x-slot:trigger>
-                    <form method="POST" action="{{ route('logout') }}">@csrf<button class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary" role="menuitem"><x-ui.icon name="logout" size="size-4" />Logout</button></form>
+                    <button type="submit" form="logout-form" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary" role="menuitem"><x-ui.icon name="logout" size="size-4" />Logout</button>
                 </x-ui.context-menu>
             </div>
+            {{-- Kept outside the <details> dropdown (and outside the header's flex row itself, so
+                 it never becomes an extra flex item that would shift the profile control away
+                 from the right edge) on purpose: closing the dropdown on menuitem click hides its
+                 contents immediately, and a <form> nested inside that closing content can have
+                 its pending submission silently cancelled by the browser. Every other submit-type
+                 menu item in the app already avoids this by referencing an external form via the
+                 button's own form="" attribute. --}}
+            <form id="logout-form" method="POST" action="{{ route('logout') }}" class="hidden">@csrf</form>
         </header>
 
         <main id="main-content" class="mx-auto w-full max-w-[100rem] px-4 py-4 sm:px-6 sm:py-5 lg:px-8" tabindex="-1">
             <div class="fixed right-4 top-20 z-[70] w-[calc(100%-2rem)] max-w-sm space-y-3 sm:right-6" data-toast-region aria-live="polite">
-                @if(session('status'))<x-ui.toast type="success" :message="session('status')" />@endif
+                @if(session('status'))<x-ui.toast :type="session('statusType', 'success')" :message="session('status')" />@endif
             </div>
             @yield('content')
         </main>

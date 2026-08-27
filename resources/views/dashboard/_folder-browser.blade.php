@@ -1,6 +1,20 @@
 @php
     $folderBrowserAction = $folderBrowserAction ?? route('home');
     $folderBrowserContext = $folderBrowserContext ?? (request()->routeIs('home') ? 'dashboard' : 'client_folders');
+    // Batched once for the whole listed page (not per folder) to keep the query count constant.
+    // Dashboard Folder History shows ONLY the folder's own created/renamed lifecycle — recycle,
+    // restore, permanent-delete, and every child-record module action (CI/BI, business reports,
+    // photo uploads, etc.) are excluded here even though their audit rows remain untouched in
+    // the database and still surface in the Admin Audit Log / Client Folder Contents' own
+    // Recent Activity panel.
+    $folderHistoryByFolder = \App\Models\AuditLog::query()
+        ->whereIn('client_folder_id', $clientFolders->pluck('id'))
+        ->whereIn('action', ['client_folder.created', 'client_folder.renamed'])
+        ->with('user:id,full_name')
+        ->orderByDesc('created_at')
+        ->orderByDesc('id')
+        ->get(['id', 'client_folder_id', 'user_id', 'action', 'metadata', 'created_at'])
+        ->groupBy('client_folder_id');
 @endphp
 <section aria-label="Client folder browser" data-folder-browser>
     <div class="ui-panel overflow-hidden">
@@ -161,16 +175,39 @@
                         </div>
                     </div>
 
+                    @php
+                        $displayTimezone = config('cims.display_timezone');
+                        $createdAt = $clientFolder->created_at->timezone($displayTimezone);
+                        $updatedAt = $clientFolder->updated_at->timezone($displayTimezone);
+                        $folderHistoryEvents = $folderHistoryByFolder->get($clientFolder->id, collect());
+                    @endphp
                     <dl class="mt-2.5 grid grid-cols-2 gap-2 text-xs">
-                        <div><dt class="font-semibold text-text-muted">Created</dt><dd class="mt-0.5 font-bold">{{ $clientFolder->created_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</dd></div>
-                        <div><dt class="font-semibold text-text-muted">Last updated</dt><dd class="mt-0.5 font-bold">{{ $clientFolder->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</dd></div>
-                        <div class="col-span-2"><dt class="font-semibold text-text-muted">Assigned Credit Investigator</dt><dd class="mt-0.5 truncate font-bold">{{ $clientFolder->assignedInvestigator->full_name }}</dd></div>
+                        <div>
+                            <dt class="font-semibold text-text-muted">Created</dt>
+                            <dd class="mt-0.5 font-bold">{{ $createdAt->format('M j, Y') }} &middot; {{ $createdAt->format('g:i A') }}</dd>
+                            <dd class="mt-0.5 truncate font-medium text-text-main">by {{ $clientFolder->creator?->full_name ?? '—' }}</dd>
+                        </div>
+                        <div>
+                            <dt class="font-semibold text-text-muted">Last updated</dt>
+                            <dd class="mt-0.5 font-bold">{{ $updatedAt->format('M j, Y') }} &middot; {{ $updatedAt->format('g:i A') }}</dd>
+                            <dd class="mt-0.5 truncate font-medium text-text-main">by {{ $clientFolder->updater?->full_name ?? '—' }}</dd>
+                        </div>
                     </dl>
+
+                    @if($folderHistoryEvents->isNotEmpty())
+                        <button type="button" class="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-brand-primary hover:underline" data-modal-open="folder-history-dialog">
+                            Folder History<span aria-hidden="true">&rarr;</span>
+                        </button>
+                    @endif
 
                     <div class="mt-2.5">
                         <a href="{{ route('client-folders.show', $clientFolder) }}" class="ui-button-primary min-h-10 w-full px-3.5 py-2 text-sm sm:w-auto" data-folder-open-action><x-ui.icon name="open" size="size-4" />Open Folder<span class="sr-only">: {{ $clientFolder->display_name }}</span></a>
                     </div>
                 </header>
+
+                @if($folderHistoryEvents->isNotEmpty())
+                    <x-ui.client-folder-history-modal id="folder-history-dialog" :events="$folderHistoryEvents" />
+                @endif
 
                 <section aria-labelledby="folder-contents-title-{{ $clientFolder->id }}">
                     <h4 id="folder-contents-title-{{ $clientFolder->id }}" class="px-4 pb-1.5 pt-3 text-sm font-semibold">Folder Contents</h4>

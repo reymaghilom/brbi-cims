@@ -87,7 +87,139 @@ class ClientFolderOverview
             ],
             'modules' => $this->modules($folder),
             'recentHistory' => $recentHistory,
+            'recentPersonActivity' => $this->recentPersonActivity($folder, $activePerson),
         ];
+    }
+
+    /**
+     * Co-Maker lifecycle events affect one specific person but are logged under the shared
+     * 'client_folders' module (they're participant-management, not that person's own record
+     * activity). They get their own person-scoping rule below rather than the generic
+     * folder-level bypass.
+     */
+    private const CO_MAKER_LIFECYCLE_ACTIONS = ['co_maker.added', 'co_maker.updated', 'co_maker.removed'];
+
+    private const MEDIA_ACTIONS = ['media.uploaded', 'media.removed'];
+
+    /**
+     * Meaningful, person-scoped activity for the Recent Activity side panel. Folder-level
+     * lifecycle events (module 'client_folders') are always included, since they belong to the
+     * shared folder rather than any one person. Everything else must self-report its own
+     * co_maker_id in metadata (written at the same time as the event) — an event missing that
+     * key is never guessed into a person bucket and is simply excluded.
+     */
+    private function recentPersonActivity(ClientFolder $folder, ?CoMaker $activePerson): \Illuminate\Support\Collection
+    {
+        $personId = $activePerson?->id;
+        $personContextLabel = $activePerson ? 'Co-Maker: '.mb_strtoupper($activePerson->full_name) : 'Applicant';
+
+        // 'person' => true means this action belongs to one specific record owner (Applicant or
+        // a Co-Maker) — the row shows the "Applicant" / "Co-Maker: NAME" context line for it.
+        // Folder-level and Co-Maker-lifecycle actions never get that line: the former belongs to
+        // no one person, the latter already names the affected Co-Maker via its own 'detail'.
+        $labels = [
+            'client_folder.created' => ['label' => 'Folder created', 'icon' => 'folder'],
+            'client_folder.renamed' => ['label' => 'Folder renamed', 'icon' => 'edit'],
+            'client_folder.recycled' => ['label' => 'Moved to Recycle Bin', 'icon' => 'trash'],
+            'client_folder.restored' => ['label' => 'Restored from Recycle Bin', 'icon' => 'check-circle'],
+            'co_maker.added' => ['label' => 'Co-Maker added', 'icon' => 'users', 'detail' => 'full_name'],
+            'co_maker.updated' => ['label' => 'Co-Maker updated', 'icon' => 'users', 'detail' => 'full_name'],
+            'co_maker.removed' => ['label' => 'Co-Maker removed', 'icon' => 'users', 'detail' => 'full_name'],
+            'cibi_report.created' => ['label' => 'CI/BI created', 'icon' => 'report', 'person' => true],
+            'cibi_report.updated' => ['label' => 'CI/BI updated', 'icon' => 'report', 'person' => true],
+            'cibi_report.signatory_reassigned' => ['label' => 'CI/BI Signatory reassigned', 'icon' => 'report', 'person' => true],
+            'income_source.created' => ['label' => 'Business added', 'icon' => 'folder', 'detail' => 'display_name', 'person' => true],
+            'income_source.deleted' => ['label' => 'Business removed', 'icon' => 'trash', 'detail' => 'display_name', 'person' => true],
+            'business_report.updated' => ['label' => 'Business updated', 'icon' => 'folder', 'detail' => 'display_name', 'person' => true],
+            'general_income_source_report.updated' => ['label' => 'Business updated', 'icon' => 'folder', 'detail' => 'display_name', 'person' => true],
+            'income_source.contributor_added' => ['label' => 'Business contributor added', 'icon' => 'users', 'person' => true],
+            'income_source.contributor_removed' => ['label' => 'Business contributor removed', 'icon' => 'users', 'person' => true],
+            'residence_check.created' => ['label' => 'Residence Check saved', 'icon' => 'home', 'person' => true],
+            'residence_check.updated' => ['label' => 'Residence Check saved', 'icon' => 'home', 'person' => true],
+            'residence_check.deleted' => ['label' => 'Residence Check removed', 'icon' => 'trash', 'detail' => 'location', 'person' => true],
+            'business_check.created' => ['label' => 'Business Check saved', 'icon' => 'building', 'person' => true],
+            'business_check.updated' => ['label' => 'Business Check saved', 'icon' => 'building', 'person' => true],
+            'business_check.deleted' => ['label' => 'Business Check removed', 'icon' => 'trash', 'detail' => 'location', 'person' => true],
+            'residence_check.contributor_added' => ['label' => 'Residence Check contributor added', 'icon' => 'users', 'person' => true],
+            'residence_check.contributor_removed' => ['label' => 'Residence Check contributor removed', 'icon' => 'users', 'person' => true],
+            'business_check.contributor_added' => ['label' => 'Business Check contributor added', 'icon' => 'users', 'person' => true],
+            'business_check.contributor_removed' => ['label' => 'Business Check contributor removed', 'icon' => 'users', 'person' => true],
+            'ci_activity.completed' => ['label' => 'CI Activity completed', 'icon' => 'activity', 'detail' => 'activity_title', 'person' => true],
+            'ci_activity.updated' => ['label' => 'CI Activity updated', 'icon' => 'activity', 'detail' => 'activity_title', 'person' => true],
+            'media.uploaded' => ['icon' => 'media', 'person' => true],
+            'media.removed' => ['icon' => 'trash', 'person' => true],
+        ];
+
+        return AuditLog::query()
+            ->where('client_folder_id', $folder->id)
+            ->whereIn('action', array_keys($labels))
+            ->with('user:id,full_name')
+            ->latest('created_at')
+            ->latest('id')
+            ->limit(30)
+            ->get(['id', 'user_id', 'module', 'action', 'metadata', 'created_at'])
+            ->filter(function (AuditLog $event) use ($personId): bool {
+                $metadata = (array) $event->metadata;
+
+                if (in_array($event->action, self::CO_MAKER_LIFECYCLE_ACTIONS, true)) {
+                    // Visible as folder-level participant-management activity from the Applicant's
+                    // view, but scoped to the exact affected Co-Maker everywhere else — never
+                    // shown as though it belongs to a different Co-Maker.
+                    return $personId === null || (array_key_exists('co_maker_id', $metadata) && $metadata['co_maker_id'] === $personId);
+                }
+
+                if ($event->module === 'client_folders') {
+                    return true;
+                }
+
+                return array_key_exists('co_maker_id', $metadata) && $metadata['co_maker_id'] === $personId;
+            })
+            ->take(20)
+            ->values()
+            ->map(function (AuditLog $event) use ($labels, $personContextLabel) {
+                $definition = $labels[$event->action];
+                $metadata = (array) $event->metadata;
+
+                $detail = match (true) {
+                    $event->action === 'cibi_report.signatory_reassigned' => $this->signatoryReassignmentDetail($metadata),
+                    isset($definition['detail']) => data_get($metadata, $definition['detail']),
+                    default => null,
+                };
+
+                return (object) [
+                    'label' => in_array($event->action, self::MEDIA_ACTIONS, true) ? $this->mediaActivityLabel($event->action, $metadata) : $definition['label'],
+                    // The administrative reassignment reason is captured in metadata for the full
+                    // audit record, but deliberately never surfaces here — Recent Activity is the
+                    // concise operational notice, not the Admin audit trail.
+                    'detail' => $detail,
+                    'personContext' => ($definition['person'] ?? false) ? $personContextLabel : null,
+                    'icon' => $definition['icon'],
+                    'user' => $event->user,
+                    'actorLabel' => $event->action === 'media.uploaded' ? 'Uploaded by' : 'by',
+                    'created_at' => $event->created_at,
+                ];
+            });
+    }
+
+    /** Distinguishes Residence vs Business photo activity using the media's own saved category. */
+    private function mediaActivityLabel(string $action, array $metadata): string
+    {
+        $subject = match (data_get($metadata, 'category')) {
+            'residence' => 'Residence photo',
+            'business' => 'Business photo',
+            default => 'Photo',
+        };
+
+        return $subject.' '.($action === 'media.uploaded' ? 'uploaded' : 'removed');
+    }
+
+    /** Old → new signatory, from name snapshots captured at reassignment time (never a live lookup). */
+    private function signatoryReassignmentDetail(array $metadata): ?string
+    {
+        $old = data_get($metadata, 'old_signatory_name');
+        $new = data_get($metadata, 'new_signatory_name');
+
+        return $old && $new ? "{$old} \u{2192} {$new}" : null;
     }
 
     private function modules(ClientFolder $folder): array

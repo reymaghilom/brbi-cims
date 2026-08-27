@@ -24,6 +24,16 @@ class SaveCoMakerRequest extends FormRequest
             'first_name' => ['required', 'string', 'max:255'],
             'middle_name' => ['nullable', 'string', 'max:255'],
             'suffix' => ['nullable', 'string', 'max:30'],
+            'address' => ['required', 'string', 'max:2000'],
         ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $address = $this->input('address');
+        if (is_string($address)) {
+            $trimmed = trim((string) preg_replace('/\s+/u', ' ', $address));
+            $this->merge(['address' => $trimmed === '' ? null : $trimmed]);
+        }
     }
 }

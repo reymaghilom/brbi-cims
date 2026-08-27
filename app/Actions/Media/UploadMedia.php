@@ -45,7 +45,7 @@ class UploadMedia
                         'action' => 'media.uploaded',
                         'module' => 'media',
                         'description' => 'A protected media evidence item was uploaded.',
-                        'metadata' => ['media_reference_id' => $media->id, 'media_type' => $media->media_type->value, 'category' => $media->category->value, 'byte_size' => $media->byte_size],
+                        'metadata' => ['media_reference_id' => $media->id, 'co_maker_id' => $media->co_maker_id, 'media_type' => $media->media_type->value, 'category' => $media->category->value, 'byte_size' => $media->byte_size],
                         'ip_address' => request()?->ip(),
                         'user_agent' => request()?->userAgent(),
                     ]);

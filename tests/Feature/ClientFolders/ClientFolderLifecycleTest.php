@@ -62,21 +62,24 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertSame($investigator->id, ClientFolder::sole()->assigned_ci_id);
     }
 
-    public function test_administrator_assignment_rejects_missing_disabled_and_non_ci_users(): void
+    public function test_administrator_assignment_is_optional_but_rejects_disabled_and_non_ci_users(): void
     {
         $administrator = User::factory()->administrator()->create();
         $disabledCi = User::factory()->create(['status' => UserStatus::Disabled]);
         $otherAdministrator = User::factory()->administrator()->create();
         $payload = ['last_name' => 'Santos', 'first_name' => 'Ana', 'middle_name' => 'Reyes'];
 
+        // No mandatory Primary CI at folder level — an Administrator may leave it unassigned.
         $this->actingAs($administrator)->post(route('client-folders.store'), $payload)
-            ->assertSessionHasErrors('assigned_ci_id');
+            ->assertSessionDoesntHaveErrors('assigned_ci_id');
+        $this->assertNull(ClientFolder::sole()->assigned_ci_id);
+
         $this->actingAs($administrator)->post(route('client-folders.store'), $payload + ['assigned_ci_id' => $disabledCi->id])
             ->assertSessionHasErrors('assigned_ci_id');
         $this->actingAs($administrator)->post(route('client-folders.store'), $payload + ['assigned_ci_id' => $otherAdministrator->id])
             ->assertSessionHasErrors('assigned_ci_id');
 
-        $this->assertDatabaseCount('client_folders', 0);
+        $this->assertDatabaseCount('client_folders', 1);
     }
 
     public function test_create_form_lists_only_active_credit_investigators_for_administrator(): void
@@ -95,7 +98,7 @@ class ClientFolderLifecycleTest extends TestCase
 
         $this->actingAs($activeCi)->get(route('client-folders.create'))
             ->assertOk()
-            ->assertSee('This folder will be assigned to your account.')
+            ->assertSee("You'll be recorded as the creator of this folder.", false)
             ->assertDontSee('name="assigned_ci_id"', false);
     }
 
@@ -152,17 +155,18 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertDatabaseHas('audit_logs', ['action' => 'client_folder.renamed', 'client_folder_id' => $folder->id]);
     }
 
-    public function test_other_ci_cannot_open_or_submit_rename_and_cannot_recycle_folder(): void
+    public function test_other_ci_can_open_rename_and_recycle_a_folder_assigned_to_another_ci(): void
     {
         $assigned = User::factory()->create();
         $other = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $assigned->id]);
 
-        $this->actingAs($other)->get(route('client-folders.edit-name', $folder))->assertForbidden();
-        $this->actingAs($other)->patch(route('client-folders.update-name', $folder), ['display_name' => 'FORGED'])->assertForbidden();
-        $this->actingAs($other)->delete(route('client-folders.destroy', $folder))->assertForbidden();
+        $this->actingAs($other)->get(route('client-folders.edit-name', $folder))->assertOk();
+        $this->actingAs($other)->patch(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED BY OTHER CI'])->assertRedirect();
+        $this->assertSame('RENAMED BY OTHER CI', $folder->fresh()->display_name);
 
-        $this->assertFalse($folder->fresh()->trashed());
+        $this->actingAs($other)->delete(route('client-folders.destroy', $folder))->assertRedirect();
+        $this->assertTrue($folder->fresh()->trashed());
     }
 
     public function test_assigned_ci_can_recycle_folder_while_children_and_audit_history_remain(): void

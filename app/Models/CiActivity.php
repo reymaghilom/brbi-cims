@@ -35,6 +35,11 @@ class CiActivity extends Model
         return $this->belongsTo(User::class, 'updated_by');
     }
 
+    public function assignedInvestigator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'assigned_ci_id');
+    }
+
     public function notes(): HasMany
     {
         return $this->hasMany(ActivityNote::class);

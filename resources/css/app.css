@@ -217,7 +217,12 @@
     .cibi-encoding-paper [data-repeater] > .cibi-entry-table-wrap { margin: .65rem .85rem .85rem; border-color: #d8d3c6; border-radius: 0; overscroll-behavior-inline: contain; -webkit-overflow-scrolling: touch; }
     .cibi-encoding-paper .cibi-entry-table { background: #fffdf9; color: #26303c; font-size: .72rem; font-weight: 400; }
     .cibi-encoding-paper .cibi-entry-table th { border-color: #d8d3c6; background: #ece6d6; color: var(--color-brand-sidebar); padding: .42rem .35rem; font-size: .625rem; font-weight: 700; letter-spacing: .035em; line-height: 1.2; text-align: left; text-transform: uppercase; white-space: normal; }
-    .cibi-encoding-paper .cibi-entry-table td { border-color: #d8d3c6; padding: .22rem; }
+    /* Table rows equalize to their tallest cell (e.g. a textarea column) — vertical-align: middle
+       (overriding the base .cibi-entry-table td's align-top) keeps shorter single-line inputs
+       centered in that equalized row height instead of pinned to the top with empty space
+       collecting underneath them. Scoped to .cibi-encoding-paper only, so the printed/PDF/Excel
+       CI-BI output (which reuses the base .cibi-entry-table class elsewhere) is unaffected. */
+    .cibi-encoding-paper .cibi-entry-table td { border-color: #d8d3c6; padding: .22rem; vertical-align: middle; }
     .cibi-encoding-paper .cibi-entry-table .ui-control { min-height: 1.8rem; border: 0; padding: .25rem .32rem; font-size: .72rem; font-weight: 400; line-height: 1.25; }
     .cibi-encoding-paper .cibi-entry-table textarea.ui-control { min-height: 2.8rem; border: 0; }
     .cibi-encoding-paper .cibi-entry-table .ui-control:focus { box-shadow: inset 0 0 0 1px var(--color-brand-primary); }
@@ -232,7 +237,7 @@
     .cibi-bank-entry-table th,
     .cibi-bank-entry-table td { padding-inline: .25rem; }
     .cibi-adb-controls { min-width: 0; }
-    .cibi-adb-choice-line { display: flex; min-width: 0; align-items: center; gap: .4rem; color: #262626; font-size: .72rem; font-weight: 500; line-height: 1.2; white-space: nowrap; }
+    .cibi-adb-choice-line { display: flex; min-width: 0; align-items: center; gap: .4rem; color: #262626; font-size: .68rem; font-weight: 500; line-height: 1.25; white-space: nowrap; }
     .cibi-adb-choice-line label { display: inline-flex; flex-shrink: 0; align-items: center; gap: .2rem; }
     .cibi-adb-choice-line input[type="radio"] { width: .8rem; height: .8rem; margin: 0; }
     .cibi-adb-controls .cibi-compact-financial-input { display: block; width: 6.5rem; min-width: 4.5rem; max-width: 6.5rem; flex: 0 1 6.5rem; }
@@ -736,8 +741,22 @@
     .client-folder-preview-panel { @apply static z-auto h-full min-h-0 w-auto translate-x-0 overflow-visible border-l border-ui-border bg-surface-muted/45 shadow-none; }
     .client-folder-preview-content { min-height: 100%; }
     .client-folder-preview-backdrop { display: none !important; }
-    .client-folder-browser-layout[data-panel-collapsed="true"] { grid-template-columns: minmax(0, 1fr); }
-    .client-folder-browser-layout[data-panel-collapsed="true"] .client-folder-preview-panel { display: none; }
+    /* Smooth, subtle collapse for the Dashboard/Client Folders preview panel: both tracks stay
+       present (grid-template-columns keeps the same track *count* in the expanded and collapsed
+       states — animating between a different number of tracks can't interpolate), only the
+       second track's size animates to 0, so the browser can genuinely transition it instead of
+       snapping. `min-width: 0` on the collapsing element is required for it to shrink past its
+       own content's intrinsic width in a grid track (grid items default to min-width: auto,
+       which otherwise blocks this) — deliberately not `overflow: hidden`, since that would clip
+       its own open dropdown menus (Switch Person, Download). Content fades via opacity instead
+       of an instant `display: none`, so it never cuts the animation short — pointer-events: none
+       keeps it non-interactive while collapsed/fading regardless. Duration/easing intentionally
+       short and restrained (professional banking UI, not flashy); prefers-reduced-motion is
+       already handled globally above via *, ::before, ::after. */
+    .client-folder-browser-layout { transition: grid-template-columns 200ms ease-in-out; }
+    .client-folder-preview-panel { min-width: 0; opacity: 1; transition: opacity 180ms ease-in-out; }
+    .client-folder-browser-layout[data-panel-collapsed="true"] { grid-template-columns: minmax(0, 1fr) 0px; }
+    .client-folder-browser-layout[data-panel-collapsed="true"] .client-folder-preview-panel { opacity: 0; pointer-events: none; }
 }
 
 @media (max-width: 639px) {
@@ -817,3 +836,4 @@
     opacity: 0; visibility: hidden; transition: opacity .12s ease;
 }
 #sidebar-tooltip[data-visible] { opacity: 1; visibility: visible; }
+

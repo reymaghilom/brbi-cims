@@ -32,20 +32,20 @@
 
                 @if(auth()->user()->role === App\Enums\UserRole::Administrator)
                     <div class="sm:col-span-2">
-                        <label for="create-folder-assigned-ci" class="ui-label">Assigned Credit Investigator <span class="text-danger" aria-hidden="true">*</span></label>
-                        <select id="create-folder-assigned-ci" name="assigned_ci_id" class="ui-control" required aria-describedby="create-folder-assigned-ci-help create-folder-assigned-ci-error">
-                            <option value="">Select an active Credit Investigator</option>
+                        <label for="create-folder-assigned-ci" class="ui-label">Credit Investigator <span class="font-normal text-text-muted">(optional)</span></label>
+                        <select id="create-folder-assigned-ci" name="assigned_ci_id" class="ui-control" aria-describedby="create-folder-assigned-ci-help create-folder-assigned-ci-error">
+                            <option value="">Leave unassigned</option>
                             @foreach($creditInvestigators as $investigator)
                                 <option value="{{ $investigator->id }}">{{ $investigator->full_name }}{{ $investigator->employee_id ? ' — '.$investigator->employee_id : '' }}</option>
                             @endforeach
                         </select>
-                        <p id="create-folder-assigned-ci-help" class="ui-help">Only active Credit Investigator accounts are available.</p>
+                        <p id="create-folder-assigned-ci-help" class="ui-help">Client Folders are a shared workspace — every Credit Investigator can open and work on any active folder regardless of this selection.</p>
                         <p id="create-folder-assigned-ci-error" class="mt-2 text-sm font-semibold text-danger" role="alert" data-create-error-for="assigned_ci_id" hidden></p>
                     </div>
                 @else
                     <div class="rounded-card border border-brand-primary/20 bg-brand-soft p-4 sm:col-span-2">
-                        <p class="text-sm font-semibold text-brand-primary">This folder will be assigned to your account.</p>
-                        <p class="mt-1 text-sm text-text-muted">{{ auth()->user()->full_name }}</p>
+                        <p class="text-sm font-semibold text-brand-primary">You'll be recorded as the creator of this folder.</p>
+                        <p class="mt-1 text-sm text-text-muted">{{ auth()->user()->full_name }} · every Credit Investigator can still open and work on it.</p>
                     </div>
                 @endif
             </div>

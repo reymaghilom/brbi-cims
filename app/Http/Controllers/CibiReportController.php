@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Actions\ClientFolders\SaveCibiReport;
 use App\Enums\RecordState;
+use App\Exceptions\NoChangesDetectedException;
 use App\Http\Requests\ClientFolders\SaveCibiReportRequest;
 use App\Models\ClientFolder;
 use App\Services\ClientFolders\ActivePersonResolver;
@@ -20,7 +21,10 @@ class CibiReportController extends Controller
         Gate::authorize('update', $clientFolder);
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
 
-        return view('client-folders.cibi-report.edit', ['clientFolder' => $clientFolder, 'activePerson' => $activePerson] + $formData->for($clientFolder, $activePerson));
+        return view('client-folders.cibi-report.edit', [
+            'clientFolder' => $clientFolder,
+            'activePerson' => $activePerson,
+        ] + $formData->for($clientFolder, $activePerson));
     }
 
     public function update(SaveCibiReportRequest $request, ClientFolder $clientFolder, SaveCibiReport $save): RedirectResponse|JsonResponse
@@ -28,7 +32,18 @@ class CibiReportController extends Controller
         $activePerson = ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id'));
         $personParams = ActivePersonResolver::queryParams($activePerson);
         $wasCompleted = $clientFolder->cibiReport()->where('co_maker_id', $activePerson?->id)->where('state', RecordState::Complete)->exists();
-        $report = $save->execute($request->user(), $clientFolder, $request->validated());
+
+        try {
+            $report = $save->execute($request->user(), $clientFolder, $request->validated());
+        } catch (NoChangesDetectedException $e) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => $e->getMessage(), 'no_change' => true]);
+            }
+
+            return redirect(route('client-folders.cibi-report.edit', [$clientFolder] + $personParams))
+                ->with('status', $e->getMessage())->with('statusType', 'info');
+        }
+
         $message = $wasCompleted ? 'CI/BI Report updated successfully.' : 'CI/BI Report saved successfully.';
 
         if ($request->expectsJson()) {

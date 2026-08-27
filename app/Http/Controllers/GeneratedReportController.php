@@ -74,7 +74,9 @@ class GeneratedReportController extends Controller
     {
         Gate::authorize('create', [GeneratedReport::class, $clientFolder]);
         $activePerson = ActivePersonResolver::resolve($clientFolder, request()->input('co_maker_id'));
-        abort_unless($clientFolder->cibiReport()->where('co_maker_id', $activePerson?->id)->value('state') === 'complete', 422, 'Complete the CI / BI report before exporting it.');
+        // ->value('state') hydrates through the model, so it returns the RecordState enum cast,
+        // not a raw string — compare via ->value like every other completion check here, not '=='.
+        abort_unless($clientFolder->cibiReport()->where('co_maker_id', $activePerson?->id)->value('state')?->value === 'complete', 422, 'Complete the CI / BI report before exporting it.');
 
         $report = $generate->execute(request()->user(), $clientFolder, OfficialReportType::Cibi, ReportFormat::Pdf, null, $activePerson);
         abort_unless($report->status === GenerationStatus::Completed, 500, $report->failure_message);

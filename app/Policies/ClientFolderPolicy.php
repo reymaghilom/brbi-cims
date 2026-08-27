@@ -17,7 +17,7 @@ class ClientFolderPolicy
 
     public function view(User $user, ClientFolder $clientFolder): bool
     {
-        return $this->isAdministrator($user) || $clientFolder->assigned_ci_id === $user->id;
+        return $clientFolder->isAccessibleBy($user);
     }
 
     public function create(User $user): bool

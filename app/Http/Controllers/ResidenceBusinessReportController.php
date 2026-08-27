@@ -17,8 +17,8 @@ class ResidenceBusinessReportController extends Controller
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
         $personId = $activePerson?->id;
 
-        $residenceChecks = $clientFolder->residenceChecks()->where('co_maker_id', $personId)->withCount('photos')->with('photos')->orderByDesc('ci_date')->orderByDesc('id')->get();
-        $businessChecks = $clientFolder->businessChecks()->where('co_maker_id', $personId)->withCount(['businessPhotos', 'competitorPhotos'])->with(['photos', 'incomeSource:id,source_name,business_name,income_source_template_id', 'incomeSource.template:id,template_type'])->orderByDesc('ci_date')->orderByDesc('id')->get();
+        $residenceChecks = $clientFolder->residenceChecks()->where('co_maker_id', $personId)->withCount('photos')->with(['photos', 'investigator:id,full_name'])->orderByDesc('ci_date')->orderByDesc('id')->get();
+        $businessChecks = $clientFolder->businessChecks()->where('co_maker_id', $personId)->withCount(['businessPhotos', 'competitorPhotos'])->with(['photos', 'investigator:id,full_name', 'incomeSource:id,source_name,business_name,income_source_template_id', 'incomeSource.template:id,template_type'])->orderByDesc('ci_date')->orderByDesc('id')->get();
 
         return view('client-folders.residence-business.edit', [
             'clientFolder' => $clientFolder,

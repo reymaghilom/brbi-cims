@@ -28,4 +28,12 @@ return [
         'primary_investigators' => 1,
         'many_to_many_enabled' => false,
     ],
+
+    'editing_presence_types' => [
+        'cibi_report' => \App\Models\CibiReport::class,
+        'income_source' => \App\Models\IncomeSource::class,
+        'residence_check' => \App\Models\ResidenceCheck::class,
+        'business_check' => \App\Models\BusinessCheck::class,
+        'ci_activity' => \App\Models\CiActivity::class,
+    ],
 ];

@@ -59,6 +59,7 @@ class CibiExcelExporter
         $this->value($sheet, 'C9', $this->choices($activePerson ? 'co_maker' : 'borrower', ['borrower' => 'BORROWER', 'co_maker' => 'CO-MAKER']));
         $this->value($sheet, 'T9', $this->choices($report->ci_risk_level, ['very_low' => 'VERY LOW', 'low' => 'LOW', 'mid' => 'MID', 'high' => 'HIGH', 'very_high' => 'VERY HIGH']));
 
+        $this->value($sheet, 'C11', $activePerson ? 'NAME OF COMAKER:' : 'NAME OF CLIENT:');
         $this->value($sheet, 'G11', $activePerson?->full_name ?? $folder->display_name);
         $this->value($sheet, 'Y11', $this->na($personal['age'] ?? null));
         $this->value($sheet, 'G12', $this->na($personal['spouse_name'] ?? null));

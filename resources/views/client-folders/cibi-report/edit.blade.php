@@ -8,11 +8,21 @@
         @method('PUT')
         <input type="hidden" name="intent" value="complete" data-cibi-intent>
         <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
+        <input type="hidden" name="expected_revision" value="{{ $report?->revision }}" data-cibi-expected-revision>
 
         <div class="mb-3 rounded-control border border-danger/30 bg-danger-soft p-3 text-sm text-danger" role="alert" tabindex="-1" data-cibi-error-summary @if(!$errors->any()) hidden @endif>
             <p class="font-semibold">Please correct the highlighted report fields.</p>
             <p class="mt-1" data-cibi-error-message>No report changes were saved.</p>
         </div>
+
+        @if($report)
+            <div data-editing-presence data-editing-type="cibi_report" data-editing-id="{{ $report->id }}" data-editing-label="CI/BI Report">
+                <div data-editing-presence-banner hidden role="status" class="mb-3 flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft p-3 text-sm text-progress">
+                    <x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" />
+                    <span data-editing-presence-text></span>
+                </div>
+            </div>
+        @endif
 
         <div class="cibi-encoding-paper" data-cibi-scroll-region>
             @include('client-folders.cibi-report._form-fields')
@@ -30,4 +40,5 @@
         <p class="text-sm text-text-muted">The entry will be removed when the CI / BI report is saved.</p>
         <x-slot:footer><button type="button" class="ui-button-secondary" data-modal-close>Cancel</button><button type="button" class="ui-button-danger" data-repeater-remove-confirm>Remove</button></x-slot:footer>
     </x-ui.modal>
+
 @endsection

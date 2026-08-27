@@ -39,7 +39,12 @@ class ResidenceBusinessCheckReportController extends Controller
         $photoSections = $this->buildPhotoSections($request, $builder, $personName);
         abort_if($photoSections === [], 404);
 
-        $bytes = $exporter->generate($clientFolder, $photoSections, 'Residence & Business Checks - '.$clientFolder->display_name);
+        // Dompdf itself already degrades unreadable/unsupported images to a blank box rather than
+        // throwing, but this still guards against any other unexpected renderer failure — the same
+        // "report it, fail cleanly" contract GenerateOfficialReport uses for the versioned
+        // single-report download, rather than surfacing a raw framework error page for this
+        // disposable one.
+        $bytes = $this->generateOrAbort(fn () => $exporter->generate($clientFolder, $photoSections, 'Residence & Business Checks - '.$clientFolder->display_name));
         $filename = $this->batchFilename($clientFolder, $activePerson, count($photoSections), 'pdf');
         $this->logBatchExport($request, $clientFolder, $activePerson, count($photoSections), 'pdf');
 
@@ -57,8 +62,14 @@ class ResidenceBusinessCheckReportController extends Controller
         $photoSections = $this->buildPhotoSections($request, $builder, $personName);
         abort_if($photoSections === [], 404);
 
+        // Only ever used as the DOCX file's own invisible document-properties metadata — never
+        // rendered onto the page itself (see ResidenceBusinessCheckBatchDocxExporter::generate()'s
+        // own docblock).
         $title = 'RESIDENCE & BUSINESS CHECKS';
-        $bytes = $exporter->generate($photoSections, $title, 'BRBI Credit Investigation Management System');
+        // BuildsOfficialReportDocx::embedImage() already recovers from an unembeddable/corrupt
+        // photo on its own (falls back to "Image unavailable" text, converts WebP to PNG first),
+        // so this is only a last-resort net against anything else unexpected in PhpWord's writer.
+        $bytes = $this->generateOrAbort(fn () => $exporter->generate($photoSections, $title));
         $filename = $this->batchFilename($clientFolder, $activePerson, count($photoSections), 'docx');
         $this->logBatchExport($request, $clientFolder, $activePerson, count($photoSections), 'docx');
 
@@ -67,6 +78,17 @@ class ResidenceBusinessCheckReportController extends Controller
             $filename,
             ['Content-Type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'X-Content-Type-Options' => 'nosniff', 'Cache-Control' => 'private, no-store, max-age=0'],
         );
+    }
+
+    /** @param  \Closure(): string  $generate */
+    private function generateOrAbort(\Closure $generate): string
+    {
+        try {
+            return $generate();
+        } catch (\Throwable $exception) {
+            report($exception);
+            abort(500, 'The report could not be generated. Please retry or contact an administrator.');
+        }
     }
 
     /** @return array<int, array<string, mixed>> */

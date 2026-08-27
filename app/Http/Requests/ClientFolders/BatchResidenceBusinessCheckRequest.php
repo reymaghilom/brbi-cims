@@ -39,7 +39,7 @@ class BatchResidenceBusinessCheckRequest extends FormRequest
         $activePerson = ActivePersonResolver::resolve($folder, $this->validated('co_maker_id'));
         $ids = array_map('intval', $this->validated('residence_check_ids') ?? []);
 
-        $checks = $folder->residenceChecks()->where('co_maker_id', $activePerson?->id)->whereIn('id', $ids)->with('photos')->get()->keyBy('id');
+        $checks = $folder->residenceChecks()->where('co_maker_id', $activePerson?->id)->whereIn('id', $ids)->with(['photos', 'investigator:id,full_name'])->get()->keyBy('id');
 
         return collect($ids)->map(fn (int $id) => $checks->get($id))->filter()->values();
     }
@@ -51,7 +51,7 @@ class BatchResidenceBusinessCheckRequest extends FormRequest
         $activePerson = ActivePersonResolver::resolve($folder, $this->validated('co_maker_id'));
         $ids = array_map('intval', $this->validated('business_check_ids') ?? []);
 
-        $checks = $folder->businessChecks()->where('co_maker_id', $activePerson?->id)->whereIn('id', $ids)->with(['photos', 'incomeSource:id,source_name,business_name,income_source_template_id', 'incomeSource.template:id,template_type'])->get()->keyBy('id');
+        $checks = $folder->businessChecks()->where('co_maker_id', $activePerson?->id)->whereIn('id', $ids)->with(['photos', 'photoGroups.photos', 'incomeSource:id,source_name,business_name,income_source_template_id', 'incomeSource.template:id,template_type'])->get()->keyBy('id');
 
         return collect($ids)->map(fn (int $id) => $checks->get($id))->filter()->values();
     }

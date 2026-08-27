@@ -7,11 +7,13 @@ use App\Enums\RecordState;
 use App\Models\AuditLog;
 use App\Models\CibiReport;
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use App\Models\IncomeSourceTemplate;
 use App\Models\MediaReference;
 use App\Models\User;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -25,7 +27,7 @@ class IncomeSourcesTest extends TestCase
         $this->seed(ReferenceDataSeeder::class);
     }
 
-    public function test_assigned_ci_and_administrator_can_browse_but_another_ci_cannot(): void
+    public function test_ci_and_administrator_can_browse_the_shared_workspace(): void
     {
         $ci = User::factory()->create();
         $other = User::factory()->create();
@@ -34,7 +36,7 @@ class IncomeSourcesTest extends TestCase
 
         $this->actingAs($ci)->get(route('client-folders.income-sources.index', $folder))->assertOk()->assertSee('Please choose Business Template');
         $this->actingAs($admin)->get(route('client-folders.income-sources.index', $folder))->assertOk()->assertSee('Please choose Business Template');
-        $this->actingAs($other)->get(route('client-folders.income-sources.index', $folder))->assertForbidden();
+        $this->actingAs($other)->get(route('client-folders.income-sources.index', $folder))->assertOk()->assertSee('Please choose Business Template');
     }
 
     public function test_business_entry_route_opens_the_neutral_template_chooser_instead_of_a_saved_business(): void
@@ -96,7 +98,6 @@ class IncomeSourcesTest extends TestCase
         $this->actingAs($ci)
             ->get(route('client-folders.income-sources.manage', $folder))
             ->assertOk()
-            ->assertSee('Business / Income Sources')
             ->assertSee('Add Business')
             ->assertDontSee('Add Another Business')
             ->assertSee('No businesses saved yet')
@@ -208,16 +209,21 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame(4, $folder->incomeSources()->count());
     }
 
-    public function test_another_ci_cannot_add_a_business_to_an_unassigned_folder(): void
+    public function test_another_ci_can_add_a_business_to_a_folder_assigned_to_a_different_ci(): void
     {
-        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_non_agricultural')->firstOrFail();
+        $source = $this->app->make(CreateIncomeSource::class)->execute($ci, $folder, [
+            'income_source_template_id' => $template->id, 'source_name' => 'Income Source', 'business_name' => 'Sample Business',
+        ]);
         $other = User::factory()->create();
 
         $this->actingAs($other)
             ->post(route('client-folders.income-sources.businesses.store', [$folder, $source]))
-            ->assertForbidden();
+            ->assertRedirect();
 
-        $this->assertCount(1, $folder->incomeSources()->get());
+        $this->assertCount(2, $folder->incomeSources()->get());
     }
 
     public function test_deleted_folder_is_unavailable_and_forged_nested_source_is_not_found(): void
@@ -332,6 +338,9 @@ class IncomeSourcesTest extends TestCase
         $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), [
             'income_source_template_id' => $taxi->id,
             'business_name' => 'Town Taxi',
+            'main_business_address' => 'Town Center',
+            'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => ['fields' => ['minimum_units' => '3']],
         ])->assertRedirect();
 
@@ -365,7 +374,7 @@ class IncomeSourcesTest extends TestCase
         $retail = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
 
         foreach ([[$leasing, 'Apartment Rentals'], [$retail, 'Neighborhood Store']] as [$template, $name]) {
-            $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), ['income_source_template_id' => $template->id, 'source_name' => $name])->assertRedirect();
+            $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), ['income_source_template_id' => $template->id, 'source_name' => $name, 'main_business_address' => 'Main Street', 'start_date' => '2026-01-01', 'year_established' => 2020])->assertRedirect();
         }
 
         $this->assertCount(2, $folder->incomeSources);
@@ -392,6 +401,8 @@ class IncomeSourcesTest extends TestCase
             $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), [
                 'income_source_template_id' => $template->id,
                 'source_name' => $name,
+                'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+                'year_established' => 2020,
             ])->assertRedirect();
         }
         $template->update(['is_active' => false]);
@@ -406,6 +417,8 @@ class IncomeSourcesTest extends TestCase
                 'source_name' => $source->source_name,
                 'business_name' => $source->source_name,
                 'report_category' => 'Other',
+                'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+                'year_established' => 2020,
                 'report_remarks' => $index === 0 ? 'Consulting details' : 'Online selling details',
             ])->assertSessionHasNoErrors();
         }
@@ -542,12 +555,12 @@ class IncomeSourcesTest extends TestCase
             $this->assertGreaterThan(strpos($addressStatusRow, 'RENTED FROM'), strpos($addressStatusRow, 'class="business-address-status-divider"'));
         }
 
-        $payload = $this->businessPayload() + ['length_of_stay_months' => 18, 'ownership_type' => 'Rented', 'rented_from' => 'Maria Santos', 'monthly_rent' => 'PHP 12,500 / month', 'previous_business_address' => 'Old Market Road', 'previous_business_address_length_of_stay' => '2 years and 6 months'];
+        $payload = $this->businessPayload() + ['length_of_stay_months' => '18', 'ownership_type' => 'Rented', 'rented_from' => 'Maria Santos', 'monthly_rent' => 'PHP 12,500 / month', 'previous_business_address' => 'Old Market Road', 'previous_business_address_length_of_stay' => '2 years and 6 months'];
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertRedirect();
         $source->refresh();
         $this->assertSame(RecordState::Complete, $source->state);
         $this->assertSame('Rented', $source->businessReport->ownership_type);
-        $this->assertSame(18, $source->businessReport->length_of_stay_months);
+        $this->assertSame('18', $source->businessReport->length_of_stay_months);
         $this->assertSame('Maria Santos', $source->businessReport->rented_from);
         $this->assertSame('PHP 12,500 / month', $source->businessReport->monthly_rent);
         $this->assertSame('Old Market Road', $source->businessReport->previous_business_address);
@@ -568,6 +581,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Apartment Rentals',
             'business_name' => 'Sample Apartments',
             'report_category' => 'Leasing',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'ownership_type' => 'Mortgaged',
             'rented_from' => 'Community Bank',
         ])->assertRedirect();
@@ -583,6 +598,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Apartment Rentals',
             'business_name' => 'Sample Apartments',
             'report_category' => 'Leasing',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'ownership_type' => 'Owned',
             'rented_from' => 'Stale lessor value',
         ])->assertRedirect();
@@ -598,6 +615,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Apartment Rentals',
             'business_name' => 'Sample Apartments',
             'report_category' => 'Leasing',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'ownership_type' => 'Residence Only',
         ])->assertRedirect();
         $residenceOnlyPage = $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))->assertOk();
@@ -664,6 +683,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Town Taxi',
             'business_name' => 'Town Taxi',
             'report_category' => 'Transportation',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => ['tables' => ['units' => [
                 ['brand_model' => ''],
                 ['brand_model' => 'Toyota Vios', 'plate_number' => 'ABC 1234'],
@@ -729,6 +750,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'PUJ Operations',
             'business_name' => 'PUJ Operations',
             'report_category' => 'Transportation',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => ['tables' => ['units' => [[
                 'brand_model' => 'Isuzu Modern PUJ',
                 'plate_number' => 'PUJ 7788',
@@ -747,6 +770,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Taxi Operations',
             'business_name' => 'Taxi Operations',
             'report_category' => 'Transportation',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => ['tables' => ['units' => [[
                 'brand_model' => 'Toyota Taxi',
                 'plate_number' => 'TXI 1122',
@@ -850,7 +875,9 @@ class IncomeSourcesTest extends TestCase
             ->assertSee('value="Barangay Farm / 4 HA"', false);
         preg_match('/<section[^>]+data-repeater="template-properties".*?<tbody data-repeater-rows>(.*?)<\/tbody>/s', $savedPage->getContent(), $savedRows);
         $this->assertNotEmpty($savedRows[1]);
-        $this->assertSame(1, substr_count($savedRows[1], 'data-repeater-row'));
+        // The workbook table always pads back up to 3 rows (same as a brand-new report) even
+        // when only 1 row has saved data — see _business-schema-table.blade.php.
+        $this->assertSame(3, substr_count($savedRows[1], 'data-repeater-row'));
 
         $script = file_get_contents(resource_path('js/app.js'));
         $this->assertStringContainsString("repeaterRowHasData(row, repeater)", $script);
@@ -950,7 +977,9 @@ class IncomeSourcesTest extends TestCase
             ->assertSee('value="Ana / 09170000000 / 4 years"', false);
         preg_match('/<section[^>]+data-repeater="template-farms".*?<tbody data-repeater-rows>(.*?)<\/tbody>/s', $savedPage->getContent(), $savedRows);
         $this->assertNotEmpty($savedRows[1]);
-        $this->assertSame(1, substr_count($savedRows[1], 'data-repeater-row'));
+        // The workbook table always pads back up to 3 rows (same as a brand-new report) even
+        // when only 1 row has saved data — see _business-schema-table.blade.php.
+        $this->assertSame(3, substr_count($savedRows[1], 'data-repeater-row'));
     }
 
     public function test_non_agricultural_leasing_uses_the_combined_excel_property_and_tenant_table(): void
@@ -1009,9 +1038,9 @@ class IncomeSourcesTest extends TestCase
                 'W/ CONTRACT?',
                 'Action',
             ], false)
-            ->assertSee('name="properties_declared" type="number" min="0" value="1"', false)
-            ->assertSee('name="properties_inspected" type="number" min="0" value="1"', false)
-            ->assertSee('name="properties_not_inspected" type="number" min="0" value="0"', false)
+            ->assertSee('name="properties_declared" type="text" value="1"', false)
+            ->assertSee('name="properties_inspected" type="text" value="1"', false)
+            ->assertSee('name="properties_not_inspected" type="text" value="0"', false)
             ->assertSee('name="properties_reason_not_inspected" type="text" value="" data-property-summary-reason', false)
             ->assertSee('type="radio" value="Commercial Space" checked', false)
             ->assertSee('WAREHOUSE')
@@ -1050,8 +1079,8 @@ class IncomeSourcesTest extends TestCase
             'is_declared' => true,
             'is_inspected' => false,
             'reason_not_inspected' => 'Client unavailable',
-            'units_available' => 4,
-            'units_with_tenants' => 3,
+            'units_available' => '4',
+            'units_with_tenants' => '3',
             'location' => 'Zone 6, Bugo / 500 SQM',
             'area_square_meters' => 500,
             'has_contract' => true,
@@ -1066,8 +1095,8 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame('Electric and water billing is shouldered by the tenant.', $source->refresh()->businessReport->report_remarks);
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
             ->assertOk()
-            ->assertSee('name="properties_inspected" type="number" min="0" value="0"', false)
-            ->assertSee('name="properties_not_inspected" type="number" min="0" value="1"', false)
+            ->assertSee('name="properties_inspected" type="text" value="0"', false)
+            ->assertSee('name="properties_not_inspected" type="text" value="1"', false)
             ->assertSee('name="properties_reason_not_inspected" type="text" value="Client unavailable" data-property-summary-reason', false)
             ->assertSee('value="Zone 6, Bugo / 500 SQM"', false)
             ->assertSee('value="New Leaf / PHP 14,000 monthly / 3 years"', false)
@@ -1104,6 +1133,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Equipment Leasing',
             'business_name' => 'Equipment Leasing',
             'report_category' => 'Leasing',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => [
                 'fields' => ['operators_count' => 'Two shifts', 'drivers_count' => '8 regular', 'helpers_count' => '4 on call'],
                 'tables' => ['suppliers' => [
@@ -1193,6 +1224,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'North Hauling',
             'business_name' => 'North Hauling',
             'report_category' => 'Transportation',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => [
                 'fields' => [
                     'total_declared' => '5', 'total_inspected' => '1', 'total_not_inspected' => '4', 'reason_not_inspected' => 'Units were dispatched',
@@ -1311,6 +1344,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Regional Distribution',
             'business_name' => 'Regional Distribution',
             'report_category' => 'Distribution',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => [
                 'fields' => [
                     'office_staff' => '3', 'agents' => '5', 'drivers' => '4', 'helpers' => '6',
@@ -1373,7 +1408,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertTrue(str_contains($productsObservationsSection[0], 'OBSERVATIONS DURING BUSINESS INSPECTION:'));
         $this->assertSame(4, substr_count($productsObservationsSection[0], 'name="template_data[questions]'));
         preg_match('/<tbody data-repeater-rows>(.*?)<\/tbody>/s', $productsObservationsSection[0], $blankProductRows);
-        $this->assertSame(4, substr_count($blankProductRows[1], 'data-repeater-row'));
+        $this->assertSame(3, substr_count($blankProductRows[1], 'data-repeater-row'));
 
         preg_match('/<section[^>]+data-repeater="template-suppliers".*?<\/section>/s', $page->getContent(), $suppliersSection);
         $this->assertNotEmpty($suppliersSection[0]);
@@ -1391,6 +1426,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Community Pharmacy',
             'business_name' => 'Community Pharmacy',
             'report_category' => 'Pharmacy',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => [
                 'tables' => [
                     'branches' => [
@@ -1427,7 +1464,9 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame(1, substr_count($savedRows[1], 'data-repeater-row'));
         preg_match('/<section[^>]+business-pharmacy-products-observations.*?<\/section>/s', $savedPage->getContent(), $savedProductsObservationsSection);
         preg_match('/<tbody data-repeater-rows>(.*?)<\/tbody>/s', $savedProductsObservationsSection[0], $savedProductRows);
-        $this->assertSame(1, substr_count($savedProductRows[1], 'data-repeater-row'));
+        // This products table always pads back up to 3 rows even with saved data — see
+        // _business-pharmacy-products-observations.blade.php.
+        $this->assertSame(3, substr_count($savedProductRows[1], 'data-repeater-row'));
         preg_match('/<section[^>]+data-repeater="template-suppliers".*?<\/section>/s', $savedPage->getContent(), $savedSuppliersSection);
         preg_match('/<tbody data-repeater-rows>(.*?)<\/tbody>/s', $savedSuppliersSection[0], $savedSupplierRows);
         $this->assertSame(1, substr_count($savedSupplierRows[1], 'data-repeater-row'));
@@ -1459,7 +1498,7 @@ class IncomeSourcesTest extends TestCase
 
         preg_match('/<section[^>]+business-pharmacy-products-observations.*?<\/section>/s', $page->getContent(), $productsObservationsSection);
         preg_match('/<tbody data-repeater-rows>(.*?)<\/tbody>/s', $productsObservationsSection[0], $productRows);
-        $this->assertSame(6, substr_count($productRows[1], 'data-repeater-row'));
+        $this->assertSame(3, substr_count($productRows[1], 'data-repeater-row'));
         $this->assertSame(8, substr_count($productsObservationsSection[0], 'name="template_data[questions]'));
         foreach (['What are the most stocked products seen in the store or bodega?', 'Aside from walk-in clients, are there big recurring customers?', 'Do they have delivery trucks? How many?', 'Are these delivery trucks owned or mortgaged? Which institution?'] as $question) {
             $this->assertTrue(str_contains($productsObservationsSection[0], $question));
@@ -1479,6 +1518,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Hardware Store',
             'business_name' => 'Hardware Store',
             'report_category' => 'General Merchandise',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => [
                 'fields' => ['store_type' => 'Hardware'],
                 'tables' => [
@@ -1522,7 +1563,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertTrue(str_contains($productsObservationsSection[0], '<span>Top Sellable Products</span>'));
         $this->assertTrue(str_contains($productsObservationsSection[0], '<span>Selling Price per Item</span>'));
         preg_match('/<tbody data-repeater-rows>(.*?)<\/tbody>/s', $productsObservationsSection[0], $productRows);
-        $this->assertSame(6, substr_count($productRows[1], 'data-repeater-row'));
+        $this->assertSame(3, substr_count($productRows[1], 'data-repeater-row'));
         $this->assertSame(8, substr_count($productsObservationsSection[0], 'name="template_data[questions]'));
         $this->assertTrue(strpos($productsObservationsSection[0], 'Are items brand new or second hand?') < strpos($productsObservationsSection[0], 'Which declared bank shows the business income?'));
 
@@ -1538,6 +1579,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Dry Goods Store',
             'business_name' => 'Dry Goods Store',
             'report_category' => 'Retail',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => [
                 'fields' => ['store_type' => 'Middle Tier Store'],
                 'tables' => [
@@ -1555,6 +1598,232 @@ class IncomeSourcesTest extends TestCase
         $this->assertCount(1, data_get($source->businessReport->template_data, 'tables.suppliers'));
         $this->assertSame('Middle Tier Store', data_get($source->businessReport->template_data, 'fields.store_type'));
         $this->assertSame('Main Bank', data_get($source->businessReport->template_data, 'questions.3'));
+    }
+
+    public function test_applicant_add_business_does_not_show_accountability_block(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+
+        $this->actingAs($ci)->get(route('client-folders.income-sources.index', $folder))
+            ->assertOk()
+            ->assertDontSee('Created by')
+            ->assertDontSee('Last updated by')
+            ->assertDontSee('Save Contributors');
+    }
+
+    public function test_applicant_edit_business_does_not_show_accountability_block(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_truck_equipment')->firstOrFail();
+        $source = $this->app->make(\App\Actions\ClientFolders\CreateIncomeSource::class)->execute($ci, $folder, [
+            'income_source_template_id' => $template->id, 'source_name' => 'Applicant Business', 'business_name' => 'Applicant Business',
+        ]);
+
+        $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
+            ->assertOk()
+            ->assertDontSee('Created by')
+            ->assertDontSee('Last updated by')
+            ->assertDontSee('Save Contributors');
+    }
+
+    public function test_co_maker_add_business_does_not_show_accountability_block(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER PERSON']);
+
+        $this->actingAs($ci)->get(route('client-folders.income-sources.index', $folder).'?person=co-maker&co_maker_id='.$coMaker->id)
+            ->assertOk()
+            ->assertDontSee('Created by')
+            ->assertDontSee('Last updated by')
+            ->assertDontSee('Save Contributors');
+    }
+
+    public function test_co_maker_edit_business_does_not_show_accountability_block_but_data_still_works_internally(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER PERSON']);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_truck_equipment')->firstOrFail();
+        $source = $this->app->make(\App\Actions\ClientFolders\CreateIncomeSource::class)->execute($ci, $folder, [
+            'income_source_template_id' => $template->id, 'source_name' => 'Co-Maker Business', 'business_name' => 'Co-Maker Business',
+            'co_maker_id' => $coMaker->id,
+        ]);
+
+        $content = $this->actingAs($ci)
+            ->get(route('client-folders.income-sources.edit', [$folder, $source]).'?person=co-maker&co_maker_id='.$coMaker->id)
+            ->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('Created by', $content);
+        $this->assertStringNotContainsString('Last updated by', $content);
+        $this->assertStringNotContainsString('Save Contributors', $content);
+
+        // The accountability data itself must still be tracked internally even though it's no
+        // longer displayed — removing the visible block must never touch created_by/last_edited_by.
+        $this->assertSame($ci->id, $source->fresh()->created_by);
+        $this->assertSame($ci->id, $source->fresh()->last_edited_by);
+    }
+
+    public function test_applicant_new_business_ci_in_charge_follows_the_current_authenticated_ci_across_logins(): void
+    {
+        $rey = User::factory()->create(['full_name' => 'REY C. MAGHILOM']);
+        $anthony = User::factory()->create(['full_name' => 'ANTHONY DELA CRUZ']);
+        $reasan = User::factory()->create(['full_name' => 'REASAN SANTOS']);
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $rey->id]);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_truck_equipment')->firstOrFail();
+
+        $this->actingAs($rey)
+            ->get(route('client-folders.income-sources.index', $folder))
+            ->assertOk()->assertSee('REY C. MAGHILOM');
+        Auth::logout();
+
+        // The companion CI picker now legitimately lists every active Credit Investigator
+        // (including Rey) as a selectable candidate, so a page-wide assertDontSee would no
+        // longer hold — what actually matters is that the CI In-Charge display itself (not the
+        // picker's candidate list) reflects whoever is currently authenticated.
+        $this->actingAs($anthony)
+            ->get(route('client-folders.income-sources.index', $folder))
+            ->assertOk()
+            ->assertDontSee('<span class="font-semibold" data-ci-primary-name>REY C. MAGHILOM</span>', false)
+            ->assertSee('<span class="font-semibold" data-ci-primary-name>ANTHONY DELA CRUZ</span>', false);
+        $this->actingAs($anthony)->post(route('client-folders.income-sources.store', $folder), [
+            'income_source_template_id' => $template->id,
+            'source_name' => 'Anthony Sari-Sari Store',
+            'main_business_address' => 'Main St., Anthony Business Area',
+            'start_date' => '2026-01-01',
+            'year_established' => '2019',
+        ])->assertSessionHasNoErrors()->assertRedirect();
+        $source = $folder->incomeSources()->latest('id')->firstOrFail();
+        $this->assertSame($anthony->id, $source->created_by);
+        Auth::logout();
+
+        $this->actingAs($reasan)
+            ->get(route('client-folders.income-sources.index', $folder))
+            ->assertOk()
+            ->assertDontSee('<span class="font-semibold" data-ci-primary-name>REY C. MAGHILOM</span>', false)
+            ->assertDontSee('<span class="font-semibold" data-ci-primary-name>ANTHONY DELA CRUZ</span>', false)
+            ->assertSee('<span class="font-semibold" data-ci-primary-name>REASAN SANTOS</span>', false);
+        $this->actingAs($reasan)->post(route('client-folders.income-sources.store', $folder), [
+            'income_source_template_id' => $template->id,
+            'source_name' => 'Reasan Rice Trading',
+            'main_business_address' => 'Main St., Reasan Business Area',
+            'start_date' => '2026-01-01',
+            'year_established' => '2020',
+        ])->assertSessionHasNoErrors()->assertRedirect();
+        $secondSource = $folder->incomeSources()->latest('id')->firstOrFail();
+        $this->assertSame($reasan->id, $secondSource->created_by);
+        $this->assertNotSame($source->id, $secondSource->id);
+    }
+
+    public function test_co_maker_new_business_ci_in_charge_follows_the_current_authenticated_ci_across_logins(): void
+    {
+        $rey = User::factory()->create(['full_name' => 'REY C. MAGHILOM']);
+        $anthony = User::factory()->create(['full_name' => 'ANTHONY DELA CRUZ']);
+        $reasan = User::factory()->create(['full_name' => 'REASAN SANTOS']);
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $rey->id]);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER PERSON']);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_truck_equipment')->firstOrFail();
+        $coMakerQuery = '?person=co-maker&co_maker_id='.$coMaker->id;
+
+        $this->actingAs($rey)
+            ->get(route('client-folders.income-sources.index', $folder).$coMakerQuery)
+            ->assertOk()->assertSee('REY C. MAGHILOM');
+        Auth::logout();
+
+        $this->actingAs($anthony)
+            ->get(route('client-folders.income-sources.index', $folder).$coMakerQuery)
+            ->assertOk()
+            ->assertDontSee('<span class="font-semibold" data-ci-primary-name>REY C. MAGHILOM</span>', false)
+            ->assertSee('<span class="font-semibold" data-ci-primary-name>ANTHONY DELA CRUZ</span>', false);
+        $this->actingAs($anthony)->post(route('client-folders.income-sources.store', $folder), [
+            'income_source_template_id' => $template->id,
+            'source_name' => 'Anthony Co-Maker Business',
+            'co_maker_id' => $coMaker->id,
+            'main_business_address' => 'Main St., Anthony Co-Maker Business Area',
+            'start_date' => '2026-01-01',
+            'year_established' => '2019',
+        ])->assertSessionHasNoErrors()->assertRedirect();
+        $source = $folder->incomeSources()->where('co_maker_id', $coMaker->id)->latest('id')->firstOrFail();
+        $this->assertSame($anthony->id, $source->created_by);
+        Auth::logout();
+
+        $this->actingAs($reasan)
+            ->get(route('client-folders.income-sources.index', $folder).$coMakerQuery)
+            ->assertOk()
+            ->assertDontSee('<span class="font-semibold" data-ci-primary-name>REY C. MAGHILOM</span>', false)
+            ->assertDontSee('<span class="font-semibold" data-ci-primary-name>ANTHONY DELA CRUZ</span>', false)
+            ->assertSee('<span class="font-semibold" data-ci-primary-name>REASAN SANTOS</span>', false);
+        $this->actingAs($reasan)->post(route('client-folders.income-sources.store', $folder), [
+            'income_source_template_id' => $template->id,
+            'source_name' => 'Reasan Co-Maker Business',
+            'co_maker_id' => $coMaker->id,
+            'main_business_address' => 'Main St., Reasan Co-Maker Business Area',
+            'start_date' => '2026-01-01',
+            'year_established' => '2020',
+        ])->assertSessionHasNoErrors()->assertRedirect();
+        $secondSource = $folder->incomeSources()->where('co_maker_id', $coMaker->id)->latest('id')->firstOrFail();
+        $this->assertSame($reasan->id, $secondSource->created_by);
+        $this->assertNotSame($source->id, $secondSource->id);
+    }
+
+    public function test_new_business_creation_ignores_client_submitted_creator_id_and_uses_the_authenticated_actor(): void
+    {
+        $actualCi = User::factory()->create(['full_name' => 'ACTUAL LOGGED IN CI']);
+        $otherCi = User::factory()->create(['full_name' => 'OTHER CI']);
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $actualCi->id]);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_truck_equipment')->firstOrFail();
+
+        $this->actingAs($actualCi)->post(route('client-folders.income-sources.store', $folder), [
+            'income_source_template_id' => $template->id,
+            'source_name' => 'Spoofed Creator Business',
+            'main_business_address' => 'Main St., Business Area',
+            'start_date' => '2026-01-01',
+            'year_established' => '2018',
+            'created_by' => $otherCi->id,
+            'ci_user_id' => $otherCi->id,
+            'ci_in_charge_id' => $otherCi->id,
+        ])->assertSessionHasNoErrors()->assertRedirect();
+
+        $source = $folder->incomeSources()->latest('id')->firstOrFail();
+        $this->assertSame($actualCi->id, $source->created_by);
+        $this->assertNotSame($otherCi->id, $source->created_by);
+    }
+
+    public function test_editing_an_existing_business_does_not_reassign_its_recorded_ci_in_charge(): void
+    {
+        $originalCi = User::factory()->create(['full_name' => 'ORIGINAL CREATOR CI']);
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $originalCi->id]);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_truck_equipment')->firstOrFail();
+        $source = $this->app->make(CreateIncomeSource::class)->execute($originalCi, $folder, [
+            'income_source_template_id' => $template->id, 'source_name' => 'Original Business', 'business_name' => 'Original Business',
+        ]);
+        $editingCi = User::factory()->create(['full_name' => 'EDITING CI']);
+        $folder->update(['assigned_ci_id' => $editingCi->id]);
+
+        $page = $this->actingAs($editingCi)
+            ->get(route('client-folders.income-sources.edit', [$folder, $source]))
+            ->assertOk();
+        $page->assertSee($originalCi->full_name);
+        // The companion CI picker legitimately lists the editing CI too (any active CI is a
+        // selectable companion candidate) — what must stay false is that they show up as the
+        // CI In-Charge itself.
+        $page->assertDontSee('<span class="font-semibold" data-ci-primary-name>'.$editingCi->full_name.'</span>', false);
+
+        $this->actingAs($editingCi)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'intent' => 'stay',
+            'source_name' => 'Updated By Different CI',
+            'business_name' => 'Updated By Different CI',
+            'report_category' => 'Leasing',
+            'main_business_address' => 'Main St., Updated Business Area',
+            'start_date' => '2026-01-01',
+            'year_established' => '2021',
+        ])->assertSessionHasNoErrors();
+
+        $source->refresh();
+        $this->assertSame($originalCi->id, $source->created_by);
+        $this->assertSame($editingCi->id, $source->last_edited_by);
     }
 
     public function test_business_header_uses_saved_client_values_and_keeps_its_optional_dates_independent_from_cibi(): void
@@ -1644,6 +1913,53 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame(RecordState::Complete, $source->refresh()->state);
     }
 
+    public function test_contributors_can_be_added_and_removed_with_audit_events(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('general_income_sources');
+        $contributorA = User::factory()->create();
+        $contributorB = User::factory()->create();
+
+        $this->actingAs($ci)->put(route('client-folders.income-sources.contributors.update', [$folder, $source]), [
+            'contributor_ids' => [$contributorA->id, $contributorB->id],
+        ])->assertRedirect();
+        $this->assertSame([$contributorA->id, $contributorB->id], $source->contributors()->orderBy('users.id')->pluck('users.id')->all());
+        $this->assertDatabaseHas('audit_logs', ['action' => 'income_source.contributor_added', 'client_folder_id' => $folder->id]);
+
+        $this->actingAs($ci)->put(route('client-folders.income-sources.contributors.update', [$folder, $source]), [
+            'contributor_ids' => [$contributorA->id],
+        ])->assertRedirect();
+        $this->assertSame([$contributorA->id], $source->contributors()->pluck('users.id')->all());
+        $this->assertDatabaseHas('audit_logs', ['action' => 'income_source.contributor_removed', 'client_folder_id' => $folder->id]);
+    }
+
+    public function test_created_by_is_set_once_on_creation_and_legacy_rows_remain_null(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('general_income_sources');
+        $this->assertSame($ci->id, $source->created_by);
+
+        $legacy = $folder->incomeSources()->create([
+            'income_source_template_id' => $source->income_source_template_id,
+            'template_type' => $source->template_type,
+            'template_version' => $source->template_version,
+            'source_name' => 'Legacy Row',
+        ]);
+        $this->assertNull($legacy->created_by);
+    }
+
+    public function test_general_income_source_concurrent_save_with_stale_revision_is_rejected(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('general_income_sources');
+        $other = User::factory()->create();
+        $this->assertSame(1, $source->revision);
+
+        $this->actingAs($other)->put(route('client-folders.income-sources.general.update', [$folder, $source]), $this->generalPayload() + ['expected_revision' => 1])->assertRedirect();
+        $this->assertSame(2, $source->fresh()->revision);
+
+        $this->actingAs($ci)->putJson(route('client-folders.income-sources.general.update', [$folder, $source]), $this->generalPayload() + ['expected_revision' => 1])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('expected_revision');
+    }
+
     public function test_dedicated_child_ids_and_incompatible_sections_cannot_cross_report_boundaries(): void
     {
         [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
@@ -1678,7 +1994,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame(3, substr_count($branchRows[1], 'data-repeater-row'));
         preg_match('/<div class="business-pharmacy-products-panel" data-repeater="products">(.*?)<\/div>\s*<div class="business-distributor-interview-panel/s', $page->getContent(), $productsSection);
         preg_match('/<tbody data-repeater-rows>(.*?)<\/tbody>/s', $productsSection[1], $productRows);
-        $this->assertSame(6, substr_count($productRows[1], 'data-repeater-row'));
+        $this->assertSame(3, substr_count($productRows[1], 'data-repeater-row'));
         preg_match('/<section[^>]+data-repeater="suppliers".*?<\/section>/s', $page->getContent(), $suppliersSection);
         $this->assertStringNotContainsString('type="checkbox"', $suppliersSection[0]);
         $this->assertStringContainsString('<span>CONFIMRED</span><small class="business-report-column-guide">(Y/N)</small>', $suppliersSection[0]);
@@ -1694,7 +2010,7 @@ class IncomeSourcesTest extends TestCase
         DB::enableQueryLog();
         $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))
             ->assertOk()
-            ->assertSee('Business / Income Sources');
+            ->assertSee('Add Business');
         $this->assertLessThanOrEqual(12, count(DB::getQueryLog()));
         DB::disableQueryLog();
     }
@@ -1717,6 +2033,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Neighborhood Grocery',
             'business_name' => 'Neighborhood Grocery',
             'report_category' => 'Retail',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'scale' => 'Grocery Store',
             'branches' => [['location' => 'Town Center', 'is_air_conditioned' => 'Y'], [], []],
             'products' => [['product_name' => 'Canned Goods', 'selling_price' => 75], [], [], [], [], []],
@@ -1774,6 +2092,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'City Meatshop',
             'business_name' => 'City Meatshop',
             'report_category' => 'Meatshop',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => [
                 'tables' => [
                     'branches' => [
@@ -1852,6 +2172,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Prime Contractor',
             'business_name' => 'Prime Contractor',
             'report_category' => 'Contractor',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => [
                 'fields' => [
                     'projects_declared' => '3',
@@ -1924,6 +2246,8 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Main Restaurant',
             'business_name' => 'Main Restaurant',
             'report_category' => 'Restaurant',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
             'template_data' => [
                 'fields' => [
                     'scale_of_business' => 'Mall - Restaurant',
@@ -2240,6 +2564,285 @@ class IncomeSourcesTest extends TestCase
         $this->assertStringNotContainsString('PRIVATE NARRATIVE VALUE', json_encode($audit->metadata));
     }
 
+    public function test_business_report_create_assigns_logged_in_creator_as_primary_ci(): void
+    {
+        [$ci, , $source] = $this->createSource('leasing_non_agricultural');
+
+        $this->assertSame($ci->id, $source->created_by);
+        $this->assertSame([$ci->id], $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->orderedParticipantIds($source));
+    }
+
+    public function test_ci_in_charge_field_renders_from_business_report_creator_not_folder_assigned_ci(): void
+    {
+        $creator = User::factory()->create(['full_name' => 'BUSINESS REPORT CREATOR']);
+        $otherAssignedCi = User::factory()->create(['full_name' => 'FOLDER ASSIGNED CI']);
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $creator->id]);
+        [, , $source] = $this->createSource('leasing_non_agricultural', $creator, $folder);
+
+        // Folder assignment changes after the business was created — the CI In-Charge shown on
+        // the Business Report must not follow it.
+        $folder->update(['assigned_ci_id' => $otherAssignedCi->id]);
+
+        $this->actingAs($creator)
+            ->get(route('client-folders.income-sources.edit', [$folder, $source]))
+            ->assertOk()
+            ->assertSee('<span class="font-semibold" data-ci-primary-name>BUSINESS REPORT CREATOR</span>', false)
+            ->assertDontSee('<span class="font-semibold" data-ci-primary-name>FOLDER ASSIGNED CI</span>', false);
+    }
+
+    public function test_folder_assigned_ci_may_differ_from_business_report_primary_ci_without_changing_it(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $newAssignedCi = User::factory()->create();
+
+        $folder->update(['assigned_ci_id' => $newAssignedCi->id]);
+
+        $this->assertSame($ci->id, $source->refresh()->created_by);
+    }
+
+    public function test_companion_ci_ids_can_be_submitted_and_saved_through_the_business_update_form(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $mark = User::factory()->create(['full_name' => 'MARK S. DELA CRUZ']);
+        $yong = User::factory()->create(['full_name' => 'YONG P. SANTOS']);
+
+        $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$mark->id, $yong->id]];
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertSame([$ci->id, $mark->id, $yong->id], $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->orderedParticipantIds($source->refresh()));
+    }
+
+    public function test_primary_creator_is_stripped_from_companion_submissions(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $mark = User::factory()->create();
+
+        $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$ci->id, $mark->id]];
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertSame([$mark->id], $source->refresh()->contributors()->pluck('users.id')->all());
+    }
+
+    public function test_duplicate_companion_ids_are_deduplicated_on_save(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $mark = User::factory()->create();
+
+        // Duplicates submitted for the same companion (e.g. a stale double-click) are silently
+        // deduplicated before validation rather than rejected outright.
+        $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$mark->id, $mark->id]];
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertSame([$mark->id], $source->refresh()->contributors()->pluck('users.id')->all());
+    }
+
+    public function test_existing_companions_load_on_edit_and_render_inline_with_creator(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $mark = User::factory()->create(['full_name' => 'MARK S. DELA CRUZ']);
+        $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->syncCompanions($source, [$mark->id]);
+
+        $page = $this->actingAs($ci)
+            ->get(route('client-folders.income-sources.edit', [$folder, $source]))
+            ->assertOk()
+            ->assertSee('Add Companion CI')
+            ->assertSee('MARK S. DELA CRUZ')
+            ->assertSee('data-companion-participant', false);
+
+        // Creator renders first, inside the same merged CI In-Charge line as the companion.
+        $content = $page->getContent();
+        $primaryPos = stripos($content, $ci->full_name);
+        $companionPos = strpos($content, 'MARK S. DELA CRUZ');
+        $this->assertNotFalse($primaryPos);
+        $this->assertNotFalse($companionPos);
+        $this->assertLessThan($companionPos, $primaryPos, 'Primary CI must render before the companion in the CI In-Charge line.');
+    }
+
+    public function test_primary_creator_has_no_remove_control_in_the_ci_in_charge_line(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $mark = User::factory()->create();
+        $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->syncCompanions($source, [$mark->id]);
+
+        $page = $this->actingAs($ci)
+            ->get(route('client-folders.income-sources.edit', [$folder, $source]))
+            ->assertOk();
+
+        // Only one remove control exists on the page, and it belongs to the companion, not the
+        // primary — the primary's name sits in its own dedicated span with no adjacent button.
+        $this->assertSame(1, substr_count($page->getContent(), 'data-companion-remove'));
+        $page->assertSee('data-ci-primary-name', false);
+    }
+
+    public function test_primary_ci_is_absent_from_the_companion_modal_choices(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $other = User::factory()->create(['full_name' => 'ELIGIBLE COMPANION']);
+
+        $page = $this->actingAs($ci)
+            ->get(route('client-folders.income-sources.edit', [$folder, $source]))
+            ->assertOk()
+            ->assertSee('ELIGIBLE COMPANION');
+
+        // The primary's own name must not appear anywhere inside the modal's option list markup.
+        // Anchored on the actual <dialog> tag, not a bare `id="..."` match — the CI In-Charge
+        // picker wrapper earlier on the page now also carries a data-companion-dialog-id
+        // attribute containing this same string, which a bare match would find first.
+        $modalMarkup = substr($page->getContent(), (int) strpos($page->getContent(), '<dialog id="business-companion-ci-dialog"'));
+        $this->assertStringNotContainsString($ci->full_name, $modalMarkup);
+        $this->assertStringNotContainsString('data-user-id="'.$ci->id.'"', $modalMarkup);
+    }
+
+    public function test_companion_modal_choices_contain_only_active_credit_investigators(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $eligible = User::factory()->create(['full_name' => 'ELIGIBLE CI']);
+        $inactive = User::factory()->create(['full_name' => 'INACTIVE CI', 'status' => \App\Enums\UserStatus::Disabled]);
+        $admin = User::factory()->administrator()->create(['full_name' => 'ADMIN USER']);
+
+        $this->actingAs($ci)
+            ->get(route('client-folders.income-sources.edit', [$folder, $source]))
+            ->assertOk()
+            ->assertSee('ELIGIBLE CI')
+            ->assertDontSee('INACTIVE CI')
+            ->assertDontSee('ADMIN USER');
+    }
+
+    public function test_add_companion_ci_trigger_points_to_the_existing_dialog(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+
+        $page = $this->actingAs($ci)
+            ->get(route('client-folders.income-sources.edit', [$folder, $source]))
+            ->assertOk();
+
+        $page->assertSee('data-modal-open="business-companion-ci-dialog"', false);
+        $page->assertSee('id="business-companion-ci-dialog"', false);
+        // The trigger must be a plain button, never a submit button that could fire the form.
+        $this->assertMatchesRegularExpression(
+            '/<button type="button"[^>]*data-companion-dialog-trigger/',
+            $page->getContent(),
+        );
+    }
+
+    public function test_add_ci_button_label_and_compact_participant_styling_render(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $mark = User::factory()->create(['full_name' => 'MARK S. DELA CRUZ']);
+        $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->syncCompanions($source, [$mark->id]);
+
+        $page = $this->actingAs($ci)
+            ->get(route('client-folders.income-sources.edit', [$folder, $source]))
+            ->assertOk();
+        $content = $page->getContent();
+
+        // Trigger button now reads "+ Add CI", not the old "+ Add Companion CI" wording.
+        $this->assertMatchesRegularExpression(
+            '/data-companion-dialog-trigger[^>]*>\s*<span aria-hidden="true">\+<\/span>\s*Add CI\s*<\/button>/',
+            $content,
+        );
+        $this->assertStringNotContainsString('>+</span> Add Companion CI<', $content);
+
+        // Primary and companions share the same (smaller) text-xs sizing.
+        $this->assertStringContainsString('data-companion-ci-container', $content);
+        $this->assertMatchesRegularExpression('/text-xs uppercase"\s+data-companion-ci-container/', $content);
+
+        // The companion remove control uses the more noticeable danger-styled circular button.
+        $page->assertSee('bg-danger-soft', false);
+        $page->assertSee('text-danger', false);
+        $page->assertSee('aria-label="Remove MARK S. DELA CRUZ"', false);
+    }
+
+    public function test_companion_can_be_removed_on_edit(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $mark = User::factory()->create();
+        $yong = User::factory()->create();
+        $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->syncCompanions($source, [$mark->id, $yong->id]);
+
+        $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$yong->id]];
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertSame([$yong->id], $source->refresh()->contributors()->pluck('users.id')->all());
+    }
+
+    public function test_another_updater_is_not_automatically_added_as_companion(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $mark = User::factory()->create();
+        $editor = User::factory()->create();
+        $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->syncCompanions($source, [$mark->id]);
+
+        // The editor saves without ever opening the Companion CI picker (no contributor_ids
+        // submitted at all) — this must never silently add them as a participant.
+        $payload = $this->businessPayload();
+        $this->actingAs($editor)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors();
+
+        $this->assertSame([$mark->id], $source->refresh()->contributors()->pluck('users.id')->all());
+        $this->assertSame($ci->id, $source->created_by);
+    }
+
+    public function test_applicant_and_co_maker_business_reports_keep_separate_companion_lists(): void
+    {
+        [$ci, $folder, $applicantSource] = $this->createSource('leasing_non_agricultural');
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER PERSON']);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_non_agricultural')->firstOrFail();
+        $coMakerSource = $this->app->make(CreateIncomeSource::class)->execute($ci, $folder, [
+            'income_source_template_id' => $template->id, 'source_name' => 'Co-Maker Business', 'business_name' => 'Co-Maker Business', 'co_maker_id' => $coMaker->id,
+        ]);
+        $mark = User::factory()->create();
+        $yong = User::factory()->create();
+
+        $applicantPayload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$mark->id]];
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $applicantSource]), $applicantPayload)->assertSessionHasNoErrors();
+
+        $coMakerPayload = $this->businessPayload() + ['co_maker_id' => $coMaker->id, 'contributor_ids_present' => '1', 'contributor_ids' => [$yong->id]];
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $coMakerSource]), $coMakerPayload)->assertSessionHasNoErrors();
+
+        $this->assertSame([$mark->id], $applicantSource->refresh()->contributors()->pluck('users.id')->all());
+        $this->assertSame([$yong->id], $coMakerSource->refresh()->contributors()->pluck('users.id')->all());
+    }
+
+    public function test_nonexistent_companion_user_id_is_rejected(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+
+        $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [999999]];
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasErrors('contributor_ids.0');
+    }
+
+    public function test_inactive_or_non_ci_user_is_rejected_as_companion(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $disabledCi = User::factory()->create(['status' => \App\Enums\UserStatus::Disabled]);
+        $admin = User::factory()->administrator()->create();
+
+        $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$disabledCi->id]];
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasErrors('contributor_ids.0');
+
+        $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$admin->id]];
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasErrors('contributor_ids.0');
+    }
+
+    public function test_business_report_no_change_behavior_is_preserved_when_companion_picker_is_untouched(): void
+    {
+        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $mark = User::factory()->create();
+        $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$mark->id]];
+        // First save actually establishes this exact state (properties row, companion) — only the
+        // second, identical save is the genuine no-change probe.
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHas('statusType', 'success');
+        $revisionBefore = $source->refresh()->revision;
+        $payload['properties'][0]['id'] = $source->businessReport->properties()->firstOrFail()->id;
+
+        $this->actingAs($ci)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)
+            ->assertRedirect()
+            ->assertSessionHas('statusType', 'info');
+
+        $this->assertSame($revisionBefore, $source->refresh()->revision);
+    }
+
     private function createSource(string $templateType, ?User $ci = null, ?ClientFolder $folder = null): array
     {
         $ci ??= User::factory()->create();
@@ -2248,7 +2851,7 @@ class IncomeSourcesTest extends TestCase
         if ($template->is_fallback) {
             $this->app->make(CreateIncomeSource::class)->execute($ci, $folder, ['income_source_template_id' => $template->id, 'source_name' => 'Income Source', 'business_name' => 'Sample Business']);
         } else {
-            $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), ['income_source_template_id' => $template->id, 'source_name' => 'Income Source', 'business_name' => 'Sample Business']);
+            $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), ['income_source_template_id' => $template->id, 'source_name' => 'Income Source', 'business_name' => 'Sample Business', 'main_business_address' => 'Main Street', 'start_date' => '2026-01-01', 'year_established' => 2020]);
         }
 
         return [$ci, $folder, $folder->incomeSources()->latest('id')->firstOrFail()];
@@ -2261,6 +2864,6 @@ class IncomeSourcesTest extends TestCase
 
     private function businessPayload(): array
     {
-        return ['intent' => 'complete', 'source_name' => 'Apartment Rentals', 'business_name' => 'Sample Apartments', 'report_category' => 'Leasing', 'main_business_address' => 'Main Street', 'registered_owner' => 'Juan Dela Cruz', 'is_primary' => true, 'properties' => [['property_type' => 'Apartment', 'is_declared' => true, 'is_inspected' => true, 'location' => 'Main Street', 'units_available' => 4, 'units_with_tenants' => 3]], 'tenants' => []];
+        return ['intent' => 'complete', 'source_name' => 'Apartment Rentals', 'business_name' => 'Sample Apartments', 'report_category' => 'Leasing', 'main_business_address' => 'Main Street', 'start_date' => '2026-01-01', 'year_established' => 2020, 'registered_owner' => 'Juan Dela Cruz', 'is_primary' => true, 'properties' => [['property_type' => 'Apartment', 'is_declared' => true, 'is_inspected' => true, 'location' => 'Main Street', 'units_available' => '4', 'units_with_tenants' => '3']], 'tenants' => []];
     }
 }
