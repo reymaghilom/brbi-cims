@@ -8,6 +8,43 @@ use ZipArchive;
 
 class BusinessCheckDocxFooterTest extends TestCase
 {
+    public function test_business_sections_use_content_attached_page_breaks_without_blank_break_paragraphs(): void
+    {
+        $docx = tempnam(sys_get_temp_dir(), 'business-check-docx-');
+        $section = fn (string $subject) => [
+            'category' => 'Business',
+            'party_label' => 'Applicant Name',
+            'subject' => $subject,
+            'location' => 'Test Location',
+            'heading' => 'Business Check',
+            'business_name' => 'Test Store',
+            'remarks' => null,
+            'ci_date' => 'August 28, 2026',
+            'ci' => 'Rey',
+            'photo_pages' => [],
+            'competitor_photo_pages' => [],
+            'google_map' => null,
+        ];
+
+        try {
+            $bytes = app(ResidenceBusinessCheckBatchDocxExporter::class)->generate([
+                $section('First Applicant'),
+                $section('Second Applicant'),
+            ], 'BUSINESS CHECK');
+            file_put_contents($docx, $bytes);
+
+            $zip = new ZipArchive;
+            $this->assertTrue($zip->open($docx));
+            $documentXml = (string) $zip->getFromName('word/document.xml');
+            $zip->close();
+
+            $this->assertStringNotContainsString('w:type="page"', $documentXml);
+            $this->assertSame(1, substr_count($documentXml, '<w:pageBreakBefore'));
+        } finally {
+            @unlink($docx);
+        }
+    }
+
     public function test_business_check_docx_omits_the_official_report_page_label_and_keeps_report_order(): void
     {
         $image = tempnam(sys_get_temp_dir(), 'business-check-image-');

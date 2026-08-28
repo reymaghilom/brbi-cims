@@ -12,6 +12,7 @@ use App\Services\ClientFolders\ResidenceBusinessCheckCompletionEvaluator;
 use App\Services\Media\CloudinaryMediaStorage;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -126,6 +127,31 @@ class DeleteCheckCloudCleanupTest extends TestCase
             $this->fail('Expected the simulated failure to propagate.');
         } catch (\RuntimeException $exception) {
             $this->assertSame('Simulated failure inside the transaction.', $exception->getMessage());
+        }
+
+        $this->assertDatabaseHas('residence_checks', ['id' => $check->id]);
+        $this->assertDatabaseHas('residence_check_photos', ['id' => $photo->id]);
+    }
+
+    public function test_an_outer_batch_transaction_rollback_never_retires_a_deleted_checks_cloud_asset(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $check = $folder->residenceChecks()->create(['ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'ci_user_id' => $ci->id]);
+        $photo = $check->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/residence/photos/outer-batch-photo'));
+
+        $cloud = $this->mock(CloudinaryMediaStorage::class);
+        $cloud->shouldNotReceive('destroy');
+
+        try {
+            DB::transaction(function () use ($ci, $folder, $check): void {
+                app(DeleteResidenceCheck::class)->execute($ci, $folder, $check);
+
+                throw new \RuntimeException('Simulated failure after one batch item was deleted.');
+            });
+            $this->fail('Expected the simulated outer batch failure to propagate.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Simulated failure after one batch item was deleted.', $exception->getMessage());
         }
 
         $this->assertDatabaseHas('residence_checks', ['id' => $check->id]);

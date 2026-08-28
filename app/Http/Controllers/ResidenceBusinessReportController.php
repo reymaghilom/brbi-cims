@@ -40,9 +40,9 @@ class ResidenceBusinessReportController extends Controller
         DeleteBusinessCheck $deleteBusinessCheck,
     ): RedirectResponse {
         Gate::authorize('update', $clientFolder);
-        abort_if($request->filled('co_maker_id'), 404);
 
         $validated = $request->validate([
+            'co_maker_id' => ActivePersonResolver::rule($clientFolder),
             'residence_check_ids' => ['sometimes', 'array'],
             'residence_check_ids.*' => ['integer', 'distinct'],
             'business_check_ids' => ['sometimes', 'array'],
@@ -52,8 +52,10 @@ class ResidenceBusinessReportController extends Controller
         $businessIds = array_map('intval', $validated['business_check_ids'] ?? []);
         abort_if($residenceIds === [] && $businessIds === [], 422);
 
-        $residenceChecks = $clientFolder->residenceChecks()->whereNull('co_maker_id')->whereIn('id', $residenceIds)->get();
-        $businessChecks = $clientFolder->businessChecks()->whereNull('co_maker_id')->whereIn('id', $businessIds)->get();
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $validated['co_maker_id'] ?? null);
+        $personId = $activePerson?->id;
+        $residenceChecks = $clientFolder->residenceChecks()->where('co_maker_id', $personId)->whereIn('id', $residenceIds)->get();
+        $businessChecks = $clientFolder->businessChecks()->where('co_maker_id', $personId)->whereIn('id', $businessIds)->get();
         abort_unless($residenceChecks->count() === count($residenceIds) && $businessChecks->count() === count($businessIds), 404);
 
         DB::transaction(function () use ($request, $clientFolder, $residenceChecks, $businessChecks, $deleteResidenceCheck, $deleteBusinessCheck): void {
@@ -65,7 +67,7 @@ class ResidenceBusinessReportController extends Controller
             }
         });
 
-        return redirect()->route('client-folders.residence-business.edit', $clientFolder)
+        return redirect()->route('client-folders.residence-business.edit', [$clientFolder] + ActivePersonResolver::queryParams($activePerson))
             ->with('status', 'Selected reports deleted successfully.')
             ->with('statusType', 'success');
     }

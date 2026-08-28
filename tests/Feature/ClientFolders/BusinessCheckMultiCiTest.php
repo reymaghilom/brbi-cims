@@ -172,6 +172,7 @@ class BusinessCheckMultiCiTest extends TestCase
 
         $this->actingAs($creator)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan',
+            'photo_groups' => [['photos' => [UploadedFile::fake()->image('Business.jpg', 900, 700)->size(500)]]],
         ])->assertRedirect();
         $check = $folder->businessChecks()->firstOrFail();
 
@@ -190,9 +191,11 @@ class BusinessCheckMultiCiTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $applicantSource->id, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address',
+            'photo_groups' => [['photos' => [UploadedFile::fake()->image('Applicant Business.jpg', 900, 700)->size(500)]]],
         ]);
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $coMakerSource->id, 'ci_date' => now()->toDateString(), 'location' => 'Co-Maker Address', 'co_maker_id' => $coMaker->id,
+            'photo_groups' => [['photos' => [UploadedFile::fake()->image('Co-Maker Business.jpg', 900, 700)->size(500)]]],
         ]);
         $applicantCheck = $folder->businessChecks()->where('co_maker_id', null)->firstOrFail();
         $coMakerCheck = $folder->businessChecks()->where('co_maker_id', $coMaker->id)->firstOrFail();
@@ -235,6 +238,7 @@ class BusinessCheckMultiCiTest extends TestCase
         // A brand new record flashes the "saved" wording.
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan',
+            'photo_groups' => [['photos' => [UploadedFile::fake()->image('Business.jpg', 900, 700)->size(500)]]],
         ])->assertRedirect()->assertSessionHas('status', 'Business Check saved successfully.');
 
         $check = $folder->businessChecks()->firstOrFail();
@@ -375,6 +379,7 @@ class BusinessCheckMultiCiTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan',
+            'photo_groups' => [['photos' => [UploadedFile::fake()->image('Business.jpg', 900, 700)->size(500)]]],
         ])->assertRedirect();
         $check = $folder->businessChecks()->firstOrFail();
 

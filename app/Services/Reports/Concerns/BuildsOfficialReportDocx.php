@@ -5,6 +5,7 @@ namespace App\Services\Reports\Concerns;
 use PhpOffice\PhpWord\Element\AbstractContainer;
 use PhpOffice\PhpWord\Element\Section;
 use PhpOffice\PhpWord\PhpWord;
+use PhpOffice\PhpWord\Settings;
 use Throwable;
 
 /**
@@ -25,7 +26,7 @@ trait BuildsOfficialReportDocx
         // title, or a saved Location/business name with an ampersand in it) produces invalid XML that Word
         // refuses to open ("Word experienced an error trying to open the file."), even though the .docx's
         // ZIP/OPC structure itself is perfectly valid. This must be enabled before any addText() call below.
-        \PhpOffice\PhpWord\Settings::setOutputEscapingEnabled(true);
+        Settings::setOutputEscapingEnabled(true);
 
         $phpWord->setDefaultFontName('Arial');
         $phpWord->setDefaultFontSize(10);
@@ -116,11 +117,20 @@ trait BuildsOfficialReportDocx
      */
     private bool $skipNextPageBreak = false;
 
-    private function pageBreakBeforeSection(Section $section): void
+    private function sectionStartsOnNewPage(): bool
     {
         if ($this->skipNextPageBreak) {
             $this->skipNextPageBreak = false;
 
+            return false;
+        }
+
+        return true;
+    }
+
+    private function pageBreakBeforeSection(Section $section): void
+    {
+        if (! $this->sectionStartsOnNewPage()) {
             return;
         }
         $section->addPageBreak();
@@ -152,8 +162,11 @@ trait BuildsOfficialReportDocx
      */
     private function businessPhotoPages(Section $section, array $photoSection): void
     {
-        $this->pageBreakBeforeSection($section);
-        $this->residenceHeaderTable($section, $photoSection, self::BUSINESS_CHECK_WIDTH_DXA);
+        // Carry the break on the first real header paragraph. A standalone addPageBreak() can be
+        // pushed onto a fresh sheet by the preceding photos and then break again, producing a full
+        // blank page. Residence intentionally keeps its existing pagination path unchanged.
+        $startsOnNewPage = $this->sectionStartsOnNewPage();
+        $this->residenceHeaderTable($section, $photoSection, self::BUSINESS_CHECK_WIDTH_DXA, $startsOnNewPage);
 
         $businessPages = $photoSection['photo_pages'] ?? [];
         $competitorPages = $photoSection['competitor_photo_pages'] ?? [];
@@ -287,7 +300,7 @@ trait BuildsOfficialReportDocx
      * never sets this key) rides in parentheses right after the Subject line's "Business Check",
      * matching the reference's "Business Check (Retail Store)".
      */
-    private function residenceHeaderTable(Section $section, array $photoSection, int $widthDxa = self::WIDTH_DXA): void
+    private function residenceHeaderTable(Section $section, array $photoSection, int $widthDxa = self::WIDTH_DXA, bool $pageBreakBefore = false): void
     {
         // borderSize alone is NOT enough to make a PhpWord table genuinely borderless: its Word2007
         // writer has no way to emit OOXML's own w:val="none" for table borders (only Border, used
@@ -305,7 +318,7 @@ trait BuildsOfficialReportDocx
         $left = $table->addCell(intdiv($widthDxa * 2, 3));
         $hasRemarks = filled($photoSection['remarks'] ?? null);
         $subjectLine = $photoSection['heading'].(filled($photoSection['business_name'] ?? null) ? ' ('.$photoSection['business_name'].')' : '');
-        $this->residenceInfoLine($left, ($photoSection['party_label'] ?? 'Applicant Name'), $photoSection['subject']);
+        $this->residenceInfoLine($left, ($photoSection['party_label'] ?? 'Applicant Name'), $photoSection['subject'], $pageBreakBefore);
         $this->residenceInfoLine($left, 'Location', $photoSection['location'] ?: '—');
         $this->residenceInfoLine($left, 'Subject', $subjectLine);
         if ($hasRemarks) {
@@ -316,9 +329,9 @@ trait BuildsOfficialReportDocx
         $this->residenceInfoLine($right, 'CI', $photoSection['ci'] ?: '—');
     }
 
-    private function residenceInfoLine(AbstractContainer $container, string $label, string $value): void
+    private function residenceInfoLine(AbstractContainer $container, string $label, string $value, bool $pageBreakBefore = false): void
     {
-        $run = $container->addTextRun(['spaceAfter' => 0]);
+        $run = $container->addTextRun(['spaceAfter' => 0, 'pageBreakBefore' => $pageBreakBefore]);
         $run->addText($label.': ', ['name' => 'Calibri', 'size' => 12]);
         $run->addText($value, ['name' => 'Calibri', 'size' => 12]);
     }

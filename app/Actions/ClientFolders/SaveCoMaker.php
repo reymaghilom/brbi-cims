@@ -13,7 +13,6 @@ class SaveCoMaker
 {
     public function __construct(
         private readonly SeedCiActivities $seedActivities,
-        private readonly SyncResidenceCheckLocation $syncLocation,
     ) {}
 
     /** @param  array{co_maker_id: ?int, first_name: string, middle_name: ?string, last_name: string, suffix: ?string, address: string}  $data */
@@ -49,7 +48,7 @@ class SaveCoMaker
                 $coMaker = $folder->coMakers()->findOrFail($coMakerId);
                 $coMaker->fill($fields);
                 if (! $coMaker->isDirty(['first_name', 'middle_name', 'last_name', 'suffix', 'full_name', 'address'])) {
-                    throw new NoChangesDetectedException();
+                    throw new NoChangesDetectedException;
                 }
                 $coMaker->save();
             } else {
@@ -70,10 +69,6 @@ class SaveCoMaker
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
             ]);
-
-            // A brand-new co-maker has no Residence Checks yet (no-op); an edited one may, and
-            // this keeps them live-synced to the address just saved above.
-            $this->syncLocation->execute($folder, $coMaker);
 
             return $coMaker;
         });

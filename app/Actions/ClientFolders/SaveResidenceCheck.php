@@ -25,7 +25,6 @@ class SaveResidenceCheck
     public function __construct(
         private readonly ClientMediaUploader $mediaUploader,
         private readonly ResidenceBusinessCheckCompletionEvaluator $completion,
-        private readonly SyncResidenceCheckLocation $syncLocation,
         private readonly SyncResidenceCheckCiDate $syncCiDate,
         private readonly CiParticipantService $participants,
         private readonly UpdateResidenceCheckContributors $updateContributors,
@@ -111,20 +110,19 @@ class SaveResidenceCheck
                     ]);
                 }
 
-                // Applicant Location is always report-owned and editable. Resolved address data is
-                // only the Add form's initial prefill. Co-Maker Location remains resolver-owned.
-                if (! $activePerson && blank($data['location'] ?? null)) {
+                // Browser forms always submit this required editable field. Older direct callers
+                // may omit it, so retain the existing saved snapshot on update or use the exact
+                // person's resolver value on create; never borrow another person's address.
+                $location = filled($data['location'] ?? null)
+                    ? trim((string) $data['location'])
+                    : ($check->location ?: $resolvedAddress);
+                if (blank($location)) {
                     throw ValidationException::withMessages([
                         'location' => 'The Location field is required.',
                     ]);
                 }
 
                 if ($created) {
-                    if (blank($resolvedAddress) && $activePerson) {
-                        throw ValidationException::withMessages([
-                            'location' => 'This person has no saved address yet. Please update their address before creating a Residence Check.',
-                        ]);
-                    }
                     if (! $resolvedCiDate && ($activePerson || $hasScopedCibiReport)) {
                         throw ValidationException::withMessages([
                             'ci_date' => 'No Start Date of CI available. Please update the CI/BI Report before creating a Residence Check.',
@@ -141,9 +139,7 @@ class SaveResidenceCheck
                 }
 
                 $check->fill(Arr::only($data, ['remarks', 'google_maps_link']));
-                if (! $activePerson) {
-                    $check->location = trim((string) $data['location']);
-                }
+                $check->location = $location;
                 // residence_checks.ci_date is NOT NULL, so — unlike location — a brand-new check
                 // needs this set directly before its first save rather than relying purely on the
                 // post-save sync below. An existing check only picks up a resolved change here too;
@@ -252,7 +248,7 @@ class SaveResidenceCheck
                             $this->mediaUploader->deleteLocal($check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
                         }
                     }
-                    $stored = $this->mediaUploader->store($folder, $data['map_screenshot'], 'residence/map-screenshots', 'map_screenshot', $check->co_maker_id === null);
+                    $stored = $this->mediaUploader->store($folder, $data['map_screenshot'], 'residence/map-screenshots', 'map_screenshot', $check->co_maker_id === null, $activePerson);
                     $storedUploads[] = $stored;
                     $check->fill([
                         'map_screenshot_file_name' => $stored['file_name'],
@@ -273,7 +269,7 @@ class SaveResidenceCheck
                 $photosUploaded = 0;
                 $nextSortOrder = ((int) $check->photos()->max('sort_order')) + 1;
                 foreach ($data['photos'] ?? [] as $file) {
-                    $stored = $this->mediaUploader->store($folder, $file, 'residence/photos', 'photo', $check->co_maker_id === null);
+                    $stored = $this->mediaUploader->store($folder, $file, 'residence/photos', 'photo', $check->co_maker_id === null, $activePerson);
                     $storedUploads[] = $stored;
                     $check->photos()->create([
                         'file_name' => $stored['file_name'],
@@ -307,9 +303,6 @@ class SaveResidenceCheck
 
                 // Applicant Location is the saved Residence report value and must not be overwritten
                 // from another report. Co-Maker Location keeps its existing resolver-owned sync.
-                if ($activePerson) {
-                    $this->syncLocation->execute($folder, $activePerson);
-                }
                 $this->syncCiDate->execute($folder, $activePerson);
                 $this->completion->evaluate($folder, $activePerson?->id);
 

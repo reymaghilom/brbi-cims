@@ -4,11 +4,8 @@
 
 @section('content')
     @php($personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null))
-    {{-- Co-Maker keeps the existing "must have a saved business first" behavior unchanged for
-         now — only the Applicant flow gets the quick-add path and can use the form with zero
-         saved businesses. --}}
     @php($isApplicant = ! ($activePerson ?? null))
-    @php($hasExistingApplicantBusinesses = $isApplicant && $businesses->isNotEmpty())
+    @php($hasExistingBusinesses = $businesses->isNotEmpty())
     <div class="mx-auto w-full max-w-5xl">
     <x-ui.breadcrumb :items="[
         ['label' => 'Client Folder', 'url' => route('client-folders.index')],
@@ -49,25 +46,8 @@
                 <span data-editing-presence-text></span>
             </div>
         </div>
-        <x-ui.record-meta
-            class="mb-4"
-            :created-by="$businessCheck->investigator?->full_name"
-            :created-at="$businessCheck->created_at"
-            :updated-by="$businessCheck->updater?->full_name"
-            :updated-at="$businessCheck->updated_at"
-        />
-
     @endif
 
-    @if($businesses->isEmpty() && ! $isApplicant)
-        <x-ui.empty-state title="No saved businesses yet" description="Add a Business / Income Source for this person before recording a Business Check." icon="folder" />
-
-        <div class="fixed inset-x-0 bottom-0 z-10 border-t border-ui-border bg-surface px-3 py-3 shadow-float sm:px-5">
-            <div class="mx-auto flex max-w-5xl items-center justify-end gap-2">
-                <button type="button" class="ui-button-secondary" data-close-parent-dialog><x-ui.icon name="close" size="size-4" />Cancel</button>
-            </div>
-        </div>
-    @else
         <form id="business-check-form" method="POST" action="{{ route('client-folders.business-checks.store', $clientFolder) }}" enctype="multipart/form-data" class="flex flex-col gap-4 pb-20" data-unsaved-form data-business-check-form>
             @csrf
             <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
@@ -97,15 +77,13 @@
                                             <option value="{{ $business['id'] }}" data-location="{{ $business['location'] }}" data-ci-date="{{ $business['ci_date'] }}" data-report-complete="{{ $business['report_complete'] ? '1' : '0' }}" @disabled($alreadyChecked) @selected(old('income_source_id', $businessCheck?->income_source_id) == $business['id'])>{{ $business['name'] }}{{ $alreadyChecked ? ' — Business Check already exists.' : '' }}</option>
                                         @endforeach
                                     </select>
-                                    @if($isApplicant)
-                                        <button type="button" class="inline-flex h-11 shrink-0 items-center gap-1 rounded-control border border-brand-primary bg-brand-soft px-3 text-sm font-semibold text-brand-primary transition hover:bg-brand-primary hover:text-white disabled:cursor-not-allowed disabled:border-ui-border disabled:bg-surface-subtle disabled:text-text-muted" data-business-check-add-new data-modal-open="business-check-quick-add-dialog" @if($hasExistingApplicantBusinesses) disabled data-lock-when-existing="true" @endif><span aria-hidden="true">+</span> Add New Business</button>
-                                    @endif
+                                    <button type="button" class="inline-flex h-11 shrink-0 items-center gap-1 rounded-control border border-brand-primary bg-brand-soft px-3 text-sm font-semibold text-brand-primary transition hover:bg-brand-primary hover:text-white disabled:cursor-not-allowed disabled:border-ui-border disabled:bg-surface-subtle disabled:text-text-muted" data-business-check-add-new data-modal-open="business-check-quick-add-dialog" @if($hasExistingBusinesses) disabled data-lock-when-existing="true" @endif><span aria-hidden="true">+</span> Add New Business</button>
                                 </div>
-                                @if($hasExistingApplicantBusinesses)
+                                @if($hasExistingBusinesses)
                                     <p class="mt-1.5 text-xs text-text-muted">An existing business is already available. Please select it first to avoid duplicate entries.</p>
                                     <button type="button" class="mt-1 text-xs font-semibold text-brand-primary underline-offset-2 hover:underline" data-business-check-add-another>Add another business</button>
-                                @elseif($isApplicant)
-                                    <p class="mt-1.5 text-xs text-text-muted" data-business-source-helper>Select an existing Applicant business or add one if the Business Report has not been created yet.</p>
+                                @else
+                                    <p class="mt-1.5 text-xs text-text-muted" data-business-source-helper>Select an existing business for this person or add one if the Business Report has not been created yet.</p>
                                 @endif
                                 <x-form.validation-message for="income_source_id" />
                             </div>
@@ -244,7 +222,6 @@
                 </div>
             </div>
         </div>
-    @endif
     </div>
 
     <x-ui.modal id="business-check-companion-ci-dialog" title="Add Companion CI" description="Select one or more active Credit Investigators to add as companions on this Business Check." size="max-w-md" data-companion-ci-dialog>
@@ -267,8 +244,7 @@
         </x-slot:footer>
     </x-ui.modal>
 
-    @if($isApplicant)
-        <x-ui.modal id="business-check-quick-add-dialog" title="Add Business" size="max-w-sm" data-quick-add-business-dialog>
+    <x-ui.modal id="business-check-quick-add-dialog" title="Add Business" size="max-w-sm" data-quick-add-business-dialog>
             <p class="mb-3 rounded-control border border-danger/30 bg-danger-soft p-2.5 text-xs text-danger" data-quick-add-business-error hidden></p>
             <div class="flex flex-col gap-4">
                 <div>
@@ -293,6 +269,5 @@
                 <button type="button" class="ui-button-secondary" data-modal-close>Cancel</button>
                 <button type="button" class="ui-button-primary" data-quick-add-business-confirm data-url="{{ route('client-folders.income-sources.quick-create', $clientFolder) }}">Add &amp; Continue</button>
             </x-slot:footer>
-        </x-ui.modal>
-    @endif
+    </x-ui.modal>
 @endsection

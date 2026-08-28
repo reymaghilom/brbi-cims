@@ -231,6 +231,7 @@ class ResidenceBusinessReportTest extends TestCase
         $source = $this->businessSource($folder, 'Sari-Sari Store', 'Poblacion, San Miguel, Bulacan');
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan',
+            'photo_groups' => [['photos' => [UploadedFile::fake()->image('Business.jpg', 900, 700)->size(500)]]],
         ]);
         $check = $folder->businessChecks()->firstOrFail();
 
@@ -283,10 +284,112 @@ class ResidenceBusinessReportTest extends TestCase
         $this->assertSame(1, $folder->residenceChecks()->where('co_maker_id', $coMakerTwo->id)->count());
 
         $applicantResponse = $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk();
-        $applicantResponse->assertSee('Applicant Address')->assertDontSee('Co-Maker One Address')->assertDontSee('Co-Maker Two Address');
+        $applicantResponse->assertSee('Applicant Address')
+            ->assertDontSee('Co-Maker One Address')
+            ->assertDontSee('Co-Maker Two Address')
+            ->assertSee('Delete Selected');
 
         $coMakerOneResponse = $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder).'?person=co-maker&co_maker_id='.$coMakerOne->id)->assertOk();
-        $coMakerOneResponse->assertSee('Co-Maker One Address')->assertDontSee('Applicant Address')->assertDontSee('Co-Maker Two Address');
+        $coMakerOneResponse->assertSee('Co-Maker One Address')
+            ->assertDontSee('Applicant Address')
+            ->assertDontSee('Co-Maker Two Address')
+            ->assertDontSee('Report Summary')
+            ->assertDontSee('Selected Reports')
+            ->assertDontSee('Residence Reports')
+            ->assertDontSee('Business Reports')
+            ->assertDontSee('xl:grid-cols-', false)
+            ->assertDontSee('xl:sticky', false)
+            ->assertSee('data-check-batch-panel', false)
+            ->assertSee('data-check-select-all', false)
+            ->assertSee('data-check-print-selected', false)
+            ->assertSee('data-check-download-selected-trigger', false)
+            ->assertSee('data-check-batch-pdf-submit', false)
+            ->assertSee('data-check-batch-docx-submit', false)
+            ->assertSee('data-check-delete-selected', false)
+            ->assertSee('data-check-clear-selection', false);
+        $coMakerOneResponse->assertSee('id="check-batch-delete-form"', false)
+            ->assertSee('name="co_maker_id" value="'.$coMakerOne->id.'"', false);
+    }
+
+    public function test_co_maker_batch_delete_supports_residence_business_and_mixed_selections(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $coMaker = $folder->coMakers()->create(['full_name' => 'Batch Delete Co Maker', 'address' => 'Co-Maker Address']);
+        $folder->cibiReports()->create(['co_maker_id' => $coMaker->id, 'ci_in_charge_id' => $ci->id, 'start_date' => now()->toDateString()]);
+
+        $residenceOnly = $folder->residenceChecks()->create([
+            'co_maker_id' => $coMaker->id, 'ci_date' => now(), 'location' => 'Residence Only', 'ci_user_id' => $ci->id,
+        ]);
+        $mixedResidence = $folder->residenceChecks()->create([
+            'co_maker_id' => $coMaker->id, 'ci_date' => now(), 'location' => 'Mixed Residence', 'ci_user_id' => $ci->id,
+        ]);
+        $businessOnlySource = $this->businessSource($folder, 'Business Only', 'Business Only Address');
+        $businessOnlySource->update(['co_maker_id' => $coMaker->id]);
+        $businessOnly = $folder->businessChecks()->create([
+            'co_maker_id' => $coMaker->id, 'income_source_id' => $businessOnlySource->id,
+            'ci_date' => now(), 'location' => 'Business Only Address', 'ci_user_id' => $ci->id,
+        ]);
+        $mixedBusinessSource = $this->businessSource($folder, 'Mixed Business', 'Mixed Business Address');
+        $mixedBusinessSource->update(['co_maker_id' => $coMaker->id]);
+        $mixedBusiness = $folder->businessChecks()->create([
+            'co_maker_id' => $coMaker->id, 'income_source_id' => $mixedBusinessSource->id,
+            'ci_date' => now(), 'location' => 'Mixed Business Address', 'ci_user_id' => $ci->id,
+        ]);
+        $route = route('client-folders.residence-business-checks.batch-delete', $folder);
+        $expectedRedirect = route('client-folders.residence-business.edit', $folder).'?person=co-maker&co_maker_id='.$coMaker->id;
+
+        $this->actingAs($ci)->post($route, [
+            'co_maker_id' => $coMaker->id,
+            'residence_check_ids' => [$residenceOnly->id],
+        ])->assertRedirect($expectedRedirect)->assertSessionHas('status', 'Selected reports deleted successfully.');
+        $this->assertDatabaseMissing('residence_checks', ['id' => $residenceOnly->id]);
+
+        $this->actingAs($ci)->post($route, [
+            'co_maker_id' => $coMaker->id,
+            'business_check_ids' => [$businessOnly->id],
+        ])->assertRedirect($expectedRedirect)->assertSessionHas('status', 'Selected reports deleted successfully.');
+        $this->assertDatabaseMissing('business_checks', ['id' => $businessOnly->id]);
+
+        $this->actingAs($ci)->post($route, [
+            'co_maker_id' => $coMaker->id,
+            'residence_check_ids' => [$mixedResidence->id],
+            'business_check_ids' => [$mixedBusiness->id],
+        ])->assertRedirect($expectedRedirect)->assertSessionHas('status', 'Selected reports deleted successfully.');
+        $this->assertDatabaseMissing('residence_checks', ['id' => $mixedResidence->id]);
+        $this->assertDatabaseMissing('business_checks', ['id' => $mixedBusiness->id]);
+    }
+
+    public function test_co_maker_batch_delete_rejects_ids_outside_the_exact_folder_and_person_before_deleting_anything(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $otherFolder = $this->folderFor($ci);
+        $coMakerA = $folder->coMakers()->create(['full_name' => 'Co Maker A', 'address' => 'Address A']);
+        $coMakerB = $folder->coMakers()->create(['full_name' => 'Co Maker B', 'address' => 'Address B']);
+        $validA = $folder->residenceChecks()->create([
+            'co_maker_id' => $coMakerA->id, 'ci_date' => now(), 'location' => 'Valid A', 'ci_user_id' => $ci->id,
+        ]);
+        $applicant = $folder->residenceChecks()->create([
+            'ci_date' => now(), 'location' => 'Applicant', 'ci_user_id' => $ci->id,
+        ]);
+        $coMakerBCheck = $folder->residenceChecks()->create([
+            'co_maker_id' => $coMakerB->id, 'ci_date' => now(), 'location' => 'Co Maker B', 'ci_user_id' => $ci->id,
+        ]);
+        $otherFolderCheck = $otherFolder->residenceChecks()->create([
+            'ci_date' => now(), 'location' => 'Other Folder', 'ci_user_id' => $ci->id,
+        ]);
+        $route = route('client-folders.residence-business-checks.batch-delete', $folder);
+
+        foreach ([$applicant->id, $coMakerBCheck->id, $otherFolderCheck->id] as $forgedId) {
+            $this->actingAs($ci)->post($route, [
+                'co_maker_id' => $coMakerA->id,
+                'residence_check_ids' => [$validA->id, $forgedId],
+            ])->assertNotFound();
+
+            $this->assertDatabaseHas('residence_checks', ['id' => $validA->id, 'co_maker_id' => $coMakerA->id]);
+            $this->assertDatabaseHas('residence_checks', ['id' => $forgedId]);
+        }
     }
 
     public function test_a_check_from_another_client_folder_cannot_be_edited_or_deleted(): void
@@ -350,7 +453,7 @@ class ResidenceBusinessReportTest extends TestCase
         Storage::disk('local')->assertMissing($storedPath);
     }
 
-    public function test_residence_check_location_is_resolved_server_side_and_a_manipulated_value_is_ignored(): void
+    public function test_residence_check_location_is_an_editable_saved_report_value(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -360,7 +463,97 @@ class ResidenceBusinessReportTest extends TestCase
         ]))->assertRedirect();
 
         $check = $folder->residenceChecks()->firstOrFail();
-        $this->assertSame('Applicant Address', $check->location);
+        $this->assertSame('Attacker-Controlled Fake Address', $check->location);
+    }
+
+    public function test_new_co_maker_residence_location_prefills_from_that_exact_co_maker_cibi_present_address(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $coMakerA = $folder->coMakers()->create(['full_name' => 'Co Maker A', 'address' => 'Co Maker A Profile Address']);
+        $coMakerB = $folder->coMakers()->create(['full_name' => 'Co Maker B', 'address' => 'Co Maker B Profile Address']);
+        $folder->cibiReports()->whereNull('co_maker_id')->firstOrFail()->update([
+            'personal_snapshot' => ['present_address' => 'Exact Applicant CIBI Address'],
+        ]);
+        $folder->cibiReports()->create([
+            'co_maker_id' => $coMakerA->id,
+            'ci_in_charge_id' => $ci->id,
+            'start_date' => now()->toDateString(),
+            'personal_snapshot' => ['present_address' => 'Exact Co Maker A CIBI Address'],
+        ]);
+        $folder->cibiReports()->create([
+            'co_maker_id' => $coMakerB->id,
+            'ci_in_charge_id' => $ci->id,
+            'start_date' => now()->toDateString(),
+            'personal_snapshot' => ['present_address' => 'Exact Co Maker B CIBI Address'],
+        ]);
+
+        $response = $this->actingAs($ci)->get(route('client-folders.residence-checks.create', [
+            $folder, 'person' => 'co-maker', 'co_maker_id' => $coMakerA->id,
+        ]))->assertOk();
+
+        $response->assertSee('name="location"', false)
+            ->assertSee('required maxlength="2000" value="Exact Co Maker A CIBI Address"', false)
+            ->assertDontSee('Exact Co Maker B CIBI Address')
+            ->assertDontSee('Exact Applicant CIBI Address');
+
+        $this->actingAs($ci)->get(route('client-folders.residence-checks.create', $folder))
+            ->assertOk()
+            ->assertSee('required maxlength="2000" value="Exact Applicant CIBI Address"', false)
+            ->assertDontSee('Exact Co Maker A CIBI Address');
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto([
+            'co_maker_id' => $coMakerA->id,
+            'location' => 'Edited Co Maker A Residence Location',
+        ]))->assertRedirect();
+        $this->assertDatabaseHas('residence_checks', [
+            'client_folder_id' => $folder->id,
+            'co_maker_id' => $coMakerA->id,
+            'location' => 'Edited Co Maker A Residence Location',
+        ]);
+    }
+
+    public function test_new_co_maker_residence_location_remains_manual_when_no_scoped_cibi_or_profile_address_exists(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $coMaker = $folder->coMakers()->create(['full_name' => 'Manual Address Co Maker']);
+
+        $response = $this->actingAs($ci)->get(route('client-folders.residence-checks.create', [
+            $folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id,
+        ]))->assertOk();
+
+        $response->assertSee('name="location"', false)
+            ->assertSee('required maxlength="2000" value=""', false)
+            ->assertSee('Enter the Residence Location')
+            ->assertDontSee('Applicant Address');
+    }
+
+    public function test_existing_co_maker_residence_keeps_its_saved_location_after_cibi_address_changes(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $coMaker = $folder->coMakers()->create(['full_name' => 'Snapshot Co Maker', 'address' => 'Profile Address']);
+        $cibi = $folder->cibiReports()->create([
+            'co_maker_id' => $coMaker->id,
+            'ci_in_charge_id' => $ci->id,
+            'start_date' => now()->toDateString(),
+            'personal_snapshot' => ['present_address' => 'Original CIBI Address'],
+        ]);
+        $check = $folder->residenceChecks()->create([
+            'co_maker_id' => $coMaker->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'Saved Residence Snapshot',
+            'ci_user_id' => $ci->id,
+        ]);
+        $cibi->update(['personal_snapshot' => ['present_address' => 'Later CIBI Address']]);
+
+        $response = $this->actingAs($ci)->get(route('client-folders.residence-checks.edit', [
+            $folder, $check, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id,
+        ]))->assertOk();
+
+        $response->assertSee('required maxlength="2000" value="Saved Residence Snapshot"', false)
+            ->assertDontSee('Later CIBI Address');
     }
 
     public function test_residence_check_creation_is_blocked_when_the_person_has_no_saved_address(): void
@@ -430,6 +623,7 @@ class ResidenceBusinessReportTest extends TestCase
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $source->id, 'ci_date' => now()->toDateString(),
             'location' => 'Poblacion, San Miguel, Bulacan', 'map_screenshot' => $screenshot,
+            'photo_groups' => [['photos' => [UploadedFile::fake()->image('Business.jpg', 900, 700)->size(500)]]],
         ])->assertRedirect();
 
         $check = $folder->businessChecks()->firstOrFail();
@@ -525,6 +719,7 @@ class ResidenceBusinessReportTest extends TestCase
         ]);
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan',
+            'photo_groups' => [['photos' => [UploadedFile::fake()->image('Business.jpg', 900, 700)->size(500)]]],
         ]);
 
         $content = $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk()->getContent();
@@ -953,6 +1148,7 @@ class ResidenceBusinessReportTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan',
+            'photo_groups' => [['photos' => [UploadedFile::fake()->image('Business.jpg', 900, 700)->size(500)]]],
         ]);
         $businessCheck = $folder->businessChecks()->firstOrFail();
         $this->actingAs($ci)->get(route('client-folders.business-checks.edit', [$folder, $businessCheck]))

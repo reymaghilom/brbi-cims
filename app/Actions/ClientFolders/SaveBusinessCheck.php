@@ -6,6 +6,7 @@ use App\Enums\BusinessCheckPhotoCategory;
 use App\Exceptions\NoChangesDetectedException;
 use App\Models\AuditLog;
 use App\Models\BusinessCheck;
+use App\Models\BusinessCheckPhoto;
 use App\Models\ClientFolder;
 use App\Models\User;
 use App\Services\ClientFolders\ActivePersonResolver;
@@ -155,7 +156,7 @@ class SaveBusinessCheck
                             $this->mediaUploader->deleteLocal($check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
                         }
                     }
-                    $stored = $this->mediaUploader->store($folder, $data['map_screenshot'], 'business/map-screenshots', 'map_screenshot', $check->co_maker_id === null);
+                    $stored = $this->mediaUploader->store($folder, $data['map_screenshot'], 'business/map-screenshots', 'map_screenshot', $check->co_maker_id === null, $activePerson);
                     $storedUploads[] = $stored;
                     $check->fill([
                         'map_screenshot_file_name' => $stored['file_name'],
@@ -240,7 +241,8 @@ class SaveBusinessCheck
         $nextSortOrder = ((int) $scope->max('sort_order')) + 1;
         $uploaded = 0;
         foreach ($files as $file) {
-            $stored = $this->mediaUploader->store($folder, $file, 'business/photos', 'photo', $check->co_maker_id === null);
+            $coMaker = $check->co_maker_id ? $folder->coMakers()->findOrFail($check->co_maker_id) : null;
+            $stored = $this->mediaUploader->store($folder, $file, 'business/photos', 'photo', $check->co_maker_id === null, $coMaker);
             $storedUploads[] = $stored;
             $check->photos()->create([
                 'category' => $category,
@@ -335,7 +337,7 @@ class SaveBusinessCheck
             if ($legacyIds !== []) {
                 // A historical ungrouped photo (saved before Photo Groups existed) being claimed
                 // into this group — a plain foreign-key backfill, never a re-upload or file move.
-                $claimed = \App\Models\BusinessCheckPhoto::query()
+                $claimed = BusinessCheckPhoto::query()
                     ->whereIn('id', $legacyIds)
                     ->where('business_check_id', $check->id)
                     ->whereNull('business_check_photo_group_id')
@@ -361,7 +363,7 @@ class SaveBusinessCheck
         return [$photosUploaded, $photosRemoved, $changed];
     }
 
-    private function retirePhoto(\App\Models\BusinessCheckPhoto $photo, array &$retiredCloudAssets): void
+    private function retirePhoto(BusinessCheckPhoto $photo, array &$retiredCloudAssets): void
     {
         if ($photo->isCloud()) {
             $retiredCloudAssets[] = ['public_id' => $photo->cloud_public_id, 'resource_type' => $photo->cloud_resource_type, 'delivery_type' => $photo->cloud_delivery_type];

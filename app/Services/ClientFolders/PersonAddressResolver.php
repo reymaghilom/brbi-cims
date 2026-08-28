@@ -8,9 +8,9 @@ use App\Models\CoMaker;
 
 /**
  * Resolves the authoritative, current address for whichever person a Residence Check is being
- * encoded for — the Applicant's Present Address, or a Co-Maker's own `address` field. This is
- * the single source of truth for that address: it must never be taken from client input, since
- * the Residence Check form only ever displays it read-only.
+ * encoded for — the exact person's CI/BI Present Address, with that person's profile address as
+ * the fallback. This supplies the initial value for a new Residence Check. The Residence Location
+ * remains an editable report snapshot after that prefill.
  *
  * For the Applicant, "Present Address" is whatever the CI/BI Report itself currently shows —
  * see CibiReportFormData::for(), which the CI/BI encoding page uses to build the exact same
@@ -25,13 +25,13 @@ class PersonAddressResolver
 {
     public static function resolve(ClientFolder $folder, ?CoMaker $activePerson): ?string
     {
-        if ($activePerson) {
-            return filled($activePerson->address) ? $activePerson->address : null;
-        }
-
-        $cibiPresentAddress = self::applicantCibiPresentAddress($folder);
+        $cibiPresentAddress = self::cibiPresentAddress($folder, $activePerson);
         if (filled($cibiPresentAddress)) {
             return $cibiPresentAddress;
+        }
+
+        if ($activePerson) {
+            return filled($activePerson->address) ? $activePerson->address : null;
         }
 
         $address = $folder->addresses()->where('address_type', AddressType::Present->value)->first();
@@ -52,14 +52,13 @@ class PersonAddressResolver
     }
 
     /**
-     * The Applicant's own CI/BI Report — never a Co-Maker's, whose record shares the same table
-     * with the same "co_maker_id is null means Applicant" convention used everywhere else — and
-     * only its present_address, normalized the same way CibiReportFormData::for() treats a
-     * literal "N/A" as blank.
+     * The exact person's own CI/BI Report, scoped through this folder and the same "co_maker_id is
+     * null means Applicant" convention used everywhere else. Only its present_address is used,
+     * normalized the same way CibiReportFormData::for() treats a literal "N/A" as blank.
      */
-    private static function applicantCibiPresentAddress(ClientFolder $folder): ?string
+    private static function cibiPresentAddress(ClientFolder $folder, ?CoMaker $activePerson): ?string
     {
-        $snapshot = $folder->cibiReports()->where('co_maker_id', null)->first()?->personal_snapshot ?? [];
+        $snapshot = $folder->cibiReports()->where('co_maker_id', $activePerson?->id)->first()?->personal_snapshot ?? [];
         $value = $snapshot['present_address'] ?? null;
         if (! is_string($value)) {
             return null;

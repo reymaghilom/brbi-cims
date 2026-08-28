@@ -6,11 +6,11 @@ use App\Models\IncomeSource;
 use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\Validator;
 
 /**
  * Validates the "+ Add Business" quick-create used from the Business Check form when the
- * Applicant doesn't have a saved Business / Income Source yet. Deliberately minimal — only what
+ * active Applicant or exact Co-Maker doesn't have a saved Business / Income Source yet.
+ * Deliberately minimal — only what
  * CreateIncomeSource actually needs — unlike StoreIncomeSourceRequest, which additionally
  * requires full Business Report profile fields (main_business_address, year_established, etc.)
  * that a field CI doing the Business Check first may not have on hand yet.
@@ -52,15 +52,5 @@ class QuickCreateIncomeSourceRequest extends FormRequest
     {
         $name = is_string($this->input('business_name')) ? trim($this->input('business_name')) : $this->input('business_name');
         $this->merge(['business_name' => $name]);
-    }
-
-    public function withValidator(Validator $validator): void
-    {
-        // Scoped to the Applicant only for now — Co-Maker quick-add is not implemented yet.
-        $validator->after(function (Validator $validator): void {
-            if (filled($this->input('co_maker_id'))) {
-                $validator->errors()->add('co_maker_id', 'Quick-adding a business is only available for the Applicant right now.');
-            }
-        });
     }
 }

@@ -36,7 +36,7 @@
               data-check-saved-status-type="{{ session('statusType', 'success') }}"></span>
     @endif
 
-    <div @class(['grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(180px,210px)]' => (bool) $activePerson]) data-check-batch-panel>
+    <div data-check-batch-panel>
         <div class="min-w-0">
             <div class="mb-5 rounded-card border border-ui-border bg-surface p-4 shadow-card">
                 <div class="flex flex-wrap items-center justify-between gap-3">
@@ -52,9 +52,7 @@
                             <button type="button" role="menuitem" data-check-batch-docx-submit class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" class="text-brand-primary" />Download Word</button>
                         </x-ui.context-menu>
                         <button type="button" class="ui-button-secondary-compact" data-check-clear-selection><x-ui.icon name="close" size="size-3.5" />Clear Selection</button>
-                        @unless($activePerson)
-                            <button type="button" class="ui-button-danger-compact" data-check-delete-selected disabled><x-ui.icon name="trash" size="size-3.5" />Delete Selected</button>
-                        @endunless
+                        <button type="button" class="ui-button-danger-compact" data-check-delete-selected disabled><x-ui.icon name="trash" size="size-3.5" />Delete Selected</button>
                     </div>
                 </div>
             </div>
@@ -73,9 +71,9 @@
                     <table class="w-full min-w-[600px] table-fixed divide-y divide-ui-border text-left text-sm" data-check-sort-table>
                             <colgroup>
                                 <col class="w-10">
-                                <col @class(['w-[20%]' => (bool) $activePerson, 'w-[18%]' => ! $activePerson])>
-                                <col @class(['w-[50%]' => (bool) $activePerson, 'w-[45%]' => ! $activePerson])>
-                                <col @class(['w-[25%]' => (bool) $activePerson, 'w-[22%]' => ! $activePerson])>
+                                <col class="w-[18%]">
+                                <col class="w-[45%]">
+                                <col class="w-[22%]">
                                 <col class="w-12">
                             </colgroup>
                             <thead class="border-b border-ui-border bg-surface-muted text-xs font-semibold uppercase tracking-wide text-text-muted">
@@ -152,10 +150,10 @@
                     <table class="w-full min-w-[600px] table-fixed divide-y divide-ui-border text-left text-sm" data-check-sort-table>
                             <colgroup>
                                 <col class="w-10">
-                                <col @class(['w-[16%]' => (bool) $activePerson, 'w-[14%]' => ! $activePerson])>
-                                <col @class(['w-[30%]' => (bool) $activePerson, 'w-[27%]' => ! $activePerson])>
-                                <col @class(['w-[32%]' => (bool) $activePerson, 'w-[28%]' => ! $activePerson])>
-                                <col @class(['w-[18%]' => (bool) $activePerson, 'w-[15%]' => ! $activePerson])>
+                                <col class="w-[14%]">
+                                <col class="w-[27%]">
+                                <col class="w-[28%]">
+                                <col class="w-[15%]">
                                 <col class="w-12">
                             </colgroup>
                             <thead class="border-b border-ui-border bg-surface-muted text-xs font-semibold uppercase tracking-wide text-text-muted">
@@ -221,23 +219,6 @@
             </section>
         </div>
 
-        @if($activePerson)
-        <aside class="h-fit rounded-panel border border-ui-border bg-surface-muted p-4 shadow-card xl:sticky xl:top-20" aria-labelledby="check-summary-title">
-            <div class="mb-2.5 flex items-center gap-2">
-                <span class="text-brand-primary"><x-ui.icon name="report" size="size-4" /></span>
-                <h2 id="check-summary-title" class="text-sm font-semibold text-brand-sidebar">Report Summary</h2>
-            </div>
-
-            <p class="text-3xl font-bold text-brand-primary" data-check-selected-summary-count>0</p>
-            <p class="text-sm font-semibold text-text-main">Selected Reports</p>
-            <p class="text-xs text-text-muted">of {{ $totalChecks }} total</p>
-
-            <div class="mt-3 space-y-1.5 border-t border-ui-border pt-3 text-sm">
-                <p class="flex items-center gap-1.5 text-text-muted"><x-ui.icon name="home" size="size-3.5" class="text-brand-primary" />{{ $residenceChecks->count() }} Residence Report{{ $residenceChecks->count() === 1 ? '' : 's' }}</p>
-                <p class="flex items-center gap-1.5 text-text-muted"><x-ui.icon name="building" size="size-3.5" class="text-success" />{{ $businessChecks->count() }} Business Report{{ $businessChecks->count() === 1 ? '' : 's' }}</p>
-            </div>
-        </aside>
-        @endif
     </div>
 
     @foreach($residenceChecks as $check)
@@ -291,9 +272,7 @@
     <form id="check-batch-export-docx-form" method="POST" action="{{ route('client-folders.residence-business-checks.batch-export-docx', $clientFolder) }}" hidden>
         @csrf<input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
     </form>
-    @unless($activePerson)
-        <form id="check-batch-delete-form" method="POST" action="{{ route('client-folders.residence-business-checks.batch-delete', $clientFolder) }}" hidden>
-            @csrf
-        </form>
-    @endunless
+    <form id="check-batch-delete-form" method="POST" action="{{ route('client-folders.residence-business-checks.batch-delete', $clientFolder) }}" hidden>
+        @csrf<input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
+    </form>
 @endsection

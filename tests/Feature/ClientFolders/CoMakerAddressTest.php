@@ -109,11 +109,44 @@ class CoMakerAddressTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'co_maker_id' => $coMaker->id, 'ci_date' => now()->toDateString(),
+            'location' => 'Resolved Co-Maker Address',
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
         ])->assertRedirect();
 
         $check = $folder->residenceChecks()->where('co_maker_id', $coMaker->id)->firstOrFail();
         $this->assertSame('Resolved Co-Maker Address', $check->location);
+    }
+
+    public function test_co_maker_residence_location_is_editable_and_remains_a_saved_report_snapshot(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = $folder->coMakers()->create(['full_name' => 'Juan Dela Cruz', 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'address' => 'Master Co-Maker Address']);
+        $folder->cibiReports()->create(['co_maker_id' => $coMaker->id, 'ci_in_charge_id' => $ci->id, 'start_date' => now()->toDateString()]);
+        $personParams = ['person' => 'co-maker', 'co_maker_id' => $coMaker->id];
+
+        $this->actingAs($ci)->get(route('client-folders.residence-checks.create', [$folder] + $personParams))
+            ->assertOk()
+            ->assertSee('name="location"', false)
+            ->assertSee('value="Master Co-Maker Address"', false);
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'co_maker_id' => $coMaker->id,
+            'location' => 'Verified Residence Location',
+            'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
+        ])->assertSessionHasNoErrors();
+
+        $check = $folder->residenceChecks()->where('co_maker_id', $coMaker->id)->firstOrFail();
+        $this->assertSame('Verified Residence Location', $check->location);
+
+        $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
+            'co_maker_id' => $coMaker->id,
+            'first_name' => 'Juan',
+            'last_name' => 'Dela Cruz',
+            'address' => 'Later Master Address',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame('Verified Residence Location', $check->fresh()->location);
     }
 
     public function test_multiple_co_makers_can_each_keep_their_own_address(): void

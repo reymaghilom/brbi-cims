@@ -3,6 +3,7 @@
 namespace Tests\Feature\ClientFolders;
 
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
@@ -12,6 +13,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Mockery\MockInterface;
 use Tests\TestCase;
 
 /**
@@ -221,7 +223,7 @@ class CloudinaryMediaTest extends TestCase
         $this->assertSame('business-photo-1', $check->photos()->firstOrFail()->cloud_public_id);
     }
 
-    public function test_new_co_maker_business_picture_keeps_the_legacy_cloudinary_folder(): void
+    public function test_new_co_maker_business_picture_uses_the_exact_co_maker_cloudinary_folder(): void
     {
         $ci = User::factory()->create();
         $folder = $this->residenceFolder($ci);
@@ -229,7 +231,7 @@ class CloudinaryMediaTest extends TestCase
         $source = $this->businessSource($folder, 'Maria Store', 'San Miguel, Bulacan');
         $source->update(['co_maker_id' => $coMaker->id]);
         $this->mockCloud()->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'business/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->coMakerCloudFolder($folder, $coMaker, 'business/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('co-maker-business-photo'));
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
@@ -625,8 +627,54 @@ class CloudinaryMediaTest extends TestCase
         $this->assertDatabaseHas('business_check_photos', ['id' => $photo->id, 'cloud_public_id' => 'still-here']);
     }
 
+    public function test_future_co_maker_residence_media_uses_the_exact_co_maker_namespace(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = $folder->coMakers()->create(['full_name' => 'Maria Santos', 'address' => 'Maria Address']);
+        $folder->cibiReports()->create(['co_maker_id' => $coMaker->id, 'ci_in_charge_id' => $ci->id, 'start_date' => now()->toDateString()]);
+        $this->mockCloud()->shouldReceive('store')->once()
+            ->with(\Mockery::type(UploadedFile::class), $this->coMakerCloudFolder($folder, $coMaker, 'residence/photos'), 'photo')
+            ->andReturn($this->fakeCloudAsset('co-maker-residence-photo'));
+        $this->mockedCloud->shouldReceive('store')->once()
+            ->with(\Mockery::type(UploadedFile::class), $this->coMakerCloudFolder($folder, $coMaker, 'residence/map-screenshots'), 'map_screenshot')
+            ->andReturn($this->fakeCloudAsset('co-maker-residence-map'));
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'co_maker_id' => $coMaker->id,
+            'location' => 'Verified Maria Address',
+            'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
+            'map_screenshot' => UploadedFile::fake()->image('Map.png', 1000, 800)->size(600),
+        ])->assertSessionHasNoErrors();
+    }
+
+    public function test_future_co_maker_business_media_uses_the_exact_co_maker_namespace(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = $folder->coMakers()->create(['full_name' => 'Maria Santos', 'address' => 'Maria Address']);
+        $source = $this->businessSource($folder, 'Maria Store', 'Maria Store Address', $coMaker->id);
+        $this->mockCloud()->shouldReceive('store')->once()
+            ->with(\Mockery::type(UploadedFile::class), $this->coMakerCloudFolder($folder, $coMaker, 'business/photos'), 'photo')
+            ->andReturn($this->fakeCloudAsset('co-maker-business-photo'));
+        $this->mockedCloud->shouldReceive('store')->once()
+            ->with(\Mockery::type(UploadedFile::class), $this->coMakerCloudFolder($folder, $coMaker, 'business/map-screenshots'), 'map_screenshot')
+            ->andReturn($this->fakeCloudAsset('co-maker-business-map'));
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'co_maker_id' => $coMaker->id,
+            'income_source_id' => $source->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'Maria Store Address',
+            'photo_groups' => [[
+                'photos' => [UploadedFile::fake()->image('Store.jpg', 900, 700)->size(500)],
+            ]],
+            'map_screenshot' => UploadedFile::fake()->image('Map.png', 1000, 800)->size(600),
+        ])->assertSessionHasNoErrors();
+    }
+
     /** Binds a mock CloudinaryMediaStorage (enabled() => true by default) and remembers it on $this->mockedCloud for further expectations. */
-    private function mockCloud(): \Mockery\MockInterface
+    private function mockCloud(): MockInterface
     {
         $this->mockedCloud = $this->mock(CloudinaryMediaStorage::class, function ($mock) {
             $mock->shouldReceive('enabled')->andReturn(true);
@@ -678,10 +726,18 @@ class CloudinaryMediaTest extends TestCase
         return "clients/CF-{$folder->id}-{$slug}/applicant/{$mediaFolder}";
     }
 
-    private function businessSource(ClientFolder $folder, string $name, string $address): IncomeSource
+    private function coMakerCloudFolder(ClientFolder $folder, CoMaker $coMaker, string $mediaFolder): string
+    {
+        $folderSlug = Str::slug((string) $folder->display_name) ?: 'client';
+        $coMakerSlug = Str::slug((string) $coMaker->full_name) ?: 'co-maker';
+
+        return "clients/CF-{$folder->id}-{$folderSlug}/co-makers/CM-{$coMaker->id}-{$coMakerSlug}/{$mediaFolder}";
+    }
+
+    private function businessSource(ClientFolder $folder, string $name, string $address, ?int $coMakerId = null): IncomeSource
     {
         $template = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
-        $source = $folder->incomeSources()->create(['income_source_template_id' => $template->id, 'template_type' => $template->template_type, 'template_version' => $template->version, 'source_name' => $name, 'business_name' => $name]);
+        $source = $folder->incomeSources()->create(['co_maker_id' => $coMakerId, 'income_source_template_id' => $template->id, 'template_type' => $template->template_type, 'template_version' => $template->version, 'source_name' => $name, 'business_name' => $name]);
         $source->businessReport()->create(['business_name' => $name, 'main_business_address' => $address, 'report_category' => 'retail_grocery_water_refilling']);
 
         return $source;

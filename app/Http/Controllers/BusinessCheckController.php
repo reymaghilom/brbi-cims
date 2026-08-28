@@ -242,9 +242,8 @@ class BusinessCheckController extends Controller
             ? $this->participants->orderedParticipants($businessCheck)->reject(fn (User $user): bool => (int) $user->id === (int) $primaryCiId)->values()
             : collect();
 
-        // "+ Add Business" quick-create is Applicant-only for now (see
-        // QuickCreateIncomeSourceRequest) — the template list is only actually needed then, but
-        // it's cheap enough to always resolve rather than branching the query itself.
+        // Shared "+ Add Business" quick-create template list for the active Applicant or exact
+        // Co-Maker; ownership itself remains request-validated by co_maker_id.
         $businessTemplates = IncomeSourceTemplate::query()
             ->where('is_active', true)
             ->where('is_fallback', false)

@@ -35,13 +35,6 @@
         </div>
     @endif
 
-    @if($missingAddress)
-        <div class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-card border border-danger/30 bg-danger-soft p-4 text-sm text-danger" role="alert">
-            <p class="flex items-center gap-2 font-semibold"><x-ui.icon name="warning" size="size-4" class="shrink-0" />No address available. Please update {{ $activePerson ? "the co-maker's" : "the applicant's" }} address before creating a Residence Check.</p>
-            <a href="{{ $addressManagementUrl }}" class="ui-button-secondary-compact shrink-0">{{ $activePerson ? 'Open Client Folder' : 'Update CI/BI Report' }}</a>
-        </div>
-    @endif
-
     @if($residenceCheck)
         <div data-editing-presence data-editing-type="residence_check" data-editing-id="{{ $residenceCheck->id }}" data-editing-label="Residence Check">
             <div data-editing-presence-banner hidden role="status" class="mb-3 flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft p-3 text-sm text-progress">
@@ -89,17 +82,12 @@
                             @endif
                         </div>
                         <div>
-                            @if($applicantLocationEditable)
-                                <label for="residence-location" class="ui-label">Location <span class="text-danger" aria-hidden="true">*</span></label>
-                                <div class="relative"><x-ui.icon name="pin" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><input id="residence-location" name="location" type="text" class="ui-control pl-9" required maxlength="2000" value="{{ old('location', $defaultLocation) }}"></div>
-                                @if($needsApplicantLocationInput)
-                                    <p class="mt-1.5 text-xs text-text-muted">No Applicant CI/BI Present Address exists yet. Enter the Residence Location below.</p>
-                                @endif
-                                <x-form.validation-message for="location" />
-                            @else
-                                <label for="residence-location" class="ui-label">Location</label>
-                                <div class="relative"><x-ui.icon name="pin" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><input id="residence-location" type="text" class="ui-control bg-surface-subtle pl-9" readonly aria-readonly="true" tabindex="-1" placeholder="No address available" value="{{ $defaultLocation }}"></div>
+                            <label for="residence-location" class="ui-label">Location <span class="text-danger" aria-hidden="true">*</span></label>
+                            <div class="relative"><x-ui.icon name="pin" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><input id="residence-location" name="location" type="text" class="ui-control pl-9" required maxlength="2000" value="{{ old('location', $defaultLocation) }}"></div>
+                            @if($needsLocationInput)
+                                <p class="mt-1.5 text-xs text-text-muted">No saved address is available for this person yet. Enter the Residence Location.</p>
                             @endif
+                            <x-form.validation-message for="location" />
                         </div>
                         <div class="sm:col-span-2">
                             <span class="ui-label">CI In-Charge</span>
@@ -246,7 +234,7 @@
             </div>
             <div class="flex items-center justify-end gap-2">
                 <button type="button" class="ui-button-secondary" data-close-parent-dialog><x-ui.icon name="close" size="size-4" />Cancel</button>
-                <button type="submit" form="residence-check-form" class="ui-button-primary" data-residence-check-submit data-residence-check-submit-label="{{ $residenceCheck ? 'Update Residence Check' : 'Save Residence Check' }}" @if($missingAddress || $missingCiDate) disabled title="{{ $missingCiDate ? 'No Start Date of CI available for this person yet' : 'No address available for this person yet' }}" @endif>
+                <button type="submit" form="residence-check-form" class="ui-button-primary" data-residence-check-submit data-residence-check-submit-label="{{ $residenceCheck ? 'Update Residence Check' : 'Save Residence Check' }}" @if($missingCiDate) disabled title="No Start Date of CI available for this person yet" @endif>
                     <span data-residence-check-submit-icon><x-ui.icon name="check" size="size-4" /></span>
                     <span class="hidden size-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" data-residence-check-submit-spinner aria-hidden="true"></span>
                     <span data-residence-check-submit-text>{{ $residenceCheck ? 'Update Residence Check' : 'Save Residence Check' }}</span>

@@ -88,9 +88,12 @@ class BusinessCheckBusinessSelectionUxTest extends TestCase
         ]))->assertOk();
         $document = new \DOMDocument;
         @$document->loadHTML($response->getContent());
-        $option = (new \DOMXPath($document))->query("//select[@name='income_source_id']/option[@value='{$coMakerRetail->id}']")->item(0);
+        $xpath = new \DOMXPath($document);
+        $option = $xpath->query("//select[@name='income_source_id']/option[@value='{$coMakerRetail->id}']")->item(0);
+        $applicantOption = $xpath->query("//select[@name='income_source_id']/option[@value='{$applicantRetail->id}']")->item(0);
 
         $this->assertNotNull($option);
+        $this->assertNull($applicantOption);
         $this->assertFalse($option->hasAttribute('disabled'));
         $response->assertDontSee('Retail Store — Business Check already exists');
         $this->assertDatabaseCount('business_checks', 1);
@@ -153,6 +156,57 @@ class BusinessCheckBusinessSelectionUxTest extends TestCase
             ->assertDontSee('data-lock-when-existing', false)
             ->assertDontSee('data-business-check-add-another', false)
             ->assertDontSee('An existing business is already available. Please select it first to avoid duplicate entries.');
+    }
+
+    public function test_co_maker_without_a_business_can_quick_add_only_to_that_exact_co_maker(): void
+    {
+        [$ci, $folder] = $this->folderWithCi();
+        $coMaker = $folder->coMakers()->create(['full_name' => 'Maria Santos', 'address' => 'Co-Maker Address']);
+        $template = IncomeSourceTemplate::query()
+            ->where('is_active', true)
+            ->where('is_fallback', false)
+            ->where('form_handler', 'dedicated-business')
+            ->firstOrFail();
+        $personParams = ['person' => 'co-maker', 'co_maker_id' => $coMaker->id];
+
+        $this->actingAs($ci)->get(route('client-folders.business-checks.create', [$folder] + $personParams))
+            ->assertOk()
+            ->assertSee('Add New Business')
+            ->assertSee('name="co_maker_id" value="'.$coMaker->id.'"', false)
+            ->assertDontSee('No saved businesses yet');
+
+        $this->actingAs($ci)->postJson(route('client-folders.income-sources.quick-create', $folder), [
+            'co_maker_id' => $coMaker->id,
+            'business_name' => 'Maria Store',
+            'income_source_template_id' => $template->id,
+            'location' => 'Maria Store Address',
+        ])->assertOk()->assertJsonFragment(['name' => 'Maria Store', 'location' => 'Maria Store Address']);
+
+        $source = $folder->incomeSources()->sole();
+        $this->assertSame($coMaker->id, $source->co_maker_id);
+        $this->assertSame('Maria Store Address', $source->businessReport->main_business_address);
+        $this->assertDatabaseMissing('income_sources', ['client_folder_id' => $folder->id, 'co_maker_id' => null]);
+    }
+
+    public function test_quick_add_rejects_a_co_maker_from_another_client_folder(): void
+    {
+        [$ci, $folder] = $this->folderWithCi();
+        $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
+        $foreignCoMaker = $otherFolder->coMakers()->create(['full_name' => 'Foreign Co-Maker', 'address' => 'Foreign Address']);
+        $template = IncomeSourceTemplate::query()
+            ->where('is_active', true)
+            ->where('is_fallback', false)
+            ->where('form_handler', 'dedicated-business')
+            ->firstOrFail();
+
+        $this->actingAs($ci)->postJson(route('client-folders.income-sources.quick-create', $folder), [
+            'co_maker_id' => $foreignCoMaker->id,
+            'business_name' => 'Forged Store',
+            'income_source_template_id' => $template->id,
+            'location' => 'Forged Address',
+        ])->assertUnprocessable()->assertJsonValidationErrors('co_maker_id');
+
+        $this->assertDatabaseCount('income_sources', 0);
     }
 
     /** @return array{User, ClientFolder} */

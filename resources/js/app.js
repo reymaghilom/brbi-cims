@@ -830,8 +830,8 @@ document.addEventListener('contextmenu', (event) => {
 });
 
 // Unsaved-changes guard: compares a normalized snapshot of the form's actual field values against
-// the baseline captured right after this script runs (i.e. after all server-rendered/Blade
-// hydration is already in the DOM) — not a `dirty = true` flag flipped on every 'input'/'change'.
+// the baseline captured after this script's synchronous form initializers have finished — not a
+// `dirty = true` flag flipped on every 'input'/'change'.
 // That distinction is what makes programmatic updates (companion CI add/remove rebuilding hidden
 // inputs, the Business Check quick-add flow appending+selecting a new <option>, a photo removal
 // appending a removed-id hidden input, etc.) behave correctly either way: if they land the form
@@ -848,8 +848,16 @@ document.querySelectorAll('[data-unsaved-form]').forEach((form) => {
         value instanceof File ? [key, value.size === 0 ? 'file:none' : `file:${value.name}:${value.size}:${value.lastModified}`] : [key, value]
     )));
 
-    let baseline = snapshotForm();
+    let baseline = null;
     let saved = false;
+
+    // This guard appears before several form initializers in this module. Capturing immediately
+    // would treat their normal hidden-input/select hydration as a user edit, which is especially
+    // visible when navigating between Co-Makers. A microtask runs after the module's synchronous
+    // initialization pass but before the user can interact with the form.
+    queueMicrotask(() => {
+        if (baseline === null) baseline = snapshotForm();
+    });
 
     form.addEventListener('submit', () => { saved = true; });
     // Dispatched whenever the current form state should become the new "nothing to lose" baseline
@@ -858,7 +866,7 @@ document.querySelectorAll('[data-unsaved-form]').forEach((form) => {
     // warning the next time this same iframe document gets reloaded for another record.
     form.addEventListener('unsaved-form-reset', () => { baseline = snapshotForm(); saved = false; });
     window.addEventListener('beforeunload', (event) => {
-        if (saved || snapshotForm() === baseline) return;
+        if (saved || baseline === null || snapshotForm() === baseline) return;
         event.preventDefault();
         event.returnValue = '';
     });
@@ -2413,7 +2421,12 @@ document.querySelector('[data-quick-add-business-confirm]')?.addEventListener('c
         const response = await fetch(button.dataset.url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token ?? '' },
-            body: JSON.stringify({ business_name: name, income_source_template_id: templateId, location }),
+            body: JSON.stringify({
+                co_maker_id: document.querySelector('#business-check-form input[name="co_maker_id"]')?.value || null,
+                business_name: name,
+                income_source_template_id: templateId,
+                location,
+            }),
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {

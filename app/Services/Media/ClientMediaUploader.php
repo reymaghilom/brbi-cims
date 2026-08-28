@@ -3,6 +3,7 @@
 namespace App\Services\Media;
 
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
 
@@ -27,11 +28,13 @@ class ClientMediaUploader
      *     cloud_public_id: ?string, cloud_resource_type: ?string, cloud_delivery_type: ?string, cloud_format: ?string, cloud_width: ?int, cloud_height: ?int,
      * }
      */
-    public function store(ClientFolder $folder, UploadedFile $file, string $cloudFolder, string $preset = 'photo', bool $organizeForApplicant = false): array
+    public function store(ClientFolder $folder, UploadedFile $file, string $cloudFolder, string $preset = 'photo', bool $organizeForApplicant = false, ?CoMaker $coMaker = null): array
     {
         if ($this->cloud->enabled()) {
             if ($organizeForApplicant) {
                 $cloudFolder = $this->applicantCloudFolder($folder, $cloudFolder);
+            } elseif ($coMaker) {
+                $cloudFolder = $this->coMakerCloudFolder($folder, $coMaker, $cloudFolder);
             }
             $stored = $this->cloud->store($file, $cloudFolder, $preset);
 
@@ -77,6 +80,16 @@ class ClientMediaUploader
         $mediaFolder = trim((string) preg_replace('#/+#', '/', $mediaFolder), '/');
 
         return "clients/CF-{$folder->getKey()}-{$slug}/applicant/{$mediaFolder}";
+    }
+
+    /** Builds the namespace for future uploads belonging to one exact Co-Maker. */
+    private function coMakerCloudFolder(ClientFolder $folder, CoMaker $coMaker, string $mediaFolder): string
+    {
+        $folderSlug = Str::slug((string) $folder->display_name) ?: 'client';
+        $coMakerSlug = Str::slug((string) $coMaker->full_name) ?: 'co-maker';
+        $mediaFolder = trim((string) preg_replace('#/+#', '/', $mediaFolder), '/');
+
+        return "clients/CF-{$folder->getKey()}-{$folderSlug}/co-makers/CM-{$coMaker->getKey()}-{$coMakerSlug}/{$mediaFolder}";
     }
 
     /** Deletes a newly-uploaded orphan after a store() whose owning save failed elsewhere in the same transaction — local file or Cloudinary asset, whichever store() actually produced. */
