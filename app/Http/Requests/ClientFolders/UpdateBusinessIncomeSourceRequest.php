@@ -6,6 +6,7 @@ use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\IncomeSourceTemplate;
 use App\Services\ClientFolders\ActivePersonResolver;
+use App\Services\ClientFolders\CiParticipantService;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -55,24 +56,24 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
                     ->where('status', UserStatus::Active->value)),
             ],
             'intent' => ['required', Rule::in(['stay', 'return', 'complete'])],
-            'source_name' => ['required', 'string', 'max:255'], 'business_name' => ['required', 'string', 'max:255'],
+            'source_name' => [Rule::requiredIf(! $this->preservesMissingSourceField('source_name')), 'nullable', 'string', 'max:255'], 'business_name' => [Rule::requiredIf(! $this->preservesMissingReportField('business_name')), 'nullable', 'string', 'max:255'],
             'contribution_rank' => ['nullable', 'integer', 'min:1', 'max:65535'], 'estimated_monthly_contribution' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'], 'is_primary' => ['nullable', 'boolean'],
             'branch_name' => ['nullable', 'string', 'max:255'], 'account_officer_name' => ['nullable', 'string', 'max:255'],
             // "Start Date of CI" is the authoritative shared CI Date also used by Business Check
             // (see BusinessCheckController::form()'s $currentCiDate and SaveBusinessCheck's
             // write-back) — required under the same condition as main_business_address below,
             // since a business needing a full profile can't be considered checked without either.
-            'start_date' => [Rule::requiredIf($requiresProfile), 'nullable', 'date', 'before_or_equal:today'], 'submitted_date' => ['nullable', 'date', 'before_or_equal:today'],
-            'report_category' => ['required', 'string', 'max:80'], 'main_business_address' => [Rule::requiredIf($requiresProfile), 'nullable', 'string', 'max:10000'],
+            'start_date' => [Rule::requiredIf($requiresProfile && ! $this->preservesMissingReportField('start_date')), 'nullable', 'date', 'before_or_equal:today'], 'submitted_date' => ['nullable', 'date', 'before_or_equal:today'],
+            'report_category' => [Rule::requiredIf(! $this->preservesMissingReportField('report_category')), 'nullable', 'string', 'max:80'], 'main_business_address' => [Rule::requiredIf($requiresProfile && ! $this->preservesMissingReportField('main_business_address')), 'nullable', 'string', 'max:10000'],
             'previous_business_address' => ['nullable', 'string', 'max:10000'], 'previous_business_address_length_of_stay' => ['nullable', 'string', 'max:100'], 'reason_for_transfer' => ['nullable', 'string', 'max:10000'],
-            'registered_owner' => [Rule::requiredIf($complete && $requiresProfile && ! $ownerOptional && ! in_array('registered_owner', $hiddenProfileFields, true)), 'nullable', 'string', 'max:255'], 'relationship_to_borrower' => ['nullable', 'string', 'max:255'],
-            'year_established' => [Rule::requiredIf($requiresProfile), 'nullable', 'integer', 'min:1800', 'max:'.now()->year], 'length_of_stay_months' => ['nullable', 'string', 'max:100'],
+            'registered_owner' => [Rule::requiredIf($complete && $requiresProfile && ! $ownerOptional && ! in_array('registered_owner', $hiddenProfileFields, true) && ! $this->preservesMissingReportField('registered_owner')), 'nullable', 'string', 'max:255'], 'relationship_to_borrower' => ['nullable', 'string', 'max:255'],
+            'year_established' => [Rule::requiredIf($requiresProfile && ! $this->preservesMissingReportField('year_established')), 'nullable', 'integer', 'min:1800', 'max:'.now()->year], 'length_of_stay_months' => ['nullable', 'string', 'max:100'],
             'monthly_rent' => ['nullable', 'string', 'max:255'], 'ownership_type' => ['nullable', 'string', 'max:80'], 'rented_from' => ['nullable', 'string', 'max:255'], 'business_type' => ['nullable', 'string', 'max:100'],
             'scale' => ['nullable', 'string', 'max:80'], 'informant' => ['nullable', 'string', 'max:255'],
             'branches_declared' => ['nullable', 'string', 'max:255'], 'branches_inspected' => ['nullable', 'string', 'max:255'],
             'branches_not_inspected' => ['nullable', 'string', 'max:255'], 'branches_reason_not_inspected' => ['nullable', 'string', 'max:10000'],
             'report_remarks' => $template?->template_type === 'other_business_source_of_income'
-                ? ['required', 'string', 'max:30000']
+                ? [Rule::requiredIf(! $this->preservesMissingReportField('report_remarks')), 'nullable', 'string', 'max:30000']
                 : ['nullable', 'string', 'max:30000'],
             'template_data' => ['nullable', 'array:fields,tables,questions'],
             'template_data.fields' => ['nullable', 'array'],
@@ -93,15 +94,16 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
         if ($this->route('incomeSource')) {
             foreach ((array) data_get($schema, 'required_fields', []) as $fieldKey) {
                 $field = collect($schema['fields'] ?? [])->firstWhere('key', $fieldKey);
+                $required = Rule::requiredIf(! $this->preservesMissingTemplateValue("fields.$fieldKey"));
                 $rules["template_data.fields.$fieldKey"] = ($field['type'] ?? 'text') === 'number'
-                    ? ['required', 'numeric', 'min:0']
-                    : ['required', 'string', 'max:10000'];
+                    ? [$required, 'nullable', 'numeric', 'min:0']
+                    : [$required, 'nullable', 'string', 'max:10000'];
             }
             foreach ((array) data_get($schema, 'required_questions', []) as $questionIndex) {
-                $rules["template_data.questions.$questionIndex"] = ['required', 'string', 'max:10000'];
+                $rules["template_data.questions.$questionIndex"] = [Rule::requiredIf(! $this->preservesMissingTemplateValue("questions.$questionIndex")), 'nullable', 'string', 'max:10000'];
             }
             if ($template?->template_type === 'other_business_source_of_income') {
-                $rules['template_data.fields.income_sources'] = ['required', 'array', 'min:1'];
+                $rules['template_data.fields.income_sources'] = [Rule::requiredIf(! $this->preservesMissingTemplateValue('fields.income_sources')), 'nullable', 'array', 'min:1'];
                 $rules['template_data.fields.income_sources.*'] = ['string', 'max:10000'];
             }
         }
@@ -151,7 +153,9 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             $source = $this->route('incomeSource');
             $this->validateTemplateData($validator, $source->template->businessReportSchema());
             if ($source->template_type === 'other_business_source_of_income') {
-                $this->validateOtherIncomeSourceGroup($validator);
+                if (! $this->preservesMissingTemplateValue('fields.income_sources')) {
+                    $this->validateOtherIncomeSourceGroup($validator);
+                }
             }
             $report = $source->businessReport;
             $tags = $source->template->businessReportSchema() !== [] ? [] : ($source->template->compatibility_tags ?? []);
@@ -184,7 +188,8 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             }
             if ($this->input('intent') === 'complete') {
                 foreach (array_intersect(['properties', 'branches', 'products'], $tags) as $section) {
-                    if (! collect($this->input($section, []))->contains(fn ($row): bool => ! filter_var($row['_delete'] ?? false, FILTER_VALIDATE_BOOL) && filled($row[$this->requiredField($section)] ?? null))) {
+                    if (! $this->preservesMissingSection($section)
+                        && ! collect($this->input($section, []))->contains(fn ($row): bool => ! filter_var($row['_delete'] ?? false, FILTER_VALIDATE_BOOL) && filled($row[$this->requiredField($section)] ?? null))) {
                         $validator->errors()->add($section, 'At least one compatible row is required before marking this source complete.');
                     }
                 }
@@ -352,6 +357,58 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
     private function hasData(array $row): bool
     {
         return collect($row)->except(['id', '_delete', 'is_declared', 'is_inspected', 'has_contract', 'is_air_conditioned', 'is_top_seller', 'is_confirmed'])->contains(fn ($value): bool => filled($value));
+    }
+
+    private function companionSelectionChanged(): bool
+    {
+        if (! $this->boolean('contributor_ids_present')) {
+            return false;
+        }
+
+        $source = $this->route('incomeSource');
+
+        return $source !== null
+            && app(CiParticipantService::class)->wouldChangeCompanions($source, (array) $this->input('contributor_ids', []));
+    }
+
+    private function preservesMissingSourceField(string $field): bool
+    {
+        $source = $this->route('incomeSource');
+
+        return $this->companionSelectionChanged()
+            && $source !== null
+            && blank($source->{$field})
+            && blank($this->input($field));
+    }
+
+    private function preservesMissingReportField(string $field): bool
+    {
+        $report = $this->route('incomeSource')?->businessReport;
+
+        return $this->companionSelectionChanged()
+            && $report !== null
+            && blank($report->{$field})
+            && blank($this->input($field));
+    }
+
+    private function preservesMissingTemplateValue(string $key): bool
+    {
+        $report = $this->route('incomeSource')?->businessReport;
+
+        return $this->companionSelectionChanged()
+            && $report !== null
+            && blank(data_get($report->template_data, $key))
+            && blank($this->input("template_data.$key"));
+    }
+
+    private function preservesMissingSection(string $section): bool
+    {
+        $report = $this->route('incomeSource')?->businessReport;
+
+        return $this->companionSelectionChanged()
+            && $report !== null
+            && $report->{$section}()->doesntExist()
+            && collect((array) $this->input($section, []))->doesntContain(fn ($row): bool => $this->hasData((array) $row));
     }
 
     private function short(mixed $value): ?string

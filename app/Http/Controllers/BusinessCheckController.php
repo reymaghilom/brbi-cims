@@ -95,7 +95,7 @@ class BusinessCheckController extends Controller
         $personParams = ActivePersonResolver::queryParams($activePerson);
         $delete->execute(request()->user(), $clientFolder, $businessCheck);
 
-        return redirect()->route('client-folders.residence-business.edit', [$clientFolder] + $personParams)->with('status', 'Business Check deleted successfully.');
+        return redirect()->route('client-folders.residence-business.edit', [$clientFolder] + $personParams)->with('status', 'Business Check and linked Business Report moved to the Recycle Bin.');
     }
 
     /** Web delivery for one Business Picture — same Cloudinary-redirect-or-local-stream split as ResidenceCheckController::photo(). */

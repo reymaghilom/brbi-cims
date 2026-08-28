@@ -25,6 +25,7 @@ use App\Http\Controllers\EditingPresenceController;
 use App\Http\Controllers\GeneratedReportController;
 use App\Http\Controllers\IncomeSourceController;
 use App\Http\Controllers\MediaReferenceController;
+use App\Http\Controllers\RecycleBinBusinessRestoreController;
 use App\Http\Controllers\RecycleBinController;
 use App\Http\Controllers\RecycleBinPurgeController;
 use App\Http\Controllers\RecycleBinRestoreController;
@@ -55,6 +56,9 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::view('/telegram-history', 'module-placeholder', ['title' => 'Telegram History'])->name('telegram.index');
         Route::view('/google-drive', 'module-placeholder', ['title' => 'Google Drive'])->name('drive.index');
         Route::get('/recycle-bin', RecycleBinController::class)->name('recycle-bin.index');
+        Route::patch('/recycle-bin/businesses/{incomeSource}/restore', [RecycleBinBusinessRestoreController::class, 'update'])
+            ->withTrashed()
+            ->name('recycle-bin.businesses.restore');
         Route::patch('/recycle-bin/{clientFolder}/restore', [RecycleBinRestoreController::class, 'update'])
             ->withTrashed()
             ->name('recycle-bin.restore');

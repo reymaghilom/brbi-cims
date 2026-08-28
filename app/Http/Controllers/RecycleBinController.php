@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ClientFolder;
+use App\Models\IncomeSource;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
@@ -16,8 +17,14 @@ class RecycleBinController extends Controller
             ->accessibleToTrashed(request()->user())
             ->with(['assignedInvestigator:id,full_name', 'deletedBy:id,full_name'])
             ->latest('deleted_at')
-            ->paginate(15);
+            ->paginate(15, ['*'], 'folders');
 
-        return view('recycle-bin.index', compact('clientFolders'));
+        $businesses = IncomeSource::onlyTrashed()
+            ->whereHas('clientFolder')
+            ->with(['template', 'clientFolder:id,display_name'])
+            ->latest('deleted_at')
+            ->paginate(15, ['*'], 'businesses');
+
+        return view('recycle-bin.index', compact('clientFolders', 'businesses'));
     }
 }

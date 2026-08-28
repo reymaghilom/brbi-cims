@@ -14,10 +14,10 @@ use App\Services\Progress\ClientProgressService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
-class DeleteIncomeSource
+class RestoreBusinessPair
 {
     public function __construct(
-        private readonly IncomeSourcesCompletionEvaluator $completion,
+        private readonly IncomeSourcesCompletionEvaluator $incomeCompletion,
         private readonly ResidenceBusinessCheckCompletionEvaluator $checkCompletion,
         private readonly ClientProgressService $progress,
     ) {}
@@ -26,45 +26,49 @@ class DeleteIncomeSource
     {
         DB::transaction(function () use ($actor, $folder, $source): void {
             $lockedSource = $this->exactSourceQuery($folder, $source)->lockForUpdate()->firstOrFail();
-            $sourceId = $lockedSource->id;
-            $templateType = $lockedSource->template_type;
-            $coMakerId = $lockedSource->co_maker_id;
-            $displayName = $lockedSource->displayName();
+            abort_unless($lockedSource->trashed(), 404);
 
-            $report = BusinessReport::query()->where('income_source_id', $sourceId)->lockForUpdate()->first();
-            $check = $this->exactCheckQuery($folder, $lockedSource)->lockForUpdate()->first();
+            $report = BusinessReport::withTrashed()
+                ->where('income_source_id', $lockedSource->id)
+                ->lockForUpdate()
+                ->first();
+            $check = $this->exactCheckQuery($folder, $lockedSource)
+                ->lockForUpdate()
+                ->first();
 
-            $report?->delete();
-            $check?->delete();
-            $lockedSource->delete();
+            if ($report?->trashed()) {
+                $report->restore();
+            }
+            if ($check?->trashed()) {
+                $check->restore();
+            }
+            $lockedSource->restore();
 
             AuditLog::create([
                 'user_id' => $actor->id,
                 'client_folder_id' => $folder->id,
-                'action' => 'income_source.deleted',
+                'action' => 'income_source.restored',
                 'module' => 'income_sources',
-                'description' => 'A business report and its linked Business Check were moved to the Recycle Bin.',
+                'description' => 'A business report and its linked Business Check were restored from the Recycle Bin.',
                 'metadata' => [
-                    'income_source_id' => $sourceId,
+                    'income_source_id' => $lockedSource->id,
                     'business_report_id' => $report?->id,
                     'business_check_id' => $check?->id,
-                    'co_maker_id' => $coMakerId,
-                    'template_type' => $templateType,
-                    'display_name' => $displayName,
+                    'co_maker_id' => $lockedSource->co_maker_id,
                 ],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
             ]);
 
-            $this->completion->evaluateFolder($folder);
-            $this->checkCompletion->evaluate($folder, $coMakerId);
+            $this->incomeCompletion->evaluateFolder($folder);
+            $this->checkCompletion->evaluate($folder, $lockedSource->co_maker_id);
             $this->progress->recalculate($folder);
         });
     }
 
     private function exactSourceQuery(ClientFolder $folder, IncomeSource $source): Builder
     {
-        return IncomeSource::query()
+        return IncomeSource::withTrashed()
             ->whereKey($source->id)
             ->where('client_folder_id', $folder->id)
             ->when(
@@ -76,7 +80,7 @@ class DeleteIncomeSource
 
     private function exactCheckQuery(ClientFolder $folder, IncomeSource $source): Builder
     {
-        return BusinessCheck::query()
+        return BusinessCheck::withTrashed()
             ->where('client_folder_id', $folder->id)
             ->where('income_source_id', $source->id)
             ->when(

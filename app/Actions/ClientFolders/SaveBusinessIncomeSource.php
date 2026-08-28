@@ -41,6 +41,18 @@ class SaveBusinessIncomeSource
     public function execute(User $actor, ClientFolder $folder, IncomeSource $source, array $data): IncomeSource
     {
         return DB::transaction(function () use ($actor, $folder, $source, $data): IncomeSource {
+            $wasFirstSave = $source->wasRecentlyCreated;
+            $source = IncomeSource::query()
+                ->whereKey($source->id)
+                ->where('client_folder_id', $folder->id)
+                ->when(
+                    $source->co_maker_id === null,
+                    fn ($query) => $query->whereNull('co_maker_id'),
+                    fn ($query) => $query->where('co_maker_id', $source->co_maker_id),
+                )
+                ->lockForUpdate()
+                ->firstOrFail();
+
             if (filled($data['expected_revision'] ?? null) && (int) $data['expected_revision'] !== $source->revision) {
                 throw ValidationException::withMessages([
                     'expected_revision' => 'This record has been updated by another CI. Please review the latest version before saving.',
@@ -50,12 +62,28 @@ class SaveBusinessIncomeSource
             // Present the moment this Action starts if it's running as part of the very first
             // save (right after CreateIncomeSource, same request) — no-change detection never
             // applies to that first save, only to later edits of an already-saved record.
-            $isFirstSave = $source->wasRecentlyCreated;
+            $isFirstSave = $wasFirstSave;
 
             $source->fill(Arr::only($data, self::SOURCE_FIELDS));
             $sourceFieldsChanged = $source->isDirty(self::SOURCE_FIELDS);
 
-            $report = $source->businessReport()->firstOrCreate([], ['business_name' => $source->business_name ?: $source->source_name, 'report_category' => $source->template->business_category ?: $source->template->name]);
+            // Include trashed rows only to distinguish a genuinely absent report from one owned
+            // by the Recycle Bin. A recycled report is never reopened or edited here.
+            $report = BusinessReport::withTrashed()
+                ->where('income_source_id', $source->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($report?->trashed()) {
+                throw ValidationException::withMessages([
+                    'business_report' => 'This Business Report is currently in the Recycle Bin. Restore it before editing.',
+                ]);
+            }
+
+            if ($report === null) {
+                $report = new BusinessReport(['income_source_id' => $source->id]);
+            }
+
             $report->fill(Arr::only($data, self::REPORT_FIELDS));
             $reportFieldsChanged = $report->isDirty(self::REPORT_FIELDS);
             $report->save();
@@ -137,17 +165,18 @@ class SaveBusinessIncomeSource
             // (before that happens) so real changes can still be told apart from a same-code
             // resubmission once the temp value is fixed back up below.
             $originalCodes = $relation->get()->pluck('observation_code', 'id')->all();
-            $relation->whereIn('id', collect($rows)->pluck('id')->filter())->get()->each(fn ($row) => $row->update(['observation_code' => '__pending_'.$row->id]));
+            (clone $relation)->whereIn('id', collect($rows)->pluck('id')->filter())->get()->each(fn ($row) => $row->update(['observation_code' => '__pending_'.$row->id]));
         }
         foreach ($rows as $index => $row) {
             $id = filled($row['id'] ?? null) ? (int) $row['id'] : null;
             $delete = (bool) ($row['_delete'] ?? false);
             $payload = Arr::only($row, $fields) + ['sort_order' => $index + 1];
             if ($id) {
-                $model = $relation->findOrFail($id);
+                $model = (clone $relation)->findOrFail($id);
                 if ($delete) {
                     $model->delete();
                     $changes['deleted']++;
+
                     continue;
                 }
                 $model->fill($payload);

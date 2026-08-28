@@ -7,14 +7,14 @@ use App\Actions\ClientFolders\DeleteIncomeSource;
 use App\Actions\ClientFolders\SaveBusinessIncomeSource;
 use App\Actions\ClientFolders\SaveGeneralIncomeSource;
 use App\Actions\ClientFolders\UpdateIncomeSourceContributors;
+use App\Enums\UserRole;
+use App\Enums\UserStatus;
 use App\Exceptions\NoChangesDetectedException;
 use App\Http\Requests\ClientFolders\QuickCreateIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\StoreIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\UpdateBusinessIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\UpdateGeneralIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\UpdateIncomeSourceContributorsRequest;
-use App\Enums\UserRole;
-use App\Enums\UserStatus;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\IncomeSource;
@@ -200,7 +200,7 @@ class IncomeSourceController extends Controller
         $personParams = ActivePersonResolver::queryParams($incomeSource->co_maker_id ? $clientFolder->coMakers()->find($incomeSource->co_maker_id) : null);
         $delete->execute(request()->user(), $clientFolder, $incomeSource);
 
-        return redirect()->route('client-folders.income-sources.manage', [$clientFolder] + $personParams)->with('status', 'Business deleted successfully.');
+        return redirect()->route('client-folders.income-sources.manage', [$clientFolder] + $personParams)->with('status', 'Business Report and linked Business Check moved to the Recycle Bin.');
     }
 
     private function afterSave(string $intent, ClientFolder $folder, IncomeSource $source, string $message, ?CoMaker $activePerson, string $statusType = 'success'): RedirectResponse

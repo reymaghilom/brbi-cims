@@ -68,11 +68,11 @@ class ResidenceBusinessSuccessToastTest extends TestCase
 
         $this->actingAs($ci)->delete(route('client-folders.business-checks.destroy', [$folder, $check]))
             ->assertRedirect(route('client-folders.residence-business.edit', $folder))
-            ->assertSessionHas('status', 'Business Check deleted successfully.');
+            ->assertSessionHas('status', 'Business Check and linked Business Report moved to the Recycle Bin.');
 
         $content = $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk()->getContent();
 
-        $this->assertVisibleToastAppearsExactlyOnce('Business Check deleted successfully.', $content);
+        $this->assertVisibleToastAppearsExactlyOnce('Business Check and linked Business Report moved to the Recycle Bin.', $content);
         $this->assertStringNotContainsString(self::OLD_BANNER_MARKUP, $content);
     }
 
@@ -143,13 +143,28 @@ class ResidenceBusinessSuccessToastTest extends TestCase
             'photo_groups' => [['caption' => '', 'photos' => [UploadedFile::fake()->image('a.jpg', 900, 700)->size(500)]]],
         ]);
         $check = $folder->businessChecks()->firstOrFail();
+        $report = $source->businessReport;
 
         $expectedRedirect = route('client-folders.residence-business.edit', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]);
         $this->actingAs($ci)->delete(route('client-folders.business-checks.destroy', [$folder, $check, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]))
             ->assertRedirect($expectedRedirect)
-            ->assertSessionHas('status', 'Business Check deleted successfully.');
+            ->assertSessionHas('status', 'Business Check and linked Business Report moved to the Recycle Bin.');
 
-        $this->assertDatabaseMissing('business_checks', ['id' => $check->id]);
+        $this->assertSoftDeleted('business_checks', [
+            'id' => $check->id,
+            'client_folder_id' => $folder->id,
+            'co_maker_id' => $coMaker->id,
+            'income_source_id' => $source->id,
+        ]);
+        $this->assertSoftDeleted('business_reports', [
+            'id' => $report->id,
+            'income_source_id' => $source->id,
+        ]);
+        $this->assertSoftDeleted('income_sources', [
+            'id' => $source->id,
+            'client_folder_id' => $folder->id,
+            'co_maker_id' => $coMaker->id,
+        ]);
 
         $this->actingAs($ci)->get($expectedRedirect)->assertOk();
     }

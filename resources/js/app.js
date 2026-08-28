@@ -986,6 +986,22 @@ document.querySelectorAll('[data-companion-ci-container]').forEach((container) =
     if (!participantList || !hiddenInputs) return;
 
     const selectedIds = () => [...hiddenInputs.querySelectorAll('input[name="contributor_ids[]"]')].map((input) => input.value);
+    const visibleIds = () => [...participantList.querySelectorAll('[data-companion-participant][data-user-id]')]
+        .map((participant) => participant.dataset.userId)
+        .filter(Boolean);
+    const normalizeIds = (ids) => [...new Set(ids.map((id) => String(id)).filter(Boolean))];
+
+    const writeHiddenInputs = (ids) => {
+        hiddenInputs.innerHTML = '';
+        normalizeIds(ids).forEach((id) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'contributor_ids[]';
+            input.value = id;
+            if (headerFormId) input.setAttribute('form', headerFormId);
+            hiddenInputs.appendChild(input);
+        });
+    };
 
     // Renders "/ Name ×" for each companion, inline after the (always-present, separately
     // markup'd) primary name — e.g. "REY MAGHILOM / ANTHONY YONG × / MARK DELA CRUZ ×".
@@ -1016,16 +1032,9 @@ document.querySelectorAll('[data-companion-ci-container]').forEach((container) =
     };
 
     const setSelection = (ids) => {
-        hiddenInputs.innerHTML = '';
-        ids.forEach((id) => {
-            const input = document.createElement('input');
-            input.type = 'hidden';
-            input.name = 'contributor_ids[]';
-            input.value = id;
-            if (headerFormId) input.setAttribute('form', headerFormId);
-            hiddenInputs.appendChild(input);
-        });
-        renderParticipants(ids);
+        const normalizedIds = normalizeIds(ids);
+        writeHiddenInputs(normalizedIds);
+        renderParticipants(normalizedIds);
         // Programmatic DOM changes don't fire a native `input` event on their own — nudge the
         // unsaved-changes tracker on data-unsaved-form so leaving the page after only touching
         // companions still warns, same as editing any other field. The always-present marker
@@ -1033,6 +1042,24 @@ document.querySelectorAll('[data-companion-ci-container]').forEach((container) =
         // (dispatching directly on the <form> element wouldn't — forms have no `.form` property).
         container.querySelector('input[name="contributor_ids_present"]')?.dispatchEvent(new Event('input', { bubbles: true }));
     };
+
+    const form = headerFormId ? document.getElementById(headerFormId) : container.closest('form');
+    if (form instanceof HTMLFormElement) {
+        const methodOverride = form.querySelector('input[name="_method"]');
+        // The confirmed inline participant list is the user-visible source of truth. Rebuild the
+        // associated hidden controls at submit time, then reconcile FormData as it is constructed,
+        // so add/remove/replace â€” including an explicitly empty list â€” cannot post stale IDs.
+        // Preserve Laravel's method override explicitly: this form is transported as POST, and
+        // without `_method=PUT` that URL has no matching route and returns 404.
+        form.addEventListener('submit', () => { writeHiddenInputs(visibleIds()); });
+        form.addEventListener('formdata', (event) => {
+            const ids = normalizeIds(visibleIds());
+            event.formData.delete('contributor_ids[]');
+            ids.forEach((id) => event.formData.append('contributor_ids[]', id));
+            event.formData.set('contributor_ids_present', '1');
+            if (methodOverride instanceof HTMLInputElement) event.formData.set('_method', methodOverride.value);
+        });
+    }
 
     container.addEventListener('click', (event) => {
         const removeTrigger = event.target.closest('[data-companion-remove]');

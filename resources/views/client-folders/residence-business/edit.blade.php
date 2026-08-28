@@ -256,8 +256,8 @@
              person/co_maker_id in the request at all, ActivePersonResolver::resolveFromQuery()
              would resolve null, and assertOwnedBy() would 404 a check that genuinely belongs to
              this exact Co-Maker (see ActivePersonResolver::assertOwnedBy()). --}}
-        <x-ui.confirmation-dialog id="delete-business-check-{{ $check->id }}" title="Delete this Business Check?" :action="route('client-folders.business-checks.destroy', [$clientFolder, $check] + $personParams)" method="DELETE" confirm-label="Delete Permanently" destructive>
-            <p class="text-sm text-text-muted">Are you sure you want to permanently delete this Business Check and its photos? This action cannot be undone.</p>
+        <x-ui.confirmation-dialog id="delete-business-check-{{ $check->id }}" title="Move business to Recycle Bin?" :action="route('client-folders.business-checks.destroy', [$clientFolder, $check] + $personParams)" method="DELETE" confirm-label="Move to Recycle Bin" destructive>
+            <p class="text-sm text-text-muted">Deleting this Business Check will also move its linked Business Report to the Recycle Bin. You can restore both records later.</p>
         </x-ui.confirmation-dialog>
     @endforeach
 

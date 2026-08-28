@@ -5,6 +5,7 @@
 @php
     $personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null);
     $report = $incomeSource?->businessReport;
+    $hasActiveReport = $report !== null;
     $cibiReport = $clientFolder->cibiReport()->where('co_maker_id', ($activePerson ?? null)?->id)->first();
     $headerBranch = $incomeSource?->branch_name ?: $cibiReport?->branch_name;
     $headerAccountOfficer = $incomeSource?->account_officer_name ?: $cibiReport?->account_officer_name;
@@ -165,7 +166,14 @@
                 </section>
             @else
             <input type="hidden" name="source_name" value="{{ old('source_name', $incomeSource->source_name) }}">
-            <input type="hidden" name="report_category" value="{{ old('report_category', $report->report_category) }}">
+            <input type="hidden" name="report_category" value="{{ old('report_category', $report?->report_category ?? $incomeSource->template->business_category) }}">
+
+            @unless($hasActiveReport)
+                <section class="business-report-empty" aria-label="No active Business Report">
+                    <h2>No active Business Report</h2>
+                    <p>Complete and save this form to recreate the Business Report for this same saved business.</p>
+                </section>
+            @endunless
 
             @include('client-folders.income-sources._business-form-body', [
                 'incomeSource' => $incomeSource,
@@ -193,7 +201,7 @@
         :hidden="$incomeSource === null"
     >
         <span class="sr-only">Business Report actions</span>
-        <x-slot:actions><button type="submit" form="{{ $headerFormId }}" name="intent" value="complete" class="ui-button-primary" data-business-save>{{ $incomeSource ? 'Update' : 'Save' }}</button></x-slot:actions>
+        <x-slot:actions><button type="submit" form="{{ $headerFormId }}" name="intent" value="complete" class="ui-button-primary" data-business-save>{{ $incomeSource ? ($hasActiveReport ? 'Update' : 'Create Business Report') : 'Save' }}</button></x-slot:actions>
     </x-ui.sticky-form-toolbar>
 
     @foreach($businessTemplates as $previewTemplate)

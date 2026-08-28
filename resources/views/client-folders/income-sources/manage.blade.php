@@ -87,13 +87,17 @@
                                     <td class="px-4 py-3.5 align-middle text-sm text-text-muted">{{ $business->businessReport?->year_established ?? '—' }}</td>
                                     <td class="px-4 py-3.5 align-middle">
                                         <div class="flex flex-wrap items-center gap-1.5">
-                                            <a href="{{ route('client-folders.income-sources.edit', [$clientFolder, $business] + $personParams) }}" data-modal-open="business-report-dialog" data-business-report-url="{{ route('client-folders.income-sources.edit', [$clientFolder, $business] + $personParams) }}" class="ui-action-icon-button ui-action-icon-button-neutral" title="Edit business" aria-label="Edit {{ $business->displayName() }}"><x-ui.icon name="edit" size="size-4" /></a>
-                                            <a href="{{ route('client-folders.generated-reports.preview', [$clientFolder, 'report_type' => 'business_income_source', 'income_source_id' => $business->id] + $personParams) }}" target="_blank" rel="noopener" class="ui-action-icon-button ui-action-icon-button-neutral" title="Print business" aria-label="Print {{ $business->displayName() }}"><x-ui.icon name="printer" size="size-4" /></a>
-                                            <x-ui.context-menu label="Download {{ $business->displayName() }}">
-                                                <x-slot:trigger><span class="ui-action-icon-button ui-action-icon-button-neutral group-open:border-brand-primary group-open:bg-brand-soft group-open:text-brand-primary" title="Download business report"><x-ui.icon name="download" size="size-4" /></span></x-slot:trigger>
-                                                <button type="submit" form="business-{{ $business->id }}-export-pdf-form" role="menuitem" data-business-download-submit class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-55"><x-ui.icon name="report" size="size-4" class="text-danger" /><span data-download-label>Download PDF</span></button>
-                                                <button type="submit" form="business-{{ $business->id }}-export-excel-form" role="menuitem" data-business-download-submit class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-55"><x-ui.icon name="spreadsheet" size="size-4" class="text-success" /><span data-download-label>Download Excel</span></button>
-                                            </x-ui.context-menu>
+                                            @if($business->businessReport)
+                                                <a href="{{ route('client-folders.income-sources.edit', [$clientFolder, $business] + $personParams) }}" data-modal-open="business-report-dialog" data-business-report-url="{{ route('client-folders.income-sources.edit', [$clientFolder, $business] + $personParams) }}" class="ui-action-icon-button ui-action-icon-button-neutral" title="Update Business Report" aria-label="Update Business Report for {{ $business->displayName() }}"><x-ui.icon name="edit" size="size-4" /></a>
+                                                <a href="{{ route('client-folders.generated-reports.preview', [$clientFolder, 'report_type' => 'business_income_source', 'income_source_id' => $business->id] + $personParams) }}" target="_blank" rel="noopener" class="ui-action-icon-button ui-action-icon-button-neutral" title="Print business" aria-label="Print {{ $business->displayName() }}"><x-ui.icon name="printer" size="size-4" /></a>
+                                                <x-ui.context-menu label="Download {{ $business->displayName() }}">
+                                                    <x-slot:trigger><span class="ui-action-icon-button ui-action-icon-button-neutral group-open:border-brand-primary group-open:bg-brand-soft group-open:text-brand-primary" title="Download business report"><x-ui.icon name="download" size="size-4" /></span></x-slot:trigger>
+                                                    <button type="submit" form="business-{{ $business->id }}-export-pdf-form" role="menuitem" data-business-download-submit class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-55"><x-ui.icon name="report" size="size-4" class="text-danger" /><span data-download-label>Download PDF</span></button>
+                                                    <button type="submit" form="business-{{ $business->id }}-export-excel-form" role="menuitem" data-business-download-submit class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-55"><x-ui.icon name="spreadsheet" size="size-4" class="text-success" /><span data-download-label>Download Excel</span></button>
+                                                </x-ui.context-menu>
+                                            @else
+                                                <a href="{{ route('client-folders.income-sources.edit', [$clientFolder, $business] + $personParams) }}" data-modal-open="business-report-dialog" data-business-report-url="{{ route('client-folders.income-sources.edit', [$clientFolder, $business] + $personParams) }}" class="ui-action-icon-button ui-action-icon-button-neutral" title="Recreate Business Report" aria-label="Recreate Business Report for {{ $business->displayName() }}"><x-ui.icon name="plus" size="size-4" /></a>
+                                            @endif
                                             <button type="button" data-modal-open="delete-business-{{ $business->id }}" class="ui-action-icon-button ui-action-icon-button-danger" title="Delete business" aria-label="Delete {{ $business->displayName() }}"><x-ui.icon name="trash" size="size-4" /></button>
                                         </div>
                                     </td>
@@ -128,14 +132,16 @@
         </div>
 
         @foreach($businesses as $business)
-            <form id="business-{{ $business->id }}-export-pdf-form" method="POST" action="{{ route('client-folders.income-sources.export-pdf', [$clientFolder, $business]) }}" target="_blank" hidden>
-                @csrf
-            </form>
-            <form id="business-{{ $business->id }}-export-excel-form" method="POST" action="{{ route('client-folders.income-sources.export-excel', [$clientFolder, $business]) }}" hidden>
-                @csrf
-            </form>
-            <x-ui.confirmation-dialog id="delete-business-{{ $business->id }}" title="Delete {{ $business->displayName() }}?" :action="route('client-folders.income-sources.destroy', [$clientFolder, $business])" method="DELETE" confirm-label="Delete Permanently" destructive>
-                <p class="text-sm text-text-muted">Are you sure you want to permanently delete this business? This action cannot be undone.</p>
+            @if($business->businessReport)
+                <form id="business-{{ $business->id }}-export-pdf-form" method="POST" action="{{ route('client-folders.income-sources.export-pdf', [$clientFolder, $business]) }}" target="_blank" hidden>
+                    @csrf
+                </form>
+                <form id="business-{{ $business->id }}-export-excel-form" method="POST" action="{{ route('client-folders.income-sources.export-excel', [$clientFolder, $business]) }}" hidden>
+                    @csrf
+                </form>
+            @endif
+            <x-ui.confirmation-dialog id="delete-business-{{ $business->id }}" title="Move business to Recycle Bin?" :action="route('client-folders.income-sources.destroy', [$clientFolder, $business])" method="DELETE" confirm-label="Move to Recycle Bin" destructive>
+                <p class="text-sm text-text-muted">Deleting this Business Report will also move its linked Business Check to the Recycle Bin. You can restore both records later.</p>
             </x-ui.confirmation-dialog>
         @endforeach
 

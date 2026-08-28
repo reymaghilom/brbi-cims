@@ -39,9 +39,20 @@ class RecentActivityAccountabilityTest extends TestCase
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $source = $this->business($folder, null, 'ABC STORE');
+        $unrelatedSource = $this->business($folder, null, 'UNAFFECTED STORE');
 
         $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]));
-        $this->assertDatabaseMissing('income_sources', ['id' => $source->id]);
+        $this->assertSoftDeleted('income_sources', [
+            'id' => $source->id,
+            'client_folder_id' => $folder->id,
+            'co_maker_id' => null,
+        ]);
+        $this->assertDatabaseHas('income_sources', [
+            'id' => $unrelatedSource->id,
+            'client_folder_id' => $folder->id,
+            'co_maker_id' => null,
+            'deleted_at' => null,
+        ]);
 
         $this->actingAs($ci)->get(route('client-folders.show', $folder))
             ->assertOk()

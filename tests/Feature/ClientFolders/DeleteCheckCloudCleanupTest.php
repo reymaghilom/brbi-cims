@@ -17,12 +17,8 @@ use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
- * Deleting an entire Residence/Business Check must also remove every Cloudinary asset it owns —
- * only after the DB delete actually commits, never if it rolls back, and never touching another
- * record's media. Cloud deletion itself was previously missing from both delete actions entirely
- * (only local files were ever cleaned up); DeleteResidenceCheck/DeleteBusinessCheck now collect
- * every cloud-backed photo/map-screenshot public id up front and retire them via
- * ClientMediaUploader::retireCloudAsset() strictly after DB::transaction() returns successfully.
+ * Residence Check deletion remains permanent. Business Check deletion is a recoverable paired
+ * business deletion, so its database rows and Cloudinary assets remain available for restore.
  */
 class DeleteCheckCloudCleanupTest extends TestCase
 {
@@ -59,7 +55,7 @@ class DeleteCheckCloudCleanupTest extends TestCase
         $this->assertDatabaseCount('residence_check_photos', 0);
     }
 
-    public function test_business_check_delete_retires_cloud_photos_from_every_group_plus_competitors_and_map_screenshot(): void
+    public function test_business_check_soft_delete_preserves_every_photo_group_competitor_and_map_asset_for_restore(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -76,18 +72,22 @@ class DeleteCheckCloudCleanupTest extends TestCase
         $check->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/business/photos/competitor-1') + ['category' => 'competitor']);
 
         $cloud = $this->mock(CloudinaryMediaStorage::class);
-        foreach (['BRBI-CIMS/business/photos/default-1', 'BRBI-CIMS/business/photos/group2-1', 'BRBI-CIMS/business/photos/competitor-1', 'BRBI-CIMS/business/map-screenshots/map-1'] as $publicId) {
-            $cloud->shouldReceive('destroy')->once()->with($publicId, 'image', 'authenticated');
-        }
+        $cloud->shouldNotReceive('destroy');
 
         app(DeleteBusinessCheck::class)->execute($ci, $folder, $check);
 
-        $this->assertDatabaseMissing('business_checks', ['id' => $check->id]);
-        $this->assertDatabaseCount('business_check_photos', 0);
-        $this->assertDatabaseCount('business_check_photo_groups', 0);
+        $this->assertSoftDeleted('income_sources', ['id' => $source->id]);
+        $this->assertSoftDeleted('business_reports', ['income_source_id' => $source->id]);
+        $this->assertSoftDeleted('business_checks', ['id' => $check->id, 'income_source_id' => $source->id]);
+        $this->assertDatabaseCount('business_check_photos', 3);
+        $this->assertDatabaseCount('business_check_photo_groups', 2);
+        foreach (['BRBI-CIMS/business/photos/default-1', 'BRBI-CIMS/business/photos/group2-1', 'BRBI-CIMS/business/photos/competitor-1'] as $publicId) {
+            $this->assertDatabaseHas('business_check_photos', ['business_check_id' => $check->id, 'cloud_public_id' => $publicId]);
+        }
+        $this->assertDatabaseHas('business_checks', ['id' => $check->id, 'map_screenshot_cloud_public_id' => 'BRBI-CIMS/business/map-screenshots/map-1']);
     }
 
-    public function test_deleting_one_business_check_never_retires_another_checks_cloud_media(): void
+    public function test_soft_deleting_one_business_check_preserves_media_and_never_touches_another_business(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -99,13 +99,17 @@ class DeleteCheckCloudCleanupTest extends TestCase
         $photoB = $checkB->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/business/photos/check-b-1') + ['category' => 'business']);
 
         $cloud = $this->mock(CloudinaryMediaStorage::class);
-        $cloud->shouldReceive('destroy')->once()->with('BRBI-CIMS/business/photos/check-a-1', 'image', 'authenticated');
-        $cloud->shouldNotReceive('destroy')->with('BRBI-CIMS/business/photos/check-b-1', \Mockery::any(), \Mockery::any());
+        $cloud->shouldNotReceive('destroy');
 
         app(DeleteBusinessCheck::class)->execute($ci, $folder, $checkA);
 
-        $this->assertDatabaseMissing('business_checks', ['id' => $checkA->id]);
-        $this->assertDatabaseHas('business_checks', ['id' => $checkB->id]);
+        $this->assertSoftDeleted('income_sources', ['id' => $sourceA->id]);
+        $this->assertSoftDeleted('business_reports', ['income_source_id' => $sourceA->id]);
+        $this->assertSoftDeleted('business_checks', ['id' => $checkA->id, 'income_source_id' => $sourceA->id]);
+        $this->assertDatabaseHas('business_check_photos', ['business_check_id' => $checkA->id, 'cloud_public_id' => 'BRBI-CIMS/business/photos/check-a-1']);
+        $this->assertDatabaseHas('income_sources', ['id' => $sourceB->id, 'deleted_at' => null]);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $sourceB->id, 'deleted_at' => null]);
+        $this->assertDatabaseHas('business_checks', ['id' => $checkB->id, 'income_source_id' => $sourceB->id, 'deleted_at' => null]);
         $this->assertDatabaseHas('business_check_photos', ['id' => $photoB->id, 'cloud_public_id' => 'BRBI-CIMS/business/photos/check-b-1']);
     }
 
