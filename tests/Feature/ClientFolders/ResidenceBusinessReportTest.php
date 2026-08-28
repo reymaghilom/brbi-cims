@@ -674,7 +674,7 @@ class ResidenceBusinessReportTest extends TestCase
         $batchPreview = $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-print', $folder), [
             'business_check_ids' => [$businessCheck->id],
         ])->assertOk();
-        $batchPreview->assertSee('Residence & Business Checks - '.$folder->display_name)
+        $batchPreview->assertSee('Business Checks - '.$folder->display_name)
             ->assertDontSee('Created by:')
             ->assertDontSee('Last updated by:');
 
@@ -1088,7 +1088,7 @@ class ResidenceBusinessReportTest extends TestCase
         $batchPreview = $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-print', $folder), [
             'residence_check_ids' => [$residenceCheck->id],
         ])->assertOk()->assertSee('Applicant Address')->assertSee('Google Map');
-        $batchPreview->assertSee('Residence - MICABALO, RONILO CABIGAS')
+        $batchPreview->assertSee('Residence Check - MICABALO, RONILO CABIGAS')
             ->assertDontSee('Continuation 2')
             ->assertDontSee('Created by:')
             ->assertDontSee('Last updated by:');
@@ -1124,6 +1124,151 @@ class ResidenceBusinessReportTest extends TestCase
 
         $preview = $this->actingAs($ci)->get(route('client-folders.residence-business.preview', $folder))->assertOk();
         $preview->assertSee('Applicant Address')->assertDontSee('Google Map');
+    }
+
+    public function test_applicant_and_co_maker_batch_titles_and_filenames_follow_the_selected_report_types(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $folder->update(['display_name' => 'MICABALO, RONILO / CABIGAS']);
+        $coMaker = $folder->coMakers()->create(['full_name' => 'SANTOS, MARIA: TEST', 'address' => 'Co-Maker Address']);
+        $applicantResidence = $folder->residenceChecks()->create([
+            'ci_date' => now(), 'location' => 'Applicant Address', 'ci_user_id' => $ci->id,
+        ]);
+        $coMakerResidence = $folder->residenceChecks()->create([
+            'co_maker_id' => $coMaker->id, 'ci_date' => now(), 'location' => 'Co-Maker Address', 'ci_user_id' => $ci->id,
+        ]);
+        $applicantSource = $this->businessSource($folder, 'Applicant Store', 'Applicant Store Address');
+        $applicantBusiness = $folder->businessChecks()->create([
+            'income_source_id' => $applicantSource->id,
+            'ci_date' => now(), 'location' => 'Applicant Store Address', 'ci_user_id' => $ci->id,
+        ]);
+        $coMakerSource = $this->businessSource($folder, 'Co-Maker Store', 'Store Address');
+        $coMakerSource->update(['co_maker_id' => $coMaker->id]);
+        $coMakerBusiness = $folder->businessChecks()->create([
+            'co_maker_id' => $coMaker->id, 'income_source_id' => $coMakerSource->id,
+            'ci_date' => now(), 'location' => 'Store Address', 'ci_user_id' => $ci->id,
+        ]);
+
+        $cases = [
+            [['residence_check_ids' => [$applicantResidence->id]], 'Residence Check - MICABALO, RONILO / CABIGAS', 'Residence-Micabalo'],
+            [['business_check_ids' => [$applicantBusiness->id]], 'Business Checks - MICABALO, RONILO / CABIGAS', 'Business-Micabalo'],
+            [['residence_check_ids' => [$applicantResidence->id], 'business_check_ids' => [$applicantBusiness->id]], 'Residence & Business Checks - MICABALO, RONILO / CABIGAS', 'Checks-Micabalo'],
+            [['co_maker_id' => $coMaker->id, 'residence_check_ids' => [$coMakerResidence->id]], 'Residence Check - SANTOS, MARIA: TEST', 'Residence-Santos'],
+            [['co_maker_id' => $coMaker->id, 'business_check_ids' => [$coMakerBusiness->id]], 'Business Checks - SANTOS, MARIA: TEST', 'Business-Santos'],
+            [['co_maker_id' => $coMaker->id, 'residence_check_ids' => [$coMakerResidence->id], 'business_check_ids' => [$coMakerBusiness->id]], 'Residence & Business Checks - SANTOS, MARIA: TEST', 'Checks-Santos'],
+        ];
+
+        foreach ($cases as [$payload, $title, $filename]) {
+            $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-print', $folder), $payload)
+                ->assertOk()->assertSee($title);
+            $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-export-pdf', $folder), $payload)
+                ->assertOk()->assertDownload($filename.'.pdf');
+            $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-export-docx', $folder), $payload)
+                ->assertOk()->assertDownload($filename.'.docx');
+        }
+    }
+
+    public function test_applicant_and_co_maker_business_checks_preserve_all_ordered_competitor_photos_on_create_and_update(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $coMaker = $folder->coMakers()->create(['full_name' => 'Exact Co Maker', 'address' => 'Co-Maker Address']);
+        $applicantSource = $this->businessSource($folder, 'Applicant Store', 'Applicant Store Address');
+        $coMakerSource = $this->businessSource($folder, 'Co-Maker Store', 'Co-Maker Store Address');
+        $coMakerSource->update(['co_maker_id' => $coMaker->id]);
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'income_source_id' => $applicantSource->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'Applicant Store Address',
+            'business_photos' => [UploadedFile::fake()->image('Applicant Business.jpg', 900, 700)],
+            'competitor_photos' => [
+                UploadedFile::fake()->image('Applicant Competitor 1.jpg', 801, 601),
+                UploadedFile::fake()->image('Applicant Competitor 2.jpg', 802, 602),
+                UploadedFile::fake()->image('Applicant Competitor 3.jpg', 803, 603),
+            ],
+        ])->assertSessionHasNoErrors();
+        $applicantCheck = $folder->businessChecks()->whereNull('co_maker_id')->firstOrFail();
+        $originalApplicantIds = $applicantCheck->competitorPhotos()->pluck('id')->all();
+        $this->assertCount(3, $originalApplicantIds);
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'co_maker_id' => $coMaker->id,
+            'income_source_id' => $coMakerSource->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'Co-Maker Store Address',
+            'business_photos' => [UploadedFile::fake()->image('Co-Maker Business.jpg', 900, 700)],
+            'competitor_photos' => [
+                UploadedFile::fake()->image('Co-Maker Competitor 1.jpg', 811, 611),
+                UploadedFile::fake()->image('Co-Maker Competitor 2.jpg', 812, 612),
+            ],
+        ])->assertSessionHasNoErrors();
+        $coMakerCheck = $folder->businessChecks()->where('co_maker_id', $coMaker->id)->firstOrFail();
+        $coMakerIds = $coMakerCheck->competitorPhotos()->pluck('id')->all();
+        $this->assertCount(2, $coMakerIds);
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'check_id' => $applicantCheck->id,
+            'income_source_id' => $applicantSource->id,
+            'ci_date' => $applicantCheck->ci_date->toDateString(),
+            'location' => $applicantCheck->location,
+            'removed_photo_ids' => [$originalApplicantIds[1]],
+            'competitor_photos' => [
+                UploadedFile::fake()->image('Applicant Competitor 4.jpg', 804, 604),
+                UploadedFile::fake()->image('Applicant Competitor 5.jpg', 805, 605),
+            ],
+        ])->assertSessionHasNoErrors();
+
+        $updatedApplicantIds = $applicantCheck->fresh()->competitorPhotos()->pluck('id')->all();
+        $this->assertCount(4, $updatedApplicantIds);
+        $this->assertSame([$originalApplicantIds[0], $originalApplicantIds[2]], array_slice($updatedApplicantIds, 0, 2));
+        $this->assertDatabaseMissing('business_check_photos', ['id' => $originalApplicantIds[1]]);
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'co_maker_id' => $coMaker->id,
+            'check_id' => $coMakerCheck->id,
+            'income_source_id' => $coMakerSource->id,
+            'ci_date' => $coMakerCheck->ci_date->toDateString(),
+            'location' => $coMakerCheck->location,
+            'removed_photo_ids' => [$coMakerIds[0]],
+            'competitor_photos' => [
+                UploadedFile::fake()->image('Co-Maker Competitor 3.jpg', 813, 613),
+                UploadedFile::fake()->image('Co-Maker Competitor 4.jpg', 814, 614),
+            ],
+        ])->assertSessionHasNoErrors();
+        $updatedCoMakerIds = $coMakerCheck->fresh()->competitorPhotos()->pluck('id')->all();
+        $this->assertCount(3, $updatedCoMakerIds);
+        $this->assertSame($coMakerIds[1], $updatedCoMakerIds[0]);
+        $this->assertSame($updatedApplicantIds, $applicantCheck->fresh()->competitorPhotos()->pluck('id')->all());
+
+        $applicantSection = app(\App\Services\Reports\OfficialReportDataBuilder::class)
+            ->businessCheckSection($applicantCheck->fresh(['photos', 'photoGroups.photos', 'incomeSource']), $folder->display_name);
+        $renderedApplicantIds = collect($applicantSection['competitor_photo_pages'])
+            ->flatMap(fn (array $page) => $page['photos'])
+            ->map(fn (array $photo) => (int) basename($photo['web_url']))
+            ->all();
+        $this->assertSame($updatedApplicantIds, $renderedApplicantIds);
+
+        $applicantPreview = $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-print', $folder), [
+            'business_check_ids' => [$applicantCheck->id],
+        ])->assertOk();
+        foreach ($updatedApplicantIds as $photoId) {
+            $applicantPreview->assertSee(route('client-folders.business-checks.photo', [$folder, $applicantCheck, $photoId]), false);
+        }
+        foreach ($updatedCoMakerIds as $photoId) {
+            $applicantPreview->assertDontSee(route('client-folders.business-checks.photo', [$folder, $coMakerCheck, $photoId]), false);
+        }
+
+        $coMakerPreview = $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-print', $folder), [
+            'co_maker_id' => $coMaker->id, 'business_check_ids' => [$coMakerCheck->id],
+        ])->assertOk();
+        foreach ($updatedCoMakerIds as $photoId) {
+            $coMakerPreview->assertSee(route('client-folders.business-checks.photo', [$folder, $coMakerCheck, $photoId]), false);
+        }
+        foreach ($updatedApplicantIds as $photoId) {
+            $coMakerPreview->assertDontSee(route('client-folders.business-checks.photo', [$folder, $applicantCheck, $photoId]), false);
+        }
     }
 
     public function test_residence_and_business_check_encoding_pages_render(): void

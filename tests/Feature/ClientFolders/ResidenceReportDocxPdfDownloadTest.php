@@ -166,10 +166,12 @@ class ResidenceReportDocxPdfDownloadTest extends TestCase
             $zip = new \ZipArchive;
             $this->assertTrue($zip->open($path) === true);
             $documentXml = $zip->getFromName('word/document.xml');
+            $this->assertFalse($zip->getFromName('word/footer1.xml'), 'Residence/Business DOCX must not contain the BRBI Official Report page footer.');
             $zip->close();
 
             $this->assertStringNotContainsString('RESIDENCE &amp; BUSINESS CHECKS', $documentXml);
             $this->assertStringNotContainsString('BRBI Credit Investigation Management System', $documentXml);
+            $this->assertStringNotContainsString('BRBI Official Report', $documentXml);
 
             preg_match_all('/<w:t[^>]*>(.*?)<\/w:t>/s', $documentXml, $matches);
             $textRuns = array_map('html_entity_decode', $matches[1]);

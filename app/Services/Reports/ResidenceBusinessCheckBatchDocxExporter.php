@@ -48,11 +48,6 @@ class ResidenceBusinessCheckBatchDocxExporter
             'marginLeft' => Converter::inchToTwip($render->marginsInches['left'] ?? .45),
             'headerHeight' => Converter::inchToTwip(.2), 'footerHeight' => Converter::inchToTwip(.25),
         ]);
-        $isBusinessCheckOnly = $photoSections !== [] && collect($photoSections)
-            ->every(fn (array $photoSection) => ($photoSection['category'] ?? null) === 'Business');
-        if (! $isBusinessCheckOnly) {
-            $this->footer($section);
-        }
         // No title page here (see this method's own docblock above) — the first photo section's
         // own leading page break must be skipped so the report opens directly on real content.
         $this->skipNextPageBreak = true;

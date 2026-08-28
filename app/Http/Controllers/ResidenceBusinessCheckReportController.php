@@ -26,7 +26,7 @@ class ResidenceBusinessCheckReportController extends Controller
         return view('reports.official.residence-business-check-batch', [
             'photoSections' => $photoSections,
             'pdfMode' => false,
-            'title' => $this->reportTitle($photoSections, $clientFolder, $personName),
+            'title' => $this->reportTitle($photoSections, $personName),
             'clientFolder' => $clientFolder,
             'personParams' => ActivePersonResolver::queryParams($activePerson),
         ]);
@@ -44,8 +44,8 @@ class ResidenceBusinessCheckReportController extends Controller
         // "report it, fail cleanly" contract GenerateOfficialReport uses for the versioned
         // single-report download, rather than surfacing a raw framework error page for this
         // disposable one.
-        $bytes = $this->generateOrAbort(fn () => $exporter->generate($clientFolder, $photoSections, $this->reportTitle($photoSections, $clientFolder, $personName)));
-        $filename = $this->batchFilename($clientFolder, $activePerson, count($photoSections), 'pdf');
+        $bytes = $this->generateOrAbort(fn () => $exporter->generate($clientFolder, $photoSections, $this->reportTitle($photoSections, $personName)));
+        $filename = $this->batchFilename($photoSections, $personName, 'pdf');
         $this->logBatchExport($request, $clientFolder, $activePerson, count($photoSections), 'pdf');
 
         return response()->streamDownload(
@@ -65,12 +65,12 @@ class ResidenceBusinessCheckReportController extends Controller
         // Only ever used as the DOCX file's own invisible document-properties metadata — never
         // rendered onto the page itself (see ResidenceBusinessCheckBatchDocxExporter::generate()'s
         // own docblock).
-        $title = $this->reportTitle($photoSections, $clientFolder, $personName);
+        $title = $this->reportTitle($photoSections, $personName);
         // BuildsOfficialReportDocx::embedImage() already recovers from an unembeddable/corrupt
         // photo on its own (falls back to "Image unavailable" text, converts WebP to PNG first),
         // so this is only a last-resort net against anything else unexpected in PhpWord's writer.
         $bytes = $this->generateOrAbort(fn () => $exporter->generate($photoSections, $title));
-        $filename = $this->batchFilename($clientFolder, $activePerson, count($photoSections), 'docx');
+        $filename = $this->batchFilename($photoSections, $personName, 'docx');
         $this->logBatchExport($request, $clientFolder, $activePerson, count($photoSections), 'docx');
 
         return response()->streamDownload(
@@ -100,22 +100,56 @@ class ResidenceBusinessCheckReportController extends Controller
         return $residenceSections->concat($businessSections)->all();
     }
 
-    private function batchFilename(ClientFolder $clientFolder, ?CoMaker $activePerson, int $count, string $extension): string
+    /** @param  array<int, array<string, mixed>>  $photoSections */
+    private function batchFilename(array $photoSections, string $personName, string $extension): string
     {
-        $client = Str::of($activePerson?->full_name ?? $clientFolder->display_name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
+        $prefix = match ($this->selectedReportType($photoSections)) {
+            'residence' => 'Residence',
+            'business' => 'Business',
+            default => 'Checks',
+        };
 
-        return Str::limit("BRBI_{$clientFolder->folder_number}_{$client}_Residence-Business-Checks-Batch-{$count}", 180, '').'.'.$extension;
+        return $prefix.'-'.$this->shortName($personName).'.'.$extension;
     }
 
     /** @param  array<int, array<string, mixed>>  $photoSections */
-    private function reportTitle(array $photoSections, ClientFolder $clientFolder, string $personName): string
+    private function reportTitle(array $photoSections, string $personName): string
     {
-        $isResidenceOnly = collect($photoSections)
-            ->every(fn (array $photoSection) => ($photoSection['category'] ?? null) === 'Residence');
+        $prefix = match ($this->selectedReportType($photoSections)) {
+            'residence' => 'Residence Check',
+            'business' => 'Business Checks',
+            default => 'Residence & Business Checks',
+        };
 
-        return $isResidenceOnly
-            ? 'Residence - '.$personName
-            : 'Residence & Business Checks - '.$clientFolder->display_name;
+        return $prefix.' - '.$personName;
+    }
+
+    /** @param  array<int, array<string, mixed>>  $photoSections */
+    private function selectedReportType(array $photoSections): string
+    {
+        $categories = collect($photoSections)->pluck('category')->unique()->values();
+
+        return match (true) {
+            $categories->all() === ['Residence'] => 'residence',
+            $categories->all() === ['Business'] => 'business',
+            default => 'mixed',
+        };
+    }
+
+    private function shortName(string $personName): string
+    {
+        $asciiName = Str::ascii(trim($personName));
+        $candidate = str_contains($asciiName, ',')
+            ? Str::before($asciiName, ',')
+            : collect(preg_split('/\s+/', $asciiName) ?: [])->filter()->take(2)->implode(' ');
+        $safeName = Str::of($candidate)
+            ->replaceMatches('/[^A-Za-z0-9]+/', '-')
+            ->trim('-')
+            ->limit(50, '')
+            ->title()
+            ->toString();
+
+        return $safeName !== '' ? $safeName : 'Person';
     }
 
     private function logBatchExport(BatchResidenceBusinessCheckRequest $request, ClientFolder $clientFolder, ?CoMaker $activePerson, int $count, string $format): void

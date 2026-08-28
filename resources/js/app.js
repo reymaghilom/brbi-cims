@@ -2490,11 +2490,12 @@ const initializePhotoUploadField = (field) => {
     if (!(input instanceof HTMLInputElement) || triggers.length === 0 || !grid || !(template instanceof HTMLTemplateElement)) return;
 
     let files = [];
-    field.getStagedPhotoFiles = () => [...files];
+    let nextFileId = 0;
+    field.getStagedPhotoFiles = () => files.map(({ file }) => file);
 
     const rebuildInputFiles = () => {
         const transfer = new DataTransfer();
-        files.forEach((file) => transfer.items.add(file));
+        files.forEach(({ file }) => transfer.items.add(file));
         input.files = transfer.files;
     };
 
@@ -2510,12 +2511,13 @@ const initializePhotoUploadField = (field) => {
         const trailingTile = grid.querySelector('[data-photo-upload-count-tile], [data-photo-upload-add-more-tile]');
         Array.from(fileList ?? []).forEach((file) => {
             if (!file.type.startsWith('image/')) return;
-            files.push(file);
+            const fileId = String(nextFileId++);
+            files.push({ id: fileId, file });
             const tile = template.content.firstElementChild.cloneNode(true);
             const img = tile.querySelector('img');
             const objectUrl = URL.createObjectURL(file);
             img.src = objectUrl;
-            tile.dataset.photoUploadFileName = file.name;
+            tile.dataset.photoUploadFileId = fileId;
             tile.dataset.photoUploadObjectUrl = objectUrl;
             const previewLink = tile.querySelector('[data-photo-upload-preview-new]');
             if (previewLink instanceof HTMLAnchorElement) previewLink.href = objectUrl;
@@ -2547,8 +2549,8 @@ const initializePhotoUploadField = (field) => {
         const removeNew = event.target.closest('[data-photo-upload-remove-new]');
         if (removeNew) {
             const tile = removeNew.closest('[data-photo-upload-new-tile]');
-            const name = tile?.dataset.photoUploadFileName;
-            const index = files.findIndex((file) => file.name === name);
+            const fileId = tile?.dataset.photoUploadFileId;
+            const index = files.findIndex((entry) => entry.id === fileId);
             if (index !== -1) files.splice(index, 1);
             if (tile?.dataset.photoUploadObjectUrl) URL.revokeObjectURL(tile.dataset.photoUploadObjectUrl);
             tile?.remove();
