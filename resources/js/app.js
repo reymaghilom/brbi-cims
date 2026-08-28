@@ -2477,6 +2477,7 @@ const initializePhotoUploadField = (field) => {
     if (!(input instanceof HTMLInputElement) || triggers.length === 0 || !grid || !(template instanceof HTMLTemplateElement)) return;
 
     let files = [];
+    field.getStagedPhotoFiles = () => [...files];
 
     const rebuildInputFiles = () => {
         const transfer = new DataTransfer();
@@ -2730,7 +2731,11 @@ document.querySelectorAll('[data-residence-check-form]').forEach((form) => {
         form.dataset.submitting = 'true';
 
         const photoInput = form.querySelector('[data-photo-upload-input]');
-        const hasNewPhotos = photoInput instanceof HTMLInputElement && (photoInput.files?.length ?? 0) > 0;
+        const photoField = photoInput?.closest('[data-photo-upload-field]');
+        const stagedPhotos = typeof photoField?.getStagedPhotoFiles === 'function'
+            ? photoField.getStagedPhotoFiles()
+            : Array.from(photoInput?.files ?? []);
+        const hasNewPhotos = stagedPhotos.length > 0;
         const mapScreenshotInput = form.querySelector('[data-map-screenshot-input]');
         const hasNewMapScreenshot = mapScreenshotInput instanceof HTMLInputElement && (mapScreenshotInput.files?.length ?? 0) > 0;
 
@@ -2800,7 +2805,12 @@ document.querySelectorAll('[data-residence-check-form]').forEach((form) => {
             showToast('Residence Check could not be saved. Please check your connection and try again.', 'error');
         });
 
-        xhr.send(new FormData(form));
+        const payload = new FormData(form);
+        if (photoInput instanceof HTMLInputElement) {
+            payload.delete(photoInput.name);
+            stagedPhotos.forEach((file) => payload.append(photoInput.name, file, file.name));
+        }
+        xhr.send(payload);
     });
 });
 

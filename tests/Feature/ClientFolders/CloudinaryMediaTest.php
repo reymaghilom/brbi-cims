@@ -76,6 +76,127 @@ class CloudinaryMediaTest extends TestCase
         $this->assertTrue($check->hasMapScreenshot());
     }
 
+    public function test_residence_create_uploads_and_persists_every_selected_cloud_photo_at_one_three_and_ten(): void
+    {
+        $ci = User::factory()->create();
+
+        foreach ([1, 3, 10] as $count) {
+            $folder = $this->residenceFolder($ci);
+            $path = $this->applicantCloudFolder($folder, 'residence/photos');
+            $assets = collect(range(1, $count))
+                ->map(fn (int $index) => $this->fakeCloudAsset("create-{$count}-{$index}"))
+                ->all();
+            $this->mockCloud()->shouldReceive('store')->times($count)
+                ->with(\Mockery::type(UploadedFile::class), $path, 'photo')
+                ->andReturn(...$assets);
+
+            $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+                'photos' => $this->fakePhotos($count, "Create{$count}"),
+            ])->assertSessionHasNoErrors();
+
+            $check = $folder->residenceChecks()->firstOrFail();
+            $this->assertSame($count, $check->photos()->count());
+            $this->assertSame(
+                collect($assets)->pluck('cloud_public_id')->all(),
+                $check->photos()->orderBy('sort_order')->pluck('cloud_public_id')->all(),
+            );
+        }
+    }
+
+    public function test_residence_update_from_seven_persists_all_three_new_cloud_photos_in_the_organized_applicant_path(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->residenceFolder($ci);
+        $path = $this->applicantCloudFolder($folder, 'residence/photos');
+        $originalAssets = collect(range(1, 7))->map(fn (int $index) => $this->fakeCloudAsset("original-photo-{$index}"))->all();
+        $this->mockCloud()->shouldReceive('store')->times(7)
+            ->with(\Mockery::type(UploadedFile::class), $path, 'photo')
+            ->andReturn(...$originalAssets);
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'photos' => $this->fakePhotos(7, 'Original'),
+        ])->assertSessionHasNoErrors();
+        $check = $folder->residenceChecks()->firstOrFail();
+
+        $newAssets = collect(range(1, 3))->map(fn (int $index) => $this->fakeCloudAsset("update-photo-{$index}"))->all();
+        $this->mockedCloud->shouldReceive('store')->times(3)
+            ->with(\Mockery::type(UploadedFile::class), $path, 'photo')
+            ->andReturn(...$newAssets);
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'check_id' => $check->id,
+            'photos' => $this->fakePhotos(3, 'Update'),
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame(10, $check->photos()->count());
+        $this->assertSame(
+            collect($newAssets)->pluck('cloud_public_id')->all(),
+            $check->photos()->whereIn('cloud_public_id', collect($newAssets)->pluck('cloud_public_id'))->orderBy('sort_order')->pluck('cloud_public_id')->all(),
+        );
+    }
+
+    public function test_residence_update_over_the_final_ten_photo_limit_never_uploads_or_retires_cloud_assets(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->residenceFolder($ci);
+        $path = $this->applicantCloudFolder($folder, 'residence/photos');
+        $assets = collect(range(1, 8))->map(fn (int $index) => $this->fakeCloudAsset("kept-photo-{$index}"))->all();
+        $this->mockCloud()->shouldReceive('store')->times(8)
+            ->with(\Mockery::type(UploadedFile::class), $path, 'photo')
+            ->andReturn(...$assets);
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'photos' => $this->fakePhotos(8, 'Existing'),
+        ])->assertSessionHasNoErrors();
+        $check = $folder->residenceChecks()->firstOrFail();
+
+        $this->mockedCloud->shouldNotReceive('store');
+        $this->mockedCloud->shouldNotReceive('destroy');
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'check_id' => $check->id,
+            'photos' => $this->fakePhotos(3, 'Rejected'),
+        ])->assertSessionHasErrors(['photos' => 'A maximum of 10 residence pictures is allowed.']);
+
+        $this->assertSame(
+            collect($assets)->pluck('cloud_public_id')->all(),
+            $check->photos()->orderBy('sort_order')->pluck('cloud_public_id')->all(),
+        );
+    }
+
+    public function test_residence_update_replaces_a_removed_cloud_photo_and_retires_it_only_after_commit(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->residenceFolder($ci);
+        $path = $this->applicantCloudFolder($folder, 'residence/photos');
+        $oldAssets = collect(range(1, 10))->map(fn (int $index) => $this->fakeCloudAsset("old-photo-{$index}"))->all();
+        $this->mockCloud()->shouldReceive('store')->times(10)
+            ->with(\Mockery::type(UploadedFile::class), $path, 'photo')
+            ->andReturn(...$oldAssets);
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'photos' => $this->fakePhotos(10, 'Old'),
+        ])->assertSessionHasNoErrors();
+        $check = $folder->residenceChecks()->firstOrFail();
+        $oldPhoto = $check->photos()->firstOrFail();
+
+        $this->mockedCloud->shouldReceive('store')->once()
+            ->with(\Mockery::type(UploadedFile::class), $path, 'photo')
+            ->andReturn($this->fakeCloudAsset('replacement-photo'));
+        $this->mockedCloud->shouldReceive('destroy')->once()
+            ->with('old-photo-1', 'image', 'authenticated')
+            ->andReturnUsing(function () use ($oldPhoto): void {
+                $this->assertDatabaseMissing('residence_check_photos', ['id' => $oldPhoto->id]);
+                $this->assertDatabaseHas('residence_check_photos', ['cloud_public_id' => 'replacement-photo']);
+            });
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'check_id' => $check->id,
+            'removed_photo_ids' => [$oldPhoto->id],
+            'photos' => [UploadedFile::fake()->image('Replacement.jpg', 900, 700)->size(500)],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertDatabaseMissing('residence_check_photos', ['id' => $oldPhoto->id]);
+        $this->assertDatabaseHas('residence_check_photos', ['residence_check_id' => $check->id, 'cloud_public_id' => 'replacement-photo']);
+        $this->assertSame(10, $check->photos()->count());
+    }
+
     public function test_new_business_picture_and_map_screenshot_upload_are_stored_on_cloudinary_when_enabled(): void
     {
         $ci = User::factory()->create();
@@ -317,10 +438,11 @@ class CloudinaryMediaTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = $this->residenceFolder($ci);
-        $this->mockCloud()->shouldReceive('store')->once()
-            ->andReturn($this->fakeCloudAsset('still-here'));
+        $assets = collect(range(1, 10))->map(fn (int $index) => $this->fakeCloudAsset("still-here-{$index}"))->all();
+        $this->mockCloud()->shouldReceive('store')->times(10)
+            ->andReturn(...$assets);
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
+            'photos' => $this->fakePhotos(10, 'Existing'),
         ]);
         $check = $folder->residenceChecks()->firstOrFail();
         $photo = $check->photos()->firstOrFail();
@@ -334,7 +456,7 @@ class CloudinaryMediaTest extends TestCase
         ])->assertSessionHasErrors('expected_updated_at');
 
         $this->assertDatabaseHas('residence_check_photos', ['id' => $photo->id]);
-        $this->assertSame(1, $check->photos()->count());
+        $this->assertSame(10, $check->photos()->count());
     }
 
     /**
@@ -541,11 +663,19 @@ class CloudinaryMediaTest extends TestCase
         return $folder;
     }
 
+    /** @return array<int, UploadedFile> */
+    private function fakePhotos(int $count, string $prefix): array
+    {
+        return collect(range(1, $count))
+            ->map(fn (int $index) => UploadedFile::fake()->image("{$prefix}-{$index}.jpg", 900, 700)->size(500))
+            ->all();
+    }
+
     private function applicantCloudFolder(ClientFolder $folder, string $mediaFolder): string
     {
         $slug = Str::slug((string) $folder->display_name) ?: 'client';
 
-        return "clients/CF-{$folder->id}-{$slug}/{$mediaFolder}";
+        return "clients/CF-{$folder->id}-{$slug}/applicant/{$mediaFolder}";
     }
 
     private function businessSource(ClientFolder $folder, string $name, string $address): IncomeSource

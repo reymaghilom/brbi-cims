@@ -68,6 +68,17 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $this->assertStringNotContainsString('data-residence-check-progress', $content);
     }
 
+    public function test_ajax_submit_uses_every_staged_residence_photo_and_preserves_upload_feedback(): void
+    {
+        $script = file_get_contents(resource_path('js/app.js'));
+
+        $this->assertStringContainsString('field.getStagedPhotoFiles = () => [...files];', $script);
+        $this->assertStringContainsString("payload.delete(photoInput.name);", $script);
+        $this->assertStringContainsString("stagedPhotos.forEach((file) => payload.append(photoInput.name, file, file.name));", $script);
+        $this->assertStringContainsString("statusText.textContent = 'Uploading media to cloud storage…';", $script);
+        $this->assertStringContainsString("statusText.textContent = 'Saving Residence Check…';", $script);
+    }
+
     public function test_cloud_storage_enabled_flag_reflects_whether_cloudinary_is_actually_configured(): void
     {
         $ci = User::factory()->create();

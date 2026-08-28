@@ -46,6 +46,23 @@ class SaveBusinessCheck
 
         try {
             $check = DB::transaction(function () use ($actor, $folder, $data, $checkId, $activePerson, &$storedUploads, &$retiredCloudAssets): BusinessCheck {
+                if ($checkId === null) {
+                    // Serialize creates for this exact scoped business, then re-check inside the
+                    // transaction so a forged or concurrent request cannot insert a duplicate.
+                    $folder->incomeSources()
+                        ->where('co_maker_id', $activePerson?->id)
+                        ->whereKey((int) $data['income_source_id'])
+                        ->lockForUpdate()
+                        ->firstOrFail();
+                    if ($folder->businessChecks()
+                        ->where('co_maker_id', $activePerson?->id)
+                        ->where('income_source_id', (int) $data['income_source_id'])
+                        ->exists()) {
+                        throw ValidationException::withMessages([
+                            'income_source_id' => 'A Business Check already exists for the selected business. Open the existing Business Check to view or edit it.',
+                        ]);
+                    }
+                }
                 $check = $checkId !== null
                     ? $folder->businessChecks()->where('co_maker_id', $activePerson?->id)->findOrFail((int) $checkId)
                     : $folder->businessChecks()->make(['co_maker_id' => $activePerson?->id]);

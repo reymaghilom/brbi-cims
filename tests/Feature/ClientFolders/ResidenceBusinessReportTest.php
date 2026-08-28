@@ -477,6 +477,13 @@ class ResidenceBusinessReportTest extends TestCase
         $businessCheck = $folder->businessChecks()->firstOrFail();
         $this->assertTrue($businessCheck->hasMapScreenshot());
 
+        $batchPreview = $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-print', $folder), [
+            'business_check_ids' => [$businessCheck->id],
+        ])->assertOk();
+        $batchPreview->assertSee('Residence & Business Checks - '.$folder->display_name)
+            ->assertDontSee('Created by:')
+            ->assertDontSee('Last updated by:');
+
         $preview = $this->actingAs($ci)->get(route('client-folders.residence-business.preview', $folder))->assertOk();
         $preview->assertSee('Sari-Sari Store')->assertSee('Google Map')
             ->assertSee(route('client-folders.business-checks.map-screenshot', [$folder, $businessCheck]), false)
@@ -635,6 +642,44 @@ class ResidenceBusinessReportTest extends TestCase
 
         $noRemarksPreview = $this->actingAs($ci)->get(route('client-folders.residence-business.preview', $folder))->assertOk();
         $noRemarksPreview->assertDontSee('Remarks:');
+    }
+
+    public function test_each_residence_check_header_renders_once_while_continuation_pages_only_render_remaining_media(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $photo = fn (string $name) => [
+            'caption' => null, 'media_type' => 'photo', 'image_path' => '/'.$name, 'web_url' => '/'.$name,
+        ];
+        $sections = [
+            [
+                'category' => 'Residence', 'party_label' => 'Applicant Name', 'subject' => 'TEST APPLICANT',
+                'location' => 'FIRST LOCATION', 'heading' => 'Residence Check', 'remarks' => 'UNIQUE FIRST REMARKS',
+                'ci_date' => 'August 28, 2026', 'ci' => 'Rey',
+                'media' => [$photo('first.jpg'), $photo('second.jpg'), $photo('third.jpg')],
+                'google_map' => ['image_path' => '/map.jpg', 'web_url' => '/map.jpg'],
+            ],
+            [
+                'category' => 'Residence', 'party_label' => 'Applicant Name', 'subject' => 'TEST APPLICANT',
+                'location' => 'SECOND LOCATION', 'heading' => 'Residence Check', 'remarks' => 'UNIQUE SECOND REMARKS',
+                'ci_date' => 'August 29, 2026', 'ci' => 'Rey',
+                'media' => [$photo('fourth.jpg')], 'google_map' => null,
+            ],
+        ];
+
+        foreach ([false, true] as $pdfMode) {
+            $html = view('reports.official.residence-business-check-batch', [
+                'photoSections' => $sections, 'pdfMode' => $pdfMode, 'title' => 'Residence - TEST APPLICANT',
+                'clientFolder' => $folder, 'personParams' => [],
+            ])->render();
+
+            $this->assertSame(1, substr_count($html, 'UNIQUE FIRST REMARKS'));
+            $this->assertSame(1, substr_count($html, 'UNIQUE SECOND REMARKS'));
+            $this->assertSame(2, substr_count($html, '<table class="residence-header">'));
+            foreach (['first.jpg', 'second.jpg', 'third.jpg', 'fourth.jpg', 'map.jpg'] as $name) {
+                $this->assertSame(1, substr_count($html, '/'.$name));
+            }
+        }
     }
 
     public function test_google_map_page_is_always_the_last_section_for_a_residence_check_with_a_screenshot(): void
@@ -815,10 +860,15 @@ class ResidenceBusinessReportTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
-        $residencePhoto = UploadedFile::fake()->image('Residence Front.jpg', 900, 700)->size(500);
+        $folder->update(['display_name' => 'MICABALO, RONILO CABIGAS']);
+        $residencePhotos = [
+            UploadedFile::fake()->image('Residence Front.jpg', 900, 700)->size(500),
+            UploadedFile::fake()->image('Residence Side.jpg', 900, 700)->size(500),
+            UploadedFile::fake()->image('Residence Back.jpg', 900, 700)->size(500),
+        ];
         $mapScreenshot = UploadedFile::fake()->image('Map.png', 800, 600)->size(300);
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'google_maps_link' => 'https://maps.google.com/example', 'remarks' => 'All good', 'photos' => [$residencePhoto], 'map_screenshot' => $mapScreenshot,
+            'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'google_maps_link' => 'https://maps.google.com/example', 'remarks' => 'All good', 'photos' => $residencePhotos, 'map_screenshot' => $mapScreenshot,
         ]);
         $residenceCheck = $folder->residenceChecks()->firstOrFail();
         $this->assertTrue($residenceCheck->hasMapScreenshot());
@@ -840,9 +890,22 @@ class ResidenceBusinessReportTest extends TestCase
         $preview->assertDontSee($residenceCheck->photos->first()->file_name);
         $preview->assertDontSee($residenceCheck->map_screenshot_file_name);
 
-        $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-print', $folder), [
+        $batchPreview = $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-print', $folder), [
             'residence_check_ids' => [$residenceCheck->id],
         ])->assertOk()->assertSee('Applicant Address')->assertSee('Google Map');
+        $batchPreview->assertSee('Residence - MICABALO, RONILO CABIGAS')
+            ->assertDontSee('Continuation 2')
+            ->assertDontSee('Created by:')
+            ->assertDontSee('Last updated by:');
+
+        $this->assertDatabaseHas('audit_logs', [
+            'client_folder_id' => $folder->id,
+            'user_id' => $ci->id,
+            'action' => 'residence_check.created',
+        ]);
+        $this->actingAs($ci)->get(route('client-folders.show', $folder))
+            ->assertOk()
+            ->assertSee('Residence Check saved');
 
         $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-export-pdf', $folder), [
             'residence_check_ids' => [$residenceCheck->id],

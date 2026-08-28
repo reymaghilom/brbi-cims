@@ -92,7 +92,9 @@
                                     <select id="business-check-income-source" name="income_source_id" class="ui-control min-w-0 flex-1" required data-business-check-income-source-select>
                                         <option value="">Select {{ $isApplicant ? 'an existing Applicant business' : 'a business' }}</option>
                                         @foreach($businesses as $business)
-                                            <option value="{{ $business['id'] }}" data-location="{{ $business['location'] }}" data-ci-date="{{ $business['ci_date'] }}" data-report-complete="{{ $business['report_complete'] ? '1' : '0' }}" @selected(old('income_source_id', $businessCheck?->income_source_id) == $business['id'])>{{ $business['name'] }}</option>
+                                            @php($isCurrentBusiness = $businessCheck && (int) $businessCheck->income_source_id === (int) $business['id'])
+                                            @php($alreadyChecked = filled($business['existing_check_id']) && ! $isCurrentBusiness)
+                                            <option value="{{ $business['id'] }}" data-location="{{ $business['location'] }}" data-ci-date="{{ $business['ci_date'] }}" data-report-complete="{{ $business['report_complete'] ? '1' : '0' }}" @disabled($alreadyChecked) @selected(old('income_source_id', $businessCheck?->income_source_id) == $business['id'])>{{ $business['name'] }}{{ $alreadyChecked ? ' — Business Check already exists.' : '' }}</option>
                                         @endforeach
                                     </select>
                                     @if($isApplicant)

@@ -166,11 +166,9 @@ trait BuildsOfficialReportDocx
         }
 
         if ($competitorPages !== []) {
-            // Competitors always starts its own fresh page (never sharing one with the last Business
-            // Photos page) — pageBreakBeforeSection() forces that one break; renderBusinessPhotoPages()
-            // only ever breaks *between* its own pages after this.
-            $this->pageBreakBeforeSection($section);
-            $this->renderBusinessPhotoPages($section, $competitorPages);
+            // Competitors starts on a fresh page, but the break belongs to its first real content
+            // paragraph so Word cannot strand a standalone break on an otherwise empty sheet.
+            $this->renderBusinessPhotoPages($section, $competitorPages, true);
         }
 
         if ($photoSection['google_map'] ?? null) {
@@ -185,31 +183,43 @@ trait BuildsOfficialReportDocx
     }
 
     /**
-     * Renders a pre-chunked (<=2 photos each) page list: a forced page break between each of its
-     * own pages (never before the first — that's the caller's responsibility, since what precedes
-     * this list differs for Business Photos vs Competitors), a page's own caption (if any) directly
-     * above its photos, and natural vertical spacing between two photos sharing the same page.
+     * Renders a pre-chunked (<=2 photos each) page list. Page 2+ starts by applying pageBreakBefore
+     * to its first real caption/photo paragraph; unlike a standalone addPageBreak(), this cannot be
+     * carried onto a new physical page and then create another, completely blank page. A caption
+     * remains attached to its first photo through keepNext/keepLines.
      */
-    private function renderBusinessPhotoPages(Section $section, array $pages): void
+    private function renderBusinessPhotoPages(Section $section, array $pages, bool $breakBeforeFirstPage = false): void
     {
         foreach ($pages as $index => $page) {
-            if ($index > 0) {
-                $section->addPageBreak();
-            }
+            $startsNewPage = $index > 0 || ($index === 0 && $breakBeforeFirstPage);
             if (filled($page['caption'])) {
                 $section->addText($page['caption'], ['name' => 'Calibri', 'size' => 12], [
                     'indentation' => ['left' => intdiv(self::WIDTH_DXA - self::BUSINESS_CHECK_WIDTH_DXA, 2)],
                     'spaceBefore' => 0,
                     'spaceAfter' => 40,
                     'keepNext' => true,
+                    'keepLines' => true,
+                    'pageBreakBefore' => $startsNewPage,
                 ]);
             }
             foreach ($page['photos'] as $photoIndex => $item) {
                 if ($photoIndex > 0) {
                     $section->addTextBreak(1);
                 }
+                $imageStyle = ['width' => self::BUSINESS_CHECK_IMAGE_WIDTH_PT, 'alignment' => 'center'];
+                $firstPhotoCarriesBreak = $photoIndex === 0 && $startsNewPage && blank($page['caption']);
+                if ($firstPhotoCarriesBreak) {
+                    $run = $section->addTextRun(['alignment' => 'center', 'pageBreakBefore' => true]);
+                    $embedded = $item['image_path'] && $item['media_type'] === 'photo'
+                        && $this->embedImage($run, $item['image_path'], $imageStyle);
+                    if (! $embedded) {
+                        $run->addText('Media reference: '.$item['file_name'].' (image content unavailable)', ['name' => 'Arial', 'size' => 9, 'italic' => true, 'color' => '555555']);
+                    }
+
+                    continue;
+                }
                 $embedded = $item['image_path'] && $item['media_type'] === 'photo'
-                    && $this->embedImage($section, $item['image_path'], ['width' => self::BUSINESS_CHECK_IMAGE_WIDTH_PT, 'alignment' => 'center']);
+                    && $this->embedImage($section, $item['image_path'], $imageStyle);
                 if (! $embedded) {
                     $section->addText('Media reference: '.$item['file_name'].' (image content unavailable)', ['name' => 'Arial', 'size' => 9, 'italic' => true, 'color' => '555555'], ['alignment' => 'center', 'spaceAfter' => 50]);
                 }
@@ -243,7 +253,7 @@ trait BuildsOfficialReportDocx
                 $section->addTextBreak(1);
             }
             if (filled($item['caption'] ?? null)) {
-                $section->addText($item['caption'], ['name' => 'Calibri', 'size' => 11, 'bold' => true], ['spaceBefore' => $index === 0 ? 80 : 0, 'spaceAfter' => 40, 'keepNext' => true]);
+                $section->addText($item['caption'], ['name' => 'Calibri', 'size' => 11, 'bold' => true], ['spaceBefore' => $index === 0 ? 80 : 0, 'spaceAfter' => 40, 'keepNext' => true, 'keepLines' => true]);
             } elseif ($index === 0) {
                 // No caption on the first photo: a small paragraph spacing still needs to separate
                 // it from the information block above — a tiny (4pt) near-invisible spacer line
@@ -354,7 +364,7 @@ trait BuildsOfficialReportDocx
      * for this app's own thumbnail generation) so the CI's actual saved photo still ends up in the
      * DOCX rather than a placeholder; only a genuinely undecodable file falls through to false.
      */
-    private function embedImage(Section $section, string $path, array $style): bool
+    private function embedImage(AbstractContainer $section, string $path, array $style): bool
     {
         try {
             $section->addImage($path, $style);

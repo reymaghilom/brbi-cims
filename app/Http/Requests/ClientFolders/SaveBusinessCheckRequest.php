@@ -91,8 +91,22 @@ class SaveBusinessCheckRequest extends FormRequest
 
             $folder = $this->route('clientFolder');
             $coMakerId = blank($this->input('co_maker_id')) ? null : (int) $this->input('co_maker_id');
-            if (filled($this->input('income_source_id')) && ! $folder->incomeSources()->where('co_maker_id', $coMakerId)->whereHas('template', fn ($query) => $query->where('is_fallback', false)->where('form_handler', 'dedicated-business'))->whereKey($this->integer('income_source_id'))->exists()) {
+            $incomeSourceId = $this->integer('income_source_id');
+            $validBusiness = filled($this->input('income_source_id')) && $folder->incomeSources()
+                ->where('co_maker_id', $coMakerId)
+                ->whereHas('template', fn ($query) => $query->where('is_fallback', false)->where('form_handler', 'dedicated-business'))
+                ->whereKey($incomeSourceId)
+                ->exists();
+            if (filled($this->input('income_source_id')) && ! $validBusiness) {
                 $validator->errors()->add('income_source_id', 'The selected business does not belong to this client folder.');
+
+                return;
+            }
+            if ($validBusiness && blank($this->input('check_id')) && $folder->businessChecks()
+                ->where('co_maker_id', $coMakerId)
+                ->where('income_source_id', $incomeSourceId)
+                ->exists()) {
+                $validator->errors()->add('income_source_id', 'A Business Check already exists for the selected business. Open the existing Business Check to view or edit it.');
             }
         });
     }

@@ -168,7 +168,7 @@
                         </div>
                     </template>
 
-                    <p class="mt-2 text-xs font-semibold text-text-muted"><span data-photo-upload-count>{{ count($existingPhotos) }}</span> of {{ $maxPhotos }} photos &middot; JPG, PNG up to {{ $maxPhotoMb }}MB each</p>
+                    <p class="mt-2 text-xs font-semibold text-text-muted"><span data-photo-upload-count>{{ count($existingPhotos) }}</span> photos &middot; Maximum {{ $maxPhotos }} residence photos. &middot; JPG, PNG up to {{ $maxPhotoMb }}MB each</p>
                     <x-form.validation-message for="photos" />
                 </div>
             </details>

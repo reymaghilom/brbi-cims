@@ -26,7 +26,7 @@ class ResidenceBusinessCheckReportController extends Controller
         return view('reports.official.residence-business-check-batch', [
             'photoSections' => $photoSections,
             'pdfMode' => false,
-            'title' => 'Residence & Business Checks - '.$clientFolder->display_name,
+            'title' => $this->reportTitle($photoSections, $clientFolder, $personName),
             'clientFolder' => $clientFolder,
             'personParams' => ActivePersonResolver::queryParams($activePerson),
         ]);
@@ -44,7 +44,7 @@ class ResidenceBusinessCheckReportController extends Controller
         // "report it, fail cleanly" contract GenerateOfficialReport uses for the versioned
         // single-report download, rather than surfacing a raw framework error page for this
         // disposable one.
-        $bytes = $this->generateOrAbort(fn () => $exporter->generate($clientFolder, $photoSections, 'Residence & Business Checks - '.$clientFolder->display_name));
+        $bytes = $this->generateOrAbort(fn () => $exporter->generate($clientFolder, $photoSections, $this->reportTitle($photoSections, $clientFolder, $personName)));
         $filename = $this->batchFilename($clientFolder, $activePerson, count($photoSections), 'pdf');
         $this->logBatchExport($request, $clientFolder, $activePerson, count($photoSections), 'pdf');
 
@@ -65,7 +65,7 @@ class ResidenceBusinessCheckReportController extends Controller
         // Only ever used as the DOCX file's own invisible document-properties metadata — never
         // rendered onto the page itself (see ResidenceBusinessCheckBatchDocxExporter::generate()'s
         // own docblock).
-        $title = 'RESIDENCE & BUSINESS CHECKS';
+        $title = $this->reportTitle($photoSections, $clientFolder, $personName);
         // BuildsOfficialReportDocx::embedImage() already recovers from an unembeddable/corrupt
         // photo on its own (falls back to "Image unavailable" text, converts WebP to PNG first),
         // so this is only a last-resort net against anything else unexpected in PhpWord's writer.
@@ -105,6 +105,17 @@ class ResidenceBusinessCheckReportController extends Controller
         $client = Str::of($activePerson?->full_name ?? $clientFolder->display_name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
 
         return Str::limit("BRBI_{$clientFolder->folder_number}_{$client}_Residence-Business-Checks-Batch-{$count}", 180, '').'.'.$extension;
+    }
+
+    /** @param  array<int, array<string, mixed>>  $photoSections */
+    private function reportTitle(array $photoSections, ClientFolder $clientFolder, string $personName): string
+    {
+        $isResidenceOnly = collect($photoSections)
+            ->every(fn (array $photoSection) => ($photoSection['category'] ?? null) === 'Residence');
+
+        return $isResidenceOnly
+            ? 'Residence - '.$personName
+            : 'Residence & Business Checks - '.$clientFolder->display_name;
     }
 
     private function logBatchExport(BatchResidenceBusinessCheckRequest $request, ClientFolder $clientFolder, ?CoMaker $activePerson, int $count, string $format): void

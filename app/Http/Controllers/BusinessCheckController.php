@@ -156,6 +156,10 @@ class BusinessCheckController extends Controller
     {
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
         $personName = $activePerson?->full_name ?? $clientFolder->display_name;
+        $existingChecksByIncomeSource = $clientFolder->businessChecks()
+            ->where('co_maker_id', $activePerson?->id)
+            ->get(['id', 'income_source_id'])
+            ->keyBy('income_source_id');
 
         $businesses = $clientFolder->incomeSources()
             ->where('co_maker_id', $activePerson?->id)
@@ -168,6 +172,7 @@ class BusinessCheckController extends Controller
                 'id' => $source->id, 'name' => $source->displayName(),
                 'location' => $source->businessReport?->main_business_address,
                 'ci_date' => $source->businessReport?->start_date?->format('Y-m-d'),
+                'existing_check_id' => $existingChecksByIncomeSource->get($source->id)?->id,
                 // Drives the "Business Report available" / "Business Report not yet created"
                 // helper text — the same completion state already tracked for every income
                 // source, not a new concept invented for this selector.

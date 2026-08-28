@@ -14,8 +14,9 @@ table { width: 100%; border-collapse: collapse; table-layout: fixed; } th, td { 
 .business-check-page { padding: .55in; font-family: Calibri, Arial, Helvetica, DejaVu Sans, sans-serif; font-size: 12pt; line-height: 1; }
 .business-check-page .residence-header strong, .business-check-page .business-group-caption strong { font-weight: 400; }
 .business-check-page .business-group-caption { margin-top: 0; }
-.business-check-page .residence-header + .business-group-caption { margin-top: .18in; }
+.business-check-page .residence-header + .caption-photo-unit { margin-top: .18in; }
 .business-check-page .photo { margin: .04in 0 0; }
+.caption-photo-unit { page-break-inside: avoid; break-inside: avoid-page; }
 {{-- No fixed box height here (unlike .photo-frame above) — a forced height that doesn't match the
      actual scaled image leaves Dompdf's page-break-inside:avoid calculating against reserved-but-
      unused space, which is what let the heading and screenshot land on different pages even though

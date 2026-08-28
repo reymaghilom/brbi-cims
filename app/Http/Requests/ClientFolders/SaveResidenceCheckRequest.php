@@ -63,25 +63,31 @@ class SaveResidenceCheckRequest extends FormRequest
         $validator->after(function (Validator $validator) {
             $this->validatePhotoUploads($validator, 'photos');
             $this->validateMapScreenshotUpload($validator);
-            $this->validateAtLeastOneResidencePicture($validator);
+            $this->validateResidencePictureCount($validator);
         });
     }
 
     /**
-     * At least one Residence Picture must exist after this save — either a newly uploaded one, or
-     * an existing one that isn't being removed. A brand-new check has no existing photos to fall
-     * back on, so this always requires an upload there; an existing check only needs one if the CI
-     * is removing every photo it already had.
+     * The final intended count is all valid new uploads plus existing photos that were not marked
+     * for removal. A Residence Check must retain between one and ten pictures after the save.
      */
-    private function validateAtLeastOneResidencePicture(Validator $validator): void
+    private function validateResidencePictureCount(Validator $validator): void
     {
         $newPhotoCount = collect((array) $this->file('photos', []))
             ->filter(fn ($file) => $file instanceof UploadedFile && $file->isValid())
             ->count();
+        $finalPhotoCount = $newPhotoCount + $this->remainingExistingResidencePhotoCount();
 
-        if ($newPhotoCount + $this->remainingExistingResidencePhotoCount() < 1) {
+        if ($finalPhotoCount < 1) {
             $validator->errors()->add('photos', 'At least one residence picture is required.');
+        } elseif ($finalPhotoCount > 10) {
+            $validator->errors()->add('photos', 'A maximum of 10 residence pictures is allowed.');
         }
+    }
+
+    public function messages(): array
+    {
+        return ['photos.max' => 'A maximum of 10 residence pictures is allowed.'];
     }
 
     private function remainingExistingResidencePhotoCount(): int

@@ -76,7 +76,7 @@ class ClientMediaUploader
         $slug = $slug !== '' ? $slug : 'client';
         $mediaFolder = trim((string) preg_replace('#/+#', '/', $mediaFolder), '/');
 
-        return "clients/CF-{$folder->getKey()}-{$slug}/{$mediaFolder}";
+        return "clients/CF-{$folder->getKey()}-{$slug}/applicant/{$mediaFolder}";
     }
 
     /** Deletes a newly-uploaded orphan after a store() whose owning save failed elsewhere in the same transaction — local file or Cloudinary asset, whichever store() actually produced. */

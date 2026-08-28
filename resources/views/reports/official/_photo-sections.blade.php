@@ -6,22 +6,23 @@
             <section class="photo-page official-report-page photo-report-page">
                 {{-- "Subject: Residence Check" inside the info block below already identifies this
                      page — no separate "Residence Check" / "Residence DOCUMENTATION" heading here. --}}
-                @if($pageIndex > 0)<p class="report-subtitle">Continuation {{ $pageIndex+1 }}</p>@endif
-                <table class="residence-header"><tr>
-                    <td class="residence-header-left">
-                        <p><strong>{{ $photoSection['party_label'] }}:</strong> {{ $photoSection['subject'] }}</p>
-                        <p><strong>Location:</strong> {{ $photoSection['location'] ?: '—' }}</p>
-                        <p><strong>Subject:</strong> {{ $photoSection['heading'] }}</p>
-                        @if(filled($photoSection['remarks']))<p><strong>Remarks:</strong> {{ $photoSection['remarks'] }}</p>@endif
-                    </td>
-                    <td class="residence-header-right">
-                        <p><strong>Date:</strong> {{ $photoSection['ci_date'] }}</p>
-                        <p><strong>CI:</strong> {{ $photoSection['ci'] ?: '—' }}</p>
-                    </td>
-                </tr></table>
+                @if($pageIndex === 0)
+                    <table class="residence-header"><tr>
+                        <td class="residence-header-left">
+                            <p><strong>{{ $photoSection['party_label'] }}:</strong> {{ $photoSection['subject'] }}</p>
+                            <p><strong>Location:</strong> {{ $photoSection['location'] ?: '—' }}</p>
+                            <p><strong>Subject:</strong> {{ $photoSection['heading'] }}</p>
+                            @if(filled($photoSection['remarks']))<p><strong>Remarks:</strong> {{ $photoSection['remarks'] }}</p>@endif
+                        </td>
+                        <td class="residence-header-right">
+                            <p><strong>Date:</strong> {{ $photoSection['ci_date'] }}</p>
+                            <p><strong>CI:</strong> {{ $photoSection['ci'] ?: '—' }}</p>
+                        </td>
+                    </tr></table>
+                @endif
                 @forelse($items as $item)
                     @php($src = $pdfMode ? $item['image_path'] : ($item['web_url'] ?? $item['image_path']))
-                    <figure class="photo">
+                    <figure @class(['photo', 'caption-photo-unit' => filled($item['caption'])])>
                         @if($item['caption'])<figcaption><strong>{{ $item['caption'] }}</strong></figcaption>@endif
                         <div class="photo-frame photo-frame-plain">@if($src && $item['media_type']==='photo')<img src="{{ $src }}">@else<div class="placeholder">Image unavailable.</div>@endif</div>
                     </figure>
@@ -52,8 +53,11 @@
                 @if($pageIndex === 0)
                     @include('reports.official._business-check-header')
                 @endif
-                @if(filled($page['caption']))<p class="section business-group-caption"><strong>{{ $page['caption'] }}</strong></p>@endif
-                @foreach($page['photos'] as $item)
+                @foreach($page['photos'] as $photoIndex => $item)
+                    @if($photoIndex === 0 && filled($page['caption']))
+                        <div class="caption-photo-unit">
+                            <p class="section business-group-caption"><strong>{{ $page['caption'] }}</strong></p>
+                    @endif
                     @php($src = $pdfMode ? $item['image_path'] : ($item['web_url'] ?? $item['image_path']))
                     <figure class="photo">
                         {{-- Business Check's own compact header leaves noticeably more page space
@@ -63,6 +67,9 @@
                              Residence Check's own unrelated .photo-frame sizing above. --}}
                         <div class="photo-frame photo-frame-plain photo-frame-tall">@if($src && $item['media_type']==='photo')<img src="{{ $src }}">@else<div class="placeholder">Image unavailable.</div>@endif</div>
                     </figure>
+                    @if($photoIndex === 0 && filled($page['caption']))
+                        </div>
+                    @endif
                 @endforeach
             </section>
         @empty
@@ -80,12 +87,18 @@
         @php($competitorPages = $photoSection['competitor_photo_pages'] ?? [])
         @foreach($competitorPages as $pageIndex => $page)
             <section class="photo-page official-report-page photo-report-page business-check-page">
-                @if(filled($page['caption']))<p class="section business-group-caption"><strong>{{ $page['caption'] }}</strong></p>@endif
-                @foreach($page['photos'] as $item)
+                @foreach($page['photos'] as $photoIndex => $item)
+                    @if($photoIndex === 0 && filled($page['caption']))
+                        <div class="caption-photo-unit">
+                            <p class="section business-group-caption"><strong>{{ $page['caption'] }}</strong></p>
+                    @endif
                     @php($src = $pdfMode ? $item['image_path'] : ($item['web_url'] ?? $item['image_path']))
                     <figure class="photo">
                         <div class="photo-frame photo-frame-plain photo-frame-tall">@if($src && $item['media_type']==='photo')<img src="{{ $src }}">@else<div class="placeholder">Image unavailable.</div>@endif</div>
                     </figure>
+                    @if($photoIndex === 0 && filled($page['caption']))
+                        </div>
+                    @endif
                 @endforeach
                 @if($pageIndex === array_key_last($competitorPages) && !empty($photoSection['google_map']))
                     @include('reports.official._google-map-section', ['flowWithPrevious' => true, 'businessContext' => true])
