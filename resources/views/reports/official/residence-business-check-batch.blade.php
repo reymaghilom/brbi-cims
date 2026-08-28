@@ -11,6 +11,11 @@ table { width: 100%; border-collapse: collapse; table-layout: fixed; } th, td { 
 .photo-page:first-child { page-break-before: avoid; } .photo-page { page-break-before: always; } .photo { margin-top: .08in; page-break-inside: avoid; } .photo-frame { height: 4.55in; border: 1px solid #333; text-align: center; overflow: hidden; background: #fafafa; } .photo-frame img { max-width: 100%; max-height: 100%; } .placeholder { padding-top: 2in; color: #555; }
 .photo-frame-plain { border: none; background: none; box-shadow: none; }
 .residence-header td { border: none; vertical-align: top; padding: 0; } .residence-header-left { width: 66%; padding-right: .15in; } .residence-header-right { width: 34%; } .residence-header p { margin: 0 0 .05in; }
+.business-check-page { padding: .55in; font-family: Calibri, Arial, Helvetica, DejaVu Sans, sans-serif; font-size: 12pt; line-height: 1; }
+.business-check-page .residence-header strong, .business-check-page .business-group-caption strong { font-weight: 400; }
+.business-check-page .business-group-caption { margin-top: 0; }
+.business-check-page .residence-header + .business-group-caption { margin-top: .18in; }
+.business-check-page .photo { margin: .04in 0 0; }
 {{-- No fixed box height here (unlike .photo-frame above) — a forced height that doesn't match the
      actual scaled image leaves Dompdf's page-break-inside:avoid calculating against reserved-but-
      unused space, which is what let the heading and screenshot land on different pages even though
@@ -36,6 +41,7 @@ table { width: 100%; border-collapse: collapse; table-layout: fixed; } th, td { 
 @media screen {
     .report-sheet { width: auto; min-height: 0; margin: 0; padding: 0; background: transparent; box-shadow: none; counter-reset: brbi-page; }
     .official-report-page { width: 8.5in; min-height: 13in; margin: 0 auto 28px; padding: .45in; background: #fff; box-shadow: 0 10px 30px rgba(15,23,42,.18); box-sizing: border-box; position: relative; counter-increment: brbi-page; }
+    .official-report-page.business-check-page { padding: 1in; }
     .official-report-page::after { content: "Page " counter(brbi-page); position: absolute; right: .3in; bottom: .22in; font-size: 7.5pt; font-weight: 700; color: #6b7280; background: #f3f4f6; padding: 2px 8px; border-radius: 10px; }
 }
 @endunless

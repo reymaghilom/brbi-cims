@@ -48,7 +48,7 @@
         @php($businessPages = $photoSection['photo_pages'] ?? [])
         @php($hasAnyBusinessMedia = $businessPages !== [] || !empty($photoSection['competitor_photo_pages']))
         @forelse($businessPages as $pageIndex => $page)
-            <section class="photo-page official-report-page photo-report-page">
+            <section class="photo-page official-report-page photo-report-page business-check-page">
                 @if($pageIndex === 0)
                     @include('reports.official._business-check-header')
                 @endif
@@ -66,7 +66,7 @@
                 @endforeach
             </section>
         @empty
-            <section class="photo-page official-report-page photo-report-page">
+            <section class="photo-page official-report-page photo-report-page business-check-page">
                 @include('reports.official._business-check-header')
                 @unless($hasAnyBusinessMedia)
                     <div class="photo-frame section"><div class="placeholder">No media is linked to this section.</div></div>
@@ -77,8 +77,9 @@
              Business Photos and before Google Map (which must be this report's final section) —
              never mixed with Business Photos — same pre-chunked (<=2 photos each) page list as
              above, each on its own fresh page. --}}
-        @foreach(($photoSection['competitor_photo_pages'] ?? []) as $page)
-            <section class="photo-page official-report-page photo-report-page">
+        @php($competitorPages = $photoSection['competitor_photo_pages'] ?? [])
+        @foreach($competitorPages as $pageIndex => $page)
+            <section class="photo-page official-report-page photo-report-page business-check-page">
                 @if(filled($page['caption']))<p class="section business-group-caption"><strong>{{ $page['caption'] }}</strong></p>@endif
                 @foreach($page['photos'] as $item)
                     @php($src = $pdfMode ? $item['image_path'] : ($item['web_url'] ?? $item['image_path']))
@@ -86,10 +87,13 @@
                         <div class="photo-frame photo-frame-plain photo-frame-tall">@if($src && $item['media_type']==='photo')<img src="{{ $src }}">@else<div class="placeholder">Image unavailable.</div>@endif</div>
                     </figure>
                 @endforeach
+                @if($pageIndex === array_key_last($competitorPages) && !empty($photoSection['google_map']))
+                    @include('reports.official._google-map-section', ['flowWithPrevious' => true, 'businessContext' => true])
+                @endif
             </section>
         @endforeach
-        @if(!empty($photoSection['google_map']))
-            @include('reports.official._google-map-section')
+        @if($competitorPages === [] && !empty($photoSection['google_map']))
+            @include('reports.official._google-map-section', ['businessContext' => true])
         @endif
     @endif
 @endforeach

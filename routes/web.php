@@ -142,6 +142,7 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::post('/client-folders/{clientFolder}/residence-business-checks/batch/print', [ResidenceBusinessCheckReportController::class, 'batchPreview'])->name('client-folders.residence-business-checks.batch-print');
         Route::post('/client-folders/{clientFolder}/residence-business-checks/batch/export-pdf', [ResidenceBusinessCheckReportController::class, 'batchExportPdf'])->name('client-folders.residence-business-checks.batch-export-pdf');
         Route::post('/client-folders/{clientFolder}/residence-business-checks/batch/export-docx', [ResidenceBusinessCheckReportController::class, 'batchExportDocx'])->name('client-folders.residence-business-checks.batch-export-docx');
+        Route::post('/client-folders/{clientFolder}/residence-business-checks/batch/delete', [ResidenceBusinessReportController::class, 'batchDelete'])->name('client-folders.residence-business-checks.batch-delete');
         Route::get('/client-folders/{clientFolder}/residence-checks/create', [ResidenceCheckController::class, 'create'])->name('client-folders.residence-checks.create');
         Route::get('/client-folders/{clientFolder}/residence-checks/{residenceCheck}/edit', [ResidenceCheckController::class, 'edit'])->scopeBindings()->name('client-folders.residence-checks.edit');
         Route::get('/client-folders/{clientFolder}/residence-checks/{residenceCheck}/photos/{photo}', [ResidenceCheckController::class, 'photo'])->scopeBindings()->name('client-folders.residence-checks.photo');

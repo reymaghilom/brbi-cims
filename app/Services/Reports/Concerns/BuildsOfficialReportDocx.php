@@ -99,6 +99,11 @@ trait BuildsOfficialReportDocx
      */
     private const RESIDENCE_IMAGE_WIDTH_PT = 540;
 
+    /** Maximum Business Check image width from the authoritative business.docx reference. */
+    private const BUSINESS_CHECK_IMAGE_WIDTH_PT = 468;
+
+    private const BUSINESS_CHECK_WIDTH_DXA = 9360;
+
     /**
      * Set by a caller that renders no title page of its own (currently only
      * ResidenceBusinessCheckBatchDocxExporter) so the very first photo section's own leading
@@ -148,7 +153,7 @@ trait BuildsOfficialReportDocx
     private function businessPhotoPages(Section $section, array $photoSection): void
     {
         $this->pageBreakBeforeSection($section);
-        $this->residenceHeaderTable($section, $photoSection);
+        $this->residenceHeaderTable($section, $photoSection, self::BUSINESS_CHECK_WIDTH_DXA);
 
         $businessPages = $photoSection['photo_pages'] ?? [];
         $competitorPages = $photoSection['competitor_photo_pages'] ?? [];
@@ -175,7 +180,7 @@ trait BuildsOfficialReportDocx
             // it fits, and pushed to its own fresh page, heading and screenshot together, when it
             // doesn't. Either way it never renders before Competitors and never shares a page with
             // Business/Competitor Photos, since those always end with their own forced break.
-            $this->googleMapPage($section, $photoSection['google_map'], ['width' => self::RESIDENCE_IMAGE_WIDTH_PT, 'alignment' => 'center']);
+            $this->googleMapPage($section, $photoSection['google_map'], ['width' => self::BUSINESS_CHECK_IMAGE_WIDTH_PT, 'alignment' => 'center']);
         }
     }
 
@@ -192,14 +197,19 @@ trait BuildsOfficialReportDocx
                 $section->addPageBreak();
             }
             if (filled($page['caption'])) {
-                $section->addText($page['caption'], ['name' => 'Arial', 'size' => 9, 'bold' => true], ['spaceBefore' => 0, 'spaceAfter' => 40, 'keepNext' => true]);
+                $section->addText($page['caption'], ['name' => 'Calibri', 'size' => 12], [
+                    'indentation' => ['left' => intdiv(self::WIDTH_DXA - self::BUSINESS_CHECK_WIDTH_DXA, 2)],
+                    'spaceBefore' => 0,
+                    'spaceAfter' => 40,
+                    'keepNext' => true,
+                ]);
             }
             foreach ($page['photos'] as $photoIndex => $item) {
                 if ($photoIndex > 0) {
                     $section->addTextBreak(1);
                 }
                 $embedded = $item['image_path'] && $item['media_type'] === 'photo'
-                    && $this->embedImage($section, $item['image_path'], ['width' => self::RESIDENCE_IMAGE_WIDTH_PT, 'alignment' => 'center']);
+                    && $this->embedImage($section, $item['image_path'], ['width' => self::BUSINESS_CHECK_IMAGE_WIDTH_PT, 'alignment' => 'center']);
                 if (! $embedded) {
                     $section->addText('Media reference: '.$item['file_name'].' (image content unavailable)', ['name' => 'Arial', 'size' => 9, 'italic' => true, 'color' => '555555'], ['alignment' => 'center', 'spaceAfter' => 50]);
                 }
@@ -267,7 +277,7 @@ trait BuildsOfficialReportDocx
      * never sets this key) rides in parentheses right after the Subject line's "Business Check",
      * matching the reference's "Business Check (Retail Store)".
      */
-    private function residenceHeaderTable(Section $section, array $photoSection): void
+    private function residenceHeaderTable(Section $section, array $photoSection, int $widthDxa = self::WIDTH_DXA): void
     {
         // borderSize alone is NOT enough to make a PhpWord table genuinely borderless: its Word2007
         // writer has no way to emit OOXML's own w:val="none" for table borders (only Border, used
@@ -276,9 +286,13 @@ trait BuildsOfficialReportDocx
         // known to silently render that at a visible minimum hairline width regardless. Matching the
         // border color to the page's own white background is what actually guarantees it stays
         // invisible either way — the standard workaround for this specific PhpWord Table limitation.
-        $table = $section->addTable(['borderSize' => 0, 'borderColor' => 'FFFFFF', 'cellMarginTop' => 0, 'cellMarginBottom' => 0, 'cellMarginLeft' => 0, 'cellMarginRight' => 0, 'width' => self::WIDTH_DXA, 'unit' => 'dxa']);
+        $tableStyle = ['borderSize' => 0, 'borderColor' => 'FFFFFF', 'cellMarginTop' => 0, 'cellMarginBottom' => 0, 'cellMarginLeft' => 0, 'cellMarginRight' => 0, 'width' => $widthDxa, 'unit' => 'dxa'];
+        if ($widthDxa !== self::WIDTH_DXA) {
+            $tableStyle['alignment'] = 'center';
+        }
+        $table = $section->addTable($tableStyle);
         $table->addRow();
-        $left = $table->addCell(intdiv(self::WIDTH_DXA * 2, 3));
+        $left = $table->addCell(intdiv($widthDxa * 2, 3));
         $hasRemarks = filled($photoSection['remarks'] ?? null);
         $subjectLine = $photoSection['heading'].(filled($photoSection['business_name'] ?? null) ? ' ('.$photoSection['business_name'].')' : '');
         $this->residenceInfoLine($left, ($photoSection['party_label'] ?? 'Applicant Name'), $photoSection['subject']);
@@ -287,7 +301,7 @@ trait BuildsOfficialReportDocx
         if ($hasRemarks) {
             $this->residenceInfoLine($left, 'Remarks', $photoSection['remarks']);
         }
-        $right = $table->addCell(self::WIDTH_DXA - intdiv(self::WIDTH_DXA * 2, 3));
+        $right = $table->addCell($widthDxa - intdiv($widthDxa * 2, 3));
         $this->residenceInfoLine($right, 'Date', $photoSection['ci_date']);
         $this->residenceInfoLine($right, 'CI', $photoSection['ci'] ?: '—');
     }

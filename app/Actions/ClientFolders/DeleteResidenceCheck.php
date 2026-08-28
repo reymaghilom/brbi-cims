@@ -67,8 +67,10 @@ class DeleteResidenceCheck
             $this->completion->evaluate($folder, $coMakerId);
         });
 
-        foreach ($retiredCloudAssets as $asset) {
-            $this->mediaUploader->retireCloudAsset($asset['public_id'], $asset['resource_type'], $asset['delivery_type']);
-        }
+        DB::afterCommit(function () use ($retiredCloudAssets): void {
+            foreach ($retiredCloudAssets as $asset) {
+                $this->mediaUploader->retireCloudAsset($asset['public_id'], $asset['resource_type'], $asset['delivery_type']);
+            }
+        });
     }
 }

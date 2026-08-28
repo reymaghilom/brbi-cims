@@ -8,6 +8,7 @@
          now — only the Applicant flow gets the quick-add path and can use the form with zero
          saved businesses. --}}
     @php($isApplicant = ! ($activePerson ?? null))
+    @php($hasExistingApplicantBusinesses = $isApplicant && $businesses->isNotEmpty())
     <div class="mx-auto w-full max-w-5xl">
     <x-ui.breadcrumb :items="[
         ['label' => 'Client Folder', 'url' => route('client-folders.index')],
@@ -95,10 +96,13 @@
                                         @endforeach
                                     </select>
                                     @if($isApplicant)
-                                        <button type="button" class="inline-flex h-11 shrink-0 items-center gap-1 rounded-control border border-brand-primary bg-brand-soft px-3 text-sm font-semibold text-brand-primary transition hover:bg-brand-primary hover:text-white" data-modal-open="business-check-quick-add-dialog"><span aria-hidden="true">+</span> Add Business</button>
+                                        <button type="button" class="inline-flex h-11 shrink-0 items-center gap-1 rounded-control border border-brand-primary bg-brand-soft px-3 text-sm font-semibold text-brand-primary transition hover:bg-brand-primary hover:text-white disabled:cursor-not-allowed disabled:border-ui-border disabled:bg-surface-subtle disabled:text-text-muted" data-business-check-add-new data-modal-open="business-check-quick-add-dialog" @if($hasExistingApplicantBusinesses) disabled data-lock-when-existing="true" @endif><span aria-hidden="true">+</span> Add New Business</button>
                                     @endif
                                 </div>
-                                @if($isApplicant)
+                                @if($hasExistingApplicantBusinesses)
+                                    <p class="mt-1.5 text-xs text-text-muted">An existing business is already available. Please select it first to avoid duplicate entries.</p>
+                                    <button type="button" class="mt-1 text-xs font-semibold text-brand-primary underline-offset-2 hover:underline" data-business-check-add-another>Add another business</button>
+                                @elseif($isApplicant)
                                     <p class="mt-1.5 text-xs text-text-muted" data-business-source-helper>Select an existing Applicant business or add one if the Business Report has not been created yet.</p>
                                 @endif
                                 <x-form.validation-message for="income_source_id" />

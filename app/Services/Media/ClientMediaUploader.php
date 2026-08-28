@@ -4,6 +4,7 @@ namespace App\Services\Media;
 
 use App\Models\ClientFolder;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Str;
 
 /**
  * Single upload entry point for the four Cloudinary-migrated media kinds (Residence/Business
@@ -26,9 +27,12 @@ class ClientMediaUploader
      *     cloud_public_id: ?string, cloud_resource_type: ?string, cloud_delivery_type: ?string, cloud_format: ?string, cloud_width: ?int, cloud_height: ?int,
      * }
      */
-    public function store(ClientFolder $folder, UploadedFile $file, string $cloudFolder, string $preset = 'photo'): array
+    public function store(ClientFolder $folder, UploadedFile $file, string $cloudFolder, string $preset = 'photo', bool $organizeForApplicant = false): array
     {
         if ($this->cloud->enabled()) {
+            if ($organizeForApplicant) {
+                $cloudFolder = $this->applicantCloudFolder($folder, $cloudFolder);
+            }
             $stored = $this->cloud->store($file, $cloudFolder, $preset);
 
             return [
@@ -63,6 +67,16 @@ class ClientMediaUploader
             'cloud_width' => null,
             'cloud_height' => null,
         ];
+    }
+
+    /** Builds the new Applicant-only Cloudinary namespace; Co-Maker uploads never call this. */
+    private function applicantCloudFolder(ClientFolder $folder, string $mediaFolder): string
+    {
+        $slug = Str::slug((string) $folder->display_name);
+        $slug = $slug !== '' ? $slug : 'client';
+        $mediaFolder = trim((string) preg_replace('#/+#', '/', $mediaFolder), '/');
+
+        return "clients/CF-{$folder->getKey()}-{$slug}/{$mediaFolder}";
     }
 
     /** Deletes a newly-uploaded orphan after a store() whose owning save failed elsewhere in the same transaction — local file or Cloudinary asset, whichever store() actually produced. */

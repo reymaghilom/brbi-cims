@@ -10,7 +10,9 @@
      screenshot together, never split — onto a fresh page. Borderless (photo-frame-plain) for both
      categories — a bordered/shadowed card here would be the one remaining spot that didn't match
      the clean, borderless document style every other Business Check photo already uses. --}}
-<section class="official-report-page photo-report-page google-map-page">
+{{-- Business Check passes flowWithPrevious at the Competitors transition so this block can use
+     the remaining printable space. Other call sites retain the standalone preview-page wrapper. --}}
+<section class="{{ ($flowWithPrevious ?? false) ? 'google-map-page' : 'official-report-page photo-report-page google-map-page' }}{{ ($businessContext ?? false) && ! ($flowWithPrevious ?? false) ? ' business-check-page' : '' }}">
     <h1 class="report-title">Google Map</h1>
     @php($mapSrc = $pdfMode ? $photoSection['google_map']['image_path'] : $photoSection['google_map']['web_url'])
     <div class="photo"><div class="photo-frame map-photo-frame photo-frame-plain">

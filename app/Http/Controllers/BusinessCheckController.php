@@ -19,6 +19,7 @@ use App\Models\User;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CiParticipantService;
 use App\Services\Media\CloudinaryMediaStorage;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
@@ -54,13 +55,18 @@ class BusinessCheckController extends Controller
         return redirect()->route('client-folders.business-checks.edit', [$clientFolder, $businessCheck] + $personParams)->with('status', 'Contributors updated successfully.');
     }
 
-    public function store(SaveBusinessCheckRequest $request, ClientFolder $clientFolder, SaveBusinessCheck $save): RedirectResponse
+    public function store(SaveBusinessCheckRequest $request, ClientFolder $clientFolder, SaveBusinessCheck $save): RedirectResponse|JsonResponse
     {
         $personParams = ActivePersonResolver::queryParams(ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id')));
+        $wantsJson = $request->expectsJson();
 
         try {
             $check = $save->execute($request->user(), $clientFolder, $request->validated());
         } catch (NoChangesDetectedException $e) {
+            if ($wantsJson) {
+                return response()->json(['result' => 'no_change', 'message' => $e->getMessage(), 'status_type' => 'info']);
+            }
+
             return redirect()->route('client-folders.residence-business.edit', [$clientFolder] + $personParams)->with('status', $e->getMessage())->with('statusType', 'info');
         }
 
@@ -68,6 +74,15 @@ class BusinessCheckController extends Controller
         // set inside SaveBusinessCheck::execute() and left untouched by its closing ->refresh() —
         // reading it here distinguishes Add from Update without changing that action's save logic.
         $message = $check->wasRecentlyCreated ? 'Business Check saved successfully.' : 'Business Check updated successfully.';
+
+        if ($wantsJson) {
+            return response()->json([
+                'result' => 'success',
+                'message' => $message,
+                'status_type' => 'success',
+                'return_url' => route('client-folders.residence-business.edit', [$clientFolder] + $personParams),
+            ]);
+        }
 
         return redirect()->route('client-folders.residence-business.edit', [$clientFolder] + $personParams)->with('status', $message)->with('statusType', 'success');
     }

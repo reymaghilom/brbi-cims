@@ -41,6 +41,29 @@ class BusinessCheckReportMediaResolutionTest extends TestCase
         Storage::fake('local');
     }
 
+    public function test_business_check_actions_list_pdf_before_word(): void
+    {
+        [$ci, $folder, $source] = $this->setUpBusiness();
+        $check = $folder->businessChecks()->create([
+            'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan', 'ci_user_id' => $ci->id,
+        ]);
+
+        $html = $this->actingAs($ci)
+            ->get(route('client-folders.residence-business.edit', $folder))
+            ->assertOk()
+            ->getContent();
+
+        $printPosition = strpos($html, 'data-check-row-print data-check-kind="business" data-check-id="'.$check->id.'"');
+        $pdfPosition = strpos($html, 'data-check-row-pdf-submit data-check-kind="business" data-check-id="'.$check->id.'"');
+        $wordPosition = strpos($html, 'data-check-row-docx-submit data-check-kind="business" data-check-id="'.$check->id.'"');
+
+        $this->assertNotFalse($printPosition);
+        $this->assertNotFalse($pdfPosition);
+        $this->assertNotFalse($wordPosition);
+        $this->assertGreaterThan($printPosition, $pdfPosition);
+        $this->assertGreaterThan($pdfPosition, $wordPosition);
+    }
+
     /**
      * Direct test of the fixed method itself, using OfficialReportDataBuilder's own real output
      * shape (not a hand-built array) so this fails again if the two ever drift apart. Covers the
@@ -88,18 +111,23 @@ class BusinessCheckReportMediaResolutionTest extends TestCase
         $this->assertFileDoesNotExist($businessPhotoPaths[0]);
     }
 
-    public function test_the_docx_export_actually_embeds_a_cloud_backed_business_photo_instead_of_a_media_reference_fallback(): void
+    public function test_the_docx_export_embeds_all_cloud_backed_business_media_instead_of_fallback_text(): void
     {
         [$ci, $folder, $source] = $this->setUpBusiness();
         $check = $folder->businessChecks()->create([
             'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan', 'ci_user_id' => $ci->id,
+            'map_screenshot_file_name' => 'map.png', 'map_screenshot_cloud_public_id' => 'cloud-docx-map', 'map_screenshot_cloud_resource_type' => 'image', 'map_screenshot_cloud_delivery_type' => 'authenticated',
         ]);
-        $group = $check->photoGroups()->create(['caption' => null, 'sort_order' => 0]);
-        $check->photos()->create($this->cloudPhotoRow($ci->id, 'business', 'cloud-docx-photo') + ['business_check_photo_group_id' => $group->id]);
+        $defaultGroup = $check->photoGroups()->create(['caption' => null, 'sort_order' => 0]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'business', 'cloud-docx-photo') + ['business_check_photo_group_id' => $defaultGroup->id]);
+        $extraGroup = $check->photoGroups()->create(['caption' => 'Storage area', 'sort_order' => 1]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'business', 'cloud-docx-extra') + ['business_check_photo_group_id' => $extraGroup->id]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'competitor', 'cloud-docx-competitor'));
 
         $this->mock(CloudinaryMediaStorage::class, function ($mock) {
-            $mock->shouldReceive('deliveryUrl')->once()->with('cloud-docx-photo', 'authenticated')
-                ->andReturn('https://res.cloudinary.com/demo/image/authenticated/s--signed--/cloud-docx-photo.jpg');
+            $mock->shouldReceive('deliveryUrl')->times(4)->andReturnUsing(
+                fn (string $publicId) => "https://res.cloudinary.com/demo/image/authenticated/s--signed--/{$publicId}.jpg"
+            );
         });
         // A tiny but genuinely valid 1x1 GIF — embedImage() needs real, decodable image bytes, not
         // just any 200 response, to actually add it to the DOCX rather than falling through to the
@@ -126,23 +154,29 @@ class BusinessCheckReportMediaResolutionTest extends TestCase
         $zip->close();
         unlink($docxPath);
 
-        $this->assertNotEmpty($mediaEntries, 'The cloud-backed photo must actually be embedded as a media part in the DOCX.');
+        $this->assertCount(4, $mediaEntries, 'The default photo, additional-group photo, competitor photo, and map must all be embedded in the DOCX.');
         $this->assertStringNotContainsString('image content unavailable', $documentXml);
         $this->assertStringNotContainsString('Media reference', $documentXml);
+        $this->assertStringNotContainsString('Map image unavailable', $documentXml);
     }
 
-    public function test_the_pdf_export_succeeds_for_a_business_check_with_cloud_backed_media(): void
+    public function test_the_pdf_export_succeeds_with_all_cloud_backed_business_media(): void
     {
         [$ci, $folder, $source] = $this->setUpBusiness();
         $check = $folder->businessChecks()->create([
             'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan', 'ci_user_id' => $ci->id,
+            'map_screenshot_file_name' => 'map.png', 'map_screenshot_cloud_public_id' => 'cloud-pdf-map', 'map_screenshot_cloud_resource_type' => 'image', 'map_screenshot_cloud_delivery_type' => 'authenticated',
         ]);
-        $group = $check->photoGroups()->create(['caption' => null, 'sort_order' => 0]);
-        $check->photos()->create($this->cloudPhotoRow($ci->id, 'business', 'cloud-pdf-photo') + ['business_check_photo_group_id' => $group->id]);
+        $defaultGroup = $check->photoGroups()->create(['caption' => null, 'sort_order' => 0]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'business', 'cloud-pdf-photo') + ['business_check_photo_group_id' => $defaultGroup->id]);
+        $extraGroup = $check->photoGroups()->create(['caption' => 'Storage area', 'sort_order' => 1]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'business', 'cloud-pdf-extra') + ['business_check_photo_group_id' => $extraGroup->id]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'competitor', 'cloud-pdf-competitor'));
 
         $this->mock(CloudinaryMediaStorage::class, function ($mock) {
-            $mock->shouldReceive('deliveryUrl')->once()->with('cloud-pdf-photo', 'authenticated')
-                ->andReturn('https://res.cloudinary.com/demo/image/authenticated/s--signed--/cloud-pdf-photo.jpg');
+            $mock->shouldReceive('deliveryUrl')->times(4)->andReturnUsing(
+                fn (string $publicId) => "https://res.cloudinary.com/demo/image/authenticated/s--signed--/{$publicId}.jpg"
+            );
         });
         $pixelGif = base64_decode('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==');
         Http::fake(['res.cloudinary.com/*' => Http::response($pixelGif, 200)]);

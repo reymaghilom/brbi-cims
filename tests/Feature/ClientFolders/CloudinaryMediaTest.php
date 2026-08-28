@@ -11,6 +11,7 @@ use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
@@ -38,7 +39,7 @@ class CloudinaryMediaTest extends TestCase
         $folder = $this->residenceFolder($ci);
         $this->mockCloud()
             ->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-public-id-1'));
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
@@ -57,10 +58,10 @@ class CloudinaryMediaTest extends TestCase
         $folder = $this->residenceFolder($ci);
         $this->mockCloud()
             ->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo'));
         $this->mockedCloud->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/map-screenshots', 'map_screenshot')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/map-screenshots'), 'map_screenshot')
             ->andReturn($this->fakeCloudAsset('residence-map-1'));
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
@@ -82,10 +83,10 @@ class CloudinaryMediaTest extends TestCase
         $source = $this->businessSource($folder, 'Sari-Sari Store', 'Poblacion, San Miguel, Bulacan');
         $this->mockCloud()
             ->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'business/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'business/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('business-photo-1'));
         $this->mockedCloud->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'business/map-screenshots', 'map_screenshot')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'business/map-screenshots'), 'map_screenshot')
             ->andReturn($this->fakeCloudAsset('business-map-1'));
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
@@ -97,6 +98,28 @@ class CloudinaryMediaTest extends TestCase
         $check = $folder->businessChecks()->firstOrFail();
         $this->assertSame('business-map-1', $check->map_screenshot_cloud_public_id);
         $this->assertSame('business-photo-1', $check->photos()->firstOrFail()->cloud_public_id);
+    }
+
+    public function test_new_co_maker_business_picture_keeps_the_legacy_cloudinary_folder(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->residenceFolder($ci);
+        $coMaker = $folder->coMakers()->create(['full_name' => 'Maria Santos', 'first_name' => 'Maria', 'last_name' => 'Santos']);
+        $source = $this->businessSource($folder, 'Maria Store', 'San Miguel, Bulacan');
+        $source->update(['co_maker_id' => $coMaker->id]);
+        $this->mockCloud()->shouldReceive('store')->once()
+            ->with(\Mockery::type(UploadedFile::class), 'business/photos', 'photo')
+            ->andReturn($this->fakeCloudAsset('co-maker-business-photo'));
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'co_maker_id' => $coMaker->id,
+            'income_source_id' => $source->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'San Miguel, Bulacan',
+            'business_photos' => [UploadedFile::fake()->image('Store.jpg', 900, 700)->size(500)],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame('co-maker-business-photo', $folder->businessChecks()->where('co_maker_id', $coMaker->id)->firstOrFail()->photos()->firstOrFail()->cloud_public_id);
     }
 
     public function test_residence_picture_web_delivery_redirects_to_the_cloudinary_secure_url(): void
@@ -180,7 +203,7 @@ class CloudinaryMediaTest extends TestCase
         $folder = $this->residenceFolder($ci);
         $this->mockCloud()
             ->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->ordered()
             ->andReturn($this->fakeCloudAsset('orphan-to-clean-up'));
         $this->mockedCloud->shouldReceive('store')->once()
@@ -360,10 +383,10 @@ class CloudinaryMediaTest extends TestCase
         $folder = $this->residenceFolder($ci);
         $this->mockCloud()
             ->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo'));
         $this->mockedCloud->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/map-screenshots', 'map_screenshot')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/map-screenshots'), 'map_screenshot')
             ->andReturn($this->fakeCloudAsset('original-map'));
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
@@ -375,7 +398,7 @@ class CloudinaryMediaTest extends TestCase
         // The replacement upload itself fails — the old asset must never be destroyed (it is only
         // ever retired AFTER a successful commit) and the check must keep pointing at it.
         $this->mockedCloud->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/map-screenshots', 'map_screenshot')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/map-screenshots'), 'map_screenshot')
             ->andThrow(new \RuntimeException('Cloudinary upload failed for the replacement map screenshot.'));
         $this->mockedCloud->shouldNotReceive('destroy');
 
@@ -385,6 +408,99 @@ class CloudinaryMediaTest extends TestCase
 
         $check->refresh();
         $this->assertSame('original-map', $check->map_screenshot_cloud_public_id);
+    }
+
+    public function test_business_update_retires_each_exact_removed_media_kind_only_after_the_save_commits(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
+        $source = $this->businessSource($folder, 'Sari-Sari Store', 'Poblacion, San Miguel, Bulacan');
+        $this->mockCloud()->shouldReceive('store')->times(5)->andReturn(
+            $this->fakeCloudAsset('group-photo'),
+            $this->fakeCloudAsset('business-map'),
+            $this->fakeCloudAsset('keep-business-photo'),
+            $this->fakeCloudAsset('remove-business-photo'),
+            $this->fakeCloudAsset('competitor-photo'),
+        );
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'income_source_id' => $source->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'Poblacion, San Miguel, Bulacan',
+            'business_photos' => [
+                UploadedFile::fake()->image('Keep.jpg', 900, 700)->size(500),
+                UploadedFile::fake()->image('Remove.jpg', 900, 700)->size(500),
+            ],
+            'photo_groups' => [[
+                'caption' => 'Rear area',
+                'photos' => [UploadedFile::fake()->image('Group.jpg', 900, 700)->size(500)],
+            ]],
+            'competitor_photos' => [UploadedFile::fake()->image('Competitor.jpg', 900, 700)->size(500)],
+            'map_screenshot' => UploadedFile::fake()->image('Map.png', 900, 700)->size(500),
+        ])->assertSessionHasNoErrors();
+
+        $check = $folder->businessChecks()->firstOrFail();
+        $group = $check->photoGroups()->firstOrFail();
+        $groupPhoto = $check->photos()->where('cloud_public_id', 'group-photo')->firstOrFail();
+        $businessPhoto = $check->photos()->where('cloud_public_id', 'remove-business-photo')->firstOrFail();
+        $competitorPhoto = $check->photos()->where('cloud_public_id', 'competitor-photo')->firstOrFail();
+
+        foreach (['group-photo', 'business-map', 'remove-business-photo', 'competitor-photo'] as $publicId) {
+            $this->mockedCloud->shouldReceive('destroy')->once()->with($publicId, 'image', 'authenticated');
+        }
+        $this->mockedCloud->shouldNotReceive('destroy')->with('keep-business-photo', \Mockery::any(), \Mockery::any());
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'check_id' => $check->id,
+            'income_source_id' => $source->id,
+            'ci_date' => $check->ci_date->toDateString(),
+            'location' => $check->location,
+            'removed_photo_ids' => [$businessPhoto->id, $competitorPhoto->id],
+            'photo_groups' => [[
+                'id' => $group->id,
+                'caption' => $group->caption,
+                'removed_photo_ids' => [$groupPhoto->id],
+            ]],
+            'remove_map_screenshot' => '1',
+        ])->assertSessionHasNoErrors();
+
+        $check->refresh();
+        $this->assertSame(['keep-business-photo'], $check->photos()->pluck('cloud_public_id')->all());
+        $this->assertFalse($check->hasMapScreenshot());
+    }
+
+    public function test_failed_business_update_does_not_retire_the_photo_marked_for_removal(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
+        $source = $this->businessSource($folder, 'Sari-Sari Store', 'Poblacion, San Miguel, Bulacan');
+        $this->mockCloud()->shouldReceive('store')->twice()->andReturn(
+            $this->fakeCloudAsset('keep-business-photo'),
+            $this->fakeCloudAsset('still-here'),
+        );
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'income_source_id' => $source->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'Poblacion, San Miguel, Bulacan',
+            'business_photos' => [
+                UploadedFile::fake()->image('Keep.jpg', 900, 700)->size(500),
+                UploadedFile::fake()->image('Remove.jpg', 900, 700)->size(500),
+            ],
+        ])->assertSessionHasNoErrors();
+        $check = $folder->businessChecks()->firstOrFail();
+        $photo = $check->photos()->where('cloud_public_id', 'still-here')->firstOrFail();
+        $this->mockedCloud->shouldNotReceive('destroy');
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'check_id' => $check->id,
+            'income_source_id' => $source->id,
+            'ci_date' => $check->ci_date->toDateString(),
+            'location' => $check->location,
+            'removed_photo_ids' => [$photo->id],
+            'expected_updated_at' => now()->subDay()->toISOString(),
+        ])->assertSessionHasErrors('expected_updated_at');
+
+        $this->assertDatabaseHas('business_check_photos', ['id' => $photo->id, 'cloud_public_id' => 'still-here']);
     }
 
     /** Binds a mock CloudinaryMediaStorage (enabled() => true by default) and remembers it on $this->mockedCloud for further expectations. */
@@ -423,6 +539,13 @@ class CloudinaryMediaTest extends TestCase
         $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => now()->toDateString()]);
 
         return $folder;
+    }
+
+    private function applicantCloudFolder(ClientFolder $folder, string $mediaFolder): string
+    {
+        $slug = Str::slug((string) $folder->display_name) ?: 'client';
+
+        return "clients/CF-{$folder->id}-{$slug}/{$mediaFolder}";
     }
 
     private function businessSource(ClientFolder $folder, string $name, string $address): IncomeSource

@@ -239,7 +239,7 @@ class SaveResidenceCheck
                             $this->mediaUploader->deleteLocal($check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
                         }
                     }
-                    $stored = $this->mediaUploader->store($folder, $data['map_screenshot'], 'residence/map-screenshots', 'map_screenshot');
+                    $stored = $this->mediaUploader->store($folder, $data['map_screenshot'], 'residence/map-screenshots', 'map_screenshot', $check->co_maker_id === null);
                     $storedUploads[] = $stored;
                     $check->fill([
                         'map_screenshot_file_name' => $stored['file_name'],
@@ -260,7 +260,7 @@ class SaveResidenceCheck
                 $photosUploaded = 0;
                 $nextSortOrder = ((int) $check->photos()->max('sort_order')) + 1;
                 foreach ($data['photos'] ?? [] as $file) {
-                    $stored = $this->mediaUploader->store($folder, $file, 'residence/photos', 'photo');
+                    $stored = $this->mediaUploader->store($folder, $file, 'residence/photos', 'photo', $check->co_maker_id === null);
                     $storedUploads[] = $stored;
                     $check->photos()->create([
                         'file_name' => $stored['file_name'],

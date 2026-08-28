@@ -391,6 +391,35 @@ document.addEventListener('submit', async (event) => {
     }
 });
 
+const contextMenuClosing = new WeakMap();
+const closeContextMenu = (menu, { restoreFocus = false } = {}) => {
+    if (!(menu instanceof HTMLDetailsElement) || !menu.open) return;
+    const panel = menu.querySelector('[data-context-menu-panel]');
+    const summary = menu.querySelector(':scope > summary');
+    if (!panel || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        menu.removeAttribute('open');
+        if (restoreFocus) summary?.focus();
+        return;
+    }
+
+    panel.dataset.state = 'closing';
+    const finish = () => {
+        if (contextMenuClosing.get(menu) !== finish) return;
+        contextMenuClosing.delete(menu);
+        menu.removeAttribute('open');
+        if (restoreFocus) summary?.focus();
+    };
+    contextMenuClosing.set(menu, finish);
+    window.requestAnimationFrame(() => {
+        const animations = panel.getAnimations();
+        if (animations.length === 0) {
+            finish();
+            return;
+        }
+        Promise.allSettled(animations.map((animation) => animation.finished)).then(finish);
+    });
+};
+
 // [data-context-menu]'s panel is CSS `position: absolute` by default, which any ancestor with
 // non-visible overflow (e.g. the Saved Businesses table's `overflow-x-auto` wrapper) clips or
 // folds back into scrollable content instead of letting it float freely. On open, switch it to
@@ -406,6 +435,8 @@ document.addEventListener('toggle', (event) => {
     if (!panel || !summary) return;
 
     if (!details.open) {
+        contextMenuClosing.delete(details);
+        delete panel.dataset.state;
         panel.style.removeProperty('position');
         panel.style.removeProperty('top');
         panel.style.removeProperty('left');
@@ -450,23 +481,38 @@ document.addEventListener('toggle', (event) => {
     panel.style.left = `${left - origin.left}px`;
     panel.style.top = `${top - origin.top}px`;
     panel.style.marginTop = '0';
+    panel.dataset.state = 'opening';
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        panel.dataset.state = 'open';
+        return;
+    }
+    window.requestAnimationFrame(() => {
+        if (details.open && panel.dataset.state === 'opening') panel.dataset.state = 'open';
+    });
 }, true);
 
 window.addEventListener('scroll', () => {
-    document.querySelectorAll('details[data-context-menu][open]').forEach((menu) => menu.removeAttribute('open'));
+    document.querySelectorAll('details[data-context-menu][open]').forEach((menu) => closeContextMenu(menu));
 }, true);
 window.addEventListener('resize', () => {
-    document.querySelectorAll('details[data-context-menu][open]').forEach((menu) => menu.removeAttribute('open'));
+    document.querySelectorAll('details[data-context-menu][open]').forEach((menu) => closeContextMenu(menu));
 });
 
 document.addEventListener('click', (event) => {
+    const contextMenuSummary = event.target.closest('details[data-context-menu] > summary');
+    if (contextMenuSummary?.parentElement?.open) {
+        event.preventDefault();
+        closeContextMenu(contextMenuSummary.parentElement);
+        return;
+    }
+
     const activeContextMenu = event.target.closest('[data-context-menu]');
     document.querySelectorAll('details[data-context-menu][open]').forEach((menu) => {
-        if (menu !== activeContextMenu) menu.removeAttribute('open');
+        if (menu !== activeContextMenu) closeContextMenu(menu);
     });
 
     const contextMenuItem = event.target.closest('[data-context-menu] [role="menuitem"]');
-    if (contextMenuItem) contextMenuItem.closest('details[data-context-menu]')?.removeAttribute('open');
+    if (contextMenuItem) closeContextMenu(contextMenuItem.closest('details[data-context-menu]'));
 
     const menuTrigger = event.target.closest('[data-folder-menu-trigger]');
     if (menuTrigger) {
@@ -727,8 +773,8 @@ window.addEventListener('message', (event) => {
     // refreshing the list behind it is the whole point, so there's no reason to wait for a manual
     // close first. A toast shown right here, a moment before this same reload navigates away,
     // would just be thrown away with the rest of the DOM — so whenever the sender includes one
-    // (both Business Check's redirect-based save, via [data-check-saved-notify] below, and
-    // Residence Check's own AJAX save, straight from its XHR JSON response), it's stashed in
+    // (both Business and Residence Check AJAX saves, straight from their XHR JSON responses),
+    // it's stashed in
     // sessionStorage and picked up by the page-load check further down, after the reload actually
     // lands. Residence Check deliberately does NOT rely on session()->flash() surviving until that
     // reload instead — an unrelated request landing in between (e.g. the editing-presence
@@ -1403,7 +1449,7 @@ document.addEventListener('toggle', (event) => {
     if (!menu.open) return;
 
     document.querySelectorAll('details[data-context-menu][open]').forEach((otherMenu) => {
-        if (otherMenu !== menu) otherMenu.removeAttribute('open');
+        if (otherMenu !== menu) closeContextMenu(otherMenu);
     });
 }, true);
 
@@ -1444,8 +1490,7 @@ document.addEventListener('keydown', (event) => {
 
     if (event.key === 'Escape') {
         document.querySelectorAll('details[data-context-menu][open]').forEach((menu) => {
-            menu.removeAttribute('open');
-            menu.querySelector(':scope > summary')?.focus();
+            closeContextMenu(menu, { restoreFocus: true });
         });
         closeFolderMenus({ restoreFocus: true });
         document.querySelectorAll('[data-folder-browser]').forEach(closeFolderPreview);
@@ -2176,10 +2221,12 @@ document.querySelectorAll('[data-business-sort-table], [data-check-sort-table]')
     const downloadTrigger = panel.querySelector('[data-check-download-selected-trigger]');
     const selectAllButton = panel.querySelector('[data-check-select-all]');
     const clearSelectionButton = panel.querySelector('[data-check-clear-selection]');
+    const deleteSelectedButton = panel.querySelector('[data-check-delete-selected]');
 
     const printForm = document.getElementById('check-batch-print-form');
     const pdfForm = document.getElementById('check-batch-export-pdf-form');
     const docxForm = document.getElementById('check-batch-export-docx-form');
+    const deleteForm = document.getElementById('check-batch-delete-form');
 
     const allCheckboxes = () => [...document.querySelectorAll('[data-residence-check-select], [data-business-check-select]')];
     const selectedResidenceChecks = () => [...document.querySelectorAll('[data-residence-check-select]:checked')];
@@ -2199,6 +2246,7 @@ document.querySelectorAll('[data-business-sort-table], [data-check-sort-table]')
         if (countLabel) countLabel.textContent = String(count);
         if (summaryCount) summaryCount.textContent = String(count);
         if (printButton) printButton.toggleAttribute('disabled', count === 0);
+        if (deleteSelectedButton) deleteSelectedButton.toggleAttribute('disabled', count === 0);
         setDownloadEnabled(count > 0);
     };
 
@@ -2249,6 +2297,14 @@ document.querySelectorAll('[data-business-sort-table], [data-check-sort-table]')
     clearSelectionButton?.addEventListener('click', () => {
         allCheckboxes().forEach((checkbox) => { checkbox.checked = false; });
         refresh();
+    });
+    deleteSelectedButton?.addEventListener('click', () => {
+        const count = selectedCount();
+        if (count === 0 || !deleteForm) return;
+        if (!window.confirm(`Delete ${count} selected reports? This action cannot be undone.`)) return;
+        syncBatchForm(deleteForm);
+        deleteSelectedButton.disabled = true;
+        deleteForm.submit();
     });
 
     printButton?.addEventListener('click', () => {
@@ -2317,9 +2373,19 @@ document.addEventListener('change', (event) => {
     helper.classList.toggle('text-text-muted', !complete);
 });
 
-// "+ Add Business" quick-create (Applicant only): creates the shared IncomeSource/BusinessReport
+// "Add New Business" quick-create: creates the shared IncomeSource/BusinessReport
 // shell via a small AJAX endpoint, then appends+selects the new option locally — no page reload,
 // and the Business Check form itself is never auto-submitted by this action.
+document.querySelector('[data-business-check-add-another]')?.addEventListener('click', () => {
+    const confirmed = window.confirm('Only add another business if it is a genuinely separate business or income source. Do you want to continue?');
+    if (!confirmed) return;
+
+    const addButton = document.querySelector('[data-business-check-add-new]');
+    if (!(addButton instanceof HTMLButtonElement)) return;
+    addButton.disabled = false;
+    addButton.click();
+});
+
 document.querySelector('[data-quick-add-business-confirm]')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-quick-add-business-confirm]');
     const dialog = button.closest('dialog');
@@ -2387,6 +2453,8 @@ document.querySelector('[data-quick-add-business-confirm]')?.addEventListener('c
 document.querySelector('[data-quick-add-business-dialog]')?.addEventListener('close', (event) => {
     const errorBox = event.target.querySelector('[data-quick-add-business-error]');
     if (errorBox) errorBox.hidden = true;
+    const addButton = document.querySelector('[data-business-check-add-new][data-lock-when-existing="true"]');
+    if (addButton instanceof HTMLButtonElement) addButton.disabled = true;
 });
 
 // Direct multi-file photo upload widget (Residence/Business/Competitor Photos): keeps newly
@@ -2812,39 +2880,101 @@ document.querySelectorAll('[data-business-check-photo-error]').forEach((node) =>
     showToast(node.dataset.businessCheckPhotoError, 'error');
 });
 
-// Business Check Save/Update: a plain form POST + server redirect (never converted to XHR — see
-// Residence Check's own submit handler above for why that's a bigger, unrelated change), so this
-// only ever needs to cover the visual gap for however long that round trip takes. Browsers don't
-// dispatch 'submit' at all when native required-field validation blocks it, so a loading state
-// here can never show for that case; a real server-side failure instead redirects back to a fresh,
-// un-disabled copy of this same form, which is what "restores" the button — nothing to reset by
-// hand either way.
+// Business Check Save/Update uses the same response-driven modal flow as Residence Check. Every
+// response that keeps this form open resets the submitting guard and button; only a successful
+// response asks the parent to close the modal and refresh the listing.
 document.querySelectorAll('[data-business-check-form]').forEach((form) => {
-    form.addEventListener('submit', () => {
-        const submitButton = document.querySelector('[data-business-check-submit]');
-        if (!(submitButton instanceof HTMLButtonElement) || submitButton.disabled) return;
+    if (form.dataset.businessCheckSubmitReady) return;
+    form.dataset.businessCheckSubmitReady = 'true';
+
+    const submitButton = document.querySelector('[data-business-check-submit]');
+    if (!(submitButton instanceof HTMLButtonElement)) return;
+    const submitText = submitButton.querySelector('[data-business-check-submit-text]');
+    const submitLabel = submitText?.textContent ?? 'Save Business Check';
+
+    const setButtonBusy = () => {
         submitButton.disabled = true;
+        submitButton.setAttribute('aria-busy', 'true');
         submitButton.querySelector('[data-business-check-submit-icon]')?.classList.add('hidden');
         submitButton.querySelector('[data-business-check-submit-spinner]')?.classList.remove('hidden');
-        const text = submitButton.querySelector('[data-business-check-submit-text]');
-        if (text) text.textContent = 'Saving…';
+        if (submitText) submitText.textContent = 'Saving…';
+    };
+    const resetButton = () => {
+        delete form.dataset.submitting;
+        submitButton.disabled = false;
+        submitButton.removeAttribute('aria-busy');
+        submitButton.querySelector('[data-business-check-submit-icon]')?.classList.remove('hidden');
+        submitButton.querySelector('[data-business-check-submit-spinner]')?.classList.add('hidden');
+        if (submitText) submitText.textContent = submitLabel;
+        document.querySelector('[data-business-check-save-status]')?.classList.add('hidden');
+    };
+
+    form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        if (form.dataset.submitting === 'true' || submitButton.disabled) return;
+        form.dataset.submitting = 'true';
 
         const hasNewPhotos = (form.querySelector('input[name="business_photos[]"]')?.files?.length ?? 0) > 0
             || (form.querySelector('input[name="competitor_photos[]"]')?.files?.length ?? 0) > 0
             || [...form.querySelectorAll('input[data-photo-upload-input][name^="photo_groups"]')].some((input) => (input.files?.length ?? 0) > 0);
         const hasNewMapScreenshot = (form.querySelector('input[name="map_screenshot"]')?.files?.length ?? 0) > 0;
 
+        setButtonBusy();
+
         const status = document.querySelector('[data-business-check-save-status]');
         const statusText = status?.querySelector('[data-business-check-save-status-text]');
         const statusHelper = status?.querySelector('[data-business-check-save-status-helper]');
-        if (!status || !statusText) return;
-        status.classList.remove('hidden');
-        if (hasNewPhotos || hasNewMapScreenshot) {
-            statusText.textContent = 'Uploading media to cloud storage…';
-            if (statusHelper) statusHelper.hidden = false;
-        } else {
-            statusText.textContent = 'Saving Business Check…';
-            if (statusHelper) statusHelper.hidden = true;
+        if (status && statusText) {
+            status.classList.remove('hidden');
+            if (hasNewPhotos || hasNewMapScreenshot) {
+                statusText.textContent = 'Uploading media to cloud storage…';
+                if (statusHelper) statusHelper.hidden = false;
+            } else {
+                statusText.textContent = 'Saving Business Check…';
+                if (statusHelper) statusHelper.hidden = true;
+            }
         }
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', form.action);
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+
+        xhr.addEventListener('load', () => {
+            let payload = null;
+            try {
+                payload = JSON.parse(xhr.responseText);
+            } catch {
+                payload = null;
+            }
+
+            resetButton();
+            if (xhr.status === 200 && payload?.result === 'success') {
+                if (window.parent !== window) {
+                    window.parent.postMessage({ type: 'brbi:check-saved', returnUrl: payload.return_url, message: payload.message, statusType: payload.status_type }, window.location.origin);
+                } else {
+                    window.location.assign(payload.return_url);
+                }
+                return;
+            }
+            if (xhr.status === 200 && payload?.result === 'no_change') {
+                showToast(payload.message, 'info');
+                return;
+            }
+            if (xhr.status === 422 && payload?.errors) {
+                const firstMessage = Object.values(payload.errors).flat()[0];
+                showToast(firstMessage || 'Please correct the highlighted fields. No changes were saved.', 'error');
+                return;
+            }
+            showToast('Business Check could not be saved. Please check your connection and try again.', 'error');
+        });
+
+        xhr.addEventListener('error', () => {
+            resetButton();
+            showToast('Business Check could not be saved. Please check your connection and try again.', 'error');
+        });
+
+        xhr.addEventListener('abort', resetButton);
+        xhr.send(new FormData(form));
     });
 });

@@ -138,7 +138,7 @@ class SaveBusinessCheck
                             $this->mediaUploader->deleteLocal($check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
                         }
                     }
-                    $stored = $this->mediaUploader->store($folder, $data['map_screenshot'], 'business/map-screenshots', 'map_screenshot');
+                    $stored = $this->mediaUploader->store($folder, $data['map_screenshot'], 'business/map-screenshots', 'map_screenshot', $check->co_maker_id === null);
                     $storedUploads[] = $stored;
                     $check->fill([
                         'map_screenshot_file_name' => $stored['file_name'],
@@ -223,7 +223,7 @@ class SaveBusinessCheck
         $nextSortOrder = ((int) $scope->max('sort_order')) + 1;
         $uploaded = 0;
         foreach ($files as $file) {
-            $stored = $this->mediaUploader->store($folder, $file, 'business/photos', 'photo');
+            $stored = $this->mediaUploader->store($folder, $file, 'business/photos', 'photo', $check->co_maker_id === null);
             $storedUploads[] = $stored;
             $check->photos()->create([
                 'category' => $category,

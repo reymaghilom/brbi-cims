@@ -69,13 +69,6 @@ class ReportMediaResolver
                 unset($page);
             }
 
-            if (array_key_exists('competitor_photos', $section)) {
-                foreach ($section['competitor_photos'] as &$item) {
-                    $item['image_path'] = $this->resolveItem($item);
-                }
-                unset($item);
-            }
-
             if (! empty($section['google_map'])) {
                 $section['google_map']['image_path'] = $this->resolveItem($section['google_map']);
             }
