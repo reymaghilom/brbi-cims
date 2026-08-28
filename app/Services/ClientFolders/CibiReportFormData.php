@@ -45,9 +45,17 @@ class CibiReportFormData
             'institutions_declared' => $clientFolder->cibiReport?->creditChecks->where('is_declared', true)->count() ?? 0,
             'loan_records_found' => $clientFolder->cibiReport?->loanRecords->whereNotNull('institution')->count() ?? 0,
         ];
+        $defaultStartDate = $clientFolder->cibiReport?->start_date?->format('Y-m-d');
+        if (! $activePerson && ! $clientFolder->cibiReport && blank($defaultStartDate)) {
+            $defaultStartDate = $clientFolder->residenceChecks()
+                ->whereNull('co_maker_id')
+                ->latest('id')
+                ->first(['ci_date'])?->ci_date?->format('Y-m-d');
+        }
 
         return [
             'report' => $clientFolder->cibiReport,
+            'defaultStartDate' => $defaultStartDate,
             'personalSnapshot' => $personalSnapshot,
             'summaryTotals' => $summaryTotals,
             'partyTypes' => PartyType::cases(),
@@ -98,12 +106,20 @@ class CibiReportFormData
             return filled($value) ? $value : null;
         };
 
+        $presentAddress = $formatAddress($addresses->get('present'));
+        if (! $clientFolder->cibiReport && blank($presentAddress)) {
+            $presentAddress = $clientFolder->residenceChecks()
+                ->whereNull('co_maker_id')
+                ->latest('id')
+                ->value('location');
+        }
+
         return [
             'name' => $clientFolder->display_name,
             'age' => $information?->birth_date?->age,
             'spouse_name' => $information?->spouse_name,
             'spouse_age' => null,
-            'present_address' => $formatAddress($addresses->get('present')),
+            'present_address' => $presentAddress,
             'length_of_stay_months' => $information?->length_of_stay_months,
             'residence_status' => $information?->home_ownership,
             'residence_status_from' => null,

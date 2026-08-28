@@ -9,7 +9,7 @@
             <p class="cibi-readonly-field uppercase">{{ $report?->investigator?->full_name ?? auth()->user()?->full_name ?? '—' }}</p>
         </div>
         <x-form.input name="branch_name" label="Branch" :value="$report?->branch_name" required />
-        <x-form.input name="start_date" label="Start Date of CI" type="date" :value="$report?->start_date?->format('Y-m-d')" required />
+        <x-form.input name="start_date" label="Start Date of CI" type="date" :value="$defaultStartDate" required />
         <x-form.input name="account_officer_name" label="Account Officer" :value="$report?->account_officer_name" required />
         <x-form.input name="submitted_date" label="Date Submitted to CA / BOO" type="date" :value="$report?->submitted_date?->format('Y-m-d')" required />
         <x-form.input name="amount_applied" label="Amount Applied" type="text" inputmode="decimal" :value="$report?->amount_applied" data-number-format />

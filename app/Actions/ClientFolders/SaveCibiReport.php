@@ -36,7 +36,6 @@ class SaveCibiReport
     public function __construct(
         private readonly CibiReportCompletionEvaluator $completion,
         private readonly ClientProgressService $progress,
-        private readonly SyncResidenceCheckLocation $syncLocation,
         private readonly SyncResidenceCheckCiDate $syncCiDate,
     ) {}
 
@@ -108,15 +107,8 @@ class SaveCibiReport
             $this->completion->evaluate($report);
             $this->progress->recalculate($folder);
 
-            // Only the Applicant's own CI/BI Report feeds Residence Check's address resolution
-            // (PersonAddressResolver deliberately never consults a Co-Maker's CI/BI snapshot —
-            // co_makers.address is their sole authoritative source), so a Co-Maker's CI/BI save
-            // has nothing to synchronize for Location. CI Date is different: every person's own
-            // CI/BI Report Start Date is their Residence Check's CI Date source, Applicant and
-            // Co-Maker alike, so that sync always runs here.
-            if ($report->co_maker_id === null) {
-                $this->syncLocation->execute($folder, null);
-            }
+            // Present Address may prefill a new Residence form, but saving CI/BI must never rewrite
+            // an already-saved Residence Location. CI Date keeps its existing scoped sync behavior.
             $this->syncCiDate->execute($folder, ActivePersonResolver::resolve($folder, $report->co_maker_id));
 
             AuditLog::create([

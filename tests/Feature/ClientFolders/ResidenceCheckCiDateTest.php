@@ -13,13 +13,9 @@ use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
- * Business rule: a Residence Check's CI Date always reflects whichever "Start Date of CI" is
- * CURRENTLY authoritative on its person's own CI/BI Report (PersonCiDateResolver, scoped by the
- * same co_maker_id convention used everywhere else) — never a frozen snapshot from when the
- * check was first encoded. Whenever that Start Date changes, every Residence Check belonging to
- * that exact person must pick up the new value automatically — no reopening or re-saving the
- * Residence Check required. Mirrors ResidenceCheckCibiAddressTest's architecture and helper
- * pattern exactly, for the CI Date rule instead of the Location rule.
+ * Once CI/BI exists, Residence CI Date follows that exact person's Start Date of CI. Applicant
+ * Residence may be created first with a validated CI Date, which later prefills the new Applicant
+ * CI/BI form; Co-Maker still requires its own CI/BI date.
  */
 class ResidenceCheckCiDateTest extends TestCase
 {
@@ -94,16 +90,27 @@ class ResidenceCheckCiDateTest extends TestCase
         $this->assertSame('2026-03-05', $check->ci_date->toDateString());
     }
 
-    public function test_residence_check_creation_is_blocked_when_the_applicant_has_no_cibi_start_date(): void
+    public function test_residence_check_creation_requires_an_applicant_ci_date_when_no_cibi_start_date_exists(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $folder->addresses()->create(['address_type' => 'present', 'address_line_1' => 'Applicant Address']);
-        // A CI/BI Report exists (so the address resolves fine) but has no Start Date yet.
-        $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id]);
-
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto())
             ->assertSessionHasErrors('ci_date');
+
+        $this->assertDatabaseCount('residence_checks', 0);
+    }
+
+    public function test_existing_applicant_cibi_without_its_required_start_date_still_blocks_residence_creation(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $folder->addresses()->create(['address_type' => 'present', 'address_line_1' => 'Applicant Address']);
+        $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id]);
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto([
+            'ci_date' => now()->toDateString(),
+        ]))->assertSessionHasErrors('ci_date');
 
         $this->assertDatabaseCount('residence_checks', 0);
     }
@@ -121,7 +128,7 @@ class ResidenceCheckCiDateTest extends TestCase
         $this->assertDatabaseCount('residence_checks', 0);
     }
 
-    public function test_add_residence_check_shows_missing_start_date_warning_and_management_link_for_applicant(): void
+    public function test_add_applicant_residence_without_cibi_shows_required_ci_date_input_instead_of_blocking_warning(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -129,8 +136,9 @@ class ResidenceCheckCiDateTest extends TestCase
 
         $response = $this->actingAs($ci)->get(route('client-folders.residence-checks.create', $folder))->assertOk();
 
-        $response->assertSee('No Start Date of CI available. Please update the CI/BI Report before creating a Residence Check.');
-        $response->assertSee(route('client-folders.cibi-report.edit', $folder), false);
+        $response->assertSee('name="ci_date"', false);
+        $response->assertSee('No Applicant CI/BI Report exists yet. This date will prefill its Start Date of CI later.');
+        $response->assertDontSee('No Start Date of CI available. Please update the CI/BI Report before creating a Residence Check.');
     }
 
     public function test_add_residence_check_shows_missing_start_date_management_link_scoped_to_the_specific_co_maker(): void

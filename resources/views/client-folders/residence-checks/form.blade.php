@@ -49,14 +49,6 @@
             <span data-editing-presence-text></span>
         </div>
         </div>
-        <x-ui.record-meta
-            class="mb-4"
-            :created-by="$residenceCheck->investigator?->full_name"
-            :created-at="$residenceCheck->created_at"
-            :updated-by="$residenceCheck->updater?->full_name"
-            :updated-at="$residenceCheck->updated_at"
-        />
-
     @endif
 
     <form id="residence-check-form" method="POST" action="{{ route('client-folders.residence-checks.store', $clientFolder) }}" enctype="multipart/form-data" class="flex flex-col gap-4 pb-20" data-unsaved-form data-residence-check-form data-cloud-storage-enabled="{{ $cloudStorageEnabled ? '1' : '0' }}">
@@ -86,12 +78,28 @@
                             <div class="relative"><x-ui.icon name="user" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><p class="ui-control bg-surface-subtle pl-9">{{ $personName }}</p></div>
                         </div>
                         <div>
-                            <span class="ui-label">CI Date</span>
-                            <div class="relative"><x-ui.icon name="calendar" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><input type="text" class="ui-control bg-surface-subtle pl-9" readonly aria-readonly="true" tabindex="-1" placeholder="No Start Date of CI available" value="{{ $defaultCiDate?->format('F j, Y') }}"></div>
+                            @if($needsApplicantCiDateInput)
+                                <label for="residence-ci-date" class="ui-label">CI Date <span class="text-danger" aria-hidden="true">*</span></label>
+                                <div class="relative"><x-ui.icon name="calendar" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><input id="residence-ci-date" name="ci_date" type="date" class="ui-control pl-9" required max="{{ now()->toDateString() }}" value="{{ old('ci_date') }}"></div>
+                                <p class="mt-1.5 text-xs text-text-muted">No Applicant CI/BI Report exists yet. This date will prefill its Start Date of CI later.</p>
+                                <x-form.validation-message for="ci_date" />
+                            @else
+                                <span class="ui-label">CI Date</span>
+                                <div class="relative"><x-ui.icon name="calendar" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><input type="text" class="ui-control bg-surface-subtle pl-9" readonly aria-readonly="true" tabindex="-1" placeholder="No Start Date of CI available" value="{{ $defaultCiDate?->format('F j, Y') }}"></div>
+                            @endif
                         </div>
                         <div>
-                            <label for="residence-location" class="ui-label">Location</label>
-                            <div class="relative"><x-ui.icon name="pin" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><input id="residence-location" type="text" class="ui-control bg-surface-subtle pl-9" readonly aria-readonly="true" tabindex="-1" placeholder="No address available" value="{{ $defaultLocation }}"></div>
+                            @if($applicantLocationEditable)
+                                <label for="residence-location" class="ui-label">Location <span class="text-danger" aria-hidden="true">*</span></label>
+                                <div class="relative"><x-ui.icon name="pin" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><input id="residence-location" name="location" type="text" class="ui-control pl-9" required maxlength="2000" value="{{ old('location', $defaultLocation) }}"></div>
+                                @if($needsApplicantLocationInput)
+                                    <p class="mt-1.5 text-xs text-text-muted">No Applicant CI/BI Present Address exists yet. Enter the Residence Location below.</p>
+                                @endif
+                                <x-form.validation-message for="location" />
+                            @else
+                                <label for="residence-location" class="ui-label">Location</label>
+                                <div class="relative"><x-ui.icon name="pin" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><input id="residence-location" type="text" class="ui-control bg-surface-subtle pl-9" readonly aria-readonly="true" tabindex="-1" placeholder="No address available" value="{{ $defaultLocation }}"></div>
+                            @endif
                         </div>
                         <div class="sm:col-span-2">
                             <span class="ui-label">CI In-Charge</span>

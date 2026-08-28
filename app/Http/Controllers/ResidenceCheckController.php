@@ -235,12 +235,16 @@ class ResidenceCheckController extends Controller
         $personName = $activePerson?->full_name ?? $clientFolder->display_name;
         $personLabel = $activePerson ? 'Co-Maker Name' : 'Applicant Name';
         $resolvedAddress = PersonAddressResolver::resolve($clientFolder, $activePerson);
-        // A new Residence Check always shows (and, on save, stores) the person's current address.
+        // Applicant Location is always editable. A resolved address only supplies the initial
+        // prefill for a new check; an existing check keeps its own saved Location.
+        // Co-Maker address requirements remain resolver-owned and unchanged.
         // An existing one keeps whatever location was captured at the time it was saved — a
         // historical snapshot that must not silently change just because the master address was
         // edited afterward, and must not disappear just because the master address is now blank.
         $defaultLocation = $residenceCheck?->location ?? $resolvedAddress;
-        $missingAddress = ! $residenceCheck && blank($resolvedAddress);
+        $applicantLocationEditable = ! $activePerson;
+        $needsApplicantLocationInput = $applicantLocationEditable && ! $residenceCheck && blank($resolvedAddress);
+        $missingAddress = ! $residenceCheck && (bool) $activePerson && blank($resolvedAddress);
         // The Applicant's authoritative Present Address is primarily the CI/BI Report's own
         // (required) present_address field — see PersonAddressResolver — so that's the page that
         // actually controls it; Client Information's structured address is only ever the fallback
@@ -251,9 +255,12 @@ class ResidenceCheckController extends Controller
             : route('client-folders.cibi-report.edit', $clientFolder);
 
         $resolvedCiDate = PersonCiDateResolver::resolve($clientFolder, $activePerson);
-        // Same historical-vs-resolved fallback as Location above, for the same reason.
+        $hasScopedCibiReport = $clientFolder->cibiReports()->where('co_maker_id', $activePerson?->id)->exists();
+        // Existing Residence keeps its stored date; new Residence uses CI/BI when available.
+        // Applicant-only may enter the initial date when CI/BI has not been created yet.
         $defaultCiDate = $residenceCheck?->ci_date ?? $resolvedCiDate;
-        $missingCiDate = ! $residenceCheck && ! $resolvedCiDate;
+        $needsApplicantCiDateInput = ! $residenceCheck && ! $activePerson && ! $hasScopedCibiReport && ! $resolvedCiDate;
+        $missingCiDate = ! $residenceCheck && ! $resolvedCiDate && ($activePerson || $hasScopedCibiReport);
         // Unlike Location's Co-Maker fallback, CI/BI Report itself is a real, precisely-scoped
         // page for both roles — the same route with the active person's own query params opens
         // that exact person's report.
@@ -292,9 +299,12 @@ class ResidenceCheckController extends Controller
             'personLabel' => $personLabel,
             'residenceCheck' => $residenceCheck,
             'defaultLocation' => $defaultLocation,
+            'applicantLocationEditable' => $applicantLocationEditable,
+            'needsApplicantLocationInput' => $needsApplicantLocationInput,
             'missingAddress' => $missingAddress,
             'addressManagementUrl' => $addressManagementUrl,
             'defaultCiDate' => $defaultCiDate,
+            'needsApplicantCiDateInput' => $needsApplicantCiDateInput,
             'missingCiDate' => $missingCiDate,
             'ciDateManagementUrl' => $ciDateManagementUrl,
             'existingPhotos' => $existingPhotos,
