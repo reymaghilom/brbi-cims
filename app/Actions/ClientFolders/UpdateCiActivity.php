@@ -32,28 +32,60 @@ class UpdateCiActivity
 
             $previousStatus = $activity->status;
             $previousAssignedCiId = $activity->assigned_ci_id;
+            $previousSchedule = $activity->scheduled_at?->copy();
             $status = ActivityStatus::from($data['status']);
-            $activity->update(Arr::except($data, ['expected_updated_at']) + [
+            $reopenedNow = $previousStatus === ActivityStatus::Completed && $status === ActivityStatus::Pending;
+            $scheduleChanged = array_key_exists('scheduled_at', $data)
+                && ! $previousSchedule?->equalTo(Carbon::parse($data['scheduled_at']));
+            if ($previousSchedule === null && blank($data['scheduled_at'] ?? null)) {
+                $scheduleChanged = false;
+            }
+
+            $updates = Arr::except($data, ['expected_updated_at']) + [
                 'updated_by' => $actor->id,
                 'completed_at' => $status === ActivityStatus::Completed ? ($activity->completed_at ?? now()) : null,
-            ]);
+                'reminder_sent_at' => $scheduleChanged || $status !== ActivityStatus::Scheduled
+                    ? null
+                    : $activity->reminder_sent_at,
+            ];
+            if ($reopenedNow) {
+                $updates['scheduled_at'] = null;
+                $updates['reminder_sent_at'] = null;
+            }
+            $activity->update($updates);
 
             $this->completion->evaluate($folder);
             $this->progress->recalculate($folder);
 
             $completedNow = $status === ActivityStatus::Completed && $previousStatus !== ActivityStatus::Completed;
+            $scheduledNow = $status === ActivityStatus::Scheduled && $previousStatus !== ActivityStatus::Scheduled;
+            $rescheduledNow = $status === ActivityStatus::Scheduled && $previousStatus === ActivityStatus::Scheduled && $scheduleChanged;
+            $action = match (true) {
+                $reopenedNow => 'ci_activity.reopened',
+                $completedNow => 'ci_activity.completed',
+                $rescheduledNow => 'ci_activity.rescheduled',
+                $scheduledNow => 'ci_activity.scheduled',
+                default => 'ci_activity.updated',
+            };
             AuditLog::create([
                 'user_id' => $actor->id,
                 'client_folder_id' => $folder->id,
-                'action' => $completedNow ? 'ci_activity.completed' : 'ci_activity.updated',
+                'action' => $action,
                 'module' => 'ci_activities',
-                'description' => $completedNow ? 'A CI activity was completed.' : 'A CI activity was updated.',
+                'description' => match ($action) {
+                    'ci_activity.reopened' => 'A completed CI activity was reopened.',
+                    'ci_activity.completed' => 'A CI activity was completed.',
+                    'ci_activity.scheduled' => 'A CI activity was scheduled.',
+                    'ci_activity.rescheduled' => 'A CI activity was rescheduled.',
+                    default => 'A CI activity was updated.',
+                },
                 'metadata' => [
                     'activity_id' => $activity->id,
                     'co_maker_id' => $activity->co_maker_id,
                     'activity_definition_id' => $activity->activity_definition_id,
                     'activity_title' => $activity->definition->name,
                     'status' => $status->value,
+                    'scheduled_at' => $activity->scheduled_at?->toISOString(),
                 ],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
@@ -68,6 +100,8 @@ class UpdateCiActivity
                     'description' => 'The assigned Credit Investigator for a CI activity was changed.',
                     'metadata' => [
                         'activity_id' => $activity->id,
+                        'co_maker_id' => $activity->co_maker_id,
+                        'activity_title' => $activity->definition->name,
                         'previous_assigned_ci_id' => $previousAssignedCiId,
                         'assigned_ci_id' => $activity->assigned_ci_id,
                     ],

@@ -8,16 +8,24 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class CiActivity extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $guarded = [];
 
     protected function casts(): array
     {
-        return ['status' => ActivityStatus::class, 'visit_date' => 'date', 'completed_at' => 'datetime'];
+        return [
+            'status' => ActivityStatus::class,
+            'visit_date' => 'date',
+            'scheduled_at' => 'datetime',
+            'reminder_sent_at' => 'datetime',
+            'completed_at' => 'datetime',
+            'deleted_at' => 'datetime',
+        ];
     }
 
     public function clientFolder(): BelongsTo
@@ -33,6 +41,11 @@ class CiActivity extends Model
     public function updater(): BelongsTo
     {
         return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'creator_id');
     }
 
     public function assignedInvestigator(): BelongsTo

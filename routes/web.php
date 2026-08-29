@@ -89,12 +89,19 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
             ->name('client-folders.co-maker.destroy');
         Route::get('/client-folders/{clientFolder}/activities', [CiActivityController::class, 'index'])
             ->name('client-folders.activities.index');
+        Route::post('/client-folders/{clientFolder}/activities', [CiActivityController::class, 'store'])
+            ->name('client-folders.activities.store');
         Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/edit', [CiActivityController::class, 'edit'])
             ->scopeBindings()
             ->name('client-folders.activities.edit');
         Route::put('/client-folders/{clientFolder}/activities/{ciActivity}', [CiActivityController::class, 'update'])
             ->scopeBindings()
             ->name('client-folders.activities.update');
+        Route::delete('/client-folders/{clientFolder}/activities/{ciActivity}', [CiActivityController::class, 'destroy'])
+            ->scopeBindings()
+            ->name('client-folders.activities.destroy');
+        Route::delete('/client-folders/{clientFolder}/activities', [CiActivityController::class, 'bulkDestroy'])
+            ->name('client-folders.activities.bulk-destroy');
         Route::post('/client-folders/{clientFolder}/activities/{ciActivity}/notes', [ActivityNoteController::class, 'store'])
             ->scopeBindings()
             ->name('client-folders.activities.notes.store');

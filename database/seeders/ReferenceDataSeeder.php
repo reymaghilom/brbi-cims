@@ -13,11 +13,11 @@ class ReferenceDataSeeder extends Seeder
     public function run(): void
     {
         foreach ([
-            ['residence_check', 'Residence Check'], ['business_check', 'Business Check'],
-            ['barangay_check', 'Barangay Check'], ['neighbor_check', 'Neighbor Check'],
-            ['asset_check', 'Asset Check'], ['bank_coop_check', 'Bank / Coop Check'],
-        ] as $index => [$code, $name]) {
-            ActivityDefinition::updateOrCreate(['code' => $code], ['name' => $name, 'sort_order' => $index + 1, 'is_required' => true, 'is_active' => true]);
+            ['residence_check', 'Residence Check', false], ['business_check', 'Business Check', false],
+            ['barangay_check', 'Barangay Check', true], ['neighbor_check', 'Neighbor Check', true],
+            ['asset_check', 'Asset Check', true], ['bank_coop_check', 'Bank / Coop Check', true],
+        ] as $index => [$code, $name, $isActive]) {
+            ActivityDefinition::updateOrCreate(['code' => $code], ['name' => $name, 'sort_order' => $index + 1, 'is_required' => true, 'is_active' => $isActive]);
         }
 
         IncomeSourceTemplate::updateOrCreate(

@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class UserManagementTest extends TestCase
@@ -61,6 +62,38 @@ class UserManagementTest extends TestCase
         $this->assertSame(UserRole::Administrator, $user->role);
         $this->assertSame($oldVersion + 1, $user->auth_session_version);
         $this->assertDatabaseMissing('sessions', ['user_id' => $user->id]);
+    }
+
+    public function test_profile_photo_uses_the_same_url_in_the_account_page_and_header_with_safe_fallbacks(): void
+    {
+        Storage::fake('public');
+
+        $photoPath = 'profile-photos/existing-avatar.png';
+        Storage::disk('public')->put($photoPath, 'avatar image contents');
+        $administrator = User::factory()->administrator()->create([
+            'full_name' => 'Avatar Administrator',
+            'profile_photo_path' => $photoPath,
+        ]);
+        $photoUrl = Storage::disk('public')->url($photoPath);
+
+        $accountResponse = $this->actingAs($administrator)
+            ->get(route('admin.users.edit', $administrator))
+            ->assertOk();
+
+        $this->assertSame(2, substr_count($accountResponse->getContent(), 'src="'.$photoUrl.'"'));
+        $this->assertSame($photoPath, $administrator->fresh()->profile_photo_path);
+
+        $administratorWithoutPhoto = User::factory()->administrator()->create([
+            'full_name' => 'Fallback Administrator',
+            'profile_photo_path' => null,
+        ]);
+
+        $this->actingAs($administratorWithoutPhoto)
+            ->get(route('admin.users.edit', $administratorWithoutPhoto))
+            ->assertOk()
+            ->assertSee('FA')
+            ->assertSee('data-photo-preview-placeholder', false);
+        $this->assertNull($administratorWithoutPhoto->fresh()->profile_photo_path);
     }
 
     public function test_administrator_cannot_change_own_role_or_status(): void

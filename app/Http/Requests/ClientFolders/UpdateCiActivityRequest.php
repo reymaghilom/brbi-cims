@@ -39,12 +39,14 @@ class UpdateCiActivityRequest extends FormRequest
             ],
             'expected_updated_at' => ['nullable', 'date'],
             'status' => ['required', Rule::enum(ActivityStatus::class)],
-            'visit_date' => ['nullable', 'date', 'before_or_equal:today', Rule::requiredIf($this->input('status') === ActivityStatus::Completed->value)],
+            'target' => ['nullable', 'string', 'max:255'],
+            'scheduled_at' => ['nullable', 'date', Rule::requiredIf($this->input('status') === ActivityStatus::Scheduled->value)],
+            'visit_date' => ['nullable', 'date', 'before_or_equal:today'],
             'time_in' => ['nullable', 'date_format:H:i'],
             'time_out' => ['nullable', 'date_format:H:i'],
-            'visited_by' => ['nullable', 'string', 'max:255', Rule::requiredIf($this->input('status') === ActivityStatus::Completed->value)],
+            'visited_by' => ['nullable', 'string', 'max:255'],
             'person_met_contact' => ['nullable', 'string', 'max:255'],
-            'remarks' => ['nullable', 'string', 'max:20000', Rule::requiredIf($this->input('status') === ActivityStatus::Completed->value)],
+            'remarks' => ['nullable', 'string', 'max:20000'],
             'supporting_reference' => ['nullable', 'string', 'max:10000'],
         ];
     }
@@ -64,7 +66,7 @@ class UpdateCiActivityRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         $normalized = [];
-        foreach (['visited_by', 'person_met_contact'] as $field) {
+        foreach (['target', 'visited_by', 'person_met_contact'] as $field) {
             $normalized[$field] = $this->normalize($this->input($field));
         }
         foreach (['remarks', 'supporting_reference'] as $field) {
