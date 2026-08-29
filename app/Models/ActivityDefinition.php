@@ -13,6 +13,8 @@ class ActivityDefinition extends Model
 
     public const NEW_TYPE_VALUE = '__new__';
 
+    public const CUSTOM_CODE_PREFIX = 'custom_';
+
     protected $guarded = [];
 
     protected function casts(): array
@@ -23,6 +25,11 @@ class ActivityDefinition extends Model
     public function activities(): HasMany
     {
         return $this->hasMany(CiActivity::class);
+    }
+
+    public function isCustom(): bool
+    {
+        return Str::startsWith((string) $this->code, self::CUSTOM_CODE_PREFIX);
     }
 
     public static function normalizeName(string $name): string

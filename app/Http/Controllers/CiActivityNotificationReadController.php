@@ -26,9 +26,8 @@ class CiActivityNotificationReadController extends Controller
 
         $databaseNotification->markAsRead();
 
-        return redirect()->route('client-folders.activities.edit', [
+        return redirect()->route('client-folders.activities.index', [
             $activity->client_folder_id,
-            $activity->id,
         ] + ($activity->co_maker_id ? [
             'person' => 'co-maker',
             'co_maker_id' => $activity->co_maker_id,

@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\CiActivity;
 use App\Models\ClientFolder;
 use App\Models\User;
+use App\Notifications\CiActivityScheduledReminder;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Arr;
@@ -72,6 +73,16 @@ class UpdateCiActivity
                 $scheduledNow => 'ci_activity.scheduled',
                 default => 'ci_activity.updated',
             };
+
+            if ($scheduledNow || $rescheduledNow) {
+                $activity->creator?->notify(new CiActivityScheduledReminder(
+                    $activity,
+                    $rescheduledNow
+                        ? CiActivityScheduledReminder::PURPOSE_SCHEDULE_CHANGED
+                        : CiActivityScheduledReminder::PURPOSE_SCHEDULE_CREATED,
+                ));
+            }
+
             AuditLog::create([
                 'user_id' => $actor->id,
                 'client_folder_id' => $folder->id,

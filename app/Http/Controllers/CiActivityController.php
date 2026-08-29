@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Actions\ClientFolders\CreateCiActivity;
+use App\Actions\ClientFolders\DeactivateActivityDefinition;
 use App\Actions\ClientFolders\DeleteCiActivity;
 use App\Actions\ClientFolders\SubmitCiActivity;
 use App\Actions\ClientFolders\UpdateCiActivity;
@@ -32,13 +33,15 @@ class CiActivityController extends Controller
         $activities = $clientFolder->activities()
             ->where('ci_activities.co_maker_id', $activePerson?->id)
             ->join('activity_definitions', 'activity_definitions.id', '=', 'ci_activities.activity_definition_id')
-            ->where('activity_definitions.is_active', true)
             ->select('ci_activities.*')
             ->with(['definition:id,name,code,is_required,is_active,sort_order', 'creator:id,full_name', 'updater:id,full_name', 'submitter:id,full_name', 'assignedInvestigator:id,full_name'])
             ->withCount(['notes', 'mediaReferences'])
             ->orderBy('activity_definitions.sort_order')
             ->orderBy('ci_activities.created_at')
             ->get();
+        $activities = $activities
+            ->filter(fn (CiActivity $activity): bool => $activity->definition->is_active || $activity->definition->isCustom())
+            ->values();
 
         $counts = [
             'pending' => $activities->where('status', ActivityStatus::Pending)->count(),
@@ -124,7 +127,12 @@ class CiActivityController extends Controller
             'existingDefinitionIds' => $activities->pluck('activity_definition_id')->unique(),
             'activePerson' => $activePerson,
             'coMakers' => $clientFolder->coMakers()->oldest('id')->get(),
-            'definitions' => ActivityDefinition::query()->where('is_active', true)->orderBy('sort_order')->get(['id', 'name']),
+            'definitions' => ActivityDefinition::query()
+                ->select(['id', 'name', 'code'])
+                ->withCount('activities')
+                ->where('is_active', true)
+                ->orderBy('sort_order')
+                ->get(),
             'counts' => $counts,
             'filter' => $filter,
             'history' => $history,
@@ -157,6 +165,48 @@ class CiActivityController extends Controller
 
         return redirect($destination)
             ->with('status', $activity->name.' activity added.');
+    }
+
+    public function deactivateDefinition(
+        Request $request,
+        ClientFolder $clientFolder,
+        ActivityDefinition $activityDefinition,
+        DeactivateActivityDefinition $deactivate,
+    ): RedirectResponse {
+        Gate::authorize('update', $clientFolder);
+        $validated = $request->validate([
+            'co_maker_id' => ActivePersonResolver::rule($clientFolder),
+            'status' => ['nullable', 'in:pending,scheduled_today,follow_up,completed,all'],
+            'selected_activity_definition_id' => ['nullable', 'string', 'max:64'],
+        ]);
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $validated['co_maker_id'] ?? null);
+        $destination = route(
+            'client-folders.activities.index',
+            [$clientFolder] + ActivePersonResolver::queryParams($activePerson) + ['status' => $validated['status'] ?? 'all'],
+        );
+        $name = $activityDefinition->name;
+
+        $result = $deactivate->execute($request->user(), $clientFolder, $activityDefinition);
+
+        $selectedDefinitionId = $validated['selected_activity_definition_id'] ?? '';
+        if ($selectedDefinitionId === (string) $activityDefinition->id) {
+            $selectedDefinitionId = '';
+        } elseif ($selectedDefinitionId !== ActivityDefinition::NEW_TYPE_VALUE) {
+            $selectedDefinitionId = ctype_digit($selectedDefinitionId)
+                && ActivityDefinition::query()->whereKey((int) $selectedDefinitionId)->where('is_active', true)->exists()
+                    ? $selectedDefinitionId
+                    : '';
+        }
+
+        return redirect($destination)
+            ->withInput([
+                'activity_definition_id' => $selectedDefinitionId,
+                'create_new_activity_type' => $selectedDefinitionId === ActivityDefinition::NEW_TYPE_VALUE,
+            ])
+            ->with('status', $result === DeactivateActivityDefinition::RESULT_DELETED
+                ? $name.' activity type permanently deleted.'
+                : $name.' activity type removed.')
+            ->with('ci_activity_modal_open', true);
     }
 
     public function edit(ClientFolder $clientFolder, CiActivity $ciActivity): View

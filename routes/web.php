@@ -94,6 +94,8 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
             ->name('client-folders.activities.index');
         Route::post('/client-folders/{clientFolder}/activities', [CiActivityController::class, 'store'])
             ->name('client-folders.activities.store');
+        Route::delete('/client-folders/{clientFolder}/activity-definitions/{activityDefinition}', [CiActivityController::class, 'deactivateDefinition'])
+            ->name('client-folders.activity-definitions.deactivate');
         Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/edit', [CiActivityController::class, 'edit'])
             ->scopeBindings()
             ->name('client-folders.activities.edit');

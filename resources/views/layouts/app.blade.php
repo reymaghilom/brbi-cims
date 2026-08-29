@@ -34,6 +34,7 @@
         };
         $scheduledTodayActivities = collect();
         $scheduledTodayNotifications = collect();
+        $scheduledTodayUnreadCount = 0;
         if ($currentUser->role === App\Enums\UserRole::CreditInvestigator) {
             $scheduledTodayActivities = App\Models\CiActivity::query()
                 ->scheduledTodayForCreator($currentUser)
@@ -45,9 +46,33 @@
                 ->orderBy('id')
                 ->get();
 
+            $unreadScheduleNotifications = $currentUser->unreadNotifications()
+                ->where('type', App\Notifications\CiActivityScheduledReminder::class)
+                ->latest()
+                ->get();
+            if ($unreadScheduleNotifications->isNotEmpty()) {
+                $activeScheduledActivitiesById = App\Models\CiActivity::query()
+                    ->whereKey($unreadScheduleNotifications->pluck('data')->map(fn ($data) => (int) data_get($data, 'ci_activity_id'))->filter()->unique()->all())
+                    ->where('creator_id', $currentUser->id)
+                    ->where('status', App\Enums\ActivityStatus::Scheduled)
+                    ->whereNull('completed_at')
+                    ->get(['id', 'scheduled_at'])
+                    ->keyBy('id');
+                $scheduledTodayUnreadCount = $unreadScheduleNotifications
+                    ->filter(function ($notification) use ($activeScheduledActivitiesById): bool {
+                        $activity = $activeScheduledActivitiesById->get((int) data_get($notification->data, 'ci_activity_id'));
+                        $notifiedSchedule = data_get($notification->data, 'scheduled_at');
+
+                        return $activity !== null
+                            && filled($notifiedSchedule)
+                            && Illuminate\Support\Carbon::parse($notifiedSchedule)->equalTo($activity->scheduled_at);
+                    })
+                    ->count();
+            }
+
             if ($scheduledTodayActivities->isNotEmpty()) {
                 $scheduledActivitiesById = $scheduledTodayActivities->keyBy('id');
-                $scheduledTodayNotifications = $currentUser->notifications()
+                $matchingTodayNotifications = $currentUser->notifications()
                     ->where('type', App\Notifications\CiActivityScheduledReminder::class)
                     ->whereIn('data->ci_activity_id', $scheduledTodayActivities->pluck('id')->all())
                     ->latest()
@@ -59,13 +84,15 @@
                         return $activity !== null
                             && filled($notifiedSchedule)
                             && Illuminate\Support\Carbon::parse($notifiedSchedule)->equalTo($activity->scheduled_at);
-                    })
+                    });
+                $scheduledTodayNotifications = $matchingTodayNotifications
+                    ->whereNull('read_at')
+                    ->concat($matchingTodayNotifications->whereNotNull('read_at'))
                     ->unique(fn ($notification) => (int) data_get($notification->data, 'ci_activity_id'))
                     ->keyBy(fn ($notification) => (int) data_get($notification->data, 'ci_activity_id'));
             }
         }
         $scheduledTodayCount = $scheduledTodayActivities->count();
-        $scheduledTodayUnreadCount = $scheduledTodayNotifications->whereNull('read_at')->count();
     @endphp
     <a href="#main-content" class="fixed left-3 top-3 z-[70] -translate-y-20 rounded-control bg-surface px-4 py-2 font-semibold text-brand-primary shadow-float focus:translate-y-0">Skip to main content</a>
 

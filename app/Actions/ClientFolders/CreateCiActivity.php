@@ -8,6 +8,7 @@ use App\Models\AuditLog;
 use App\Models\CiActivity;
 use App\Models\ClientFolder;
 use App\Models\User;
+use App\Notifications\CiActivityScheduledReminder;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Facades\DB;
@@ -69,6 +70,13 @@ class CreateCiActivity
                 'user_agent' => request()?->userAgent(),
             ]);
 
+            if ($status === ActivityStatus::Scheduled) {
+                $actor->notify(new CiActivityScheduledReminder(
+                    $activity,
+                    CiActivityScheduledReminder::PURPOSE_SCHEDULE_CREATED,
+                ));
+            }
+
             $this->completion->evaluate($folder);
             $this->progress->recalculate($folder);
 
@@ -126,7 +134,7 @@ class CreateCiActivity
 
         $key = ActivityDefinition::normalizedNameKey($name);
         $slug = Str::slug($key, '_') ?: 'activity';
-        $code = 'custom_'.Str::limit($slug, 62, '').'_'.substr(hash('sha256', $key), 0, 10);
+        $code = ActivityDefinition::CUSTOM_CODE_PREFIX.Str::limit($slug, 62, '').'_'.substr(hash('sha256', $key), 0, 10);
         $definition = ActivityDefinition::query()->createOrFirst(
             ['code' => $code],
             [
