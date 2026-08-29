@@ -7,7 +7,10 @@ use App\Actions\ClientFolders\DeactivateActivityDefinition;
 use App\Actions\ClientFolders\DeleteCiActivity;
 use App\Actions\ClientFolders\SubmitCiActivity;
 use App\Actions\ClientFolders\UpdateCiActivity;
+use App\Actions\Media\RemoveCiActivityProof;
+use App\Actions\Media\ReplaceCiActivityProof;
 use App\Enums\ActivityStatus;
+use App\Http\Requests\ClientFolders\ReplaceCiActivityProofRequest;
 use App\Http\Requests\ClientFolders\StoreCiActivityRequest;
 use App\Http\Requests\ClientFolders\SubmitCiActivityRequest;
 use App\Http\Requests\ClientFolders\UpdateCiActivityRequest;
@@ -49,6 +52,8 @@ class CiActivityController extends Controller
             ])
             ->withCount([
                 'notes',
+                'bankTargets',
+                'bankTargets as completed_bank_targets_count' => fn ($query) => $query->where('status', ActivityStatus::Completed->value),
                 'mediaReferences' => fn ($query) => $query
                     ->where('media_references.client_folder_id', $clientFolder->id)
                     ->where('media_references.co_maker_id', $activePerson?->id),
@@ -110,6 +115,7 @@ class CiActivityController extends Controller
                         'ci_activity.scheduled' => data_get($metadata, 'activity_title').' scheduled',
                         'ci_activity.rescheduled' => data_get($metadata, 'activity_title').' rescheduled',
                         'ci_activity.completed' => data_get($metadata, 'activity_title').' completed',
+                        'ci_activity.bank_target_completed' => data_get($metadata, 'bank_target_label', 'Bank / Coop target').' completed',
                         'ci_activity.submitted' => data_get($metadata, 'activity_title').' submitted to Credit Analyst',
                         'ci_activity.reopened' => data_get($metadata, 'activity_title').' reopened',
                         'ci_activity.deleted' => data_get($metadata, 'activity_title').' deleted',
@@ -126,7 +132,7 @@ class CiActivityController extends Controller
                         default => null,
                     },
                     'tone' => match ($event->action) {
-                        'ci_activity.completed', 'ci_activity.submitted', 'media.uploaded' => 'success',
+                        'ci_activity.completed', 'ci_activity.bank_target_completed', 'ci_activity.submitted', 'media.uploaded' => 'success',
                         'ci_activity.scheduled', 'ci_activity.rescheduled', 'ci_activity.reopened' => 'progress',
                         default => 'neutral',
                     },
@@ -283,6 +289,44 @@ class CiActivityController extends Controller
             : route('client-folders.activities.edit', [$clientFolder, $ciActivity] + $personParams);
 
         return redirect($destination)->with('status', 'CI activity saved successfully.');
+    }
+
+    public function replaceProof(
+        ReplaceCiActivityProofRequest $request,
+        ClientFolder $clientFolder,
+        CiActivity $ciActivity,
+        MediaReference $mediaReference,
+        ReplaceCiActivityProof $replace,
+    ): RedirectResponse {
+        $replace->execute($request->user(), $clientFolder, $ciActivity, $mediaReference, $request->file('attachment'));
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $ciActivity->co_maker_id);
+
+        return redirect()->route(
+            'client-folders.activities.edit',
+            [$clientFolder, $ciActivity] + ActivePersonResolver::queryParams($activePerson),
+        )->with('status', 'Proof attachment replaced successfully.');
+    }
+
+    public function removeProof(
+        ClientFolder $clientFolder,
+        CiActivity $ciActivity,
+        MediaReference $mediaReference,
+        RemoveCiActivityProof $remove,
+    ): RedirectResponse {
+        Gate::authorize('update', $clientFolder);
+        Gate::authorize('update', $ciActivity);
+        abort_unless($ciActivity->client_folder_id === $clientFolder->id, 404);
+        abort_unless($mediaReference->client_folder_id === $clientFolder->id, 404);
+        abort_unless($mediaReference->co_maker_id === $ciActivity->co_maker_id, 404);
+        abort_unless($ciActivity->mediaReferences()->whereKey($mediaReference->id)->exists(), 404);
+
+        $remove->execute(request()->user(), $clientFolder, $ciActivity, $mediaReference);
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $ciActivity->co_maker_id);
+
+        return redirect()->route(
+            'client-folders.activities.edit',
+            [$clientFolder, $ciActivity] + ActivePersonResolver::queryParams($activePerson),
+        )->with('status', 'Proof attachment removed successfully.');
     }
 
     public function destroy(Request $request, ClientFolder $clientFolder, CiActivity $ciActivity, DeleteCiActivity $delete): RedirectResponse

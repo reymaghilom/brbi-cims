@@ -81,10 +81,38 @@
 
             <section class="ui-panel p-5 sm:p-6" aria-labelledby="media-title">
                 <div class="flex items-center justify-between gap-3"><h2 id="media-title" class="ui-section-title">Supporting Proof</h2><span class="text-sm font-bold text-text-muted">{{ $activity->media_references_count }}</span></div>
+                <x-form.validation-message for="attachment" />
                 @if($activity->mediaReferences->isEmpty())
                     <div class="mt-4 rounded-control bg-surface-subtle p-4 text-sm leading-6 text-text-muted"><p>No proof is linked. Proof is optional.</p><a href="{{ route('client-folders.media.index', [$clientFolder] + $personParams) }}" class="mt-2 inline-flex font-semibold text-brand-primary hover:underline">Manage Photos &amp; Videos</a></div>
                 @else
-                    <ul class="mt-4 divide-y divide-ui-border overflow-hidden rounded-card border border-ui-border">@foreach($activity->mediaReferences as $media)<li class="p-3 text-sm"><p class="break-words font-semibold">{{ $media->pivot->label ?: $media->file_name }}</p><p class="mt-1 text-xs text-text-muted">{{ str($media->media_type->value)->title() }} · {{ str($media->category->value)->replace('_', ' ')->title() }}</p></li>@endforeach</ul>
+                    <ul class="mt-4 divide-y divide-ui-border overflow-hidden rounded-card border border-ui-border">
+                        @foreach($activity->mediaReferences as $media)
+                            <li class="p-3 text-sm">
+                                <p class="break-words font-semibold">{{ $media->pivot->label ?: $media->file_name }}</p>
+                                <p class="mt-1 text-xs text-text-muted">{{ str($media->media_type->value)->title() }} · {{ str($media->category->value)->replace('_', ' ')->title() }}</p>
+                                <div class="mt-3 flex flex-wrap gap-2">
+                                    <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $media]) }}" target="_blank" rel="noopener" class="ui-button-secondary-compact"><x-ui.icon name="eye" size="size-3.5" />Preview / Open</a>
+                                    @if($activity->status === App\Enums\ActivityStatus::Completed)
+                                        <form method="POST" action="{{ route('client-folders.activities.proof.replace', [$clientFolder, $activity, $media]) }}" enctype="multipart/form-data" data-ci-proof-replace-form>
+                                            @csrf
+                                            @method('PUT')
+                                            <input id="replace-proof-{{ $media->id }}" name="attachment" type="file" accept="image/jpeg,image/png,image/webp,video/mp4" class="sr-only" data-ci-proof-replace-input>
+                                            <label for="replace-proof-{{ $media->id }}" class="ui-button-secondary-compact cursor-pointer" data-ci-proof-replace-label><x-ui.icon name="upload" size="size-3.5" />Replace</label>
+                                        </form>
+                                    @else
+                                        <span class="ui-button-secondary-compact cursor-not-allowed opacity-50" aria-disabled="true" title="Proof can only be replaced while the activity is Completed"><x-ui.icon name="upload" size="size-3.5" />Replace</span>
+                                    @endif
+                                    <button type="button" class="ui-button-danger-compact" data-modal-open="remove-proof-{{ $media->id }}"><x-ui.icon name="trash" size="size-3.5" />Remove</button>
+                                </div>
+                            </li>
+                        @endforeach
+                    </ul>
+
+                    @foreach($activity->mediaReferences as $media)
+                        <x-ui.confirmation-dialog id="remove-proof-{{ $media->id }}" title="Remove Proof Attachment?" :action="route('client-folders.activities.proof.destroy', [$clientFolder, $activity, $media])" method="DELETE" confirm-label="Remove Attachment" destructive>
+                            <p><span class="font-semibold text-text-main">{{ $media->file_name }}</span> will be removed from this activity. If it is not referenced elsewhere, its stored file will also be retired.</p>
+                        </x-ui.confirmation-dialog>
+                    @endforeach
                 @endif
             </section>
         </aside>
@@ -116,6 +144,19 @@
 
             status.addEventListener('change', syncScheduleAvailability);
             syncScheduleAvailability();
+
+            document.querySelectorAll('[data-ci-proof-replace-input]').forEach((input) => {
+                input.addEventListener('change', () => {
+                    if (!(input instanceof HTMLInputElement) || !input.files?.length) return;
+                    const form = input.closest('[data-ci-proof-replace-form]');
+                    const label = form?.querySelector('[data-ci-proof-replace-label]');
+                    if (label) {
+                        label.classList.add('pointer-events-none', 'opacity-60');
+                        label.setAttribute('aria-disabled', 'true');
+                    }
+                    if (form instanceof HTMLFormElement) form.requestSubmit();
+                });
+            });
         });
     </script>
 @endsection

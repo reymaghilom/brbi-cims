@@ -7,6 +7,7 @@ use App\Enums\ActivityStatus;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\CiActivity;
+use App\Models\CiActivityBankTarget;
 use App\Models\ClientFolder;
 use App\Models\User;
 use App\Notifications\CiActivityScheduledReminder;
@@ -23,6 +24,7 @@ class CreateCiActivity
         private readonly CiActivitiesCompletionEvaluator $completion,
         private readonly ClientProgressService $progress,
         private readonly UploadCiActivityProof $uploadProof,
+        private readonly SaveCiActivityBankTarget $saveBankTarget,
     ) {}
 
     public function execute(User $actor, ClientFolder $folder, array $data): CiActivity
@@ -36,10 +38,13 @@ class CreateCiActivity
                 $data['co_maker_id'] ?? null,
                 'activity_definition_id',
             );
-            $status = ActivityStatus::from($data['status']);
-            [$scheduledAt, $scheduledHasTime] = in_array($status, [ActivityStatus::Scheduled, ActivityStatus::FollowUp], true)
-                ? CiActivity::normalizeScheduleInput($data['scheduled_at'] ?? null, $data['scheduled_time'] ?? null)
-                : [null, true];
+            $isBankCoopCheck = $definition->code === ActivityDefinition::BANK_COOP_CHECK_CODE;
+            $status = $isBankCoopCheck ? ActivityStatus::Pending : ActivityStatus::from($data['status']);
+            [$scheduledAt, $scheduledHasTime] = $isBankCoopCheck
+                ? [null, false]
+                : (in_array($status, [ActivityStatus::Scheduled, ActivityStatus::FollowUp], true)
+                    ? CiActivity::normalizeScheduleInput($data['scheduled_at'] ?? null, $data['scheduled_time'] ?? null)
+                    : [null, true]);
             $activity = $folder->activities()->create([
                 'co_maker_id' => $data['co_maker_id'] ?? null,
                 'activity_definition_id' => $definition->id,
@@ -48,11 +53,35 @@ class CreateCiActivity
                 'status' => $status,
                 'scheduled_at' => $scheduledAt,
                 'scheduled_has_time' => $scheduledHasTime,
-                'remarks' => $data['remarks'] ?? null,
+                'remarks' => $isBankCoopCheck ? null : ($data['remarks'] ?? null),
                 'creator_id' => $actor->id,
                 'updated_by' => $actor->id,
                 'completed_at' => $status === ActivityStatus::Completed ? now() : null,
             ]);
+
+            if ($isBankCoopCheck) {
+                foreach ($data['bank_targets'] as $targetData) {
+                    $targetStatus = ActivityStatus::from($targetData['status']);
+                    [$targetSchedule, $targetHasTime] = CiActivityBankTarget::normalizeScheduleInput(
+                        $targetStatus,
+                        $targetData['scheduled_at'] ?? null,
+                        $targetData['scheduled_time'] ?? null,
+                    );
+                    $activity->bankTargets()->create([
+                        'institution_name' => $targetData['institution_name'],
+                        'branch_location' => $targetData['branch_location'] ?? null,
+                        'status' => $targetStatus,
+                        'scheduled_at' => $targetSchedule,
+                        'scheduled_has_time' => $targetHasTime,
+                        'remarks' => $targetData['remarks'] ?? null,
+                        'created_by' => $actor->id,
+                        'updated_by' => $actor->id,
+                    ]);
+                }
+
+                $status = $this->saveBankTarget->synchronizeParentStatus($activity, $actor);
+                $activity->refresh();
+            }
 
             AuditLog::create([
                 'user_id' => $actor->id,
@@ -73,7 +102,7 @@ class CreateCiActivity
                 'user_agent' => request()?->userAgent(),
             ]);
 
-            if ($status === ActivityStatus::Scheduled) {
+            if (! $isBankCoopCheck && $status === ActivityStatus::Scheduled) {
                 $actor->notify(new CiActivityScheduledReminder(
                     $activity,
                     CiActivityScheduledReminder::PURPOSE_SCHEDULE_CREATED,

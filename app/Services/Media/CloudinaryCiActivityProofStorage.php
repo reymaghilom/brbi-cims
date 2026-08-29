@@ -11,19 +11,34 @@ use Illuminate\Support\Str;
 
 class CloudinaryCiActivityProofStorage
 {
+    private const DELIVERY_TYPE = 'upload';
+
     private ?Cloudinary $client = null;
+
+    public function __construct(private readonly ClientMediaUploader $clientMediaUploader) {}
 
     public function folderFor(ClientFolder $folder, CiActivity $activity): string
     {
-        $personPath = $activity->co_maker_id === null
-            ? 'applicant'
-            : 'co-makers/'.$activity->co_maker_id;
+        throw_unless(
+            $activity->client_folder_id === $folder->id,
+            \InvalidArgumentException::class,
+            'The proof activity does not belong to the selected Client Folder.',
+        );
 
-        return trim((string) config('cims.cloudinary.root', 'brbi-cims'), '/')
-            .'/client-folders/'.$folder->id
-            .'/'.$personPath
-            .'/ci-activities/'.$activity->id
-            .'/proof';
+        $coMaker = $activity->co_maker_id === null
+            ? null
+            : $folder->coMakers()->find($activity->co_maker_id);
+        throw_if(
+            $activity->co_maker_id !== null && $coMaker === null,
+            \InvalidArgumentException::class,
+            'The proof activity Co-Maker does not belong to the selected Client Folder.',
+        );
+
+        return $this->clientMediaUploader->rootedPersonCloudFolder(
+            $folder,
+            'ci-activities/attachments',
+            $coMaker,
+        );
     }
 
     public function store(ClientFolder $folder, CiActivity $activity, UploadedFile $file): array
@@ -84,10 +99,7 @@ class CloudinaryCiActivityProofStorage
             return;
         }
 
-        $this->cloudinary()->uploadApi()->destroy($publicId, [
-            'resource_type' => $resourceType,
-            'invalidate' => true,
-        ]);
+        $this->clientMediaUploader->retireCloudAsset($publicId, $resourceType, self::DELIVERY_TYPE);
     }
 
     private function verifiedMimeType(UploadedFile $file): string

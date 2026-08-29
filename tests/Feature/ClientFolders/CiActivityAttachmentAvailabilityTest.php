@@ -10,12 +10,14 @@ use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\MediaReference;
 use App\Models\User;
+use App\Services\Media\ClientMediaUploader;
 use App\Services\Media\CloudinaryCiActivityProofStorage;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -122,6 +124,7 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
 
     public function test_cloudinary_folder_paths_are_exact_for_applicant_and_co_maker(): void
     {
+        config()->set('cloudinary.root_folder', 'BRBI-CIMS');
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
         $coMaker = CoMaker::create([
@@ -132,17 +135,213 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
         ]);
         $applicantActivity = $this->activityFor($folder, $ci, 'APPLICANT CLOUDINARY PATH');
         $coMakerActivity = $this->activityFor($folder, $ci, 'CO-MAKER CLOUDINARY PATH', $coMaker->id);
-        $storage = new CloudinaryCiActivityProofStorage;
+        $storage = app(CloudinaryCiActivityProofStorage::class);
+        $clientMediaUploader = app(ClientMediaUploader::class);
+        $clientSlug = Str::slug((string) $folder->display_name) ?: 'client';
+        $coMakerSlug = Str::slug((string) $coMaker->full_name) ?: 'co-maker';
+        $clientRoot = 'BRBI-CIMS/clients/CF-'.$folder->id.'-'.$clientSlug;
 
         $this->assertSame(
-            'brbi-cims/client-folders/'.$folder->id.'/applicant/ci-activities/'.$applicantActivity->id.'/proof',
+            $clientRoot.'/applicant/ci-activities/attachments',
             $storage->folderFor($folder, $applicantActivity),
         );
         $this->assertSame(
-            'brbi-cims/client-folders/'.$folder->id.'/co-makers/'.$coMaker->id.'/ci-activities/'.$coMakerActivity->id.'/proof',
+            $clientRoot.'/co-makers/CM-'.$coMaker->id.'-'.$coMakerSlug.'/ci-activities/attachments',
             $storage->folderFor($folder, $coMakerActivity),
         );
-        $this->assertStringNotContainsString('PRIVATE NAME', $storage->folderFor($folder, $coMakerActivity));
+        $this->assertSame(
+            $clientRoot.'/applicant/residence/photos',
+            $clientMediaUploader->rootedPersonCloudFolder($folder, 'residence/photos'),
+        );
+        $this->assertSame(
+            $clientRoot.'/applicant/business/photos',
+            $clientMediaUploader->rootedPersonCloudFolder($folder, 'business/photos'),
+        );
+    }
+
+    public function test_cloudinary_proof_retirement_reuses_the_shared_media_retirement_service(): void
+    {
+        $mediaUploader = $this->mock(ClientMediaUploader::class);
+        $mediaUploader->shouldReceive('retireCloudAsset')
+            ->once()
+            ->with('brbi-cims/legacy/exact-proof', 'video', 'upload');
+
+        (new CloudinaryCiActivityProofStorage($mediaUploader))->delete(
+            'brbi-cims/legacy/exact-proof',
+            'video',
+        );
+    }
+
+    public function test_removing_one_historical_cloudinary_proof_retires_its_stored_asset_and_preserves_other_proof(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->activityFor($folder, $ci, 'REMOVE EXACT HISTORICAL PROOF');
+        $historical = $this->cloudinaryMedia($folder, $ci, 'historical-proof.jpg', 'brbi-cims/client-folders/'.$folder->id.'/applicant/ci-activities/'.$activity->id.'/proof/historical-id');
+        $other = $this->cloudinaryMedia($folder, $ci, 'keep-proof.jpg', 'BRBI-CIMS/clients/current/keep-id');
+        $activity->mediaReferences()->attach([$historical->id, $other->id]);
+
+        $this->mock(CloudinaryCiActivityProofStorage::class)
+            ->shouldReceive('delete')
+            ->once()
+            ->with($historical->cloudinary_public_id, 'image');
+
+        $this->actingAs($ci)
+            ->delete(route('client-folders.activities.proof.destroy', [$folder, $activity, $historical]))
+            ->assertRedirect(route('client-folders.activities.edit', [$folder, $activity]))
+            ->assertSessionHas('status', 'Proof attachment removed successfully.');
+
+        $this->assertSoftDeleted('media_references', ['id' => $historical->id]);
+        $this->assertDatabaseMissing('activity_media', ['ci_activity_id' => $activity->id, 'media_reference_id' => $historical->id]);
+        $this->assertNotSoftDeleted('media_references', ['id' => $other->id]);
+        $this->assertDatabaseHas('activity_media', ['ci_activity_id' => $activity->id, 'media_reference_id' => $other->id]);
+    }
+
+    public function test_removing_a_shared_proof_detaches_only_the_exact_activity_without_retiring_the_asset(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->activityFor($folder, $ci, 'DETACH SHARED PROOF');
+        $otherActivity = $this->activityFor($folder, $ci, 'KEEP SHARED PROOF', null, [], 1);
+        $shared = $this->cloudinaryMedia($folder, $ci, 'shared-proof.jpg', 'brbi-cims/legacy/shared-proof');
+        $activity->mediaReferences()->attach($shared);
+        $otherActivity->mediaReferences()->attach($shared);
+
+        $this->mock(CloudinaryCiActivityProofStorage::class)->shouldNotReceive('delete');
+
+        $this->actingAs($ci)
+            ->delete(route('client-folders.activities.proof.destroy', [$folder, $activity, $shared]))
+            ->assertRedirect(route('client-folders.activities.edit', [$folder, $activity]));
+
+        $this->assertNotSoftDeleted('media_references', ['id' => $shared->id]);
+        $this->assertDatabaseMissing('activity_media', ['ci_activity_id' => $activity->id, 'media_reference_id' => $shared->id]);
+        $this->assertDatabaseHas('activity_media', ['ci_activity_id' => $otherActivity->id, 'media_reference_id' => $shared->id]);
+    }
+
+    public function test_successful_replacement_persists_new_proof_before_retiring_only_the_old_asset(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->activityFor($folder, $ci, 'REPLACE EXACT PROOF');
+        $old = $this->cloudinaryMedia($folder, $ci, 'old-proof.jpg', 'brbi-cims/legacy/old-proof');
+        $other = $this->cloudinaryMedia($folder, $ci, 'other-proof.jpg', 'BRBI-CIMS/clients/current/other-proof');
+        $activity->mediaReferences()->attach([$old->id, $other->id]);
+
+        $storage = $this->mock(CloudinaryCiActivityProofStorage::class);
+        $storage->shouldReceive('store')
+            ->once()
+            ->ordered()
+            ->andReturn($this->cloudinaryStored('replacement-proof.jpg', 'BRBI-CIMS/clients/current/replacement-proof'));
+        $storage->shouldReceive('delete')
+            ->once()
+            ->ordered()
+            ->with('brbi-cims/legacy/old-proof', 'image');
+
+        $this->actingAs($ci)
+            ->put(route('client-folders.activities.proof.replace', [$folder, $activity, $old]), [
+                'attachment' => UploadedFile::fake()->image('replacement-proof.jpg'),
+            ])
+            ->assertRedirect(route('client-folders.activities.edit', [$folder, $activity]))
+            ->assertSessionHas('status', 'Proof attachment replaced successfully.');
+
+        $replacement = MediaReference::query()->where('cloudinary_public_id', 'BRBI-CIMS/clients/current/replacement-proof')->sole();
+        $this->assertSoftDeleted('media_references', ['id' => $old->id]);
+        $this->assertDatabaseHas('activity_media', ['ci_activity_id' => $activity->id, 'media_reference_id' => $replacement->id]);
+        $this->assertDatabaseHas('activity_media', ['ci_activity_id' => $activity->id, 'media_reference_id' => $other->id]);
+        $this->assertDatabaseMissing('activity_media', ['ci_activity_id' => $activity->id, 'media_reference_id' => $old->id]);
+    }
+
+    public function test_failed_replacement_upload_preserves_the_old_reference_and_cloudinary_asset(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->activityFor($folder, $ci, 'FAILED REPLACEMENT');
+        $old = $this->cloudinaryMedia($folder, $ci, 'old-proof.jpg', 'brbi-cims/legacy/preserved-old-proof');
+        $activity->mediaReferences()->attach($old);
+        $storage = $this->mock(CloudinaryCiActivityProofStorage::class);
+        $storage->shouldReceive('store')->once()->andThrow(new \RuntimeException('Simulated replacement upload failure.'));
+        $storage->shouldNotReceive('delete');
+        $this->withoutExceptionHandling();
+
+        try {
+            $this->actingAs($ci)->put(route('client-folders.activities.proof.replace', [$folder, $activity, $old]), [
+                'attachment' => UploadedFile::fake()->image('failed-replacement.jpg'),
+            ]);
+            $this->fail('The simulated replacement upload failure was not raised.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Simulated replacement upload failure.', $exception->getMessage());
+        }
+
+        $this->assertNotSoftDeleted('media_references', ['id' => $old->id]);
+        $this->assertDatabaseHas('activity_media', ['ci_activity_id' => $activity->id, 'media_reference_id' => $old->id]);
+        $this->assertDatabaseCount('media_references', 1);
+    }
+
+    public function test_non_completed_activity_cannot_replace_existing_proof(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->activityFor($folder, $ci, 'NON COMPLETED REPLACEMENT', null, [
+            'status' => ActivityStatus::FollowUp,
+            'completed_at' => null,
+        ]);
+        $old = $this->cloudinaryMedia($folder, $ci, 'old-proof.jpg', 'brbi-cims/legacy/non-completed-proof');
+        $activity->mediaReferences()->attach($old);
+        $storage = $this->mock(CloudinaryCiActivityProofStorage::class);
+        $storage->shouldNotReceive('store');
+        $storage->shouldNotReceive('delete');
+
+        $this->actingAs($ci)
+            ->from(route('client-folders.activities.edit', [$folder, $activity]))
+            ->put(route('client-folders.activities.proof.replace', [$folder, $activity, $old]), [
+                'attachment' => UploadedFile::fake()->image('forged-replacement.jpg'),
+            ])
+            ->assertRedirect(route('client-folders.activities.edit', [$folder, $activity]))
+            ->assertSessionHasErrors('attachment');
+
+        $this->assertNotSoftDeleted('media_references', ['id' => $old->id]);
+    }
+
+    public function test_cross_activity_and_cross_folder_proof_removal_are_not_found(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $otherFolder = $this->folderFor($ci);
+        $activity = $this->activityFor($folder, $ci, 'EXACT ACTIVITY');
+        $otherActivity = $this->activityFor($folder, $ci, 'OTHER ACTIVITY', null, [], 1);
+        $otherFolderActivity = $this->activityFor($otherFolder, $ci, 'OTHER FOLDER ACTIVITY');
+        $media = $this->cloudinaryMedia($folder, $ci, 'exact-proof.jpg', 'BRBI-CIMS/clients/current/exact-proof');
+        $activity->mediaReferences()->attach($media);
+        $this->mock(CloudinaryCiActivityProofStorage::class)->shouldNotReceive('delete');
+
+        $this->actingAs($ci)
+            ->delete(route('client-folders.activities.proof.destroy', [$folder, $otherActivity, $media]))
+            ->assertNotFound();
+        $this->delete(route('client-folders.activities.proof.destroy', [$otherFolder, $otherFolderActivity, $media]))
+            ->assertNotFound();
+
+        $this->assertNotSoftDeleted('media_references', ['id' => $media->id]);
+        $this->assertDatabaseHas('activity_media', ['ci_activity_id' => $activity->id, 'media_reference_id' => $media->id]);
+    }
+
+    public function test_edit_page_shows_preview_replace_and_confirmed_remove_controls_for_exact_proof(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->activityFor($folder, $ci, 'EDIT PROOF CONTROLS');
+        $media = $this->cloudinaryMedia($folder, $ci, 'editable-proof.jpg', 'BRBI-CIMS/clients/current/editable-proof');
+        $activity->mediaReferences()->attach($media);
+
+        $this->actingAs($ci)
+            ->get(route('client-folders.activities.edit', [$folder, $activity]))
+            ->assertOk()
+            ->assertSee('Preview / Open')
+            ->assertSee('Replace')
+            ->assertSee('Remove')
+            ->assertSee(route('client-folders.activities.proof.content', [$folder, $activity, $media]), false)
+            ->assertSee(route('client-folders.activities.proof.replace', [$folder, $activity, $media]), false)
+            ->assertSee('data-modal-open="remove-proof-'.$media->id.'"', false)
+            ->assertSee('id="remove-proof-'.$media->id.'"', false);
     }
 
     public function test_attachment_indicator_is_not_clickable_without_proof(): void
@@ -471,7 +670,7 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
         ];
     }
 
-    private function cloudinaryStored(string $fileName): array
+    private function cloudinaryStored(string $fileName, string $publicId = 'brbi-cims/test-proof'): array
     {
         return [
             'media_type' => 'photo',
@@ -482,11 +681,28 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
             'storage_provider' => MediaReference::STORAGE_PROVIDER_CLOUDINARY,
             'temporary_local_path' => null,
             'thumbnail_path' => null,
-            'cloudinary_public_id' => 'brbi-cims/test-proof',
+            'cloudinary_public_id' => $publicId,
             'cloudinary_resource_type' => 'image',
             'cloudinary_secure_url' => 'https://res.cloudinary.test/test-proof.jpg',
             'suggested_label' => 'Test proof',
         ];
+    }
+
+    private function cloudinaryMedia(ClientFolder $folder, User $uploader, string $fileName, string $publicId): MediaReference
+    {
+        return MediaReference::factory()->create([
+            'client_folder_id' => $folder->id,
+            'co_maker_id' => null,
+            'uploaded_by' => $uploader->id,
+            'file_name' => $fileName,
+            'mime_type' => 'image/jpeg',
+            'storage_provider' => MediaReference::STORAGE_PROVIDER_CLOUDINARY,
+            'temporary_local_path' => null,
+            'thumbnail_path' => null,
+            'cloudinary_public_id' => $publicId,
+            'cloudinary_resource_type' => 'image',
+            'cloudinary_secure_url' => 'https://res.cloudinary.test/'.basename($publicId).'.jpg',
+        ]);
     }
 
     private function activityFor(

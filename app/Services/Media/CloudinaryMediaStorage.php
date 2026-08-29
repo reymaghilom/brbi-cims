@@ -56,7 +56,7 @@ class CloudinaryMediaStorage
 
         try {
             $response = $this->client()->uploadApi()->upload($file->getRealPath(), [
-                'folder' => $this->folder($folder),
+                'folder' => $this->folderFor($folder),
                 'public_id' => $publicId,
                 'resource_type' => 'image',
                 'type' => self::DELIVERY_TYPE,
@@ -73,7 +73,7 @@ class CloudinaryMediaStorage
         } catch (\Throwable $exception) {
             report($exception);
 
-            throw new CloudMediaUploadException();
+            throw new CloudMediaUploadException;
         }
 
         $format = (string) ($response['format'] ?? 'jpg');
@@ -138,7 +138,7 @@ class CloudinaryMediaStorage
             ->signUrl(true);
     }
 
-    private function folder(string $folder): string
+    public function folderFor(string $folder): string
     {
         return rtrim((string) config('cloudinary.root_folder', 'BRBI-CIMS'), '/').'/'.trim($folder, '/');
     }

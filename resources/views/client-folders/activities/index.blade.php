@@ -7,11 +7,18 @@
         $personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null);
         $tabs = ['all' => 'All Activities', 'pending' => 'Pending', 'scheduled_today' => 'Scheduled Today', 'follow_up' => 'For Follow-up', 'completed' => 'Completed'];
         $addingNewActivityType = (bool) old('create_new_activity_type');
-        $addActivityStatus = old('status', App\Enums\ActivityStatus::Pending->value);
-        $addScheduleEnabled = in_array($addActivityStatus, [App\Enums\ActivityStatus::Scheduled->value, App\Enums\ActivityStatus::FollowUp->value], true);
-        $addActivityProofEnabled = ! $addingNewActivityType && $addActivityStatus === App\Enums\ActivityStatus::Completed->value;
         $selectedActivityDefinitionId = $addingNewActivityType ? App\Models\ActivityDefinition::NEW_TYPE_VALUE : (string) old('activity_definition_id', '');
         $selectedActivityDefinition = $definitions->firstWhere('id', (int) $selectedActivityDefinitionId);
+        $addingBankCoopCheck = ! $addingNewActivityType && $selectedActivityDefinition?->code === App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE;
+        $bankTargetRows = old('bank_targets');
+        if (! is_array($bankTargetRows) || $bankTargetRows === []) {
+            $bankTargetRows = [['institution_name' => '', 'branch_location' => '', 'status' => 'pending', 'scheduled_at' => '', 'scheduled_time' => '', 'remarks' => '']];
+        }
+        $addActivityStatus = $addingBankCoopCheck
+            ? App\Models\CiActivityBankTarget::deriveParentStatus(array_column($bankTargetRows, 'status'))->value
+            : old('status', App\Enums\ActivityStatus::Pending->value);
+        $addScheduleEnabled = ! $addingBankCoopCheck && in_array($addActivityStatus, [App\Enums\ActivityStatus::Scheduled->value, App\Enums\ActivityStatus::FollowUp->value], true);
+        $addActivityProofEnabled = ! $addingNewActivityType && $addActivityStatus === App\Enums\ActivityStatus::Completed->value;
         $builtInActivityDefinitions = $definitions->reject->isCustom();
         $customActivityDefinitions = $definitions->filter->isCustom();
         $activityModalStatus = session('status');
@@ -213,11 +220,12 @@
                                 $singleAttachment = $attachmentCount === 1 ? $activityProof->first() : null;
                                 $singleAttachmentIsPreviewable = $singleAttachment
                                     && (Str::startsWith($singleAttachment->mime_type, 'image/') || Str::startsWith($singleAttachment->mime_type, 'video/'));
+                                $isBankCoopCheck = $activity->definition?->code === App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE;
                             @endphp
                             <tr class="align-middle transition hover:bg-surface-subtle/70" data-ci-activity-row data-status="{{ $activity->status->value }}" data-scheduled-today="{{ $scheduledToday ? 'true' : 'false' }}" data-sort-activity="{{ Str::lower($activity->name) }}" data-sort-status="{{ Str::lower($activity->status->label()) }}" data-sort-schedule="{{ $activitySchedule?->timestamp ?? 0 }}" data-sort-creator="{{ Str::lower($activity->creator?->full_name ?? 'System-created') }}" data-sort-updated="{{ $activity->updated_at->timestamp }}" @if(! $visibleActivityIds->contains($activity->id)) hidden @endif>
                                 <td class="px-3 py-3 text-center"><input type="checkbox" value="{{ $activity->id }}" class="size-4 rounded border-ui-border text-brand-primary focus:ring-brand-primary" aria-label="Select {{ $activity->name }}" data-ci-activity-select></td>
-                                <td class="px-4 py-3"><div class="flex items-start gap-2.5"><span class="grid size-8 shrink-0 place-items-center rounded-full border border-ui-border bg-surface-subtle text-text-muted"><x-ui.icon name="report" size="size-4" /></span><div class="min-w-0"><p class="font-bold text-text-main">{{ $activity->name }}</p><p class="mt-0.5 max-w-52 truncate text-xs text-text-muted">{{ $activity->target ?: ($activity->definition?->is_required ? 'Required investigation activity' : 'General investigation activity') }}</p></div></div></td>
-                                <td class="px-3 py-3"><span @class(['inline-flex rounded-full px-2.5 py-1 text-xs font-bold', 'bg-progress-soft text-progress' => $activity->status === App\Enums\ActivityStatus::Pending, 'bg-brand-soft text-brand-primary' => $activity->status === App\Enums\ActivityStatus::Scheduled, 'bg-[#fff0e7] text-[#c85b12]' => $activity->status === App\Enums\ActivityStatus::FollowUp, 'bg-success-soft text-success' => $activity->status === App\Enums\ActivityStatus::Completed])>{{ $activity->status->label() }}</span></td>
+                                <td class="px-4 py-3"><div class="flex items-start gap-2.5"><span class="grid size-8 shrink-0 place-items-center rounded-full border border-ui-border bg-surface-subtle text-text-muted"><x-ui.icon name="report" size="size-4" /></span><div class="min-w-0">@if($isBankCoopCheck)<a href="{{ route('client-folders.activities.bank-coop.show', [$clientFolder, $activity] + $personParams) }}" class="group block rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30" data-bank-coop-open="{{ $activity->id }}" data-bank-coop-url="{{ route('client-folders.activities.bank-coop.show', [$clientFolder, $activity] + $personParams) }}" aria-haspopup="dialog" aria-controls="bank-coop-tracker-modal"><p class="font-bold text-brand-primary group-hover:underline">{{ $activity->name }}</p><p class="mt-0.5 max-w-52 truncate text-xs text-text-muted group-hover:text-brand-primary" data-bank-coop-progress="{{ $activity->id }}">{{ $activity->bank_targets_count }} {{ str('institution')->plural($activity->bank_targets_count) }} · {{ $activity->completed_bank_targets_count }} completed</p></a>@else<p class="font-bold text-text-main">{{ $activity->name }}</p><p class="mt-0.5 max-w-52 truncate text-xs text-text-muted">{{ $activity->target ?: ($activity->definition?->is_required ? 'Required investigation activity' : 'General investigation activity') }}</p>@endif</div></div></td>
+                                <td class="px-3 py-3"><span data-bank-coop-status="{{ $isBankCoopCheck ? $activity->id : '' }}" @class(['inline-flex rounded-full px-2.5 py-1 text-xs font-bold', 'bg-progress-soft text-progress' => $activity->status === App\Enums\ActivityStatus::Pending, 'bg-brand-soft text-brand-primary' => $activity->status === App\Enums\ActivityStatus::Scheduled, 'bg-[#fff0e7] text-[#c85b12]' => $activity->status === App\Enums\ActivityStatus::FollowUp, 'bg-success-soft text-success' => $activity->status === App\Enums\ActivityStatus::Completed])>{{ $activity->status->label() }}</span></td>
                                 <td class="px-3 py-3 text-xs leading-5 text-text-muted">@if($activity->scheduled_at)<span class="block font-semibold text-text-main">{{ $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->scheduled_has_time ? $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time' }}@elseif($activity->visit_date)<span class="block font-semibold text-text-main">{{ $activity->visit_date->format('M j, Y') }}</span>Completed visit @else — @endif</td>
                                 <td class="px-3 py-3" data-submission-cell="{{ $activity->id }}">
                                     <div class="min-w-36 space-y-2 text-xs">
@@ -273,13 +281,30 @@
                 </table>
             </div>
 
+            <dialog id="bank-coop-tracker-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-4xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-bank-coop-modal aria-labelledby="bank-coop-tracker-title">
+                <div class="flex max-h-[calc(100dvh-2rem)] flex-col">
+                    <div class="relative flex shrink-0 flex-col gap-3 border-b border-ui-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                        <div class="min-w-0 pr-10 sm:pr-0"><h2 id="bank-coop-tracker-title" class="text-lg font-bold text-brand-sidebar">Bank / Coop Check</h2><p class="mt-1 truncate text-sm text-text-muted" data-bank-coop-modal-context>Loading exact activity context…</p></div>
+                        <div class="flex flex-wrap items-center gap-2 pr-10 sm:pr-0"><button type="button" class="ui-button-primary !min-h-9 !px-3 !py-1.5 !text-xs" data-bank-coop-modal-add disabled><x-ui.icon name="plus" size="size-3.5" />Add Bank / Coop</button><button type="button" class="ui-icon-button absolute right-3 top-3 sm:static" data-bank-coop-modal-close aria-label="Close Bank / Coop Check"><x-ui.icon name="close" size="size-5" /></button></div>
+                    </div>
+                    <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-subtle/40 p-3 sm:p-4" data-bank-coop-modal-body>
+                        <div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading Bank / Coop targets…</div>
+                    </div>
+                    <div class="flex shrink-0 justify-end border-t border-ui-border px-5 py-3.5 sm:px-6"><button type="button" class="ui-button-secondary-compact" data-bank-coop-modal-close>Close</button></div>
+                </div>
+            </dialog>
+
             @foreach($activities as $activity)
-                @php($activityProof = $activity->mediaReferences)
+                @php
+                    $activityProof = $activity->mediaReferences;
+                @endphp
                 @if($activityProof->count() > 1)
                     <x-ui.modal id="ci-proof-list-{{ $activity->id }}" title="Attachments ({{ $activityProof->count() }})" description="Proof files linked to {{ $activity->name }} only." size="max-w-lg" data-ci-proof-list data-ci-activity-id="{{ $activity->id }}">
                         <ul class="divide-y divide-ui-border" aria-label="Proof attachments for {{ $activity->name }}">
                             @foreach($activityProof as $proof)
-                                @php($proofIsPreviewable = Str::startsWith($proof->mime_type, 'image/') || Str::startsWith($proof->mime_type, 'video/'))
+                                @php
+                                    $proofIsPreviewable = Str::startsWith($proof->mime_type, 'image/') || Str::startsWith($proof->mime_type, 'video/');
+                                @endphp
                                 <li class="flex min-w-0 items-center gap-3 py-3 first:pt-0 last:pb-0">
                                     <span class="grid size-9 shrink-0 place-items-center rounded-control bg-brand-soft text-brand-primary"><x-ui.icon name="{{ Str::startsWith($proof->mime_type, 'image/') ? 'media' : (Str::startsWith($proof->mime_type, 'video/') ? 'video' : 'report') }}" size="size-4" /></span>
                                     <span class="min-w-0 flex-1 break-words text-sm font-semibold leading-5 text-text-main" title="{{ $proof->file_name }}">{{ $proof->file_name }}</span>
@@ -439,8 +464,10 @@
                             @if($builtInActivityDefinitions->isNotEmpty())
                                 <div class="px-3 pb-1 pt-1.5 text-[0.6875rem] font-bold uppercase tracking-wide text-text-muted" role="presentation">Built-in Activity Types</div>
                                 @foreach($builtInActivityDefinitions as $definition)
-                                    @php($alreadyAdded = $existingDefinitionIds->contains($definition->id))
-                                    <button type="button" class="flex min-h-10 w-full items-center px-3 py-2 text-left text-sm font-semibold transition hover:bg-surface-subtle focus:bg-surface-subtle focus:outline-none disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60" role="option" data-activity-type-option data-value="{{ $definition->id }}" data-label="{{ $definition->name }}" aria-selected="{{ (string) $selectedActivityDefinitionId === (string) $definition->id ? 'true' : 'false' }}" @disabled($alreadyAdded)>{{ $definition->name }}@if($alreadyAdded)<span class="ml-auto pl-3 text-xs font-normal">Already Added</span>@endif</button>
+                                    @php
+                                        $alreadyAdded = $existingDefinitionIds->contains($definition->id);
+                                    @endphp
+                                    <button type="button" class="flex min-h-10 w-full items-center px-3 py-2 text-left text-sm font-normal leading-5 transition hover:bg-surface-subtle focus:bg-surface-subtle focus:outline-none aria-selected:bg-brand-soft aria-selected:text-brand-primary disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60" role="option" data-activity-type-option data-value="{{ $definition->id }}" data-code="{{ $definition->code }}" data-label="{{ $definition->name }}" aria-selected="{{ (string) $selectedActivityDefinitionId === (string) $definition->id ? 'true' : 'false' }}" @disabled($alreadyAdded)>{{ $definition->name }}@if($alreadyAdded)<span class="ml-auto pl-3 text-xs font-normal">Already Added</span>@endif</button>
                                 @endforeach
                             @endif
 
@@ -449,9 +476,11 @@
                                 <div class="mx-2 my-1 border-t border-ui-border" role="presentation"></div>
                                 <div class="px-3 pb-1 pt-1.5 text-[0.6875rem] font-bold uppercase tracking-wide text-text-muted" role="presentation">My Custom Activity Types</div>
                                 @foreach($customActivityDefinitions as $definition)
-                                    @php($alreadyAdded = $existingDefinitionIds->contains($definition->id))
+                                    @php
+                                        $alreadyAdded = $existingDefinitionIds->contains($definition->id);
+                                    @endphp
                                     <div class="flex min-w-0 items-center" role="presentation" data-custom-activity-type-row="{{ $definition->id }}">
-                                        <button type="button" class="flex min-h-10 min-w-0 flex-1 items-center px-3 py-2 text-left text-sm font-semibold transition hover:bg-surface-subtle focus:bg-surface-subtle focus:outline-none disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60" role="option" data-activity-type-option data-value="{{ $definition->id }}" data-label="{{ $definition->name }}" aria-selected="{{ (string) $selectedActivityDefinitionId === (string) $definition->id ? 'true' : 'false' }}" @disabled($alreadyAdded)><span class="min-w-0 flex-1 truncate">{{ $definition->name }}</span>@if($alreadyAdded)<span class="shrink-0 pl-3 text-xs font-normal">Already Added</span>@endif</button>
+                                        <button type="button" class="flex min-h-10 min-w-0 flex-1 items-center px-3 py-2 text-left text-sm font-normal leading-5 transition hover:bg-surface-subtle focus:bg-surface-subtle focus:outline-none aria-selected:bg-brand-soft aria-selected:text-brand-primary disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60" role="option" data-activity-type-option data-value="{{ $definition->id }}" data-code="{{ $definition->code }}" data-label="{{ $definition->name }}" aria-selected="{{ (string) $selectedActivityDefinitionId === (string) $definition->id ? 'true' : 'false' }}" @disabled($alreadyAdded)><span class="min-w-0 flex-1 truncate">{{ $definition->name }}</span>@if($alreadyAdded)<span class="shrink-0 pl-3 text-xs font-normal">Already Added</span>@endif</button>
                                         <button type="button" class="mr-1 grid size-9 shrink-0 place-items-center rounded-control text-base font-bold text-danger transition hover:bg-danger-soft focus:bg-danger-soft focus:outline-none focus:ring-2 focus:ring-danger/30" title="Remove Activity Type" aria-label="Remove {{ $definition->name }} activity type" data-activity-type-remove="{{ $definition->id }}" data-activity-type-remove-dialog="remove-activity-definition-{{ $definition->id }}"><span aria-hidden="true">&minus;</span></button>
                                     </div>
                                 @endforeach
@@ -459,7 +488,7 @@
                             @endif
 
                             <div class="mx-2 my-1 border-t border-ui-border" role="presentation"></div>
-                            <button type="button" class="flex min-h-10 w-full items-center px-3 py-2 text-left text-sm font-bold text-brand-primary transition hover:bg-brand-soft focus:bg-brand-soft focus:outline-none" role="option" data-activity-type-option data-value="{{ App\Models\ActivityDefinition::NEW_TYPE_VALUE }}" data-label="+ Add New Activity Type" aria-selected="{{ $addingNewActivityType ? 'true' : 'false' }}">+ Add New Activity Type</button>
+                            <button type="button" class="flex min-h-10 w-full items-center px-3 py-2 text-left text-sm font-normal leading-5 text-brand-primary transition hover:bg-brand-soft focus:bg-brand-soft focus:outline-none aria-selected:bg-brand-soft" role="option" data-activity-type-option data-value="{{ App\Models\ActivityDefinition::NEW_TYPE_VALUE }}" data-code="" data-label="+ Add New Activity Type" aria-selected="{{ $addingNewActivityType ? 'true' : 'false' }}">+ Add New Activity Type</button>
                         </div>
                     </div>
                     <x-form.validation-message for="activity_definition_id" />
@@ -471,15 +500,50 @@
                     <x-form.validation-message for="new_activity_type" />
                     <p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-new-activity-type-error hidden>Please enter an Activity Type name.</p>
                 </div>
-                <div data-standard-activity-field @if($addingNewActivityType) hidden @endif><label for="activity-status" class="ui-label">Status</label><select id="activity-status" name="status" class="ui-control" required data-ci-activity-status><option value="pending" @selected($addActivityStatus === 'pending')>Pending</option><option value="scheduled" @selected($addActivityStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($addActivityStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($addActivityStatus === 'completed')>Completed</option></select><x-form.validation-message for="status" /><p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-activity-status-error hidden>Please select a Status.</p></div>
-                <div class="sm:col-span-2" data-standard-activity-field @if($addingNewActivityType) hidden @endif>
+                <div data-standard-activity-field @if($addingNewActivityType || $addingBankCoopCheck) hidden @endif><label for="activity-status" class="ui-label">Status</label><select id="activity-status" name="status" class="ui-control" @if(! $addingNewActivityType && ! $addingBankCoopCheck) required @else disabled @endif data-ci-activity-status><option value="pending" @selected($addActivityStatus === 'pending')>Pending</option><option value="scheduled" @selected($addActivityStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($addActivityStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($addActivityStatus === 'completed')>Completed</option></select><x-form.validation-message for="status" /><p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-activity-status-error hidden>Please select a Status.</p></div>
+                <div class="sm:col-span-2" data-standard-activity-field @if($addingNewActivityType || $addingBankCoopCheck) hidden @endif>
                     <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,0.55fr)]">
                         <div><label for="activity-schedule" class="ui-label">Schedule / Follow-up Date</label><input id="activity-schedule" name="scheduled_at" type="date" value="{{ $addScheduleEnabled ? old('scheduled_at') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-activity-schedule @disabled(! $addScheduleEnabled) aria-disabled="{{ $addScheduleEnabled ? 'false' : 'true' }}"><x-form.validation-message for="scheduled_at" /><p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-activity-schedule-error hidden>Please select a Schedule date.</p></div>
                         <div><label for="activity-schedule-time" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="activity-schedule-time" name="scheduled_time" type="time" value="{{ $addScheduleEnabled ? old('scheduled_time') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-activity-schedule-time @disabled(! $addScheduleEnabled) aria-disabled="{{ $addScheduleEnabled ? 'false' : 'true' }}"><x-form.validation-message for="scheduled_time" /></div>
                     </div>
                     <p class="ui-help" data-ci-schedule-help>{{ $addScheduleEnabled ? 'Time is optional. Without one, the creator is reminded at 8:00 AM on the selected date.' : 'Available when the status is Scheduled or For Follow-up.' }}</p>
                 </div>
-                <div class="sm:col-span-2" data-standard-activity-field @if($addingNewActivityType) hidden @endif><label for="activity-remarks" class="ui-label">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="activity-remarks" name="remarks" rows="3" class="ui-control" placeholder="Add concise operational details." data-ci-activity-remarks>{{ old('remarks') }}</textarea><x-form.validation-message for="remarks" /></div>
+                <div class="sm:col-span-2" data-standard-activity-field @if($addingNewActivityType || $addingBankCoopCheck) hidden @endif><label for="activity-remarks" class="ui-label">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="activity-remarks" name="remarks" rows="3" class="ui-control" placeholder="Add concise operational details." data-ci-activity-remarks @disabled($addingNewActivityType || $addingBankCoopCheck)>{{ old('remarks') }}</textarea><x-form.validation-message for="remarks" /></div>
+                <section class="sm:col-span-2 rounded-card border border-ui-border bg-surface-subtle/50 p-3.5 sm:p-4" data-bank-targets-section @if(! $addingBankCoopCheck) hidden @endif>
+                    <div><h3 class="text-xs font-bold uppercase tracking-wide text-brand-sidebar">Banks / Cooperatives</h3><p class="mt-1 text-xs text-text-muted">Add each institution with its own status and schedule.</p></div>
+                    <div class="mt-3 space-y-3" data-bank-target-rows>
+                        @foreach($bankTargetRows as $index => $target)
+                            @php
+                                $targetStatus = $target['status'] ?? 'pending';
+                                $targetSupportsSchedule = in_array($targetStatus, ['scheduled', 'follow_up'], true);
+                            @endphp
+                            <article class="rounded-control border border-ui-border bg-surface p-3" data-bank-target-row data-bank-target-index="{{ $index }}">
+                                <div class="mb-3 flex justify-end"><button type="button" class="ui-button-danger-compact" data-bank-target-remove><x-ui.icon name="trash" size="size-3.5" />Remove</button></div>
+                                <div class="grid gap-3 sm:grid-cols-2">
+                                    <div><label for="bank-target-name-{{ $index }}" class="ui-label">Bank / Coop Name</label><input id="bank-target-name-{{ $index }}" name="bank_targets[{{ $index }}][institution_name]" value="{{ $target['institution_name'] ?? '' }}" class="ui-control" maxlength="255" required data-bank-target-control @disabled(! $addingBankCoopCheck)>@error('bank_targets.'.$index.'.institution_name')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror<p class="mt-1.5 text-sm font-semibold text-danger" data-bank-target-name-error hidden>Enter the Bank / Coop name.</p></div>
+                                    <div><label for="bank-target-branch-{{ $index }}" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-branch-{{ $index }}" name="bank_targets[{{ $index }}][branch_location]" value="{{ $target['branch_location'] ?? '' }}" class="ui-control" maxlength="255" data-bank-target-control @disabled(! $addingBankCoopCheck)>@error('bank_targets.'.$index.'.branch_location')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
+                                    <div><label for="bank-target-status-{{ $index }}" class="ui-label">Status</label><select id="bank-target-status-{{ $index }}" name="bank_targets[{{ $index }}][status]" class="ui-control" required data-bank-target-status data-bank-target-control @disabled(! $addingBankCoopCheck)><option value="pending" @selected($targetStatus === 'pending')>Pending</option><option value="scheduled" @selected($targetStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($targetStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($targetStatus === 'completed')>Completed</option></select>@error('bank_targets.'.$index.'.status')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
+                                    <div class="grid gap-3 sm:grid-cols-2"><div><label for="bank-target-date-{{ $index }}" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-date-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_at]" type="date" value="{{ $targetSupportsSchedule ? ($target['scheduled_at'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-bank-target-control @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule)>@error('bank_targets.'.$index.'.scheduled_at')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><div><label for="bank-target-time-{{ $index }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_time]" type="time" value="{{ $targetSupportsSchedule ? ($target['scheduled_time'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule || blank($target['scheduled_at'] ?? null))>@error('bank_targets.'.$index.'.scheduled_time')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
+                                    <div class="sm:col-span-2"><label for="bank-target-remarks-{{ $index }}" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="bank-target-remarks-{{ $index }}" name="bank_targets[{{ $index }}][remarks]" rows="2" class="ui-control" data-bank-target-control @disabled(! $addingBankCoopCheck)>{{ $target['remarks'] ?? '' }}</textarea>@error('bank_targets.'.$index.'.remarks')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
+                                </div>
+                            </article>
+                        @endforeach
+                    </div>
+                    @error('bank_targets')<p class="mt-2 text-sm font-semibold text-danger">{{ $message }}</p>@enderror
+                    <button type="button" class="ui-button-secondary-compact mt-3" data-bank-target-add><x-ui.icon name="plus" size="size-3.5" />Add Another Bank / Coop</button>
+                    <template data-bank-target-template>
+                        <article class="rounded-control border border-ui-border bg-surface p-3" data-bank-target-row data-bank-target-index="__INDEX__">
+                            <div class="mb-3 flex justify-end"><button type="button" class="ui-button-danger-compact" data-bank-target-remove><x-ui.icon name="trash" size="size-3.5" />Remove</button></div>
+                            <div class="grid gap-3 sm:grid-cols-2">
+                                <div><label for="bank-target-name-__INDEX__" class="ui-label">Bank / Coop Name</label><input id="bank-target-name-__INDEX__" name="bank_targets[__INDEX__][institution_name]" class="ui-control" maxlength="255" required data-bank-target-control><p class="mt-1.5 text-sm font-semibold text-danger" data-bank-target-name-error hidden>Enter the Bank / Coop name.</p></div>
+                                <div><label for="bank-target-branch-__INDEX__" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-branch-__INDEX__" name="bank_targets[__INDEX__][branch_location]" class="ui-control" maxlength="255" data-bank-target-control></div>
+                                <div><label for="bank-target-status-__INDEX__" class="ui-label">Status</label><select id="bank-target-status-__INDEX__" name="bank_targets[__INDEX__][status]" class="ui-control" required data-bank-target-status data-bank-target-control><option value="pending">Pending</option><option value="scheduled">Scheduled</option><option value="follow_up">For Follow-up</option><option value="completed">Completed</option></select></div>
+                                <div class="grid gap-3 sm:grid-cols-2"><div><label for="bank-target-date-__INDEX__" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-date-__INDEX__" name="bank_targets[__INDEX__][scheduled_at]" type="date" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-bank-target-control disabled></div><div><label for="bank-target-time-__INDEX__" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-__INDEX__" name="bank_targets[__INDEX__][scheduled_time]" type="time" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control disabled></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
+                                <div class="sm:col-span-2"><label for="bank-target-remarks-__INDEX__" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="bank-target-remarks-__INDEX__" name="bank_targets[__INDEX__][remarks]" rows="2" class="ui-control" data-bank-target-control></textarea></div>
+                            </div>
+                        </article>
+                    </template>
+                </section>
                 <div class="min-w-0 sm:col-span-2" data-activity-create-only @if(! $addActivityProofEnabled) hidden @endif>
                     <label for="activity-attachment" class="ui-label">Proof / Attachment <span class="font-normal text-text-muted">(optional)</span></label>
                     <div class="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
@@ -752,6 +816,10 @@
             const customInfo = document.querySelector('[data-custom-activity-info]');
             const form = document.querySelector('[data-ci-activity-create-form]');
             const submitLabel = document.querySelector('[data-ci-activity-submit-label]');
+            const bankTargetSection = document.querySelector('[data-bank-targets-section]');
+            const bankTargetRows = document.querySelector('[data-bank-target-rows]');
+            const bankTargetTemplate = document.querySelector('[data-bank-target-template]');
+            const bankTargetAdd = document.querySelector('[data-bank-target-add]');
             if (!(select instanceof HTMLInputElement)
                 || !(selector instanceof HTMLElement)
                 || !(trigger instanceof HTMLButtonElement)
@@ -770,9 +838,98 @@
                 || !(attachmentRemove instanceof HTMLButtonElement)
                 || !(dialogBody instanceof HTMLElement)
                 || !(customInfo instanceof HTMLElement)
-                || !(form instanceof HTMLFormElement)) return;
+                || !(form instanceof HTMLFormElement)
+                || !(bankTargetSection instanceof HTMLElement)
+                || !(bankTargetRows instanceof HTMLElement)
+                || !(bankTargetTemplate instanceof HTMLTemplateElement)
+                || !(bankTargetAdd instanceof HTMLButtonElement)) return;
 
             const addingNewActivityType = () => select.value === @js(App\Models\ActivityDefinition::NEW_TYPE_VALUE);
+            const addingBankCoopCheck = () => options.some((option) => option.dataset.value === select.value
+                && option.dataset.code === @js(App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE));
+            let nextBankTargetIndex = Math.max(-1, ...[...bankTargetRows.querySelectorAll('[data-bank-target-index]')]
+                .map((row) => Number.parseInt(row.dataset.bankTargetIndex ?? '-1', 10))) + 1;
+
+            const currentBankTargetRows = () => [...bankTargetRows.querySelectorAll('[data-bank-target-row]')];
+
+            const derivedBankParentStatus = () => {
+                const statuses = currentBankTargetRows()
+                    .map((row) => row.querySelector('[data-bank-target-status]'))
+                    .filter((control) => control instanceof HTMLSelectElement)
+                    .map((control) => control.value);
+                if (statuses.length > 0 && statuses.every((targetStatus) => targetStatus === 'completed')) return 'completed';
+                if (statuses.includes('follow_up')) return 'follow_up';
+                if (statuses.includes('scheduled')) return 'scheduled';
+                return 'pending';
+            };
+
+            const syncBankTargetRow = (row) => {
+                const active = ! bankTargetSection.hidden;
+                const statusControl = row.querySelector('[data-bank-target-status]');
+                const dateControl = row.querySelector('[data-bank-target-date]');
+                const timeControl = row.querySelector('[data-bank-target-time]');
+                if (!(statusControl instanceof HTMLSelectElement)
+                    || !(dateControl instanceof HTMLInputElement)
+                    || !(timeControl instanceof HTMLInputElement)) return;
+
+                row.querySelectorAll('[data-bank-target-control]').forEach((control) => {
+                    if (control !== dateControl && control !== timeControl) control.disabled = ! active;
+                });
+                const supportsSchedule = ['scheduled', 'follow_up'].includes(statusControl.value);
+                if (! supportsSchedule) {
+                    dateControl.value = '';
+                    timeControl.value = '';
+                }
+                dateControl.disabled = ! active || ! supportsSchedule;
+                dateControl.required = false;
+                const timeEnabled = active && supportsSchedule && dateControl.value !== '';
+                if (! timeEnabled) timeControl.value = '';
+                timeControl.disabled = ! timeEnabled;
+                syncAttachmentAvailability();
+            };
+
+            const syncBankTargetRows = () => {
+                const rows = currentBankTargetRows();
+                rows.forEach((row) => {
+                    const remove = row.querySelector('[data-bank-target-remove]');
+                    if (remove instanceof HTMLButtonElement) remove.disabled = bankTargetSection.hidden || rows.length === 1;
+                    syncBankTargetRow(row);
+                });
+                bankTargetAdd.disabled = bankTargetSection.hidden;
+            };
+
+            const bindBankTargetRow = (row) => {
+                if (row.dataset.bankTargetBound === 'true') return;
+                row.dataset.bankTargetBound = 'true';
+                const statusControl = row.querySelector('[data-bank-target-status]');
+                const dateControl = row.querySelector('[data-bank-target-date]');
+                const remove = row.querySelector('[data-bank-target-remove]');
+                statusControl?.addEventListener('change', () => syncBankTargetRow(row));
+                dateControl?.addEventListener('input', () => syncBankTargetRow(row));
+                remove?.addEventListener('click', () => {
+                    if (currentBankTargetRows().length === 1) return;
+                    row.remove();
+                    syncBankTargetRows();
+                });
+            };
+
+            const addBankTargetRow = () => {
+                const html = bankTargetTemplate.innerHTML.replaceAll('__INDEX__', String(nextBankTargetIndex++));
+                bankTargetRows.insertAdjacentHTML('beforeend', html);
+                const row = currentBankTargetRows().at(-1);
+                if (row) {
+                    bindBankTargetRow(row);
+                    syncBankTargetRows();
+                    row.querySelector('input')?.focus();
+                }
+            };
+
+            const syncBankTargetSection = () => {
+                bankTargetSection.hidden = ! addingBankCoopCheck() || addingNewActivityType();
+                currentBankTargetRows().forEach(bindBankTargetRow);
+                if (! bankTargetSection.hidden && currentBankTargetRows().length === 0) addBankTargetRow();
+                syncBankTargetRows();
+            };
 
             const syncAttachmentName = () => {
                 const fileName = attachment.files?.[0]?.name ?? '';
@@ -817,14 +974,15 @@
             };
 
             const syncScheduleAvailability = () => {
-                const enabled = ! addingNewActivityType() && ['scheduled', 'follow_up'].includes(status.value);
+                const parentFieldsEnabled = ! addingNewActivityType() && ! addingBankCoopCheck();
+                const enabled = parentFieldsEnabled && ['scheduled', 'follow_up'].includes(status.value);
                 if (! enabled) {
                     schedule.value = '';
                     scheduleTime.value = '';
                 }
                 schedule.disabled = ! enabled;
                 scheduleTime.disabled = ! enabled;
-                schedule.required = ! addingNewActivityType() && status.value === 'scheduled';
+                schedule.required = parentFieldsEnabled && status.value === 'scheduled';
                 schedule.setAttribute('aria-disabled', enabled ? 'false' : 'true');
                 scheduleTime.setAttribute('aria-disabled', enabled ? 'false' : 'true');
                 if (scheduleHelp) scheduleHelp.textContent = enabled
@@ -833,7 +991,8 @@
             };
 
             const syncAttachmentAvailability = () => {
-                const enabled = ! addingNewActivityType() && status.value === 'completed';
+                const effectiveStatus = addingBankCoopCheck() ? derivedBankParentStatus() : status.value;
+                const enabled = ! addingNewActivityType() && effectiveStatus === 'completed';
                 attachmentSection.hidden = ! enabled;
                 attachment.disabled = ! enabled;
                 if (! enabled && attachment.value !== '') {
@@ -844,12 +1003,16 @@
 
             const syncNewActivityType = () => {
                 const addingNewType = addingNewActivityType();
+                const bankCoopCheck = ! addingNewType && addingBankCoopCheck();
+                const parentFieldsHidden = addingNewType || bankCoopCheck;
                 fields.hidden = ! addingNewType;
                 input.required = addingNewType;
                 input.disabled = ! addingNewType;
-                standardFields.forEach((field) => { field.hidden = addingNewType; });
+                standardFields.forEach((field) => { field.hidden = parentFieldsHidden; });
                 customInfo.hidden = ! addingNewType;
-                remarks.disabled = addingNewType;
+                status.disabled = parentFieldsHidden;
+                status.required = ! parentFieldsHidden;
+                remarks.disabled = parentFieldsHidden;
                 form.dataset.submissionMode = addingNewType ? 'activity-type' : 'activity';
                 if (submitLabel) submitLabel.textContent = addingNewType ? 'Add Activity Type' : 'Add Activity';
 
@@ -864,10 +1027,12 @@
 
                 syncScheduleAvailability();
                 syncAttachmentAvailability();
+                syncBankTargetSection();
                 window.requestAnimationFrame(() => { dialogBody.scrollTop = 0; });
             };
 
             select.addEventListener('change', syncNewActivityType);
+            bankTargetAdd.addEventListener('click', addBankTargetRow);
             attachmentOpen.addEventListener('click', () => attachment.click());
             attachment.addEventListener('change', syncAttachmentName);
             attachmentRemove.addEventListener('click', () => {
@@ -986,6 +1151,7 @@
             const scheduleError = form?.querySelector('[data-ci-activity-schedule-error]');
             const requestError = form?.querySelector('[data-ci-activity-request-error]');
             const requestErrorMessage = form?.querySelector('[data-ci-activity-request-error-message]');
+            const bankTargetSection = form?.querySelector('[data-bank-targets-section]');
             if (!(form instanceof HTMLFormElement)
                 || !(dialog instanceof HTMLDialogElement)
                 || !(submitButton instanceof HTMLButtonElement)
@@ -1000,7 +1166,8 @@
                 || !(schedule instanceof HTMLInputElement)
                 || !(scheduleError instanceof HTMLElement)
                 || !(requestError instanceof HTMLElement)
-                || !(requestErrorMessage instanceof HTMLElement)) return;
+                || !(requestErrorMessage instanceof HTMLElement)
+                || !(bankTargetSection instanceof HTMLElement)) return;
 
             const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             const invalidClasses = ['border-danger', 'ring-2', 'ring-danger/20'];
@@ -1055,12 +1222,27 @@
 
             const validateActivityForm = () => {
                 const addingActivityType = form.dataset.submissionMode === 'activity-type';
+                const addingBankActivity = ! addingActivityType && ! bankTargetSection.hidden;
                 const missingActivityType = activityType.value === '';
                 const missingNewActivityType = addingActivityType && newActivityType.value.trim() === '';
-                const missingStatus = ! addingActivityType && status.value === '';
-                const missingSchedule = ! addingActivityType && status.value === 'scheduled' && schedule.value === '';
+                const missingStatus = ! addingActivityType && ! addingBankActivity && status.value === '';
+                const missingSchedule = ! addingActivityType && ! addingBankActivity && status.value === 'scheduled' && schedule.value === '';
+                let firstInvalidBankTarget = null;
 
-                if (missingActivityType || missingNewActivityType || missingStatus || missingSchedule) {
+                if (! bankTargetSection.hidden) {
+                    bankTargetSection.querySelectorAll('[data-bank-target-row]').forEach((row) => {
+                        const name = row.querySelector('[name$="[institution_name]"]');
+                        const nameError = row.querySelector('[data-bank-target-name-error]');
+                        if (!(name instanceof HTMLInputElement)
+                            || !(nameError instanceof HTMLElement)) return;
+
+                        const missingName = name.value.trim() === '';
+                        setInvalid(name, nameError, missingName);
+                        if (! firstInvalidBankTarget && missingName) firstInvalidBankTarget = name;
+                    });
+                }
+
+                if (missingActivityType || missingNewActivityType || missingStatus || missingSchedule || firstInvalidBankTarget) {
                     stabilizeDialogFrame();
                 }
 
@@ -1073,6 +1255,7 @@
                 if (missingNewActivityType) return newActivityType;
                 if (missingStatus) return status;
                 if (missingSchedule) return schedule;
+                if (firstInvalidBankTarget) return firstInvalidBankTarget;
                 return null;
             };
 
@@ -1083,6 +1266,16 @@
                 if (status.value !== 'scheduled') setInvalid(schedule, scheduleError, false);
             });
             schedule.addEventListener('input', () => setInvalid(schedule, scheduleError, false));
+            form.addEventListener('input', (event) => {
+                const control = event.target;
+                if (!(control instanceof HTMLInputElement)) return;
+                const row = control.closest('[data-bank-target-row]');
+                if (! row) return;
+                const error = control.matches('[name$="[institution_name]"]')
+                    ? row.querySelector('[data-bank-target-name-error]')
+                    : null;
+                if (error instanceof HTMLElement) setInvalid(control, error, false);
+            });
             form.addEventListener('input', clearRequestError);
             form.addEventListener('change', clearRequestError);
             dialog.addEventListener('close', releaseDialogFrame);
@@ -1136,6 +1329,226 @@
                 } catch (error) {
                     resetSubmissionState();
                     showRequestError(error instanceof Error ? error.message : 'Unable to add the activity. Please try again.');
+                }
+            });
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const modal = document.querySelector('[data-bank-coop-modal]');
+            const modalBody = modal?.querySelector('[data-bank-coop-modal-body]');
+            const modalContext = modal?.querySelector('[data-bank-coop-modal-context]');
+            const addButton = modal?.querySelector('[data-bank-coop-modal-add]');
+            const closeButtons = [...(modal?.querySelectorAll('[data-bank-coop-modal-close]') ?? [])];
+            const openers = [...document.querySelectorAll('[data-bank-coop-open]')];
+            if (!(modal instanceof HTMLDialogElement)
+                || !(modalBody instanceof HTMLElement)
+                || !(modalContext instanceof HTMLElement)
+                || !(addButton instanceof HTMLButtonElement)) return;
+
+            let currentActivityId = '';
+            let currentUrl = '';
+            let currentTrigger = null;
+
+            const loadingMarkup = '<div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading Bank / Coop targets…</div>';
+            const statusClasses = {
+                pending: ['bg-progress-soft', 'text-progress'],
+                scheduled: ['bg-brand-soft', 'text-brand-primary'],
+                follow_up: ['bg-[#fff0e7]', 'text-[#c85b12]'],
+                completed: ['bg-success-soft', 'text-success'],
+            };
+
+            const showLoadError = (message) => {
+                modalBody.replaceChildren();
+                const panel = document.createElement('div');
+                panel.className = 'rounded-card border border-danger/25 bg-danger-soft p-5 text-sm text-danger';
+                const text = document.createElement('p');
+                text.className = 'font-semibold';
+                text.textContent = message;
+                panel.append(text);
+                if (currentUrl !== '') {
+                    const fallback = document.createElement('a');
+                    fallback.href = currentUrl;
+                    fallback.className = 'ui-button-secondary-compact mt-3 inline-flex';
+                    fallback.textContent = 'Open detail page';
+                    panel.append(fallback);
+                }
+                modalBody.append(panel);
+            };
+
+            const syncScheduleForm = (form) => {
+                const status = form.querySelector('[data-bank-target-detail-status]');
+                const date = form.querySelector('[data-bank-target-detail-date]');
+                const time = form.querySelector('[data-bank-target-detail-time]');
+                if (!(status instanceof HTMLSelectElement)
+                    || !(date instanceof HTMLInputElement)
+                    || !(time instanceof HTMLInputElement)) return;
+
+                const sync = () => {
+                    const supportsSchedule = ['scheduled', 'follow_up'].includes(status.value);
+                    if (! supportsSchedule) {
+                        date.value = '';
+                        time.value = '';
+                    }
+                    date.disabled = ! supportsSchedule;
+                    date.required = false;
+                    const timeEnabled = supportsSchedule && date.value !== '';
+                    if (! timeEnabled) time.value = '';
+                    time.disabled = ! timeEnabled;
+                };
+
+                status.addEventListener('change', sync);
+                date.addEventListener('input', sync);
+                sync();
+            };
+
+            const synchronizeTable = (source) => {
+                const activityId = source.dataset.bankCoopActivityId ?? '';
+                const targetCount = Number.parseInt(source.dataset.bankCoopTargetCount ?? '0', 10);
+                const completedCount = Number.parseInt(source.dataset.bankCoopCompletedCount ?? '0', 10);
+                const status = source.dataset.bankCoopStatus ?? 'pending';
+                const statusLabel = source.dataset.bankCoopStatusLabel ?? 'Pending';
+                const progress = document.querySelector(`[data-bank-coop-progress="${activityId}"]`);
+                const statusBadge = document.querySelector(`[data-bank-coop-status="${activityId}"]`);
+                const row = progress?.closest('[data-ci-activity-row]');
+
+                if (progress instanceof HTMLElement) {
+                    progress.textContent = `${targetCount} ${targetCount === 1 ? 'institution' : 'institutions'} · ${completedCount} completed`;
+                }
+                if (statusBadge instanceof HTMLElement) {
+                    Object.values(statusClasses).flat().forEach((className) => statusBadge.classList.remove(className));
+                    (statusClasses[status] ?? statusClasses.pending).forEach((className) => statusBadge.classList.add(className));
+                    statusBadge.textContent = statusLabel;
+                }
+                if (row instanceof HTMLTableRowElement) {
+                    row.dataset.status = status;
+                    row.dataset.sortStatus = statusLabel.toLocaleLowerCase();
+                }
+
+                document.dispatchEvent(new CustomEvent('ci-bank-coop-updated', {
+                    detail: { activityId },
+                }));
+            };
+
+            const renderDetail = (html) => {
+                const page = new DOMParser().parseFromString(html, 'text/html');
+                const source = page.querySelector('[data-bank-coop-modal-source]');
+                if (!(source instanceof HTMLElement) || source.dataset.bankCoopActivityId !== currentActivityId) {
+                    throw new Error('The exact Bank / Coop activity could not be loaded.');
+                }
+
+                modalBody.replaceChildren(...[...source.childNodes].map((node) => document.importNode(node, true)));
+                modalContext.textContent = source.dataset.bankCoopContext ?? 'Bank / Coop activity';
+                addButton.disabled = false;
+                modalBody.querySelectorAll('[data-bank-target-form]').forEach((form) => {
+                    if (form instanceof HTMLFormElement) syncScheduleForm(form);
+                });
+                synchronizeTable(source);
+            };
+
+            const loadDetail = async () => {
+                modalBody.innerHTML = loadingMarkup;
+                addButton.disabled = true;
+                try {
+                    const response = await fetch(currentUrl, {
+                        credentials: 'same-origin',
+                        headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' },
+                    });
+                    if (! response.ok) throw new Error('Unable to load the Bank / Coop activity.');
+                    renderDetail(await response.text());
+                } catch (error) {
+                    showLoadError(error instanceof Error ? error.message : 'Unable to load the Bank / Coop activity.');
+                }
+            };
+
+            const openChildDialog = (dialog) => {
+                if (!(dialog instanceof HTMLDialogElement)) return;
+                dialog.showModal();
+                dialog.querySelector('input:not([type="hidden"]), select, textarea, button')?.focus();
+            };
+
+            openers.forEach((opener) => opener.addEventListener('click', (event) => {
+                event.preventDefault();
+                currentActivityId = opener.dataset.bankCoopOpen ?? '';
+                currentUrl = opener.dataset.bankCoopUrl ?? opener.href;
+                currentTrigger = opener;
+                modalContext.textContent = 'Loading exact activity context…';
+                modal.showModal();
+                loadDetail();
+            }));
+
+            closeButtons.forEach((button) => button.addEventListener('click', () => modal.close()));
+            modal.addEventListener('click', (event) => {
+                if (event.target === modal) modal.close();
+            });
+            modal.addEventListener('close', () => {
+                addButton.disabled = true;
+                modalBody.innerHTML = loadingMarkup;
+                if (currentTrigger instanceof HTMLElement) currentTrigger.focus();
+            });
+            addButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                openChildDialog(modalBody.querySelector('#add-bank-target'));
+            });
+
+            modalBody.addEventListener('click', (event) => {
+                const trigger = event.target.closest('[data-modal-open]');
+                const close = event.target.closest('[data-modal-close]');
+                if (close) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    close.closest('dialog')?.close();
+                    return;
+                }
+                if (! trigger) return;
+
+                event.preventDefault();
+                event.stopPropagation();
+                if (trigger instanceof HTMLInputElement && trigger.type === 'checkbox') trigger.checked = false;
+                const dialog = modalBody.querySelector(`#${trigger.dataset.modalOpen}`);
+                const followUpId = trigger.dataset.bankTargetFollowUp;
+                if (followUpId && dialog instanceof HTMLDialogElement) {
+                    const status = dialog.querySelector('[data-bank-target-detail-status]');
+                    if (status instanceof HTMLSelectElement) {
+                        status.value = 'follow_up';
+                        status.dispatchEvent(new Event('change'));
+                    }
+                }
+                openChildDialog(dialog);
+            });
+
+            modalBody.addEventListener('submit', async (event) => {
+                const form = event.target;
+                if (!(form instanceof HTMLFormElement)) return;
+                event.preventDefault();
+                event.stopPropagation();
+
+                const submitter = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
+                submitter?.setAttribute('disabled', 'disabled');
+                form.querySelector('[data-bank-coop-form-error]')?.remove();
+
+                try {
+                    const response = await fetch(form.action, {
+                        method: form.method,
+                        body: new FormData(form),
+                        credentials: 'same-origin',
+                        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    });
+                    if (! response.ok) {
+                        const payload = await response.json().catch(() => ({}));
+                        const validationMessage = Object.values(payload.errors ?? {}).flat().find((message) => typeof message === 'string');
+                        throw new Error(validationMessage ?? payload.message ?? 'Unable to save the Bank / Coop target.');
+                    }
+                    renderDetail(await response.text());
+                } catch (error) {
+                    const alert = document.createElement('div');
+                    alert.dataset.bankCoopFormError = '';
+                    alert.className = 'mx-5 mt-4 rounded-control border border-danger/25 bg-danger-soft px-3 py-2 text-sm font-semibold text-danger sm:mx-6';
+                    alert.setAttribute('role', 'alert');
+                    alert.tabIndex = -1;
+                    alert.textContent = error instanceof Error ? error.message : 'Unable to save the Bank / Coop target.';
+                    form.prepend(alert);
+                    alert.focus();
+                    if (submitter?.isConnected) submitter.removeAttribute('disabled');
                 }
             });
         });
@@ -1314,6 +1727,21 @@
                 activeSort = key;
                 sortRows();
             }));
+            document.addEventListener('ci-bank-coop-updated', (event) => {
+                const activityId = String(event.detail?.activityId ?? '');
+                const row = rows.find((candidate) => candidate.querySelector('[data-ci-activity-select]')?.value === activityId);
+                if (!(row instanceof HTMLTableRowElement)) return;
+
+                row.dataset.searchText = normalizeSearch(row.textContent ?? '');
+                row.hidden = !matchesFilter(row, activeFilter) || !matchesSearch(row);
+                const visibleRows = rows.filter((candidate) => !candidate.hidden);
+                if (emptyState instanceof HTMLTableRowElement) emptyState.hidden = visibleRows.length > 0;
+                if (emptyFresh instanceof HTMLElement) emptyFresh.hidden = rows.length > 0;
+                if (emptyFilter instanceof HTMLElement) emptyFilter.hidden = rows.length === 0 || searchQuery !== '';
+                emptySearch.hidden = rows.length === 0 || searchQuery === '' || visibleRows.length > 0;
+                sortRows();
+                syncBulkSelection();
+            });
             applyFilter(activeFilter, false);
         });
     </script>

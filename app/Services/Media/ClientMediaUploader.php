@@ -32,9 +32,9 @@ class ClientMediaUploader
     {
         if ($this->cloud->enabled()) {
             if ($organizeForApplicant) {
-                $cloudFolder = $this->applicantCloudFolder($folder, $cloudFolder);
+                $cloudFolder = $this->personCloudFolder($folder, $cloudFolder);
             } elseif ($coMaker) {
-                $cloudFolder = $this->coMakerCloudFolder($folder, $coMaker, $cloudFolder);
+                $cloudFolder = $this->personCloudFolder($folder, $cloudFolder, $coMaker);
             }
             $stored = $this->cloud->store($file, $cloudFolder, $preset);
 
@@ -70,6 +70,19 @@ class ClientMediaUploader
             'cloud_width' => null,
             'cloud_height' => null,
         ];
+    }
+
+    /** Builds a fully rooted Cloudinary namespace for media belonging to one exact Applicant or Co-Maker. */
+    public function rootedPersonCloudFolder(ClientFolder $folder, string $mediaFolder, ?CoMaker $coMaker = null): string
+    {
+        return $this->cloud->folderFor($this->personCloudFolder($folder, $mediaFolder, $coMaker));
+    }
+
+    private function personCloudFolder(ClientFolder $folder, string $mediaFolder, ?CoMaker $coMaker = null): string
+    {
+        return $coMaker
+            ? $this->coMakerCloudFolder($folder, $coMaker, $mediaFolder)
+            : $this->applicantCloudFolder($folder, $mediaFolder);
     }
 
     /** Builds the new Applicant-only Cloudinary namespace; Co-Maker uploads never call this. */

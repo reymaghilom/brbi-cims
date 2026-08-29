@@ -8,6 +8,7 @@ use App\Http\Controllers\Admin\UserStatusController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\RequiredPasswordChangeController;
 use App\Http\Controllers\BusinessCheckController;
+use App\Http\Controllers\CiActivityBankTargetController;
 use App\Http\Controllers\CiActivityController;
 use App\Http\Controllers\CiActivityNotificationReadController;
 use App\Http\Controllers\CibiReportController;
@@ -94,6 +95,21 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
             ->name('client-folders.activities.index');
         Route::post('/client-folders/{clientFolder}/activities', [CiActivityController::class, 'store'])
             ->name('client-folders.activities.store');
+        Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/bank-coop', [CiActivityBankTargetController::class, 'show'])
+            ->scopeBindings()
+            ->name('client-folders.activities.bank-coop.show');
+        Route::post('/client-folders/{clientFolder}/activities/{ciActivity}/bank-targets', [CiActivityBankTargetController::class, 'store'])
+            ->scopeBindings()
+            ->name('client-folders.activities.bank-targets.store');
+        Route::put('/client-folders/{clientFolder}/activities/{ciActivity}/bank-targets/{bankTarget}', [CiActivityBankTargetController::class, 'update'])
+            ->scopeBindings()
+            ->name('client-folders.activities.bank-targets.update');
+        Route::patch('/client-folders/{clientFolder}/activities/{ciActivity}/bank-targets/{bankTarget}/complete', [CiActivityBankTargetController::class, 'complete'])
+            ->scopeBindings()
+            ->name('client-folders.activities.bank-targets.complete');
+        Route::delete('/client-folders/{clientFolder}/activities/{ciActivity}/bank-targets/{bankTarget}', [CiActivityBankTargetController::class, 'destroy'])
+            ->scopeBindings()
+            ->name('client-folders.activities.bank-targets.destroy');
         Route::delete('/client-folders/{clientFolder}/activity-definitions/{activityDefinition}', [CiActivityController::class, 'deactivateDefinition'])
             ->name('client-folders.activity-definitions.deactivate');
         Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/edit', [CiActivityController::class, 'edit'])
@@ -108,6 +124,12 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/proof/{mediaReference}/content', [MediaReferenceController::class, 'activityContent'])
             ->scopeBindings()
             ->name('client-folders.activities.proof.content');
+        Route::put('/client-folders/{clientFolder}/activities/{ciActivity}/proof/{mediaReference}', [CiActivityController::class, 'replaceProof'])
+            ->scopeBindings()
+            ->name('client-folders.activities.proof.replace');
+        Route::delete('/client-folders/{clientFolder}/activities/{ciActivity}/proof/{mediaReference}', [CiActivityController::class, 'removeProof'])
+            ->scopeBindings()
+            ->name('client-folders.activities.proof.destroy');
         Route::delete('/client-folders/{clientFolder}/activities/{ciActivity}', [CiActivityController::class, 'destroy'])
             ->scopeBindings()
             ->name('client-folders.activities.destroy');
