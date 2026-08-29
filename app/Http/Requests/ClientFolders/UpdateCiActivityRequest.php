@@ -39,7 +39,6 @@ class UpdateCiActivityRequest extends FormRequest
             ],
             'expected_updated_at' => ['nullable', 'date'],
             'status' => ['required', Rule::enum(ActivityStatus::class)],
-            'target' => ['nullable', 'string', 'max:255'],
             'scheduled_at' => ['nullable', 'date', Rule::requiredIf($this->input('status') === ActivityStatus::Scheduled->value)],
             'visit_date' => ['nullable', 'date', 'before_or_equal:today'],
             'time_in' => ['nullable', 'date_format:H:i'],
@@ -66,12 +65,17 @@ class UpdateCiActivityRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         $normalized = [];
-        foreach (['target', 'visited_by', 'person_met_contact'] as $field) {
+        foreach (['visited_by', 'person_met_contact'] as $field) {
             $normalized[$field] = $this->normalize($this->input($field));
         }
         foreach (['remarks', 'supporting_reference'] as $field) {
             $normalized[$field] = $this->trimmed($this->input($field));
         }
+        $statusSupportsSchedule = in_array($this->input('status'), [
+            ActivityStatus::Scheduled->value,
+            ActivityStatus::FollowUp->value,
+        ], true);
+        $normalized['scheduled_at'] = $statusSupportsSchedule ? $this->input('scheduled_at') : null;
         $normalized['assigned_ci_id'] = filled($this->input('assigned_ci_id')) ? (int) $this->input('assigned_ci_id') : null;
 
         $this->merge($normalized);

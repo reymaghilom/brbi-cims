@@ -34,12 +34,13 @@ class UpdateCiActivity
             $previousAssignedCiId = $activity->assigned_ci_id;
             $previousSchedule = $activity->scheduled_at?->copy();
             $status = ActivityStatus::from($data['status']);
+            $data['scheduled_at'] = in_array($status, [ActivityStatus::Scheduled, ActivityStatus::FollowUp], true)
+                ? ($data['scheduled_at'] ?? null)
+                : null;
             $reopenedNow = $previousStatus === ActivityStatus::Completed && $status === ActivityStatus::Pending;
-            $scheduleChanged = array_key_exists('scheduled_at', $data)
-                && ! $previousSchedule?->equalTo(Carbon::parse($data['scheduled_at']));
-            if ($previousSchedule === null && blank($data['scheduled_at'] ?? null)) {
-                $scheduleChanged = false;
-            }
+            $nextSchedule = filled($data['scheduled_at']) ? Carbon::parse($data['scheduled_at']) : null;
+            $scheduleChanged = ($previousSchedule === null) !== ($nextSchedule === null)
+                || ($previousSchedule !== null && $nextSchedule !== null && ! $previousSchedule->equalTo($nextSchedule));
 
             $updates = Arr::except($data, ['expected_updated_at']) + [
                 'updated_by' => $actor->id,

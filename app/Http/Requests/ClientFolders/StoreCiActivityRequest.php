@@ -49,10 +49,14 @@ class StoreCiActivityRequest extends FormRequest
                     }
                 },
             ],
-            'status' => ['required', Rule::enum(ActivityStatus::class)],
-            'target' => ['nullable', 'string', 'max:255'],
-            'scheduled_at' => ['nullable', 'date', Rule::requiredIf($this->input('status') === ActivityStatus::Scheduled->value)],
-            'remarks' => ['nullable', 'string', 'max:20000'],
+            'status' => [Rule::excludeIf($this->boolean('create_new_activity_type')), 'required', Rule::enum(ActivityStatus::class)],
+            'scheduled_at' => [
+                Rule::excludeIf($this->boolean('create_new_activity_type')),
+                'nullable',
+                'date',
+                Rule::requiredIf($this->input('status') === ActivityStatus::Scheduled->value),
+            ],
+            'remarks' => [Rule::excludeIf($this->boolean('create_new_activity_type')), 'nullable', 'string', 'max:20000'],
         ];
     }
 
@@ -60,6 +64,10 @@ class StoreCiActivityRequest extends FormRequest
     {
         $createNewType = $this->input('activity_definition_id') === ActivityDefinition::NEW_TYPE_VALUE
             || $this->boolean('create_new_activity_type');
+        $statusSupportsSchedule = in_array($this->input('status'), [
+            ActivityStatus::Scheduled->value,
+            ActivityStatus::FollowUp->value,
+        ], true);
 
         $this->merge([
             'co_maker_id' => filled($this->input('co_maker_id')) ? (int) $this->input('co_maker_id') : null,
@@ -68,7 +76,7 @@ class StoreCiActivityRequest extends FormRequest
             'new_activity_type' => is_string($this->input('new_activity_type'))
                 ? ActivityDefinition::normalizeName($this->input('new_activity_type'))
                 : null,
-            'target' => $this->normalized('target'),
+            'scheduled_at' => $statusSupportsSchedule ? $this->input('scheduled_at') : null,
             'remarks' => $this->normalized('remarks'),
         ]);
     }

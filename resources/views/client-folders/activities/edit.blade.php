@@ -3,7 +3,14 @@
 @section('title', $activity->name)
 
 @section('content')
-    @php($personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null))
+    @php
+        $personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null);
+        $editActivityStatus = old('status', $activity->status->value);
+        $editScheduleEnabled = in_array($editActivityStatus, [App\Enums\ActivityStatus::Scheduled->value, App\Enums\ActivityStatus::FollowUp->value], true);
+        $editScheduleValue = $editScheduleEnabled
+            ? old('scheduled_at', $activity->scheduled_at?->timezone(config('cims.display_timezone'))->format('Y-m-d\TH:i'))
+            : '';
+    @endphp
 
     <x-ui.breadcrumb :items="[
         ['label' => 'Client Folders', 'url' => route('client-folders.index')],
@@ -29,11 +36,14 @@
             </div>
             <x-ui.record-meta :updated-by="$activity->updater?->full_name" :updated-at="$activity->updated_at" />
 
-            <x-ui.form-section title="Activity Details" description="Statuses can move directly as field conditions change. An exact date and time is required only for Scheduled activities.">
-                <x-form.select name="status" label="Status" :options="collect($statuses)->mapWithKeys(fn ($status) => [$status->value => $status->label()])->all()" :selected="$activity->status->value" required />
-                <x-form.input name="target" label="Bank / Office / Target" :value="$activity->target" maxlength="255" />
-                <div id="schedule"><x-form.input name="scheduled_at" label="Schedule / Follow-up Date and Time" type="datetime-local" :value="$activity->scheduled_at?->timezone(config('cims.display_timezone'))->format('Y-m-d\TH:i')" /></div>
-                <div><label class="ui-label" for="activity-creator">Creator</label><input id="activity-creator" value="{{ $activity->creator?->full_name ?? 'System-created' }}" class="ui-control bg-surface-muted" readonly aria-readonly="true"><p class="mt-1 text-xs text-text-muted">Creator is locked. Other authorized CIs may still update or complete this activity.</p></div>
+            <x-ui.form-section title="Activity Details" description="Schedule / Follow-up is available for Scheduled and For Follow-up statuses. An exact date and time is required for Scheduled activities.">
+                <div data-ci-edit-status><x-form.select name="status" label="Status" :options="collect($statuses)->mapWithKeys(fn ($status) => [$status->value => $status->label()])->all()" :selected="$editActivityStatus" required /></div>
+                <div id="schedule"><label for="scheduled_at" class="ui-label">Schedule / Follow-up Date and Time</label><input id="scheduled_at" name="scheduled_at" type="datetime-local" value="{{ $editScheduleValue }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-edit-schedule @disabled(! $editScheduleEnabled) aria-disabled="{{ $editScheduleEnabled ? 'false' : 'true' }}"><p class="ui-help" data-ci-edit-schedule-help>{{ $editScheduleEnabled ? 'Choose the next schedule or follow-up date and time.' : 'Available when the status is Scheduled or For Follow-up.' }}</p><x-form.validation-message for="scheduled_at" /></div>
+                <div class="space-y-1.5 rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted sm:col-span-2">
+                    <p class="text-sm"><span class="font-semibold text-text-main">Creator:</span> {{ $activity->creator?->full_name ?? 'System-created' }} <span class="ml-1">(locked)</span></p>
+                    <p>The original Creator remains unchanged. Scheduled and follow-up notifications will continue to be sent only to {{ $activity->creator?->full_name ?? 'the original Creator' }}. Other authorized CI users may still update or complete this activity.</p>
+                    <p>Proof is optional and can be linked through Photos &amp; Videos after creation.</p>
+                </div>
             </x-ui.form-section>
 
             <x-ui.form-section title="Remarks and Proof" description="Keep remarks concise. Proof remains optional and reuses Photos & Videos.">
@@ -75,4 +85,27 @@
             </section>
         </aside>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const status = document.querySelector('[data-ci-edit-status] select[name="status"]');
+            const schedule = document.querySelector('[data-ci-edit-schedule]');
+            const help = document.querySelector('[data-ci-edit-schedule-help]');
+            if (!(status instanceof HTMLSelectElement) || !(schedule instanceof HTMLInputElement)) return;
+
+            const syncScheduleAvailability = () => {
+                const enabled = ['scheduled', 'follow_up'].includes(status.value);
+                if (!enabled) schedule.value = '';
+                schedule.disabled = !enabled;
+                schedule.required = status.value === 'scheduled';
+                schedule.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+                if (help) help.textContent = enabled
+                    ? 'Choose the next schedule or follow-up date and time.'
+                    : 'Available when the status is Scheduled or For Follow-up.';
+            };
+
+            status.addEventListener('change', syncScheduleAvailability);
+            syncScheduleAvailability();
+        });
+    </script>
 @endsection

@@ -24,17 +24,25 @@ class CreateCiActivity
     public function execute(User $actor, ClientFolder $folder, array $data): CiActivity
     {
         return DB::transaction(function () use ($actor, $folder, $data): CiActivity {
-            $definition = ($data['create_new_activity_type'] ?? false)
-                ? $this->resolveCustomDefinition($actor, $folder, $data['new_activity_type'])
-                : ActivityDefinition::query()->where('is_active', true)->findOrFail($data['activity_definition_id']);
+            $definition = ActivityDefinition::query()->where('is_active', true)->findOrFail($data['activity_definition_id']);
+            $definition = ActivityDefinition::query()->whereKey($definition->id)->lockForUpdate()->firstOrFail();
+            $this->ensureNotAlreadyAdded(
+                $folder,
+                $definition,
+                $data['co_maker_id'] ?? null,
+                'activity_definition_id',
+            );
             $status = ActivityStatus::from($data['status']);
+            $scheduledAt = in_array($status, [ActivityStatus::Scheduled, ActivityStatus::FollowUp], true)
+                ? ($data['scheduled_at'] ?? null)
+                : null;
             $activity = $folder->activities()->create([
                 'co_maker_id' => $data['co_maker_id'] ?? null,
                 'activity_definition_id' => $definition->id,
                 'name' => $definition->name,
                 'target' => $data['target'] ?? null,
                 'status' => $status,
-                'scheduled_at' => $data['scheduled_at'] ?? null,
+                'scheduled_at' => $scheduledAt,
                 'remarks' => $data['remarks'] ?? null,
                 'creator_id' => $actor->id,
                 'updated_by' => $actor->id,
@@ -64,6 +72,34 @@ class CreateCiActivity
 
             return $activity;
         });
+    }
+
+    public function createDefinition(User $actor, ClientFolder $folder, string $name): ActivityDefinition
+    {
+        return DB::transaction(
+            fn (): ActivityDefinition => $this->resolveCustomDefinition($actor, $folder, $name),
+        );
+    }
+
+    private function ensureNotAlreadyAdded(
+        ClientFolder $folder,
+        ActivityDefinition $definition,
+        ?int $coMakerId,
+        string $validationField,
+    ): void {
+        $alreadyExists = $folder->activities()
+            ->where('activity_definition_id', $definition->id)
+            ->where('co_maker_id', $coMakerId)
+            ->lockForUpdate()
+            ->first(['ci_activities.id']) !== null;
+
+        if ($alreadyExists) {
+            throw ValidationException::withMessages([
+                $validationField => $coMakerId === null
+                    ? 'This activity already exists for the current Applicant.'
+                    : 'This activity already exists for this Co-Maker.',
+            ]);
+        }
     }
 
     private function resolveCustomDefinition(User $actor, ClientFolder $folder, string $name): ActivityDefinition

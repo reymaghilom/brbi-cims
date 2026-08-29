@@ -45,9 +45,9 @@ class CiActivityController extends Controller
             'completed' => $activities->where('status', ActivityStatus::Completed)->count(),
             'all' => $activities->count(),
         ];
-        $filter = request()->query('status', 'pending');
+        $filter = request()->query('status', 'all');
         if (! in_array($filter, array_keys($counts), true)) {
-            $filter = 'pending';
+            $filter = 'all';
         }
         $visibleActivities = (match ($filter) {
             'pending' => $activities->where('status', ActivityStatus::Pending),
@@ -61,7 +61,7 @@ class CiActivityController extends Controller
             ->whereIn('ci_activity_id', $activities->pluck('id'))
             ->pluck('media_reference_id');
         $proofNames = MediaReference::query()->whereKey($proofMediaIds)->pluck('file_name', 'id');
-        $history = AuditLog::query()
+        $historyEvents = AuditLog::query()
             ->where('client_folder_id', $clientFolder->id)
             ->where(function ($query): void {
                 $query->where('module', 'ci_activities')->orWhere('action', 'media.uploaded');
@@ -69,7 +69,6 @@ class CiActivityController extends Controller
             ->with('user:id,full_name')
             ->latest('created_at')
             ->latest('id')
-            ->limit(50)
             ->get()
             ->filter(function (AuditLog $event) use ($activePerson, $proofMediaIds): bool {
                 $metadata = (array) $event->metadata;
@@ -80,7 +79,6 @@ class CiActivityController extends Controller
                 return array_key_exists('co_maker_id', $metadata)
                     && $metadata['co_maker_id'] === $activePerson?->id;
             })
-            ->take(8)
             ->map(function (AuditLog $event) use ($proofNames): object {
                 $metadata = (array) $event->metadata;
 
@@ -109,26 +107,47 @@ class CiActivityController extends Controller
                 ];
             })
             ->values();
+        $history = $historyEvents->take(5)->values();
 
         return view('client-folders.activities.index', [
             'clientFolder' => $clientFolder,
-            'activities' => $visibleActivities,
+            'activities' => $activities,
+            'visibleActivityIds' => $visibleActivities->pluck('id'),
+            'existingDefinitionIds' => $activities->pluck('activity_definition_id')->unique(),
             'activePerson' => $activePerson,
             'coMakers' => $clientFolder->coMakers()->oldest('id')->get(),
             'definitions' => ActivityDefinition::query()->where('is_active', true)->orderBy('sort_order')->get(['id', 'name']),
             'counts' => $counts,
             'filter' => $filter,
             'history' => $history,
+            'allHistory' => $historyEvents,
         ]);
     }
 
     public function store(StoreCiActivityRequest $request, ClientFolder $clientFolder, CreateCiActivity $create): RedirectResponse
     {
-        $activity = $create->execute($request->user(), $clientFolder, $request->validated());
-        $activePerson = ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id'));
+        $validated = $request->validated();
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $validated['co_maker_id'] ?? null);
+        $destination = route(
+            'client-folders.activities.index',
+            [$clientFolder] + ActivePersonResolver::queryParams($activePerson) + ['status' => 'all'],
+        );
 
-        return redirect()
-            ->route('client-folders.activities.index', [$clientFolder] + ActivePersonResolver::queryParams($activePerson) + ['status' => 'all'])
+        if ($validated['create_new_activity_type']) {
+            $definition = $create->createDefinition($request->user(), $clientFolder, $validated['new_activity_type']);
+
+            return redirect($destination)
+                ->withInput([
+                    'activity_definition_id' => $definition->id,
+                    'status' => ActivityStatus::Pending->value,
+                ])
+                ->with('status', $definition->name.' activity type is ready to use.')
+                ->with('ci_activity_modal_open', true);
+        }
+
+        $activity = $create->execute($request->user(), $clientFolder, $validated);
+
+        return redirect($destination)
             ->with('status', $activity->name.' activity added.');
     }
 
@@ -214,12 +233,16 @@ class CiActivityController extends Controller
         $activities->each(fn (CiActivity $activity) => Gate::authorize('update', $activity));
 
         $count = $activities->count();
+        $redirectParameters = ['clientFolder' => $clientFolder->getRouteKey()]
+            + ActivePersonResolver::queryParams($activePerson)
+            + ['status' => $filter];
         $destination = route(
             'client-folders.activities.index',
-            [$clientFolder] + ActivePersonResolver::queryParams($activePerson) + ['status' => $filter],
+            $redirectParameters,
         );
+        $successMessage = $count.' '.str('activity')->plural($count).' permanently deleted.';
         $delete->executeMany($request->user(), $clientFolder, $activities);
 
-        return redirect($destination)->with('status', $count.' '.str('activity')->plural($count).' permanently deleted.');
+        return redirect()->to($destination)->with('status', $successMessage);
     }
 }
