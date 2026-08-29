@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\ClientFolders;
 
+use App\Enums\ActivityStatus;
 use App\Enums\MediaCategory;
 use App\Enums\MediaType;
 use App\Models\ActivityDefinition;
@@ -174,6 +175,43 @@ class MediaReferenceTest extends TestCase
             ->assertOk()->assertSee('New site evidence');
     }
 
+    public function test_new_media_cannot_be_linked_to_a_non_completed_activity(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->activityFor($folder, ActivityStatus::Pending);
+
+        $this->actingAs($ci)->post(route('client-folders.media.store', $folder), [
+            'files' => [UploadedFile::fake()->image('pending-proof.jpg')],
+            'category' => MediaCategory::Other->value,
+            'ci_activity_id' => $activity->id,
+        ])->assertSessionHasErrors('ci_activity_id');
+
+        $this->assertDatabaseCount('media_references', 0);
+    }
+
+    public function test_existing_proof_link_is_preserved_and_remains_editable_after_reopen(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->activityFor($folder, ActivityStatus::Completed);
+        $media = MediaReference::factory()->create([
+            'client_folder_id' => $folder->id,
+            'uploaded_by' => $ci->id,
+            'category' => MediaCategory::Other,
+        ]);
+        $media->activities()->attach($activity->id, ['label' => 'Existing proof']);
+        $activity->update(['status' => ActivityStatus::Pending, 'completed_at' => null]);
+
+        $this->actingAs($ci)->patch(route('client-folders.media.update', [$folder, $media]), [
+            'category' => MediaCategory::Other->value,
+            'label' => 'Preserved proof',
+            'ci_activity_id' => $activity->id,
+        ])->assertSessionHasNoErrors();
+
+        $this->assertTrue($media->activities()->whereKey($activity->id)->exists());
+    }
+
     public function test_preview_download_update_and_remove_reject_forged_folder_combinations(): void
     {
         $first = User::factory()->create();
@@ -239,7 +277,7 @@ class MediaReferenceTest extends TestCase
         return ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
     }
 
-    private function activityFor(ClientFolder $folder): CiActivity
+    private function activityFor(ClientFolder $folder, ActivityStatus $status = ActivityStatus::Completed): CiActivity
     {
         $definition = ActivityDefinition::query()->orderBy('sort_order')->firstOrFail();
 
@@ -247,6 +285,8 @@ class MediaReferenceTest extends TestCase
             'client_folder_id' => $folder->id,
             'activity_definition_id' => $definition->id,
             'name' => $definition->name,
+            'status' => $status,
+            'completed_at' => $status === ActivityStatus::Completed ? now() : null,
         ]);
     }
 }

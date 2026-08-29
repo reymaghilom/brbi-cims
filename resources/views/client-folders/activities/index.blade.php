@@ -9,21 +9,45 @@
         $addingNewActivityType = (bool) old('create_new_activity_type');
         $addActivityStatus = old('status', App\Enums\ActivityStatus::Pending->value);
         $addScheduleEnabled = in_array($addActivityStatus, [App\Enums\ActivityStatus::Scheduled->value, App\Enums\ActivityStatus::FollowUp->value], true);
+        $addActivityProofEnabled = ! $addingNewActivityType && $addActivityStatus === App\Enums\ActivityStatus::Completed->value;
         $selectedActivityDefinitionId = $addingNewActivityType ? App\Models\ActivityDefinition::NEW_TYPE_VALUE : (string) old('activity_definition_id', '');
         $selectedActivityDefinition = $definitions->firstWhere('id', (int) $selectedActivityDefinitionId);
         $builtInActivityDefinitions = $definitions->reject->isCustom();
         $customActivityDefinitions = $definitions->filter->isCustom();
         $activityModalStatus = session('status');
-        $activityCreated = is_string($activityModalStatus) && str_ends_with($activityModalStatus, ' activity added.');
         $activityTypeCreated = is_string($activityModalStatus) && str_ends_with($activityModalStatus, ' activity type is ready to use.');
         $activityModalHasErrors = $errors->getBag('default')->any();
-        $activityModalShouldOpen = $activityModalHasErrors || session('ci_activity_modal_open') || $activityCreated;
-        $activityModalSuccess = $activityCreated
-            ? 'Activity added successfully.'
-            : ($activityTypeCreated ? $activityModalStatus : null);
+        $activityModalShouldOpen = $activityModalHasErrors || session('ci_activity_modal_open');
+        $activityModalSuccess = $activityTypeCreated ? $activityModalStatus : null;
     @endphp
 
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('brbi-ci-activities-history-collapsed') === 'true') {
+                    document.documentElement.setAttribute('data-ci-activities-history-collapsed', '');
+                }
+            } catch (e) {}
+        })();
+    </script>
+
     <style>
+        [data-ci-activity-search]::-webkit-search-decoration,
+        [data-ci-activity-search]::-webkit-search-cancel-button,
+        [data-ci-activity-search]::-webkit-search-results-button,
+        [data-ci-activity-search]::-webkit-search-results-decoration {
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        html[data-ci-activities-history-collapsed] [data-ci-activities-layout] {
+            gap: 0;
+        }
+
+        html[data-ci-activities-history-collapsed] [data-ci-history-shell] {
+            display: none;
+        }
+
         [data-ci-activities-layout] {
             transition: gap 200ms ease-in-out;
         }
@@ -89,6 +113,10 @@
         }
 
         @media (min-width: 1280px) {
+            html[data-ci-activities-history-collapsed] [data-ci-activities-layout] {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
             [data-ci-activities-layout] {
                 grid-template-columns: minmax(0, 4fr) minmax(15rem, 1fr);
                 transition: grid-template-columns 200ms ease-in-out, gap 200ms ease-in-out;
@@ -145,7 +173,13 @@
                         </a>
                     @endforeach
                 </nav>
-                <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <div class="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
+                    <div class="relative min-w-0 basis-full flex-1 sm:w-52 sm:basis-auto sm:flex-none">
+                        <label for="ci-activity-search" class="sr-only">Search activities</label>
+                        <span class="pointer-events-none absolute inset-y-0 left-0 grid w-9 place-items-center text-text-muted"><x-ui.icon name="search" size="size-4" /></span>
+                        <input id="ci-activity-search" type="search" class="ui-control !min-h-9 !py-1.5 !pl-9 !pr-9 text-sm" placeholder="Search activities..." autocomplete="off" data-ci-activity-search>
+                        <button type="button" class="absolute inset-y-0 right-0 grid w-9 place-items-center rounded-r-control text-text-muted transition hover:text-brand-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/30" aria-label="Clear activity search" data-ci-activity-search-clear hidden><x-ui.icon name="close" size="size-3.5" /></button>
+                    </div>
                     <button type="button" class="ui-button-secondary-compact shrink-0" data-clear-selected-button hidden><x-ui.icon name="close" size="size-3.5" />Clear Selected</button>
                     <button type="button" class="ui-button-danger-compact shrink-0" data-modal-open="bulk-delete-activities" data-bulk-delete-button disabled>
                         <x-ui.icon name="trash" size="size-3.5" /><span data-bulk-delete-label>Delete Selected</span>
@@ -174,6 +208,11 @@
                                 $activitySchedule = $activity->scheduled_at ?? $activity->visit_date;
                                 $scheduledToday = $activity->status === App\Enums\ActivityStatus::Scheduled
                                     && $activity->scheduled_at?->timezone(config('cims.display_timezone'))->isToday();
+                                $activityProof = $activity->mediaReferences;
+                                $attachmentCount = $activityProof->count();
+                                $singleAttachment = $attachmentCount === 1 ? $activityProof->first() : null;
+                                $singleAttachmentIsPreviewable = $singleAttachment
+                                    && (Str::startsWith($singleAttachment->mime_type, 'image/') || Str::startsWith($singleAttachment->mime_type, 'video/'));
                             @endphp
                             <tr class="align-middle transition hover:bg-surface-subtle/70" data-ci-activity-row data-status="{{ $activity->status->value }}" data-scheduled-today="{{ $scheduledToday ? 'true' : 'false' }}" data-sort-activity="{{ Str::lower($activity->name) }}" data-sort-status="{{ Str::lower($activity->status->label()) }}" data-sort-schedule="{{ $activitySchedule?->timestamp ?? 0 }}" data-sort-creator="{{ Str::lower($activity->creator?->full_name ?? 'System-created') }}" data-sort-updated="{{ $activity->updated_at->timestamp }}" @if(! $visibleActivityIds->contains($activity->id)) hidden @endif>
                                 <td class="px-3 py-3 text-center"><input type="checkbox" value="{{ $activity->id }}" class="size-4 rounded border-ui-border text-brand-primary focus:ring-brand-primary" aria-label="Select {{ $activity->name }}" data-ci-activity-select></td>
@@ -182,8 +221,12 @@
                                 <td class="px-3 py-3 text-xs leading-5 text-text-muted">@if($activity->scheduled_at)<span class="block font-semibold text-text-main">{{ $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->scheduled_has_time ? $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time' }}@elseif($activity->visit_date)<span class="block font-semibold text-text-main">{{ $activity->visit_date->format('M j, Y') }}</span>Completed visit @else — @endif</td>
                                 <td class="px-3 py-3" data-submission-cell="{{ $activity->id }}">
                                     <div class="min-w-36 space-y-2 text-xs">
-                                        @if($activity->media_references_count > 0)
-                                            <span class="flex items-center gap-1.5 font-semibold text-text-main"><x-ui.icon name="attachment" size="size-4" />{{ $activity->media_references_count }} {{ Str::plural('Attachment', $activity->media_references_count) }}</span>
+                                        @if($attachmentCount === 1 && $singleAttachmentIsPreviewable)
+                                            <button type="button" class="inline-flex min-h-7 items-center gap-1.5 rounded-control px-1.5 py-1 font-semibold text-brand-primary transition hover:bg-brand-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30" data-modal-open="ci-proof-preview-{{ $activity->id }}-{{ $singleAttachment->id }}" aria-label="View {{ $singleAttachment->file_name }}"><x-ui.icon name="attachment" size="size-4" />1 Attachment</button>
+                                        @elseif($attachmentCount === 1)
+                                            <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $singleAttachment]) }}" target="_blank" rel="noopener" class="inline-flex min-h-7 items-center gap-1.5 rounded-control px-1.5 py-1 font-semibold text-brand-primary transition hover:bg-brand-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30" aria-label="View {{ $singleAttachment->file_name }}"><x-ui.icon name="attachment" size="size-4" />1 Attachment</a>
+                                        @elseif($attachmentCount > 1)
+                                            <button type="button" class="inline-flex min-h-7 items-center gap-1.5 rounded-control px-1.5 py-1 font-semibold text-brand-primary transition hover:bg-brand-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30" data-modal-open="ci-proof-list-{{ $activity->id }}" aria-label="View {{ $attachmentCount }} attachments for {{ $activity->name }}"><x-ui.icon name="attachment" size="size-4" />{{ $attachmentCount }} Attachments</button>
                                         @else
                                             <span class="flex items-center gap-1.5 font-semibold text-text-muted"><x-ui.icon name="attachment" size="size-4" />No Attachment</span>
                                         @endif
@@ -194,7 +237,7 @@
                                                 @if($activity->submitted_to)<span class="block max-w-44 truncate text-text-muted" title="{{ $activity->submitted_to }}">To: {{ $activity->submitted_to }}</span>@endif
                                             </div>
                                             @if($activity->status === App\Enums\ActivityStatus::Completed)
-                                                <button type="button" class="ui-button-secondary-compact" data-modal-open="submit-activity-{{ $activity->id }}" data-submission-action="update">View / Update</button>
+                                                <button type="button" class="ui-button-secondary-compact !min-h-7 !px-2 !py-1 !text-[0.6875rem]" data-modal-open="submit-activity-{{ $activity->id }}" data-submission-action="update">View / Update</button>
                                             @endif
                                         @else
                                             <span class="inline-flex items-center rounded-full border border-ui-border bg-surface-subtle px-2 py-0.5 font-bold text-text-muted">Not Submitted</span>
@@ -225,37 +268,80 @@
                                 </td>
                             </tr>
                         @endforeach
-                        <tr data-ci-empty-state @if($visibleActivityIds->isNotEmpty()) hidden @endif><td colspan="8" class="px-6 py-12 text-center"><div data-ci-empty-fresh @if($counts['all'] !== 0) hidden @endif><p class="font-semibold text-text-main">No CI activities yet.</p><p class="mt-1 text-sm text-text-muted">Add an activity when there is something to process, schedule, follow up, or document.</p></div><div data-ci-empty-filter @if($counts['all'] === 0) hidden @endif><p class="font-semibold text-text-main">No activities in this view.</p><p class="mt-1 text-sm text-text-muted">Choose another status or add an activity.</p></div></td></tr>
+                        <tr data-ci-empty-state @if($visibleActivityIds->isNotEmpty()) hidden @endif><td colspan="8" class="px-6 py-12 text-center"><div data-ci-empty-fresh @if($counts['all'] !== 0) hidden @endif><p class="font-semibold text-text-main">No CI activities yet.</p><p class="mt-1 text-sm text-text-muted">Add an activity when there is something to process, schedule, follow up, or document.</p></div><div data-ci-empty-filter @if($counts['all'] === 0) hidden @endif><p class="font-semibold text-text-main">No activities in this view.</p><p class="mt-1 text-sm text-text-muted">Choose another status or add an activity.</p></div><div data-ci-empty-search hidden><p class="font-semibold text-text-main">No activities match your search.</p><p class="mt-1 text-sm text-text-muted">Try a different activity, status, date, creator, or submission term.</p></div></td></tr>
                     </tbody>
                 </table>
             </div>
 
             @foreach($activities as $activity)
+                @php($activityProof = $activity->mediaReferences)
+                @if($activityProof->count() > 1)
+                    <x-ui.modal id="ci-proof-list-{{ $activity->id }}" title="Attachments ({{ $activityProof->count() }})" description="Proof files linked to {{ $activity->name }} only." size="max-w-lg" data-ci-proof-list data-ci-activity-id="{{ $activity->id }}">
+                        <ul class="divide-y divide-ui-border" aria-label="Proof attachments for {{ $activity->name }}">
+                            @foreach($activityProof as $proof)
+                                @php($proofIsPreviewable = Str::startsWith($proof->mime_type, 'image/') || Str::startsWith($proof->mime_type, 'video/'))
+                                <li class="flex min-w-0 items-center gap-3 py-3 first:pt-0 last:pb-0">
+                                    <span class="grid size-9 shrink-0 place-items-center rounded-control bg-brand-soft text-brand-primary"><x-ui.icon name="{{ Str::startsWith($proof->mime_type, 'image/') ? 'media' : (Str::startsWith($proof->mime_type, 'video/') ? 'video' : 'report') }}" size="size-4" /></span>
+                                    <span class="min-w-0 flex-1 break-words text-sm font-semibold leading-5 text-text-main" title="{{ $proof->file_name }}">{{ $proof->file_name }}</span>
+                                    @if($proofIsPreviewable)
+                                        <button type="button" class="ui-button-secondary-compact shrink-0" data-modal-open="ci-proof-preview-{{ $activity->id }}-{{ $proof->id }}" aria-label="View {{ $proof->file_name }}">View</button>
+                                    @else
+                                        <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof]) }}" target="_blank" rel="noopener" class="ui-button-secondary-compact shrink-0" aria-label="View {{ $proof->file_name }}">View</a>
+                                    @endif
+                                </li>
+                            @endforeach
+                        </ul>
+                        <x-slot:footer><button type="button" data-modal-close class="ui-button-secondary">Close</button></x-slot:footer>
+                    </x-ui.modal>
+                @endif
+
+                @foreach($activityProof as $proof)
+                    @if(Str::startsWith($proof->mime_type, 'image/') || Str::startsWith($proof->mime_type, 'video/'))
+                        <x-ui.modal id="ci-proof-preview-{{ $activity->id }}-{{ $proof->id }}" :title="$proof->file_name" size="max-w-4xl" data-ci-proof-preview data-ci-activity-id="{{ $activity->id }}" data-media-id="{{ $proof->id }}">
+                            <div class="overflow-hidden rounded-card bg-brand-sidebar/5">
+                                @if(Str::startsWith($proof->mime_type, 'image/'))
+                                    <img src="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof]) }}" alt="{{ $proof->file_name }}" loading="lazy" class="mx-auto max-h-[65vh] w-auto max-w-full object-contain">
+                                @else
+                                    <video controls preload="none" class="mx-auto max-h-[65vh] w-full bg-black" aria-label="{{ $proof->file_name }}"><source src="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof]) }}" type="{{ $proof->mime_type }}">Your browser does not support this video format.</video>
+                                @endif
+                            </div>
+                            <x-slot:footer><button type="button" data-modal-close class="ui-button-primary">Close</button></x-slot:footer>
+                        </x-ui.modal>
+                    @endif
+                @endforeach
+
                 @if($activity->status === App\Enums\ActivityStatus::Completed)
-                    <dialog id="submit-activity-{{ $activity->id }}" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto overscroll-contain rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" @if($errors->submission->any() && (int) old('submission_activity_id') === $activity->id) open @endif>
-                        <form method="POST" action="{{ route('client-folders.activities.submit', [$clientFolder, $activity]) }}">
+                    <dialog id="submit-activity-{{ $activity->id }}" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" aria-labelledby="submission-dialog-title-{{ $activity->id }}" @if($errors->submission->any() && (int) old('submission_activity_id') === $activity->id) open @endif>
+                        <form method="POST" action="{{ route('client-folders.activities.submit', [$clientFolder, $activity]) }}" class="flex max-h-[calc(100dvh-2rem)] flex-col">
                             @csrf @method('PATCH')
                             <input type="hidden" name="submission_activity_id" value="{{ $activity->id }}">
                             <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
-                            <div class="flex items-start justify-between gap-4 border-b border-ui-border px-5 py-4 sm:px-6">
-                                <div><h2 class="text-lg font-bold text-brand-sidebar">{{ $activity->submitted_at ? 'View / Update Submission' : 'Mark as Submitted' }}</h2><p class="mt-1 text-sm text-text-muted">{{ $activity->submitted_at ? 'Review the recorded submission details or update them.' : 'Record this CI result as submitted to the Credit Analyst.' }}</p></div>
+                            <div class="flex shrink-0 items-start justify-between gap-4 border-b border-ui-border px-5 py-4 sm:px-6">
+                                <div class="min-w-0">
+                                    <div class="flex flex-wrap items-center gap-2.5">
+                                        <h2 id="submission-dialog-title-{{ $activity->id }}" class="text-lg font-bold text-brand-sidebar">{{ $activity->submitted_at ? 'View / Update Submission' : 'Mark as Submitted' }}</h2>
+                                        @if($activity->submitted_at)<span class="inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 text-[0.6875rem] font-bold text-success"><x-ui.icon name="check-circle" size="size-3.5" />Submitted</span>@endif
+                                    </div>
+                                    <p class="mt-1.5 truncate text-sm font-bold text-text-main">{{ $activity->name }}</p>
+                                    <p class="mt-0.5 text-xs leading-5 text-text-muted">{{ $activePerson?->full_name ?? $clientFolder->display_name }} <span aria-hidden="true">&middot;</span> {{ $activePerson ? 'Co-Maker' : 'Applicant' }}</p>
+                                </div>
                                 <button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close submission dialog"><x-ui.icon name="close" size="size-5" /></button>
                             </div>
-                            <div class="space-y-4 px-5 py-5 sm:px-6">
+                            <div class="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
                                 @if($activity->submitted_at)
-                                    <dl class="grid gap-3 rounded-control border border-ui-border bg-surface-subtle px-4 py-3 text-xs sm:grid-cols-2" data-submission-summary>
-                                        <div><dt class="font-bold uppercase tracking-wide text-text-muted">Submitted By</dt><dd class="mt-1 font-semibold text-text-main">{{ $activity->submitter?->full_name ?? 'Unknown user' }}</dd></div>
-                                        <div><dt class="font-bold uppercase tracking-wide text-text-muted">Submitted At</dt><dd class="mt-1 font-semibold text-text-main">{{ $activity->submitted_at->timezone(config('cims.display_timezone'))->format('M j, Y · g:i A') }}</dd></div>
-                                        @if($activity->submitted_to)<div><dt class="font-bold uppercase tracking-wide text-text-muted">Submitted To</dt><dd class="mt-1 break-words font-semibold text-text-main">{{ $activity->submitted_to }}</dd></div>@endif
-                                        @if($activity->submission_note)<div class="sm:col-span-2"><dt class="font-bold uppercase tracking-wide text-text-muted">Note</dt><dd class="mt-1 whitespace-pre-line break-words leading-5 text-text-main">{{ $activity->submission_note }}</dd></div>@endif
+                                    <dl class="grid gap-x-4 gap-y-3 rounded-control border border-ui-border bg-surface-subtle/70 px-4 py-3 sm:grid-cols-2" data-submission-summary>
+                                        <div class="min-w-0"><dt class="text-[0.6875rem] font-bold uppercase tracking-wide text-text-muted">Submitted By</dt><dd class="mt-1 break-words text-sm font-semibold leading-5 text-text-main">{{ $activity->submitter?->full_name ?? 'Unknown user' }}</dd></div>
+                                        <div class="min-w-0"><dt class="text-[0.6875rem] font-bold uppercase tracking-wide text-text-muted">Submitted At</dt><dd class="mt-1 break-words text-sm font-semibold leading-5 text-text-main">{{ $activity->submitted_at->timezone(config('cims.display_timezone'))->format('M j, Y · g:i A') }}</dd></div>
+                                        <div class="min-w-0"><dt class="text-[0.6875rem] font-bold uppercase tracking-wide text-text-muted">Submitted To</dt><dd class="mt-1 break-words text-sm font-semibold leading-5 text-text-main">{{ $activity->submitted_to ?: 'Not specified' }}</dd></div>
+                                        <div class="min-w-0"><dt class="text-[0.6875rem] font-bold uppercase tracking-wide text-text-muted">Proof</dt><dd class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold leading-5 text-text-main">@if($activity->media_references_count > 0)<span>{{ $activity->media_references_count }} {{ Str::plural('Attachment', $activity->media_references_count) }}</span><a href="{{ route('client-folders.media.index', [$clientFolder] + $personParams) }}" class="text-xs font-bold text-brand-primary hover:underline">View Proof</a>@else<span class="text-text-muted">No Attachment</span>@endif</dd></div>
                                     </dl>
                                 @endif
-                                <div><label for="submitted-to-{{ $activity->id }}" class="ui-label">Submitted To / Credit Analyst <span class="font-normal text-text-muted">(optional)</span></label><input id="submitted-to-{{ $activity->id }}" name="submitted_to" value="{{ (int) old('submission_activity_id') === $activity->id ? old('submitted_to') : $activity->submitted_to }}" class="ui-control" maxlength="255" autocomplete="off" placeholder="Enter the Credit Analyst's name">@if($errors->submission->has('submitted_to'))<p class="mt-2 flex items-start gap-1.5 text-sm font-medium text-danger" role="alert"><x-ui.icon name="warning" size="mt-0.5 size-4" />{{ $errors->submission->first('submitted_to') }}</p>@endif</div>
+                                <div><label for="submitted-to-{{ $activity->id }}" class="ui-label">Submitted To <span class="font-normal text-text-muted">(optional)</span></label><input id="submitted-to-{{ $activity->id }}" name="submitted_to" value="{{ (int) old('submission_activity_id') === $activity->id ? old('submitted_to') : $activity->submitted_to }}" class="ui-control" maxlength="255" autocomplete="off" placeholder="Enter the Credit Analyst's name">@if($errors->submission->has('submitted_to'))<p class="mt-2 flex items-start gap-1.5 text-sm font-medium text-danger" role="alert"><x-ui.icon name="warning" size="mt-0.5 size-4" />{{ $errors->submission->first('submitted_to') }}</p>@endif</div>
                                 <div><label for="submission-note-{{ $activity->id }}" class="ui-label">Submission Note <span class="font-normal text-text-muted">(optional)</span></label><textarea id="submission-note-{{ $activity->id }}" name="submission_note" rows="3" class="ui-control" placeholder="Add a concise handoff or submission note.">{{ (int) old('submission_activity_id') === $activity->id ? old('submission_note') : $activity->submission_note }}</textarea>@if($errors->submission->has('submission_note'))<p class="mt-2 flex items-start gap-1.5 text-sm font-medium text-danger" role="alert"><x-ui.icon name="warning" size="mt-0.5 size-4" />{{ $errors->submission->first('submission_note') }}</p>@endif</div>
                                 @if($errors->submission->has('submission_activity_id'))<p class="flex items-start gap-1.5 text-sm font-medium text-danger" role="alert"><x-ui.icon name="warning" size="mt-0.5 size-4" />{{ $errors->submission->first('submission_activity_id') }}</p>@endif
-                                <div class="rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted">Proof is optional. Existing proof remains linked through Photos &amp; Videos. Recording this submission will not change the activity status or original Creator.</div>
+                                <div class="flex items-start gap-2 rounded-control border border-brand-primary/15 bg-brand-soft/40 px-3 py-2.5 text-xs leading-5 text-text-muted"><x-ui.icon name="info" size="mt-0.5 size-4 shrink-0 text-brand-primary" /><p><span class="font-semibold text-text-main">Submitted By</span> records the authenticated user completing this handoff. The original activity Creator remains unchanged, and proof remains optional.</p></div>
                             </div>
-                            <div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-modal-close>Cancel</button><button type="submit" class="ui-button-primary"><x-ui.icon name="check-circle" size="size-4" />{{ $activity->submitted_at ? 'Update Submission' : 'Mark as Submitted' }}</button></div>
+                            <div class="flex shrink-0 flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-3.5 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary-compact !min-h-9 w-full sm:w-auto" data-modal-close>{{ $activity->submitted_at ? 'Close' : 'Cancel' }}</button><button type="submit" class="ui-button-primary !min-h-9 !px-3 !py-1.5 !text-xs w-full sm:w-auto"><x-ui.icon name="check-circle" size="size-3.5" />{{ $activity->submitted_at ? 'Update Submission' : 'Mark as Submitted' }}</button></div>
                         </form>
                     </dialog>
                     <x-ui.confirmation-dialog id="reopen-activity-{{ $activity->id }}" title="Reopen Activity?" :action="route('client-folders.activities.update', [$clientFolder, $activity])" method="PUT" confirm-label="Reopen Activity">
@@ -289,7 +375,7 @@
                 </x-slot:footer>
             </x-ui.modal>
 
-            <div class="mt-4 space-y-3"><div class="flex items-start gap-2 rounded-control border border-brand-primary/20 bg-brand-soft/60 px-4 py-3 text-sm text-brand-primary"><x-ui.icon name="info" size="size-4" class="mt-0.5" /><p>Activities remain visible after scheduling, submission, or completion for traceability and audit purposes.</p></div><div class="flex items-start gap-2 rounded-control border border-progress/20 bg-progress-soft/70 px-4 py-3 text-sm text-[#76520c]"><x-ui.icon name="warning" size="size-4" class="mt-0.5" /><p>Only the activity creator receives scheduled notifications. Other authorized CI users may view and update the activity as needed.</p></div></div>
+            <div class="mt-4 flex items-start gap-2 rounded-control border border-progress/20 bg-progress-soft/70 px-4 py-3 text-sm text-[#76520c]"><x-ui.icon name="warning" size="size-4" class="mt-0.5" /><p>Only the activity creator receives scheduled notifications. Other authorized CI users may view and update the activity as needed.</p></div>
         </section>
 
         <div class="min-w-0" data-ci-history-shell>
@@ -337,8 +423,9 @@
                 @if($activityModalSuccess)
                     <div class="mt-4 flex items-center gap-2 rounded-control bg-success-soft px-3 py-2 text-sm font-semibold text-success" role="status" data-ci-activity-success><x-ui.icon name="check-circle" size="size-4" />{{ $activityModalSuccess }}</div>
                 @endif
+                <div class="mt-4 flex items-start gap-2 rounded-control border border-danger/25 bg-danger-soft px-3 py-2 text-sm font-semibold text-danger" role="alert" tabindex="-1" data-ci-activity-request-error hidden><x-ui.icon name="warning" size="mt-0.5 size-4 shrink-0" /><span data-ci-activity-request-error-message></span></div>
             </div>
-            <div class="min-h-0 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6" data-ci-activity-dialog-body>
+            <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6" data-ci-activity-dialog-body>
                 <div class="grid gap-4 sm:grid-cols-2">
                 <div class="sm:col-span-2">
                     <label for="activity-definition" class="ui-label">Activity Type</label>
@@ -393,10 +480,10 @@
                     <p class="ui-help" data-ci-schedule-help>{{ $addScheduleEnabled ? 'Time is optional. Without one, the creator is reminded at 8:00 AM on the selected date.' : 'Available when the status is Scheduled or For Follow-up.' }}</p>
                 </div>
                 <div class="sm:col-span-2" data-standard-activity-field @if($addingNewActivityType) hidden @endif><label for="activity-remarks" class="ui-label">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="activity-remarks" name="remarks" rows="3" class="ui-control" placeholder="Add concise operational details." data-ci-activity-remarks>{{ old('remarks') }}</textarea><x-form.validation-message for="remarks" /></div>
-                <div class="min-w-0 sm:col-span-2" data-activity-create-only @if($addingNewActivityType) hidden @endif>
+                <div class="min-w-0 sm:col-span-2" data-activity-create-only @if(! $addActivityProofEnabled) hidden @endif>
                     <label for="activity-attachment" class="ui-label">Proof / Attachment <span class="font-normal text-text-muted">(optional)</span></label>
                     <div class="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-                        <input id="activity-attachment" type="file" name="attachment" class="sr-only" data-ci-activity-attachment @disabled($addingNewActivityType)>
+                        <input id="activity-attachment" type="file" name="attachment" class="sr-only" data-ci-activity-attachment @disabled(! $addActivityProofEnabled)>
                         <button type="button" class="ui-button-secondary-compact w-fit shrink-0" data-ci-activity-attachment-open><x-ui.icon name="attachment" size="size-4" />Upload Attachment</button>
                         <div class="flex min-w-0 items-center gap-2 text-xs text-text-muted">
                             <span class="min-w-0 truncate" title="No file selected" data-ci-activity-attachment-name>No file selected</span>
@@ -406,6 +493,9 @@
                     <p class="ui-help">Attach supporting evidence now or add it later.</p>
                     <x-form.validation-message for="attachment" />
                 </div>
+                @if(! $addActivityProofEnabled && $errors->has('attachment'))
+                    <div class="sm:col-span-2"><x-form.validation-message for="attachment" /></div>
+                @endif
                 <div class="sm:col-span-2 rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted" data-custom-activity-info @if(! $addingNewActivityType) hidden @endif>
                     Saving this reusable Activity Type will not create a CI Activity or assign a Creator.
                 </div>
@@ -449,6 +539,13 @@
             const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             let closeTimer = null;
             let openFrame = null;
+            let closeCallbacks = [];
+
+            const finishCloseCallbacks = () => {
+                const callbacks = closeCallbacks;
+                closeCallbacks = [];
+                callbacks.forEach((callback) => callback());
+            };
 
             const showActivityDialog = () => {
                 if (closeTimer !== null) window.clearTimeout(closeTimer);
@@ -463,8 +560,13 @@
                 });
             };
 
-            const closeActivityDialog = () => {
-                if (! dialog.open || dialog.dataset.modalState === 'closing') return;
+            const closeActivityDialog = (afterClose = null) => {
+                if (typeof afterClose === 'function') closeCallbacks.push(afterClose);
+                if (! dialog.open) {
+                    finishCloseCallbacks();
+                    return;
+                }
+                if (dialog.dataset.modalState === 'closing') return;
                 if (openFrame !== null) window.cancelAnimationFrame(openFrame);
                 dialog.dataset.modalState = 'closing';
 
@@ -473,6 +575,7 @@
                     if (dialog.open) dialog.close();
                     delete dialog.dataset.modalState;
                     openButton.focus();
+                    finishCloseCallbacks();
                 };
 
                 if (reducedMotion) finishClose();
@@ -507,6 +610,12 @@
                 event.stopImmediatePropagation();
             });
 
+            dialog.addEventListener('ci-activity-created', (event) => {
+                const destination = event instanceof CustomEvent ? event.detail?.redirect : null;
+                if (typeof destination !== 'string' || destination === '') return;
+                closeActivityDialog(() => window.location.assign(destination));
+            });
+
             if (dialog.hasAttribute('data-ci-activity-initial-open')) {
                 dialog.removeAttribute('open');
                 if (dialog.hasAttribute('data-ci-activity-validation-open')) {
@@ -526,6 +635,8 @@
             const hideButton = document.querySelector('[data-ci-history-hide]');
             const showButton = document.querySelector('[data-ci-history-show]');
             const desktopColumns = 'xl:grid-cols-[minmax(0,4fr)_minmax(15rem,1fr)]';
+            const storageKey = 'brbi-ci-activities-history-collapsed';
+            const initiallyCollapsed = document.documentElement.hasAttribute('data-ci-activities-history-collapsed');
             const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             let collapseTimer = null;
             if (!(layout instanceof HTMLElement)
@@ -549,6 +660,12 @@
                 layout.classList.toggle('gap-5', ! hidden);
             };
 
+            const persistCollapsedState = (collapsed) => {
+                try {
+                    localStorage.setItem(storageKey, String(collapsed));
+                } catch (e) {}
+            };
+
             const finishCollapse = () => {
                 collapseTimer = null;
                 if (layout.dataset.historyState === 'collapsed') syncFinalVisibility(true);
@@ -561,6 +678,7 @@
                 layout.dataset.historyState = 'collapsed';
                 syncLayoutClasses(true);
                 setExpandedState(false);
+                persistCollapsedState(true);
 
                 if (reducedMotion) {
                     finishCollapse();
@@ -576,6 +694,7 @@
                 showButton.hidden = true;
                 syncLayoutClasses(false);
                 setExpandedState(true);
+                persistCollapsedState(false);
 
                 if (reducedMotion) {
                     layout.dataset.historyState = 'expanded';
@@ -588,6 +707,21 @@
                     layout.dataset.historyState = 'expanded';
                 });
             };
+
+            if (initiallyCollapsed) {
+                layout.dataset.historyState = 'collapsed';
+                syncLayoutClasses(true);
+                syncFinalVisibility(true);
+                showButton.hidden = false;
+                setExpandedState(false);
+            } else {
+                layout.dataset.historyState = 'expanded';
+                syncLayoutClasses(false);
+                syncFinalVisibility(false);
+                showButton.hidden = true;
+                setExpandedState(true);
+            }
+            document.documentElement.removeAttribute('data-ci-activities-history-collapsed');
 
             hideButton.addEventListener('click', hideHistoryPanel);
             showButton.addEventListener('click', showHistoryPanel);
@@ -698,14 +832,22 @@
                     : 'Available when the status is Scheduled or For Follow-up.';
             };
 
+            const syncAttachmentAvailability = () => {
+                const enabled = ! addingNewActivityType() && status.value === 'completed';
+                attachmentSection.hidden = ! enabled;
+                attachment.disabled = ! enabled;
+                if (! enabled && attachment.value !== '') {
+                    attachment.value = '';
+                    syncAttachmentName();
+                }
+            };
+
             const syncNewActivityType = () => {
                 const addingNewType = addingNewActivityType();
                 fields.hidden = ! addingNewType;
                 input.required = addingNewType;
                 input.disabled = ! addingNewType;
                 standardFields.forEach((field) => { field.hidden = addingNewType; });
-                attachmentSection.hidden = addingNewType;
-                attachment.disabled = addingNewType;
                 customInfo.hidden = ! addingNewType;
                 remarks.disabled = addingNewType;
                 form.dataset.submissionMode = addingNewType ? 'activity-type' : 'activity';
@@ -721,6 +863,7 @@
                 }
 
                 syncScheduleAvailability();
+                syncAttachmentAvailability();
                 window.requestAnimationFrame(() => { dialogBody.scrollTop = 0; });
             };
 
@@ -819,12 +962,16 @@
                 if (! selector.contains(event.target)) closeActivityTypeOptions();
             });
             selector.closest('dialog')?.addEventListener('close', () => closeActivityTypeOptions());
-            status.addEventListener('change', syncScheduleAvailability);
+            status.addEventListener('change', () => {
+                syncScheduleAvailability();
+                syncAttachmentAvailability();
+            });
             syncNewActivityType();
         });
 
         document.addEventListener('DOMContentLoaded', () => {
             const form = document.querySelector('[data-ci-activity-create-form]');
+            const dialog = form?.closest('[data-ci-activity-dialog]');
             const submitButton = form?.querySelector('[data-ci-activity-submit]');
             const submitLabel = submitButton?.querySelector('[data-ci-activity-submit-label]');
             const dialogBody = form?.querySelector('[data-ci-activity-dialog-body]');
@@ -837,7 +984,10 @@
             const statusError = form?.querySelector('[data-ci-activity-status-error]');
             const schedule = form?.querySelector('[data-ci-activity-schedule]');
             const scheduleError = form?.querySelector('[data-ci-activity-schedule-error]');
+            const requestError = form?.querySelector('[data-ci-activity-request-error]');
+            const requestErrorMessage = form?.querySelector('[data-ci-activity-request-error-message]');
             if (!(form instanceof HTMLFormElement)
+                || !(dialog instanceof HTMLDialogElement)
                 || !(submitButton instanceof HTMLButtonElement)
                 || !(dialogBody instanceof HTMLElement)
                 || !(activityType instanceof HTMLInputElement)
@@ -848,10 +998,40 @@
                 || !(status instanceof HTMLSelectElement)
                 || !(statusError instanceof HTMLElement)
                 || !(schedule instanceof HTMLInputElement)
-                || !(scheduleError instanceof HTMLElement)) return;
+                || !(scheduleError instanceof HTMLElement)
+                || !(requestError instanceof HTMLElement)
+                || !(requestErrorMessage instanceof HTMLElement)) return;
 
             const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             const invalidClasses = ['border-danger', 'ring-2', 'ring-danger/20'];
+
+            const stabilizeDialogFrame = () => {
+                if (form.style.height !== '') return;
+                const height = form.getBoundingClientRect().height;
+                if (height > 0) form.style.height = `${height}px`;
+            };
+
+            const releaseDialogFrame = () => form.style.removeProperty('height');
+
+            const resetSubmissionState = () => {
+                delete form.dataset.submitting;
+                submitButton.disabled = false;
+                submitButton.removeAttribute('aria-busy');
+                if (submitLabel) submitLabel.textContent = form.dataset.submissionMode === 'activity-type'
+                    ? 'Add Activity Type'
+                    : 'Add Activity';
+            };
+
+            const clearRequestError = () => {
+                requestError.hidden = true;
+                requestErrorMessage.textContent = '';
+            };
+
+            const showRequestError = (message) => {
+                requestErrorMessage.textContent = message;
+                requestError.hidden = false;
+                requestError.focus({ preventScroll: true });
+            };
 
             const setInvalid = (control, error, invalid) => {
                 control.classList.toggle(invalidClasses[0], invalid);
@@ -880,6 +1060,10 @@
                 const missingStatus = ! addingActivityType && status.value === '';
                 const missingSchedule = ! addingActivityType && status.value === 'scheduled' && schedule.value === '';
 
+                if (missingActivityType || missingNewActivityType || missingStatus || missingSchedule) {
+                    stabilizeDialogFrame();
+                }
+
                 setInvalid(activityTypeTrigger, activityTypeError, missingActivityType);
                 setInvalid(newActivityType, newActivityTypeError, missingNewActivityType);
                 setInvalid(status, statusError, missingStatus);
@@ -899,16 +1083,20 @@
                 if (status.value !== 'scheduled') setInvalid(schedule, scheduleError, false);
             });
             schedule.addEventListener('input', () => setInvalid(schedule, scheduleError, false));
+            form.addEventListener('input', clearRequestError);
+            form.addEventListener('change', clearRequestError);
+            dialog.addEventListener('close', releaseDialogFrame);
+            window.addEventListener('resize', releaseDialogFrame);
 
-            form.addEventListener('submit', (event) => {
+            form.addEventListener('submit', async (event) => {
+                event.preventDefault();
                 if (form.dataset.submitting === 'true') {
-                    event.preventDefault();
                     return;
                 }
 
+                clearRequestError();
                 const firstInvalid = validateActivityForm();
                 if (firstInvalid) {
-                    event.preventDefault();
                     revealFirstInvalid(firstInvalid);
                     return;
                 }
@@ -919,6 +1107,36 @@
                 if (submitLabel) submitLabel.textContent = form.dataset.submissionMode === 'activity-type'
                     ? 'Adding Activity Type…'
                     : 'Adding Activity…';
+
+                try {
+                    const response = await fetch(form.action, {
+                        method: form.method,
+                        body: new FormData(form),
+                        credentials: 'same-origin',
+                        headers: {
+                            Accept: 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest',
+                        },
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (! response.ok) {
+                        const validationMessage = Object.values(payload.errors ?? {}).flat().find((message) => typeof message === 'string');
+                        throw new Error(validationMessage ?? payload.message ?? 'Unable to add the activity. Please try again.');
+                    }
+                    if (typeof payload.redirect !== 'string' || payload.redirect === '') {
+                        throw new Error('The activity was saved, but the tracker could not be refreshed. Please reload the page.');
+                    }
+
+                    if (payload.activity_created === true) {
+                        dialog.dispatchEvent(new CustomEvent('ci-activity-created', { detail: { redirect: payload.redirect } }));
+                        return;
+                    }
+
+                    window.location.assign(payload.redirect);
+                } catch (error) {
+                    resetSubmissionState();
+                    showRequestError(error instanceof Error ? error.message : 'Unable to add the activity. Please try again.');
+                }
             });
         });
 
@@ -932,17 +1150,33 @@
             const emptyState = document.querySelector('[data-ci-empty-state]');
             const emptyFresh = document.querySelector('[data-ci-empty-fresh]');
             const emptyFilter = document.querySelector('[data-ci-empty-filter]');
+            const emptySearch = document.querySelector('[data-ci-empty-search]');
+            const searchInput = document.querySelector('[data-ci-activity-search]');
+            const searchClear = document.querySelector('[data-ci-activity-search-clear]');
             const clearButton = document.querySelector('[data-clear-selected-button]');
             const bulkButton = document.querySelector('[data-bulk-delete-button]');
             const bulkLabel = document.querySelector('[data-bulk-delete-label]');
             const bulkSummary = document.querySelector('[data-bulk-delete-summary]');
             const bulkInputs = document.querySelector('[data-bulk-delete-inputs]');
             const bulkFilter = document.querySelector('[data-ci-bulk-filter]');
-            if (!(selectAll instanceof HTMLInputElement) || !(clearButton instanceof HTMLButtonElement) || !(bulkButton instanceof HTMLButtonElement) || !bulkLabel || !bulkSummary || !bulkInputs) return;
+            if (!(selectAll instanceof HTMLInputElement)
+                || !(searchInput instanceof HTMLInputElement)
+                || !(searchClear instanceof HTMLButtonElement)
+                || !(emptySearch instanceof HTMLElement)
+                || !(clearButton instanceof HTMLButtonElement)
+                || !(bulkButton instanceof HTMLButtonElement)
+                || !bulkLabel
+                || !bulkSummary
+                || !bulkInputs) return;
 
             let activeFilter = @js($filter);
             let activeSort = null;
             let sortDirection = 'ascending';
+            let searchQuery = '';
+            let searchTimer = null;
+
+            const normalizeSearch = (value) => value.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+            rows.forEach((row) => { row.dataset.searchText = normalizeSearch(row.textContent ?? ''); });
 
             const visibleSelections = () => selections.filter((checkbox) => {
                 const row = checkbox.closest('[data-ci-activity-row]');
@@ -973,6 +1207,8 @@
                 if (filter === 'scheduled_today') return row.dataset.scheduledToday === 'true';
                 return row.dataset.status === filter;
             };
+
+            const matchesSearch = (row) => searchQuery === '' || (row.dataset.searchText ?? '').includes(searchQuery);
 
             const updateSortIndicators = () => {
                 sortButtons.forEach((button) => {
@@ -1012,7 +1248,7 @@
             const applyFilter = (filter, updateUrl = true) => {
                 activeFilter = filter;
                 const visibleRows = rows.filter((row) => {
-                    row.hidden = !matchesFilter(row, filter);
+                    row.hidden = !matchesFilter(row, filter) || !matchesSearch(row);
                     return !row.hidden;
                 });
 
@@ -1024,7 +1260,8 @@
                 if (bulkFilter instanceof HTMLInputElement) bulkFilter.value = filter;
                 if (emptyState instanceof HTMLTableRowElement) emptyState.hidden = visibleRows.length > 0;
                 if (emptyFresh instanceof HTMLElement) emptyFresh.hidden = rows.length > 0;
-                if (emptyFilter instanceof HTMLElement) emptyFilter.hidden = rows.length === 0;
+                if (emptyFilter instanceof HTMLElement) emptyFilter.hidden = rows.length === 0 || searchQuery !== '';
+                emptySearch.hidden = rows.length === 0 || searchQuery === '' || visibleRows.length > 0;
                 clearSelections();
                 sortRows();
 
@@ -1035,6 +1272,13 @@
                 }
             };
 
+            const applySearch = () => {
+                searchTimer = null;
+                searchQuery = normalizeSearch(searchInput.value);
+                searchClear.hidden = searchQuery === '';
+                applyFilter(activeFilter, false);
+            };
+
             selectAll.addEventListener('change', () => {
                 visibleSelections().forEach((checkbox) => {
                     checkbox.checked = selectAll.checked;
@@ -1043,6 +1287,22 @@
             });
             selections.forEach((checkbox) => checkbox.addEventListener('change', syncBulkSelection));
             clearButton.addEventListener('click', clearSelections);
+            searchInput.addEventListener('input', () => {
+                searchClear.hidden = normalizeSearch(searchInput.value) === '';
+                if (searchTimer !== null) window.clearTimeout(searchTimer);
+                searchTimer = window.setTimeout(applySearch, 225);
+            });
+            searchInput.addEventListener('keydown', (event) => {
+                if (event.key !== 'Escape' || searchInput.value === '') return;
+                event.preventDefault();
+                searchClear.click();
+            });
+            searchClear.addEventListener('click', () => {
+                if (searchTimer !== null) window.clearTimeout(searchTimer);
+                searchInput.value = '';
+                applySearch();
+                searchInput.focus();
+            });
             tabs.forEach((tab) => tab.addEventListener('click', (event) => {
                 event.preventDefault();
                 applyFilter(tab.dataset.filter ?? 'all');

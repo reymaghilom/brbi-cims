@@ -2923,19 +2923,6 @@ document.querySelectorAll('[aria-invalid="true"]').forEach((field) => {
 });
 document.querySelector('[aria-invalid="true"]')?.focus();
 
-// CI Activities uses one native dialog for the compact Add Activity form. Native page scrolling
-// remains in place everywhere else, including the activity table and history panel.
-const ciActivityDialog = document.querySelector('[data-ci-activity-dialog]');
-document.querySelectorAll('[data-ci-activity-dialog-open]').forEach((button) => {
-    button.addEventListener('click', () => ciActivityDialog?.showModal());
-});
-document.querySelectorAll('[data-ci-activity-dialog-close]').forEach((button) => {
-    button.addEventListener('click', () => ciActivityDialog?.close());
-});
-ciActivityDialog?.addEventListener('click', (event) => {
-    if (event.target === ciActivityDialog) ciActivityDialog.close();
-});
-
 // Business Check's required-photo validation error: same temporary toast as Residence Check's own
 // (XHR-driven) missing-photo error, surfaced here instead from a marker left by the server-rendered
 // redirect (see the [data-business-check-photo-error] span in business-checks/form.blade.php). The

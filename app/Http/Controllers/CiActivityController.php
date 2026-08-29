@@ -17,6 +17,7 @@ use App\Models\CiActivity;
 use App\Models\ClientFolder;
 use App\Models\MediaReference;
 use App\Services\ClientFolders\ActivePersonResolver;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -34,8 +35,24 @@ class CiActivityController extends Controller
             ->where('ci_activities.co_maker_id', $activePerson?->id)
             ->join('activity_definitions', 'activity_definitions.id', '=', 'ci_activities.activity_definition_id')
             ->select('ci_activities.*')
-            ->with(['definition:id,name,code,is_required,is_active,sort_order', 'creator:id,full_name', 'updater:id,full_name', 'submitter:id,full_name', 'assignedInvestigator:id,full_name'])
-            ->withCount(['notes', 'mediaReferences'])
+            ->with([
+                'definition:id,name,code,is_required,is_active,sort_order',
+                'creator:id,full_name',
+                'updater:id,full_name',
+                'submitter:id,full_name',
+                'assignedInvestigator:id,full_name',
+                'mediaReferences' => fn ($query) => $query
+                    ->select(['media_references.id', 'media_references.client_folder_id', 'media_references.co_maker_id', 'media_references.file_name', 'media_references.mime_type', 'media_references.media_type'])
+                    ->where('media_references.client_folder_id', $clientFolder->id)
+                    ->where('media_references.co_maker_id', $activePerson?->id)
+                    ->oldest('activity_media.created_at'),
+            ])
+            ->withCount([
+                'notes',
+                'mediaReferences' => fn ($query) => $query
+                    ->where('media_references.client_folder_id', $clientFolder->id)
+                    ->where('media_references.co_maker_id', $activePerson?->id),
+            ])
             ->orderBy('activity_definitions.sort_order')
             ->orderBy('ci_activities.created_at')
             ->get();
@@ -140,7 +157,7 @@ class CiActivityController extends Controller
         ]);
     }
 
-    public function store(StoreCiActivityRequest $request, ClientFolder $clientFolder, CreateCiActivity $create): RedirectResponse
+    public function store(StoreCiActivityRequest $request, ClientFolder $clientFolder, CreateCiActivity $create): RedirectResponse|JsonResponse
     {
         $validated = $request->validated();
         $activePerson = ActivePersonResolver::resolve($clientFolder, $validated['co_maker_id'] ?? null);
@@ -151,20 +168,43 @@ class CiActivityController extends Controller
 
         if ($validated['create_new_activity_type']) {
             $definition = $create->createDefinition($request->user(), $clientFolder, $validated['new_activity_type']);
+            $oldInput = [
+                'activity_definition_id' => $definition->id,
+                'status' => ActivityStatus::Pending->value,
+            ];
+            $message = $definition->name.' activity type is ready to use.';
+
+            if ($request->expectsJson()) {
+                $request->session()->flashInput($oldInput);
+                $request->session()->flash('status', $message);
+                $request->session()->flash('ci_activity_modal_open', true);
+
+                return response()->json([
+                    'activity_created' => false,
+                    'redirect' => $destination,
+                ]);
+            }
 
             return redirect($destination)
-                ->withInput([
-                    'activity_definition_id' => $definition->id,
-                    'status' => ActivityStatus::Pending->value,
-                ])
-                ->with('status', $definition->name.' activity type is ready to use.')
+                ->withInput($oldInput)
+                ->with('status', $message)
                 ->with('ci_activity_modal_open', true);
         }
 
-        $activity = $create->execute($request->user(), $clientFolder, $validated);
+        $create->execute($request->user(), $clientFolder, $validated);
+        $message = 'Activity added successfully.';
+
+        if ($request->expectsJson()) {
+            $request->session()->flash('status', $message);
+
+            return response()->json([
+                'activity_created' => true,
+                'redirect' => $destination,
+            ]);
+        }
 
         return redirect($destination)
-            ->with('status', $activity->name.' activity added.');
+            ->with('status', $message);
     }
 
     public function deactivateDefinition(

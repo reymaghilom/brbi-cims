@@ -9,6 +9,7 @@ use App\Enums\MediaCategory;
 use App\Enums\MediaType;
 use App\Http\Requests\ClientFolders\StoreMediaRequest;
 use App\Http\Requests\ClientFolders\UpdateMediaRequest;
+use App\Models\CiActivity;
 use App\Models\ClientFolder;
 use App\Models\MediaReference;
 use App\Services\ClientFolders\ActivePersonResolver;
@@ -86,13 +87,66 @@ class MediaReferenceController extends Controller
         return redirect()->route('client-folders.media.index', [$clientFolder] + $personParams)->with('status', 'Media removed from the active gallery.');
     }
 
-    public function content(ClientFolder $clientFolder, MediaReference $mediaReference): StreamedResponse
+    public function content(ClientFolder $clientFolder, MediaReference $mediaReference): StreamedResponse|RedirectResponse
     {
         // Reads by exact media id — folder-level authorization already fully identifies and
         // permits the request, so no active-person check is layered on here (thumbnails/inline
         // previews are also rendered from the person-agnostic global gallery, which has no
         // "active person" query-string context to check against).
         Gate::authorize('view', $mediaReference);
+        abort_unless($mediaReference->client_folder_id === $clientFolder->id, 404);
+
+        return $this->contentResponse($mediaReference);
+    }
+
+    public function activityContent(ClientFolder $clientFolder, CiActivity $ciActivity, MediaReference $mediaReference): StreamedResponse|RedirectResponse
+    {
+        Gate::authorize('view', $mediaReference);
+        abort_unless($ciActivity->client_folder_id === $clientFolder->id, 404);
+        abort_unless($mediaReference->client_folder_id === $clientFolder->id, 404);
+        abort_unless($mediaReference->co_maker_id === $ciActivity->co_maker_id, 404);
+        abort_unless($ciActivity->mediaReferences()->whereKey($mediaReference->id)->exists(), 404);
+
+        return $this->contentResponse($mediaReference);
+    }
+
+    public function download(ClientFolder $clientFolder, MediaReference $mediaReference): StreamedResponse|RedirectResponse
+    {
+        Gate::authorize('export', $mediaReference);
+        abort_unless($mediaReference->client_folder_id === $clientFolder->id, 404);
+        if ($mediaReference->storage_provider === MediaReference::STORAGE_PROVIDER_CLOUDINARY) {
+            abort_unless(filled($mediaReference->cloudinary_secure_url), 404);
+
+            return redirect()->away($mediaReference->cloudinary_secure_url);
+        }
+
+        $path = $mediaReference->temporary_local_path;
+        abort_unless(filled($path), 404);
+        $disk = Storage::disk(config('cims.media_disk'));
+        abort_unless($disk->exists($path), 404);
+        $extension = pathinfo($mediaReference->file_name, PATHINFO_EXTENSION);
+        $downloadName = Str::slug($mediaReference->label ?: 'media-evidence').'.'.$extension;
+
+        return $disk->download($path, $downloadName, [
+            'Content-Type' => $mediaReference->mime_type,
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
+    private function contentResponse(MediaReference $mediaReference): StreamedResponse|RedirectResponse
+    {
+        if ($mediaReference->storage_provider === MediaReference::STORAGE_PROVIDER_CLOUDINARY) {
+            abort_unless(
+                filled($mediaReference->cloudinary_public_id)
+                    && filled($mediaReference->cloudinary_resource_type)
+                    && filled($mediaReference->cloudinary_secure_url),
+                404,
+            );
+
+            return redirect()->away($mediaReference->cloudinary_secure_url);
+        }
+
+        abort_unless($mediaReference->storage_provider === MediaReference::STORAGE_PROVIDER_LOCAL, 404);
         $thumbnail = request()->boolean('thumbnail') && filled($mediaReference->thumbnail_path);
         $path = $thumbnail ? $mediaReference->thumbnail_path : $mediaReference->temporary_local_path;
         abort_unless(filled($path), 404);
@@ -103,22 +157,6 @@ class MediaReferenceController extends Controller
             'Content-Type' => $thumbnail ? 'image/jpeg' : $mediaReference->mime_type,
             'Content-Disposition' => 'inline',
             'Cache-Control' => 'private, max-age=300',
-            'X-Content-Type-Options' => 'nosniff',
-        ]);
-    }
-
-    public function download(ClientFolder $clientFolder, MediaReference $mediaReference): StreamedResponse
-    {
-        Gate::authorize('export', $mediaReference);
-        $path = $mediaReference->temporary_local_path;
-        abort_unless(filled($path), 404);
-        $disk = Storage::disk(config('cims.media_disk'));
-        abort_unless($disk->exists($path), 404);
-        $extension = pathinfo($mediaReference->file_name, PATHINFO_EXTENSION);
-        $downloadName = Str::slug($mediaReference->label ?: 'media-evidence').'.'.$extension;
-
-        return $disk->download($path, $downloadName, [
-            'Content-Type' => $mediaReference->mime_type,
             'X-Content-Type-Options' => 'nosniff',
         ]);
     }

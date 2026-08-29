@@ -2,6 +2,7 @@
 
 namespace App\Actions\ClientFolders;
 
+use App\Actions\Media\UploadCiActivityProof;
 use App\Enums\ActivityStatus;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
@@ -11,6 +12,7 @@ use App\Models\User;
 use App\Notifications\CiActivityScheduledReminder;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -20,6 +22,7 @@ class CreateCiActivity
     public function __construct(
         private readonly CiActivitiesCompletionEvaluator $completion,
         private readonly ClientProgressService $progress,
+        private readonly UploadCiActivityProof $uploadProof,
     ) {}
 
     public function execute(User $actor, ClientFolder $folder, array $data): CiActivity
@@ -79,6 +82,10 @@ class CreateCiActivity
 
             $this->completion->evaluate($folder);
             $this->progress->recalculate($folder);
+
+            if (($data['attachment'] ?? null) instanceof UploadedFile) {
+                $this->uploadProof->execute($actor, $folder, $activity, $data['attachment']);
+            }
 
             return $activity;
         });

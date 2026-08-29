@@ -15,7 +15,13 @@ class MediaReference extends Model
 {
     use HasFactory, SoftDeletes;
 
+    public const STORAGE_PROVIDER_LOCAL = 'local';
+
+    public const STORAGE_PROVIDER_CLOUDINARY = 'cloudinary';
+
     protected $guarded = [];
+
+    protected $attributes = ['storage_provider' => self::STORAGE_PROVIDER_LOCAL];
 
     protected function casts(): array
     {

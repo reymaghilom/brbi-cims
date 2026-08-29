@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\ClientFolders;
 
+use App\Enums\ActivityStatus;
 use App\Enums\MediaCategory;
 use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
@@ -44,8 +45,17 @@ class UpdateMediaRequest extends FormRequest
             if (filled($this->input('income_source_id')) && ! $folder->incomeSources()->where('co_maker_id', $coMakerId)->whereKey($this->integer('income_source_id'))->exists()) {
                 $validator->errors()->add('income_source_id', 'The selected income source does not belong to this client folder.');
             }
-            if (filled($this->input('ci_activity_id')) && ! $folder->activities()->where('co_maker_id', $coMakerId)->whereKey($this->integer('ci_activity_id'))->exists()) {
-                $validator->errors()->add('ci_activity_id', 'The selected CI activity does not belong to this client folder.');
+            if (filled($this->input('ci_activity_id'))) {
+                $activity = $folder->activities()
+                    ->where('co_maker_id', $coMakerId)
+                    ->whereKey($this->integer('ci_activity_id'))
+                    ->first();
+                if ($activity === null) {
+                    $validator->errors()->add('ci_activity_id', 'The selected CI activity does not belong to this client folder.');
+                } elseif ($activity->status !== ActivityStatus::Completed
+                    && ! $this->route('mediaReference')->activities()->whereKey($activity->id)->exists()) {
+                    $validator->errors()->add('ci_activity_id', 'New proof may only be linked to a Completed CI activity.');
+                }
             }
             if ($this->input('category') !== MediaCategory::Business->value && filled($this->input('income_source_id'))) {
                 $validator->errors()->add('income_source_id', 'Only Business media may be linked to an income source.');

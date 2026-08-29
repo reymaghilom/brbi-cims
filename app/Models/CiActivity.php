@@ -72,6 +72,11 @@ class CiActivity extends Model
         return $this->hasMany(ActivityNote::class);
     }
 
+    public function bankTargets(): HasMany
+    {
+        return $this->hasMany(CiActivityBankTarget::class);
+    }
+
     public function mediaReferences(): BelongsToMany
     {
         return $this->belongsToMany(MediaReference::class, 'activity_media')->withPivot('label')->withTimestamps();

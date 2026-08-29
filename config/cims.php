@@ -8,6 +8,10 @@ return [
         'image_max_kilobytes' => 10 * 1024,
         'video_max_kilobytes' => 50 * 1024,
     ],
+    'cloudinary' => [
+        'url' => env('CLOUDINARY_URL'),
+        'root' => 'brbi-cims',
+    ],
     'demo_data_enabled' => (bool) env('CIMS_SEED_DEMO_DATA', false),
 
     'display_timezone' => env('CIMS_DISPLAY_TIMEZONE', 'Asia/Manila'),

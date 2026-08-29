@@ -7,10 +7,19 @@ use App\Models\ActivityDefinition;
 use App\Services\ClientFolders\ActivePersonResolver;
 use Closure;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 class StoreCiActivityRequest extends FormRequest
 {
+    private const MIME_EXTENSIONS = [
+        'image/jpeg' => ['jpg', 'jpeg'],
+        'image/png' => ['png'],
+        'image/webp' => ['webp'],
+        'video/mp4' => ['mp4'],
+    ];
+
     public function authorize(): bool
     {
         return $this->user()->can('update', $this->route('clientFolder'));
@@ -58,7 +67,43 @@ class StoreCiActivityRequest extends FormRequest
             ],
             'scheduled_time' => [Rule::excludeIf($this->boolean('create_new_activity_type')), 'nullable', 'date_format:H:i'],
             'remarks' => [Rule::excludeIf($this->boolean('create_new_activity_type')), 'nullable', 'string', 'max:20000'],
+            'attachment' => [
+                Rule::prohibitedIf($this->boolean('create_new_activity_type') || $this->input('status') !== ActivityStatus::Completed->value),
+                'nullable',
+                'file',
+                'mimes:jpg,jpeg,png,webp,mp4',
+                'max:'.config('cims.media.video_max_kilobytes'),
+            ],
         ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'attachment.prohibited' => 'Proof may only be uploaded when the activity status is Completed.',
+            'attachment.mimes' => 'Only JPG, JPEG, PNG, WEBP, and MP4 files are supported.',
+            'attachment.max' => 'The selected proof exceeds the 50 MB video limit.',
+        ];
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator): void {
+            $file = $this->file('attachment');
+            if (! $file instanceof UploadedFile || ! $file->isValid()) {
+                return;
+            }
+
+            $mime = $this->verifiedMimeType($file);
+            $extension = strtolower($file->getClientOriginalExtension());
+            if (! isset(self::MIME_EXTENSIONS[$mime]) || ! in_array($extension, self::MIME_EXTENSIONS[$mime], true)) {
+                $validator->errors()->add('attachment', 'The file extension does not match its verified media type.');
+            }
+
+            if (str_starts_with($mime, 'image/') && $file->getSize() > config('cims.media.image_max_kilobytes') * 1024) {
+                $validator->errors()->add('attachment', 'Photos must not exceed 10 MB.');
+            }
+        });
     }
 
     protected function prepareForValidation(): void
@@ -93,5 +138,13 @@ class StoreCiActivityRequest extends FormRequest
         $value = trim((string) $value);
 
         return $value === '' ? null : $value;
+    }
+
+    private function verifiedMimeType(UploadedFile $file): string
+    {
+        $detector = new \finfo(FILEINFO_MIME_TYPE);
+        $mime = $detector->file($file->getRealPath());
+
+        return strtolower(is_string($mime) ? $mime : 'application/octet-stream');
     }
 }

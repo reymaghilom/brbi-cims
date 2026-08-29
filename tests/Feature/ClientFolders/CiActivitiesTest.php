@@ -1375,9 +1375,16 @@ class CiActivitiesTest extends TestCase
             ->assertSee('data-ci-activity-type-error', false)
             ->assertSee('data-ci-activity-schedule-error', false)
             ->assertSee('const validateActivityForm = () => {', false)
+            ->assertSee('if (firstInvalid) {', false)
+            ->assertSee('event.preventDefault();', false)
             ->assertSee('revealFirstInvalid(firstInvalid);', false)
             ->assertSee("status.value === 'scheduled' && schedule.value === ''", false)
             ->assertSee('control.focus({ preventScroll: true });', false);
+
+        $globalJavascript = file_get_contents(resource_path('js/app.js'));
+        $this->assertIsString($globalJavascript);
+        $this->assertStringNotContainsString("const ciActivityDialog = document.querySelector('[data-ci-activity-dialog]');", $globalJavascript);
+        $this->assertStringNotContainsString('if (event.target === ciActivityDialog) ciActivityDialog.close();', $globalJavascript);
 
         $invalidResponse = $this->post(route('client-folders.activities.store', $folder), [
             'status' => 'pending',

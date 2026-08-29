@@ -15,6 +15,8 @@ class ActivityDefinition extends Model
 
     public const CUSTOM_CODE_PREFIX = 'custom_';
 
+    public const BANK_COOP_CHECK_CODE = 'bank_coop_check';
+
     protected $guarded = [];
 
     protected function casts(): array

@@ -105,6 +105,9 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::patch('/client-folders/{clientFolder}/activities/{ciActivity}/submission', [CiActivityController::class, 'submit'])
             ->scopeBindings()
             ->name('client-folders.activities.submit');
+        Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/proof/{mediaReference}/content', [MediaReferenceController::class, 'activityContent'])
+            ->scopeBindings()
+            ->name('client-folders.activities.proof.content');
         Route::delete('/client-folders/{clientFolder}/activities/{ciActivity}', [CiActivityController::class, 'destroy'])
             ->scopeBindings()
             ->name('client-folders.activities.destroy');
