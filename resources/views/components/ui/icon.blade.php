@@ -33,6 +33,7 @@
         @case('user') <circle cx="12" cy="8" r="3.5"/><path d="M5 21a7 7 0 0 1 14 0"/> @break
         @case('calendar') <rect x="3.5" y="5.5" width="17" height="15" rx="2"/><path d="M7.5 3.5v4M16.5 3.5v4M3.5 9.5h17"/> @break
         @case('clock') <circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/> @break
+        @case('bell') <path d="M6.5 9.5a5.5 5.5 0 0 1 11 0c0 6 2.5 6.5 2.5 6.5H4s2.5-.5 2.5-6.5Z"/><path d="M9.5 19a2.75 2.75 0 0 0 5 0"/> @break
         @case('chart') <path d="M5 20V10M10 20V4M15 20v-7M20 20V7"/> @break
         @case('eye') <path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7S2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/> @break
         @case('eye-off') <path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7S2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/><path d="M4 4l16 16"/> @break

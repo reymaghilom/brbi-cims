@@ -56,6 +56,7 @@ class StoreCiActivityRequest extends FormRequest
                 'date',
                 Rule::requiredIf($this->input('status') === ActivityStatus::Scheduled->value),
             ],
+            'scheduled_time' => [Rule::excludeIf($this->boolean('create_new_activity_type')), 'nullable', 'date_format:H:i'],
             'remarks' => [Rule::excludeIf($this->boolean('create_new_activity_type')), 'nullable', 'string', 'max:20000'],
         ];
     }
@@ -77,6 +78,7 @@ class StoreCiActivityRequest extends FormRequest
                 ? ActivityDefinition::normalizeName($this->input('new_activity_type'))
                 : null,
             'scheduled_at' => $statusSupportsSchedule ? $this->input('scheduled_at') : null,
+            'scheduled_time' => $statusSupportsSchedule ? $this->input('scheduled_time') : null,
             'remarks' => $this->normalized('remarks'),
         ]);
     }

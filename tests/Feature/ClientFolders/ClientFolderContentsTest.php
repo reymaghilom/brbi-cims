@@ -538,19 +538,36 @@ class ClientFolderContentsTest extends TestCase
         $asideHtml = substr($content, $asideStart, $asideEnd - $asideStart);
 
         $this->assertSame(5, substr_count($asideHtml, 'CI/BI updated'));
-        $this->assertStringContainsString('View more activity', $asideHtml);
+        $this->assertStringContainsString('View All', $asideHtml);
     }
 
     public function test_recent_activity_panel_uses_responsive_stacking_markup(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $this->activityLog($ci, $folder, 'cibi_report.updated', 'cibi_report', ['report_id' => 1, 'co_maker_id' => null]);
+        $this->activityLog($ci, $folder, 'income_source.created', 'income_sources', ['income_source_id' => 1, 'co_maker_id' => null]);
 
-        $this->actingAs($ci)->get(route('client-folders.show', $folder))
+        $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))
             ->assertOk()
             ->assertSee('xl:grid-cols-[minmax(0,1fr)_minmax(15rem,23%)]', false)
-            ->assertSee('xl:sticky xl:top-20', false)
-            ->assertSee('aria-labelledby="recent-activity-title"', false);
+            ->assertSee('aria-labelledby="recent-activity-title"', false)
+            ->getContent();
+        $asideStart = strrpos(substr($content, 0, strpos($content, 'id="recent-activity-title"')), '<aside');
+        $asideEnd = strpos($content, '</aside>', $asideStart);
+        $asideHtml = substr($content, $asideStart, $asideEnd - $asideStart);
+
+        $this->assertStringContainsString('class="ui-panel min-w-0 p-5"', $asideHtml);
+        $this->assertStringContainsString('text-base font-bold text-brand-sidebar', $asideHtml);
+        $this->assertStringContainsString('grid-cols-[1rem_1fr] gap-3 pb-6', $asideHtml);
+        $this->assertStringContainsString('border-l border-dashed border-ui-border-strong', $asideHtml);
+        $this->assertStringContainsString('w-full text-center text-sm font-bold text-brand-primary hover:underline', $asideHtml);
+        $this->assertStringNotContainsString('overflow-y-auto', $asideHtml);
+        $this->assertStringNotContainsString('overflow-y-scroll', $asideHtml);
+        $this->assertStringNotContainsString('max-h-', $asideHtml);
+        $this->assertStringNotContainsString('xl:sticky', $asideHtml);
+        $this->assertStringContainsString('max-w-2xl', $content);
+        $this->assertStringContainsString('border-b border-ui-border px-1 py-4 first:pt-0 last:border-b-0 last:pb-0', $content);
     }
 
     public function test_recent_activity_query_count_is_flat_regardless_of_activity_volume(): void

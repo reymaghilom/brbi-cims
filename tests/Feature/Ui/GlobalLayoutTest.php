@@ -2,7 +2,13 @@
 
 namespace Tests\Feature\Ui;
 
+use App\Enums\ActivityStatus;
+use App\Models\ActivityDefinition;
+use App\Models\CiActivity;
+use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use App\Models\User;
+use App\Notifications\CiActivityScheduledReminder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Tests\TestCase;
@@ -180,6 +186,270 @@ class GlobalLayoutTest extends TestCase
             ->assertSee('Bank Administrator')
             ->assertSee('Administrator')
             ->assertDontSee('credit_investigator');
+    }
+
+    public function test_ci_header_bell_shows_a_compact_empty_state_without_a_zero_badge(): void
+    {
+        $ci = User::factory()->create();
+
+        $content = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-scheduled-today-bell', $content);
+        $this->assertStringContainsString('Scheduled Today', $content);
+        $this->assertStringContainsString('No scheduled CI activities today.', $content);
+        $this->assertStringNotContainsString('data-scheduled-today-count', $content);
+        $this->assertStringNotContainsString('0 activities', $content);
+        $this->assertStringContainsString('size-9 place-items-center', $content);
+        $this->assertStringContainsString('w-[min(23rem,calc(100vw-2.75rem))]', $content);
+        $this->assertStringContainsString('View CI Activities', $content);
+        $this->assertStringContainsString(route('ci-activities.index'), $content);
+        $this->assertLessThan(strpos($content, 'Open account menu'), strpos($content, 'data-scheduled-today-bell'));
+    }
+
+    public function test_scheduled_today_bell_is_creator_only_current_state_and_exact_person_scoped(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-29 01:00:00', 'UTC'));
+
+        try {
+            $creator = User::factory()->create(['full_name' => 'Rey Creator']);
+            $otherCi = User::factory()->create(['full_name' => 'Mark Other CI']);
+            $folder = ClientFolder::factory()->create(['assigned_ci_id' => $creator->id, 'display_name' => 'MICABALO, RONILO CABIGAS']);
+            $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'JUAN CO-MAKER', 'first_name' => 'Juan', 'last_name' => 'Co-Maker']);
+            $definition = ActivityDefinition::factory()->create(['name' => 'Header Reminder Type']);
+            $todayAt = Carbon::parse('2026-08-29 14:00:00', config('cims.display_timezone'))->utc();
+            $laterToday = Carbon::parse('2026-08-29 15:30:00', config('cims.display_timezone'))->utc();
+            $tomorrow = Carbon::parse('2026-08-30 09:00:00', config('cims.display_timezone'))->utc();
+
+            $makeActivity = fn (array $attributes): CiActivity => CiActivity::create($attributes + [
+                'client_folder_id' => $folder->id,
+                'activity_definition_id' => $definition->id,
+                'status' => ActivityStatus::Scheduled,
+                'scheduled_at' => $todayAt,
+                'creator_id' => $creator->id,
+            ]);
+
+            $applicantActivity = $makeActivity(['name' => 'Applicant Asset Check']);
+            $coMakerActivity = $makeActivity(['name' => 'Co-Maker Bank Check', 'co_maker_id' => $coMaker->id, 'scheduled_at' => $laterToday]);
+            $makeActivity(['name' => 'Tomorrow Activity', 'scheduled_at' => $tomorrow]);
+            $makeActivity(['name' => 'Completed Activity', 'status' => ActivityStatus::Completed, 'completed_at' => now()]);
+            $makeActivity(['name' => 'Reopened Pending Activity', 'status' => ActivityStatus::Pending, 'scheduled_at' => null]);
+            $deletedActivity = $makeActivity(['name' => 'Deleted Activity']);
+            $deletedActivity->delete();
+            $otherCiActivity = $makeActivity(['name' => 'Other CI Only', 'creator_id' => $otherCi->id]);
+            $creator->notify(new CiActivityScheduledReminder($applicantActivity));
+            $creator->notify(new CiActivityScheduledReminder($coMakerActivity));
+            $otherCi->notify(new CiActivityScheduledReminder($otherCiActivity));
+
+            $creatorNotifications = $creator->notifications->keyBy(fn ($notification) => (int) data_get($notification->data, 'ci_activity_id'));
+
+            $creatorResponse = $this->actingAs($creator)->get(route('home'))->assertOk();
+            $creatorResponse->assertSee('data-scheduled-today-count>2</span>', false)
+                ->assertSee('rounded-full bg-danger', false)
+                ->assertSee('2 activities')
+                ->assertSee('Applicant Asset Check')
+                ->assertSee('Co-Maker Bank Check')
+                ->assertSee('MICABALO, RONILO CABIGAS')
+                ->assertSee('title="MICABALO, RONILO CABIGAS · Applicant"', false)
+                ->assertSee('title="MICABALO, RONILO CABIGAS · Co-Maker: JUAN CO-MAKER"', false)
+                ->assertSee('2:00 PM')
+                ->assertSee('3:30 PM')
+                ->assertSee('View CI Activities')
+                ->assertDontSee('Other CI Only')
+                ->assertDontSee('Tomorrow Activity')
+                ->assertDontSee('Completed Activity')
+                ->assertDontSee('Reopened Pending Activity')
+                ->assertDontSee('Deleted Activity')
+                ->assertSee(route('notifications.ci-activities.read', $creatorNotifications[$applicantActivity->id]->id), false)
+                ->assertSee(route('notifications.ci-activities.read', $creatorNotifications[$coMakerActivity->id]->id), false);
+
+            $this->actingAs($otherCi)->get(route('home'))
+                ->assertOk()
+                ->assertSee('data-scheduled-today-count>1</span>', false)
+                ->assertSee('Other CI Only')
+                ->assertDontSee('Applicant Asset Check')
+                ->assertDontSee('Co-Maker Bank Check');
+
+            $applicantActivity->update(['status' => ActivityStatus::Completed, 'completed_at' => now()]);
+            $coMakerActivity->update(['scheduled_at' => $tomorrow]);
+            $emptyResponse = $this->actingAs($creator)->get(route('home'))->assertOk();
+            $emptyResponse->assertDontSee('data-scheduled-today-count', false)
+                ->assertSee('No scheduled CI activities today.');
+
+            $reopenedActivity = CiActivity::query()->where('name', 'Reopened Pending Activity')->sole();
+            $reopenedActivity->update(['status' => ActivityStatus::Scheduled, 'scheduled_at' => $todayAt]);
+            $creator->notify(new CiActivityScheduledReminder($reopenedActivity));
+            $this->get(route('home'))
+                ->assertOk()
+                ->assertSee('data-scheduled-today-count>1</span>', false)
+                ->assertSee('Reopened Pending Activity');
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_scheduled_today_dropdown_previews_only_the_first_five_activities(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-29 01:00:00', 'UTC'));
+
+        try {
+            $ci = User::factory()->create();
+            $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+            $definition = ActivityDefinition::factory()->create();
+            $firstSchedule = Carbon::parse('2026-08-29 09:00:00', config('cims.display_timezone'))->utc();
+
+            foreach (range(1, 5) as $number) {
+                $activity = CiActivity::create([
+                    'client_folder_id' => $folder->id,
+                    'activity_definition_id' => $definition->id,
+                    'name' => "Preview Activity {$number}",
+                    'status' => ActivityStatus::Scheduled,
+                    'scheduled_at' => $firstSchedule->copy()->addMinutes($number),
+                    'scheduled_has_time' => true,
+                    'creator_id' => $ci->id,
+                ]);
+                $ci->notify(new CiActivityScheduledReminder($activity));
+            }
+
+            $content = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+
+            $this->assertStringContainsString('data-scheduled-today-count>5</span>', $content);
+            $this->assertStringContainsString('5 activities', $content);
+            $this->assertSame(5, substr_count($content, 'data-scheduled-today-item='));
+            $this->assertStringContainsString('Preview Activity 1', $content);
+            $this->assertStringContainsString('Preview Activity 5', $content);
+            $this->assertStringContainsString('View CI Activities', $content);
+
+            foreach (range(6, 10) as $number) {
+                $activity = CiActivity::create([
+                    'client_folder_id' => $folder->id,
+                    'activity_definition_id' => $definition->id,
+                    'name' => "Preview Activity {$number}",
+                    'status' => ActivityStatus::Scheduled,
+                    'scheduled_at' => $firstSchedule->copy()->addMinutes($number),
+                    'scheduled_has_time' => true,
+                    'creator_id' => $ci->id,
+                ]);
+                $ci->notify(new CiActivityScheduledReminder($activity));
+            }
+
+            $overflowContent = $this->get(route('home'))->assertOk()->getContent();
+            $this->assertStringContainsString('data-scheduled-today-count>9+</span>', $overflowContent);
+            $this->assertStringContainsString('10 activities', $overflowContent);
+            $this->assertSame(5, substr_count($overflowContent, 'data-scheduled-today-item='));
+            $this->assertStringNotContainsString('Preview Activity 6', $overflowContent);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_clicking_a_scheduled_notification_marks_only_the_owners_notification_read_and_preserves_exact_context(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-29 01:00:00', 'UTC'));
+
+        try {
+            $creator = User::factory()->create();
+            $otherCi = User::factory()->create();
+            $folder = ClientFolder::factory()->create(['assigned_ci_id' => $creator->id, 'display_name' => 'READ STATE CLIENT']);
+            $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'READ STATE CO-MAKER', 'first_name' => 'Read', 'last_name' => 'State']);
+            $definition = ActivityDefinition::factory()->create();
+            $schedule = Carbon::parse('2026-08-29 10:00:00', config('cims.display_timezone'))->utc();
+            $applicantActivity = CiActivity::create([
+                'client_folder_id' => $folder->id,
+                'activity_definition_id' => $definition->id,
+                'name' => 'Unread Applicant Check',
+                'status' => ActivityStatus::Scheduled,
+                'scheduled_at' => $schedule,
+                'scheduled_has_time' => true,
+                'creator_id' => $creator->id,
+            ]);
+            $coMakerActivity = CiActivity::create([
+                'client_folder_id' => $folder->id,
+                'co_maker_id' => $coMaker->id,
+                'activity_definition_id' => $definition->id,
+                'name' => 'Unread Co-Maker Check',
+                'status' => ActivityStatus::Scheduled,
+                'scheduled_at' => $schedule->copy()->addHour(),
+                'scheduled_has_time' => true,
+                'creator_id' => $creator->id,
+            ]);
+            $creator->notify(new CiActivityScheduledReminder($applicantActivity));
+            $creator->notify(new CiActivityScheduledReminder($coMakerActivity));
+            $notifications = $creator->notifications->keyBy(fn ($notification) => (int) data_get($notification->data, 'ci_activity_id'));
+            $applicantNotification = $notifications[$applicantActivity->id];
+            $coMakerNotification = $notifications[$coMakerActivity->id];
+
+            $this->actingAs($creator)->get(route('home'))
+                ->assertOk()
+                ->assertSee('data-scheduled-today-count>2</span>', false)
+                ->assertSee('data-scheduled-notification-state="unread"', false)
+                ->assertSee(route('notifications.ci-activities.read', $applicantNotification->id), false)
+                ->assertSee(route('notifications.ci-activities.read', $coMakerNotification->id), false);
+            $this->assertNull($applicantNotification->fresh()->read_at);
+            $this->assertNull($coMakerNotification->fresh()->read_at);
+
+            $this->actingAs($otherCi)
+                ->post(route('notifications.ci-activities.read', $applicantNotification->id))
+                ->assertNotFound();
+            $this->assertNull($applicantNotification->fresh()->read_at);
+
+            $this->actingAs($creator)
+                ->post(route('notifications.ci-activities.read', $applicantNotification->id))
+                ->assertRedirect(route('client-folders.activities.edit', [$folder, $applicantActivity]));
+            $this->assertNotNull($applicantNotification->fresh()->read_at);
+            $this->assertNull($coMakerNotification->fresh()->read_at);
+
+            $this->get(route('home'))
+                ->assertOk()
+                ->assertSee('data-scheduled-today-count>1</span>', false)
+                ->assertSee('Unread Applicant Check')
+                ->assertSee('Unread Co-Maker Check')
+                ->assertSee('data-scheduled-notification-state="read"', false)
+                ->assertSee('data-scheduled-notification-state="unread"', false);
+
+            $this->post(route('notifications.ci-activities.read', $coMakerNotification->id))
+                ->assertRedirect(route('client-folders.activities.edit', [$folder, $coMakerActivity, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]));
+            $this->assertNotNull($coMakerNotification->fresh()->read_at);
+
+            $this->get(route('home'))
+                ->assertOk()
+                ->assertDontSee('data-scheduled-today-count', false)
+                ->assertSee('2 activities')
+                ->assertSee('Unread Applicant Check')
+                ->assertSee('Unread Co-Maker Check');
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_date_only_scheduled_activity_uses_today_label_without_showing_a_fake_time(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-29 01:00:00', 'UTC'));
+
+        try {
+            $creator = User::factory()->create();
+            $folder = ClientFolder::factory()->create(['assigned_ci_id' => $creator->id, 'display_name' => 'DATE ONLY CLIENT']);
+            $definition = ActivityDefinition::factory()->create();
+            $activity = CiActivity::create([
+                'client_folder_id' => $folder->id,
+                'activity_definition_id' => $definition->id,
+                'name' => 'Date Only Asset Check',
+                'status' => ActivityStatus::Scheduled,
+                'scheduled_at' => Carbon::parse('2026-08-29 08:00:00', config('cims.display_timezone'))->utc(),
+                'scheduled_has_time' => false,
+                'creator_id' => $creator->id,
+            ]);
+            $creator->notify(new CiActivityScheduledReminder($activity));
+            $notification = $creator->notifications()->sole();
+
+            $response = $this->actingAs($creator)->get(route('home'))->assertOk();
+            $response->assertSee('data-scheduled-today-count>1</span>', false)
+                ->assertSee('Date Only Asset Check')
+                ->assertSee('Today')
+                ->assertDontSee('8:00 AM')
+                ->assertSee(route('notifications.ci-activities.read', $notification->id), false);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_topbar_greeting_uses_asia_manila_local_time(): void

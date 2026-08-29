@@ -344,9 +344,9 @@ class RecentActivityScopingTest extends TestCase
         $this->assertStringNotContainsString('flex-wrap items-center gap-2 overflow-x-auto', $tabsMarkup);
     }
 
-    // --- 14: Recent Activity data/View More unaffected by the Hide/Show removal ------------------
+    // --- 14: Recent Activity data/View All unaffected by the Hide/Show removal -------------------
 
-    public function test_recent_activity_still_caps_at_five_compact_items_with_view_more_available(): void
+    public function test_recent_activity_still_caps_at_five_compact_items_with_view_all_available(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -357,7 +357,7 @@ class RecentActivityScopingTest extends TestCase
         $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
 
         $this->assertStringContainsString('id="recent-activity-dialog"', $content);
-        $this->assertStringContainsString('View more activity', $content);
+        $this->assertStringContainsString('View All', $content);
 
         $bodyStart = strpos($content, 'data-recent-activity-body');
         $bodyEnd = strpos($content, '</aside>', $bodyStart);

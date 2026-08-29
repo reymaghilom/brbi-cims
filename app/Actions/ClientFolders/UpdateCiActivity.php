@@ -33,16 +33,19 @@ class UpdateCiActivity
             $previousStatus = $activity->status;
             $previousAssignedCiId = $activity->assigned_ci_id;
             $previousSchedule = $activity->scheduled_at?->copy();
+            $previousScheduleHasTime = $activity->scheduled_has_time;
             $status = ActivityStatus::from($data['status']);
-            $data['scheduled_at'] = in_array($status, [ActivityStatus::Scheduled, ActivityStatus::FollowUp], true)
-                ? ($data['scheduled_at'] ?? null)
-                : null;
+            [$nextSchedule, $nextScheduleHasTime] = in_array($status, [ActivityStatus::Scheduled, ActivityStatus::FollowUp], true)
+                ? CiActivity::normalizeScheduleInput($data['scheduled_at'] ?? null, $data['scheduled_time'] ?? null)
+                : [null, true];
+            $data['scheduled_at'] = $nextSchedule;
+            $data['scheduled_has_time'] = $nextScheduleHasTime;
             $reopenedNow = $previousStatus === ActivityStatus::Completed && $status === ActivityStatus::Pending;
-            $nextSchedule = filled($data['scheduled_at']) ? Carbon::parse($data['scheduled_at']) : null;
             $scheduleChanged = ($previousSchedule === null) !== ($nextSchedule === null)
-                || ($previousSchedule !== null && $nextSchedule !== null && ! $previousSchedule->equalTo($nextSchedule));
+                || ($previousSchedule !== null && $nextSchedule !== null && ! $previousSchedule->equalTo($nextSchedule))
+                || $previousScheduleHasTime !== $nextScheduleHasTime;
 
-            $updates = Arr::except($data, ['expected_updated_at']) + [
+            $updates = Arr::except($data, ['expected_updated_at', 'scheduled_time']) + [
                 'updated_by' => $actor->id,
                 'completed_at' => $status === ActivityStatus::Completed ? ($activity->completed_at ?? now()) : null,
                 'reminder_sent_at' => $scheduleChanged || $status !== ActivityStatus::Scheduled
@@ -51,6 +54,7 @@ class UpdateCiActivity
             ];
             if ($reopenedNow) {
                 $updates['scheduled_at'] = null;
+                $updates['scheduled_has_time'] = true;
                 $updates['reminder_sent_at'] = null;
             }
             $activity->update($updates);
@@ -87,6 +91,7 @@ class UpdateCiActivity
                     'activity_title' => $activity->definition->name,
                     'status' => $status->value,
                     'scheduled_at' => $activity->scheduled_at?->toISOString(),
+                    'scheduled_has_time' => $activity->scheduled_has_time,
                 ],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),

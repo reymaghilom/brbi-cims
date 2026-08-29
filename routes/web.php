@@ -9,6 +9,7 @@ use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\RequiredPasswordChangeController;
 use App\Http\Controllers\BusinessCheckController;
 use App\Http\Controllers\CiActivityController;
+use App\Http\Controllers\CiActivityNotificationReadController;
 use App\Http\Controllers\CibiReportController;
 use App\Http\Controllers\CibiSignatoryReassignmentController;
 use App\Http\Controllers\ClientFolderAccessController;
@@ -46,6 +47,8 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
 
     Route::middleware('password.changed')->group(function (): void {
         Route::get('/', DashboardController::class)->name('home');
+        Route::post('/notifications/ci-activities/{notification}/read', CiActivityNotificationReadController::class)
+            ->name('notifications.ci-activities.read');
 
         Route::post('/editing-presence/heartbeat', [EditingPresenceController::class, 'heartbeat'])->name('editing-presence.heartbeat');
         Route::post('/editing-presence/release', [EditingPresenceController::class, 'release'])->name('editing-presence.release');
@@ -97,6 +100,9 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::put('/client-folders/{clientFolder}/activities/{ciActivity}', [CiActivityController::class, 'update'])
             ->scopeBindings()
             ->name('client-folders.activities.update');
+        Route::patch('/client-folders/{clientFolder}/activities/{ciActivity}/submission', [CiActivityController::class, 'submit'])
+            ->scopeBindings()
+            ->name('client-folders.activities.submit');
         Route::delete('/client-folders/{clientFolder}/activities/{ciActivity}', [CiActivityController::class, 'destroy'])
             ->scopeBindings()
             ->name('client-folders.activities.destroy');

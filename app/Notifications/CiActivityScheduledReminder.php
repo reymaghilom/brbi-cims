@@ -26,7 +26,8 @@ class CiActivityScheduledReminder extends Notification
             'activity' => $this->activity->name,
             'target' => $this->activity->target,
             'scheduled_at' => $this->activity->scheduled_at?->toISOString(),
-            'message' => $this->activity->name.' is scheduled now.',
+            'scheduled_has_time' => $this->activity->scheduled_has_time,
+            'message' => $this->activity->name.($this->activity->scheduled_has_time ? ' is scheduled now.' : ' is scheduled today.'),
             'url' => route('client-folders.activities.edit', [
                 $this->activity->client_folder_id,
                 $this->activity->id,

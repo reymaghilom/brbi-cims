@@ -182,40 +182,45 @@
                 </nav>
             </section>
 
-            <aside class="h-fit rounded-panel border border-ui-border bg-surface-muted p-4 shadow-card xl:sticky xl:top-20" aria-labelledby="recent-activity-title">
-                <div class="mb-2.5 flex items-center gap-2">
-                    <span class="text-brand-primary"><x-ui.icon name="activity" size="size-4" /></span>
-                    <h2 id="recent-activity-title" class="text-sm font-semibold text-brand-sidebar">Recent Activity</h2>
+            <aside class="ui-panel min-w-0 p-5" aria-labelledby="recent-activity-title">
+                <div class="flex items-center gap-2 text-brand-primary">
+                    <x-ui.icon name="clock" size="size-5" />
+                    <h2 id="recent-activity-title" class="text-base font-bold text-brand-sidebar">Recent Activity</h2>
                 </div>
 
                 <div data-recent-activity-body>
                     @php($recentActivityPreview = $recentPersonActivity->take(5))
                     @if($recentActivityPreview->isEmpty())
-                        <p class="text-xs leading-5 text-text-muted">No recent activity recorded yet @if($coMakers->isNotEmpty())for {{ $viewingLabel }} @endif.</p>
+                        <div class="mt-6 rounded-control bg-surface-subtle p-4 text-sm leading-6 text-text-muted">
+                            @if($coMakers->isNotEmpty())
+                                No recent activity recorded yet for {{ $viewingLabel }}.
+                            @else
+                                No recent activity recorded yet.
+                            @endif
+                        </div>
                     @else
-                        <ol class="space-y-3">
+                        <ol class="relative mt-6 space-y-0">
                             @foreach($recentActivityPreview as $activity)
-                                <li class="flex items-start gap-2.5 border-b border-ui-border pb-3 last:border-0 last:pb-0">
-                                    <span class="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-surface text-brand-primary"><x-ui.icon :name="$activity->icon" size="size-3.5" /></span>
+                                <li class="relative grid grid-cols-[1rem_1fr] gap-3 pb-6 last:pb-0">
+                                    @unless($loop->last)<span class="absolute bottom-0 left-[0.4375rem] top-4 border-l border-dashed border-ui-border-strong" aria-hidden="true"></span>@endunless
+                                    <span class="relative z-10 mt-1 size-3.5 rounded-full border-2 border-white bg-brand-primary shadow-sm" aria-hidden="true"></span>
                                     <div class="min-w-0">
-                                        <p class="text-sm font-semibold leading-snug text-text-main">{{ $activity->label }}</p>
+                                        <p class="text-sm font-bold leading-5 text-text-main">{{ $activity->label }}</p>
                                         @if($activity->detail)
-                                            <p class="mt-0.5 truncate text-xs font-medium uppercase text-text-main">{{ $activity->detail }}</p>
+                                            <p class="mt-1 break-words text-xs leading-5 text-text-muted">{{ $activity->detail }}</p>
                                         @endif
                                         @if($activity->personContext)
-                                            <p class="mt-0.5 truncate text-xs text-text-muted">{{ $activity->personContext }}</p>
+                                            <p class="mt-1 break-words text-xs leading-5 text-text-muted">{{ $activity->personContext }}</p>
                                         @endif
-                                        <p class="mt-0.5 truncate text-xs text-text-muted">{{ $activity->actorLabel }} {{ $activity->user?->full_name ?? '—' }}</p>
-                                        <p class="mt-0.5 text-xs text-text-subtle">{{ $activity->created_at->timezone($displayTimezone)->format('M j, Y') }} &middot; {{ $activity->created_at->timezone($displayTimezone)->format('g:i A') }}</p>
+                                        <p class="mt-1 text-xs leading-5 text-text-muted">{{ $activity->actorLabel }} {{ $activity->user?->full_name ?? '—' }}<br>{{ $activity->created_at->timezone($displayTimezone)->format('M j, Y · g:i A') }}</p>
                                     </div>
                                 </li>
                             @endforeach
                         </ol>
-
-                        @if($recentPersonActivity->count() > 5)
-                            <button type="button" class="ui-button-secondary-compact mt-3 w-full justify-center" data-modal-open="recent-activity-dialog"><x-ui.icon name="eye" size="size-3.5" />View more activity</button>
-                        @endif
                     @endif
+                </div>
+                <div class="mt-5 border-t border-ui-border pt-4">
+                    <button type="button" class="w-full text-center text-sm font-bold text-brand-primary hover:underline" data-modal-open="recent-activity-dialog">View All</button>
                 </div>
             </aside>
         </div>

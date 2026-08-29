@@ -4,9 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Actions\ClientFolders\CreateCiActivity;
 use App\Actions\ClientFolders\DeleteCiActivity;
+use App\Actions\ClientFolders\SubmitCiActivity;
 use App\Actions\ClientFolders\UpdateCiActivity;
 use App\Enums\ActivityStatus;
 use App\Http\Requests\ClientFolders\StoreCiActivityRequest;
+use App\Http\Requests\ClientFolders\SubmitCiActivityRequest;
 use App\Http\Requests\ClientFolders\UpdateCiActivityRequest;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
@@ -16,8 +18,8 @@ use App\Models\MediaReference;
 use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
 class CiActivityController extends Controller
@@ -32,7 +34,7 @@ class CiActivityController extends Controller
             ->join('activity_definitions', 'activity_definitions.id', '=', 'ci_activities.activity_definition_id')
             ->where('activity_definitions.is_active', true)
             ->select('ci_activities.*')
-            ->with(['definition:id,name,code,is_required,is_active,sort_order', 'creator:id,full_name', 'updater:id,full_name', 'assignedInvestigator:id,full_name'])
+            ->with(['definition:id,name,code,is_required,is_active,sort_order', 'creator:id,full_name', 'updater:id,full_name', 'submitter:id,full_name', 'assignedInvestigator:id,full_name'])
             ->withCount(['notes', 'mediaReferences'])
             ->orderBy('activity_definitions.sort_order')
             ->orderBy('ci_activities.created_at')
@@ -88,17 +90,23 @@ class CiActivityController extends Controller
                         'ci_activity.scheduled' => data_get($metadata, 'activity_title').' scheduled',
                         'ci_activity.rescheduled' => data_get($metadata, 'activity_title').' rescheduled',
                         'ci_activity.completed' => data_get($metadata, 'activity_title').' completed',
+                        'ci_activity.submitted' => data_get($metadata, 'activity_title').' submitted to Credit Analyst',
                         'ci_activity.reopened' => data_get($metadata, 'activity_title').' reopened',
                         'ci_activity.deleted' => data_get($metadata, 'activity_title').' deleted',
                         'ci_activity.assignment_changed' => data_get($metadata, 'activity_title', 'CI Activity').' assignment updated',
                         'media.uploaded' => 'Proof uploaded',
                         default => data_get($metadata, 'activity_title', 'CI Activity').' updated',
                     },
-                    'detail' => $event->action === 'media.uploaded'
-                        ? $proofNames[(int) data_get($metadata, 'media_reference_id')] ?? null
-                        : null,
+                    'detail' => match ($event->action) {
+                        'media.uploaded' => $proofNames[(int) data_get($metadata, 'media_reference_id')] ?? null,
+                        'ci_activity.submitted' => collect([
+                            filled(data_get($metadata, 'submitted_to')) ? 'Submitted to: '.data_get($metadata, 'submitted_to') : null,
+                            data_get($metadata, 'submission_note'),
+                        ])->filter()->join(' — ') ?: null,
+                        default => null,
+                    },
                     'tone' => match ($event->action) {
-                        'ci_activity.completed', 'media.uploaded' => 'success',
+                        'ci_activity.completed', 'ci_activity.submitted', 'media.uploaded' => 'success',
                         'ci_activity.scheduled', 'ci_activity.rescheduled', 'ci_activity.reopened' => 'progress',
                         default => 'neutral',
                     },
@@ -202,6 +210,21 @@ class CiActivityController extends Controller
         $delete->execute($request->user(), $clientFolder, $ciActivity);
 
         return redirect($destination)->with('status', $successMessage);
+    }
+
+    public function submit(SubmitCiActivityRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, SubmitCiActivity $submit): RedirectResponse
+    {
+        $validated = $request->validated();
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $validated['co_maker_id'] ?? null);
+        ActivePersonResolver::assertOwnedBy($ciActivity, $activePerson);
+        $destination = route(
+            'client-folders.activities.index',
+            [$clientFolder] + ActivePersonResolver::queryParams($activePerson) + ['status' => 'completed'],
+        );
+
+        $submit->execute($request->user(), $clientFolder, $ciActivity, $validated);
+
+        return redirect($destination)->with('status', $ciActivity->name.' submission recorded.');
     }
 
     public function bulkDestroy(Request $request, ClientFolder $clientFolder, DeleteCiActivity $delete): RedirectResponse

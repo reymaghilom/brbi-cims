@@ -40,6 +40,7 @@ class UpdateCiActivityRequest extends FormRequest
             'expected_updated_at' => ['nullable', 'date'],
             'status' => ['required', Rule::enum(ActivityStatus::class)],
             'scheduled_at' => ['nullable', 'date', Rule::requiredIf($this->input('status') === ActivityStatus::Scheduled->value)],
+            'scheduled_time' => ['nullable', 'date_format:H:i'],
             'visit_date' => ['nullable', 'date', 'before_or_equal:today'],
             'time_in' => ['nullable', 'date_format:H:i'],
             'time_out' => ['nullable', 'date_format:H:i'],
@@ -76,6 +77,7 @@ class UpdateCiActivityRequest extends FormRequest
             ActivityStatus::FollowUp->value,
         ], true);
         $normalized['scheduled_at'] = $statusSupportsSchedule ? $this->input('scheduled_at') : null;
+        $normalized['scheduled_time'] = $statusSupportsSchedule ? $this->input('scheduled_time') : null;
         $normalized['assigned_ci_id'] = filled($this->input('assigned_ci_id')) ? (int) $this->input('assigned_ci_id') : null;
 
         $this->merge($normalized);

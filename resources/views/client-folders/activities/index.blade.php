@@ -32,9 +32,9 @@
                         </a>
                     @endforeach
                 </nav>
-                <div class="flex shrink-0 items-center gap-2">
-                    <button type="button" class="ui-button-secondary shrink-0 !min-h-8 !rounded-control !px-2.5 !py-1 text-xs sm:text-sm" data-clear-selected-button hidden>Clear Selected</button>
-                    <button type="button" class="ui-button-danger shrink-0 !min-h-8 !rounded-control !px-2.5 !py-1 text-xs sm:text-sm" data-modal-open="bulk-delete-activities" data-bulk-delete-button disabled>
+                <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    <button type="button" class="ui-button-secondary-compact shrink-0" data-clear-selected-button hidden><x-ui.icon name="close" size="size-3.5" />Clear Selected</button>
+                    <button type="button" class="ui-button-danger-compact shrink-0" data-modal-open="bulk-delete-activities" data-bulk-delete-button disabled>
                         <x-ui.icon name="trash" size="size-3.5" /><span data-bulk-delete-label>Delete Selected</span>
                     </button>
                 </div>
@@ -66,8 +66,22 @@
                                 <td class="px-3 py-3 text-center"><input type="checkbox" value="{{ $activity->id }}" class="size-4 rounded border-ui-border text-brand-primary focus:ring-brand-primary" aria-label="Select {{ $activity->name }}" data-ci-activity-select></td>
                                 <td class="px-4 py-3"><div class="flex items-start gap-2.5"><span class="grid size-8 shrink-0 place-items-center rounded-full border border-ui-border bg-surface-subtle text-text-muted"><x-ui.icon name="report" size="size-4" /></span><div class="min-w-0"><p class="font-bold text-text-main">{{ $activity->name }}</p><p class="mt-0.5 max-w-52 truncate text-xs text-text-muted">{{ $activity->target ?: ($activity->definition?->is_required ? 'Required investigation activity' : 'General investigation activity') }}</p></div></div></td>
                                 <td class="px-3 py-3"><span @class(['inline-flex rounded-full px-2.5 py-1 text-xs font-bold', 'bg-progress-soft text-progress' => $activity->status === App\Enums\ActivityStatus::Pending, 'bg-brand-soft text-brand-primary' => $activity->status === App\Enums\ActivityStatus::Scheduled, 'bg-[#fff0e7] text-[#c85b12]' => $activity->status === App\Enums\ActivityStatus::FollowUp, 'bg-success-soft text-success' => $activity->status === App\Enums\ActivityStatus::Completed])>{{ $activity->status->label() }}</span></td>
-                                <td class="px-3 py-3 text-xs leading-5 text-text-muted">@if($activity->scheduled_at)<span class="block font-semibold text-text-main">{{ $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') }}@elseif($activity->visit_date)<span class="block font-semibold text-text-main">{{ $activity->visit_date->format('M j, Y') }}</span>Completed visit @else — @endif</td>
-                                <td class="px-3 py-3">@if($activity->media_references_count > 0)<span class="inline-flex items-center gap-1.5 text-xs font-semibold text-success"><x-ui.icon name="attachment" size="size-4" />With proof</span>@elseif($activity->supporting_reference)<span class="inline-flex items-center gap-1.5 text-xs font-semibold text-success"><x-ui.icon name="check-circle" size="size-4" />Submitted</span>@else<span class="inline-flex items-center gap-1.5 text-xs font-semibold text-text-muted"><x-ui.icon name="clock" size="size-4" />No proof</span>@endif</td>
+                                <td class="px-3 py-3 text-xs leading-5 text-text-muted">@if($activity->scheduled_at)<span class="block font-semibold text-text-main">{{ $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->scheduled_has_time ? $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time' }}@elseif($activity->visit_date)<span class="block font-semibold text-text-main">{{ $activity->visit_date->format('M j, Y') }}</span>Completed visit @else — @endif</td>
+                                <td class="px-3 py-3">
+                                    <div class="space-y-1.5 text-xs">
+                                        @if($activity->media_references_count > 0)
+                                            <span class="flex items-center gap-1.5 font-semibold text-success"><x-ui.icon name="attachment" size="size-4" />With Proof</span>
+                                        @else
+                                            <span class="flex items-center gap-1.5 font-semibold text-text-muted"><x-ui.icon name="attachment" size="size-4" />No Proof</span>
+                                        @endif
+                                        @if($activity->submitted_at)
+                                            <span class="flex items-center gap-1.5 font-semibold text-success" title="Submitted by {{ $activity->submitter?->full_name ?? 'Unknown user' }} on {{ $activity->submitted_at->timezone(config('cims.display_timezone'))->format('M j, Y · g:i A') }}"><x-ui.icon name="check-circle" size="size-4" />Submitted</span>
+                                            @if($activity->submitted_to)<span class="block max-w-40 truncate pl-5 text-text-muted" title="{{ $activity->submitted_to }}">to {{ $activity->submitted_to }}</span>@endif
+                                        @else
+                                            <span class="flex items-center gap-1.5 font-semibold text-text-muted"><x-ui.icon name="clock" size="size-4" />Not Submitted</span>
+                                        @endif
+                                    </div>
+                                </td>
                                 <td class="px-3 py-3 text-xs leading-5"><span class="block max-w-36 truncate font-semibold text-text-main">{{ $activity->creator?->full_name ?? 'System-created' }}</span><span class="text-text-muted">Locked creator</span></td>
                                 <td class="px-3 py-3 text-xs leading-5 text-text-muted"><span class="block font-semibold text-text-main">{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('g:i A') }}@if($activity->updater) · {{ $activity->updater->full_name }}@endif</td>
                                 <td class="px-3 py-3">
@@ -81,6 +95,7 @@
                                             <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#notes-title" role="menuitem" class="client-folder-menu-item">View notes</a>
                                             <a href="{{ route('client-folders.media.index', [$clientFolder] + $personParams) }}" role="menuitem" class="client-folder-menu-item">Manage proof</a>
                                             @if($activity->status === App\Enums\ActivityStatus::Completed)
+                                                <button type="button" role="menuitem" class="client-folder-menu-item" data-modal-open="submit-activity-{{ $activity->id }}">{{ $activity->submitted_at ? 'Update Submission' : 'Mark as Submitted' }}</button>
                                                 <button type="button" role="menuitem" class="client-folder-menu-item" data-modal-open="reopen-activity-{{ $activity->id }}">Reopen Activity</button>
                                             @endif
                                             <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}">Delete Activity</button>
@@ -96,6 +111,24 @@
 
             @foreach($activities as $activity)
                 @if($activity->status === App\Enums\ActivityStatus::Completed)
+                    <dialog id="submit-activity-{{ $activity->id }}" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto overscroll-contain rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" @if($errors->submission->any() && (int) old('submission_activity_id') === $activity->id) open @endif>
+                        <form method="POST" action="{{ route('client-folders.activities.submit', [$clientFolder, $activity]) }}">
+                            @csrf @method('PATCH')
+                            <input type="hidden" name="submission_activity_id" value="{{ $activity->id }}">
+                            <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
+                            <div class="flex items-start justify-between gap-4 border-b border-ui-border px-5 py-4 sm:px-6">
+                                <div><h2 class="text-lg font-bold text-brand-sidebar">{{ $activity->submitted_at ? 'Update Submission' : 'Mark as Submitted' }}</h2><p class="mt-1 text-sm text-text-muted">Record the delivery of {{ $activity->name }} to the Credit Analyst.</p></div>
+                                <button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close submission dialog"><x-ui.icon name="close" size="size-5" /></button>
+                            </div>
+                            <div class="space-y-4 px-5 py-5 sm:px-6">
+                                <div><label for="submitted-to-{{ $activity->id }}" class="ui-label">Submitted To / Credit Analyst <span class="font-normal text-text-muted">(optional)</span></label><input id="submitted-to-{{ $activity->id }}" name="submitted_to" value="{{ (int) old('submission_activity_id') === $activity->id ? old('submitted_to') : $activity->submitted_to }}" class="ui-control" maxlength="255" autocomplete="off" placeholder="Enter the Credit Analyst's name">@if($errors->submission->has('submitted_to'))<p class="mt-2 flex items-start gap-1.5 text-sm font-medium text-danger" role="alert"><x-ui.icon name="warning" size="mt-0.5 size-4" />{{ $errors->submission->first('submitted_to') }}</p>@endif</div>
+                                <div><label for="submission-note-{{ $activity->id }}" class="ui-label">Submission Note <span class="font-normal text-text-muted">(optional)</span></label><textarea id="submission-note-{{ $activity->id }}" name="submission_note" rows="3" class="ui-control" placeholder="Add a concise handoff or submission note.">{{ (int) old('submission_activity_id') === $activity->id ? old('submission_note') : $activity->submission_note }}</textarea>@if($errors->submission->has('submission_note'))<p class="mt-2 flex items-start gap-1.5 text-sm font-medium text-danger" role="alert"><x-ui.icon name="warning" size="mt-0.5 size-4" />{{ $errors->submission->first('submission_note') }}</p>@endif</div>
+                                @if($errors->submission->has('submission_activity_id'))<p class="flex items-start gap-1.5 text-sm font-medium text-danger" role="alert"><x-ui.icon name="warning" size="mt-0.5 size-4" />{{ $errors->submission->first('submission_activity_id') }}</p>@endif
+                                <div class="rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted">Proof is optional. Existing proof remains linked through Photos &amp; Videos. Recording this submission will not change the activity status or original Creator.</div>
+                            </div>
+                            <div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-modal-close>Cancel</button><button type="submit" class="ui-button-primary"><x-ui.icon name="check-circle" size="size-4" />{{ $activity->submitted_at ? 'Update Submission' : 'Mark as Submitted' }}</button></div>
+                        </form>
+                    </dialog>
                     <x-ui.confirmation-dialog id="reopen-activity-{{ $activity->id }}" title="Reopen Activity?" :action="route('client-folders.activities.update', [$clientFolder, $activity])" method="PUT" confirm-label="Reopen Activity">
                         <p>This activity will be returned to Pending. The previous completion will remain visible in Activity History.</p>
                         <x-slot:formFields>
@@ -161,7 +194,7 @@
         </div>
     </dialog>
 
-    <dialog class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-xl overflow-y-auto overscroll-contain rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-ci-activity-dialog @if($errors->any() || session('ci_activity_modal_open')) open @endif>
+    <dialog class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-xl overflow-y-auto overscroll-contain rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-ci-activity-dialog @if($errors->getBag('default')->any() || session('ci_activity_modal_open')) open @endif>
         <form method="POST" action="{{ route('client-folders.activities.store', $clientFolder) }}" class="p-5 sm:p-6" data-ci-activity-create-form>@csrf<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
             <div class="flex items-start justify-between gap-4"><div><h2 class="text-xl font-bold text-brand-sidebar">Add Activity</h2><p class="mt-1 text-sm text-text-muted">Create a focused activity for {{ $activePerson?->full_name ?? $clientFolder->display_name }}.</p></div><button type="button" class="ui-icon-button -mr-2 -mt-2" data-ci-activity-dialog-close aria-label="Close"><x-ui.icon name="close" size="size-5" /></button></div>
             <div class="mt-6 grid gap-4 sm:grid-cols-2">
@@ -183,12 +216,17 @@
                     <x-form.validation-message for="new_activity_type" />
                 </div>
                 <div data-standard-activity-field @if($addingNewActivityType) hidden @endif><label for="activity-status" class="ui-label">Status</label><select id="activity-status" name="status" class="ui-control" required data-ci-activity-status><option value="pending" @selected($addActivityStatus === 'pending')>Pending</option><option value="scheduled" @selected($addActivityStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($addActivityStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($addActivityStatus === 'completed')>Completed</option></select><x-form.validation-message for="status" /></div>
-                <div data-standard-activity-field @if($addingNewActivityType) hidden @endif><label for="activity-schedule" class="ui-label">Schedule / Follow-up</label><input id="activity-schedule" name="scheduled_at" type="datetime-local" value="{{ $addScheduleEnabled ? old('scheduled_at') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-activity-schedule @disabled(! $addScheduleEnabled) aria-disabled="{{ $addScheduleEnabled ? 'false' : 'true' }}"><p class="ui-help" data-ci-schedule-help>{{ $addScheduleEnabled ? 'Choose the next schedule or follow-up date and time.' : 'Available when the status is Scheduled or For Follow-up.' }}</p><x-form.validation-message for="scheduled_at" /></div>
+                <div class="sm:col-span-2" data-standard-activity-field @if($addingNewActivityType) hidden @endif>
+                    <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,0.55fr)]">
+                        <div><label for="activity-schedule" class="ui-label">Schedule / Follow-up Date</label><input id="activity-schedule" name="scheduled_at" type="date" value="{{ $addScheduleEnabled ? old('scheduled_at') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-activity-schedule @disabled(! $addScheduleEnabled) aria-disabled="{{ $addScheduleEnabled ? 'false' : 'true' }}"><x-form.validation-message for="scheduled_at" /></div>
+                        <div><label for="activity-schedule-time" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="activity-schedule-time" name="scheduled_time" type="time" value="{{ $addScheduleEnabled ? old('scheduled_time') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-activity-schedule-time @disabled(! $addScheduleEnabled) aria-disabled="{{ $addScheduleEnabled ? 'false' : 'true' }}"><x-form.validation-message for="scheduled_time" /></div>
+                    </div>
+                    <p class="ui-help" data-ci-schedule-help>{{ $addScheduleEnabled ? 'Time is optional. Without one, the creator is reminded at 8:00 AM on the selected date.' : 'Available when the status is Scheduled or For Follow-up.' }}</p>
+                </div>
                 <div class="sm:col-span-2" data-standard-activity-field @if($addingNewActivityType) hidden @endif><label for="activity-remarks" class="ui-label">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="activity-remarks" name="remarks" rows="3" class="ui-control" placeholder="Add concise operational details." data-ci-activity-remarks>{{ old('remarks') }}</textarea><x-form.validation-message for="remarks" /></div>
                 <div class="sm:col-span-2 space-y-1.5 rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted" data-standard-activity-field @if($addingNewActivityType) hidden @endif>
                     <p class="text-sm"><span class="font-semibold text-text-main">Creator:</span> {{ request()->user()->full_name }} <span class="ml-1">(locked)</span></p>
                     <p>You will become the Creator of this activity. Scheduled and follow-up notifications will be sent only to you.</p>
-                    <p>Proof is optional and can be linked through Photos &amp; Videos after creation.</p>
                 </div>
                 <div class="sm:col-span-2 rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted" data-custom-activity-info @if(! $addingNewActivityType) hidden @endif>
                     Saving this reusable Activity Type will not create a CI Activity or assign a Creator.
@@ -206,6 +244,7 @@
             const standardFields = [...document.querySelectorAll('[data-standard-activity-field]')];
             const status = document.querySelector('[data-ci-activity-status]');
             const schedule = document.querySelector('[data-ci-activity-schedule]');
+            const scheduleTime = document.querySelector('[data-ci-activity-schedule-time]');
             const scheduleHelp = document.querySelector('[data-ci-schedule-help]');
             const remarks = document.querySelector('[data-ci-activity-remarks]');
             const customInfo = document.querySelector('[data-custom-activity-info]');
@@ -216,6 +255,7 @@
                 || !(input instanceof HTMLInputElement)
                 || !(status instanceof HTMLSelectElement)
                 || !(schedule instanceof HTMLInputElement)
+                || !(scheduleTime instanceof HTMLInputElement)
                 || !(remarks instanceof HTMLTextAreaElement)
                 || !(customInfo instanceof HTMLElement)
                 || !(form instanceof HTMLFormElement)) return;
@@ -224,12 +264,17 @@
 
             const syncScheduleAvailability = () => {
                 const enabled = ! addingNewActivityType() && ['scheduled', 'follow_up'].includes(status.value);
-                if (! enabled) schedule.value = '';
+                if (! enabled) {
+                    schedule.value = '';
+                    scheduleTime.value = '';
+                }
                 schedule.disabled = ! enabled;
+                scheduleTime.disabled = ! enabled;
                 schedule.required = ! addingNewActivityType() && status.value === 'scheduled';
                 schedule.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+                scheduleTime.setAttribute('aria-disabled', enabled ? 'false' : 'true');
                 if (scheduleHelp) scheduleHelp.textContent = enabled
-                    ? 'Choose the next schedule or follow-up date and time.'
+                    ? 'Time is optional. Without one, the creator is reminded at 8:00 AM on the selected date.'
                     : 'Available when the status is Scheduled or For Follow-up.';
             };
 
@@ -247,6 +292,7 @@
                 if (addingNewType) {
                     status.value = 'pending';
                     schedule.value = '';
+                    scheduleTime.value = '';
                     remarks.value = '';
                 }
 

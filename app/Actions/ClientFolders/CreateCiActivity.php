@@ -33,9 +33,9 @@ class CreateCiActivity
                 'activity_definition_id',
             );
             $status = ActivityStatus::from($data['status']);
-            $scheduledAt = in_array($status, [ActivityStatus::Scheduled, ActivityStatus::FollowUp], true)
-                ? ($data['scheduled_at'] ?? null)
-                : null;
+            [$scheduledAt, $scheduledHasTime] = in_array($status, [ActivityStatus::Scheduled, ActivityStatus::FollowUp], true)
+                ? CiActivity::normalizeScheduleInput($data['scheduled_at'] ?? null, $data['scheduled_time'] ?? null)
+                : [null, true];
             $activity = $folder->activities()->create([
                 'co_maker_id' => $data['co_maker_id'] ?? null,
                 'activity_definition_id' => $definition->id,
@@ -43,6 +43,7 @@ class CreateCiActivity
                 'target' => $data['target'] ?? null,
                 'status' => $status,
                 'scheduled_at' => $scheduledAt,
+                'scheduled_has_time' => $scheduledHasTime,
                 'remarks' => $data['remarks'] ?? null,
                 'creator_id' => $actor->id,
                 'updated_by' => $actor->id,
@@ -62,6 +63,7 @@ class CreateCiActivity
                     'activity_title' => $definition->name,
                     'status' => $status->value,
                     'scheduled_at' => $activity->scheduled_at?->toISOString(),
+                    'scheduled_has_time' => $activity->scheduled_has_time,
                 ],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),

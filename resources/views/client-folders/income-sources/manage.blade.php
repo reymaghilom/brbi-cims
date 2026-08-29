@@ -18,8 +18,8 @@
     @error('income_source')<div class="mb-6 rounded-card border border-danger/30 bg-danger-soft p-4 text-sm font-semibold text-danger" role="alert">{{ $message }}</div>@enderror
 
     @if($businesses->isNotEmpty())
-        <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(15rem,23%)]" data-business-batch-panel>
-            <section class="ui-panel mb-6 p-4 sm:p-5 xl:mb-0" aria-labelledby="saved-businesses-title">
+        <div data-business-batch-panel>
+            <section class="ui-panel p-4 sm:p-5" aria-labelledby="saved-businesses-title">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <h2 id="saved-businesses-title" class="ui-section-title">Saved Businesses / Income Sources</h2>
                     <div class="flex flex-wrap items-center gap-2">
@@ -108,27 +108,6 @@
                 </div>
             </section>
 
-            <aside class="h-fit rounded-panel border border-ui-border bg-surface-muted p-4 shadow-card xl:sticky xl:top-20" aria-labelledby="print-summary-title">
-                <div class="mb-2.5 flex items-center gap-2">
-                    <span class="text-brand-primary"><x-ui.icon name="report" size="size-4" /></span>
-                    <h2 id="print-summary-title" class="text-sm font-semibold text-brand-sidebar">Print Summary</h2>
-                </div>
-
-                <p class="text-sm font-semibold text-brand-primary" data-business-selected-summary-count>0 reports selected</p>
-                <p class="mt-1 text-xs leading-5 text-text-muted" data-business-selected-empty>Select one or more saved businesses to print or download them together.</p>
-
-                <ol class="mt-3 space-y-1.5 text-sm text-text-main" data-business-selected-list hidden></ol>
-
-                <div class="mt-3 hidden rounded-control bg-surface p-2.5 text-xs leading-5 text-text-muted" data-business-selected-estimate-box>
-                    <p class="font-semibold text-text-main">Estimated output</p>
-                    <p class="mt-0.5" data-business-selected-estimate></p>
-                </div>
-
-                <div class="mt-3 rounded-control border border-ui-border bg-surface p-2.5">
-                    <p class="flex items-center gap-1.5 text-xs font-semibold text-text-main"><x-ui.icon name="warning" size="size-3.5" />Printing Tip</p>
-                    <p class="mt-1 text-xs leading-5 text-text-muted">For best results, keep each selected report short enough that it can share a page — combined output flows short reports together and starts a new page automatically once one no longer fits.</p>
-                </div>
-            </aside>
         </div>
 
         @foreach($businesses as $business)

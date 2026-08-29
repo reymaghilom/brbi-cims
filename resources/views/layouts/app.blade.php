@@ -32,6 +32,40 @@
             $localHour >= 12 && $localHour < 18 => 'Good Afternoon',
             default => 'Good Evening',
         };
+        $scheduledTodayActivities = collect();
+        $scheduledTodayNotifications = collect();
+        if ($currentUser->role === App\Enums\UserRole::CreditInvestigator) {
+            $scheduledTodayActivities = App\Models\CiActivity::query()
+                ->scheduledTodayForCreator($currentUser)
+                ->with([
+                    'clientFolder:id,display_name',
+                    'coMaker:id,client_folder_id,full_name',
+                ])
+                ->orderBy('scheduled_at')
+                ->orderBy('id')
+                ->get();
+
+            if ($scheduledTodayActivities->isNotEmpty()) {
+                $scheduledActivitiesById = $scheduledTodayActivities->keyBy('id');
+                $scheduledTodayNotifications = $currentUser->notifications()
+                    ->where('type', App\Notifications\CiActivityScheduledReminder::class)
+                    ->whereIn('data->ci_activity_id', $scheduledTodayActivities->pluck('id')->all())
+                    ->latest()
+                    ->get()
+                    ->filter(function ($notification) use ($scheduledActivitiesById): bool {
+                        $activity = $scheduledActivitiesById->get((int) data_get($notification->data, 'ci_activity_id'));
+                        $notifiedSchedule = data_get($notification->data, 'scheduled_at');
+
+                        return $activity !== null
+                            && filled($notifiedSchedule)
+                            && Illuminate\Support\Carbon::parse($notifiedSchedule)->equalTo($activity->scheduled_at);
+                    })
+                    ->unique(fn ($notification) => (int) data_get($notification->data, 'ci_activity_id'))
+                    ->keyBy(fn ($notification) => (int) data_get($notification->data, 'ci_activity_id'));
+            }
+        }
+        $scheduledTodayCount = $scheduledTodayActivities->count();
+        $scheduledTodayUnreadCount = $scheduledTodayNotifications->whereNull('read_at')->count();
     @endphp
     <a href="#main-content" class="fixed left-3 top-3 z-[70] -translate-y-20 rounded-control bg-surface px-4 py-2 font-semibold text-brand-primary shadow-float focus:translate-y-0">Skip to main content</a>
 
@@ -89,23 +123,86 @@
                     <button type="button" data-drawer-toggle class="ui-icon-button -ml-2" aria-controls="primary-sidebar" aria-expanded="false" aria-label="Open navigation"><x-ui.icon name="menu" /></button>
                     <p class="min-w-0 text-sm font-semibold leading-5 tracking-[-0.01em] sm:text-base lg:text-[1.05rem]">{{ $greeting }}, {{ $currentUser->full_name }}</p>
                 </div>
-                <x-ui.context-menu label="Open account menu" class="shrink-0">
-                    <x-slot:trigger>
-                        <span class="flex min-h-11 items-center gap-2 px-1.5 py-1 transition hover:bg-brand-soft sm:gap-3 sm:px-2">
-                            @if ($currentUser->profilePhotoUrl())
-                                <img src="{{ $currentUser->profilePhotoUrl() }}" alt="" class="size-9 shrink-0 rounded-full border border-ui-border object-cover [aspect-ratio:1/1]" aria-hidden="true">
-                            @else
-                                <span class="grid size-9 shrink-0 place-items-center rounded-full bg-brand-primary text-xs font-bold text-white" aria-hidden="true">{{ $userInitials }}</span>
-                            @endif
-                            <span class="hidden min-w-0 text-left sm:block">
-                                <span class="block max-w-44 truncate text-sm font-bold text-text-main">{{ $currentUser->full_name }}</span>
-                                <span class="block text-xs text-text-muted">{{ $roleLabel }}</span>
+                <div class="flex shrink-0 items-center gap-1 sm:gap-2">
+                    @if($currentUser->role === App\Enums\UserRole::CreditInvestigator)
+                        <x-ui.context-menu label="Scheduled Today" class="shrink-0 [&>summary]:focus-visible:outline-none [&>summary]:focus-visible:ring-2 [&>summary]:focus-visible:ring-brand-primary/30 [&>summary]:focus-visible:ring-offset-2">
+                            <x-slot:trigger>
+                                <span class="relative grid size-9 place-items-center rounded-full text-brand-sidebar/70 transition hover:bg-brand-soft hover:text-brand-primary group-open:bg-brand-soft group-open:text-brand-primary" data-scheduled-today-bell>
+                                    <x-ui.icon name="bell" size="size-[1.125rem]" />
+                                    @if($scheduledTodayUnreadCount > 0)
+                                        <span class="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-danger px-1 text-[0.625rem] font-bold leading-none text-white ring-2 ring-surface" data-scheduled-today-count>{{ $scheduledTodayUnreadCount > 9 ? '9+' : $scheduledTodayUnreadCount }}</span>
+                                    @endif
+                                </span>
+                            </x-slot:trigger>
+                            <div class="w-[min(23rem,calc(100vw-2.75rem))]">
+                                <div class="border-b border-ui-border px-3 py-2.5">
+                                    <p class="text-sm font-bold leading-5 text-brand-sidebar">Scheduled Today</p>
+                                    @if($scheduledTodayCount > 0)
+                                        <p class="mt-0.5 text-xs leading-4 text-text-muted">{{ $scheduledTodayCount }} {{ Illuminate\Support\Str::plural('activity', $scheduledTodayCount) }}</p>
+                                    @endif
+                                </div>
+                                <div class="max-h-[calc(100dvh-10rem)] divide-y divide-ui-border overflow-y-auto overscroll-contain sm:max-h-none sm:overflow-visible" data-scheduled-today-list>
+                                    @forelse($scheduledTodayActivities->take(5) as $scheduledActivity)
+                                        @php
+                                            $scheduledPersonParams = $scheduledActivity->co_maker_id
+                                                ? ['person' => 'co-maker', 'co_maker_id' => $scheduledActivity->co_maker_id]
+                                                : [];
+                                            $scheduledPersonLabel = $scheduledActivity->coMaker
+                                                ? 'Co-Maker: '.$scheduledActivity->coMaker->full_name
+                                                : 'Applicant';
+                                            $scheduledTimeLabel = $scheduledActivity->scheduled_has_time
+                                                ? $scheduledActivity->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A')
+                                                : 'Today';
+                                            $scheduledNotification = $scheduledTodayNotifications->get($scheduledActivity->id);
+                                            $scheduledNotificationIsUnread = $scheduledNotification !== null && $scheduledNotification->read_at === null;
+                                            $scheduledItemClass = 'block w-full px-3 py-2.5 text-left transition hover:bg-brand-soft focus-visible:bg-brand-soft focus-visible:outline-none'
+                                                .($scheduledNotificationIsUnread ? ' bg-brand-soft/40' : '');
+                                        @endphp
+                                        @if($scheduledNotification)
+                                            <form method="POST" action="{{ route('notifications.ci-activities.read', $scheduledNotification->id) }}">@csrf
+                                                <button type="submit" role="menuitem" class="{{ $scheduledItemClass }}" data-scheduled-today-item="{{ $scheduledActivity->id }}" data-scheduled-notification-state="{{ $scheduledNotificationIsUnread ? 'unread' : 'read' }}">
+                                        @else
+                                            <a href="{{ route('client-folders.activities.index', [$scheduledActivity->client_folder_id] + $scheduledPersonParams + ['status' => 'scheduled_today']) }}" role="menuitem" class="{{ $scheduledItemClass }}" data-scheduled-today-item="{{ $scheduledActivity->id }}" data-scheduled-notification-state="none">
+                                        @endif
+                                            <span class="block truncate text-sm font-bold leading-5 text-text-main">{{ $scheduledActivity->name }}</span>
+                                            <span class="mt-1 flex min-w-0 items-center justify-between gap-3">
+                                                <span class="min-w-0 truncate text-xs leading-4 text-text-muted" title="{{ $scheduledActivity->clientFolder?->display_name ?? 'Client Folder' }} · {{ $scheduledPersonLabel }}">{{ $scheduledActivity->clientFolder?->display_name ?? 'Client Folder' }} <span aria-hidden="true">&middot;</span> {{ $scheduledPersonLabel }}</span>
+                                                <span class="inline-flex shrink-0 items-center gap-1 text-xs font-bold leading-4 text-brand-primary"><x-ui.icon :name="$scheduledActivity->scheduled_has_time ? 'clock' : 'calendar'" size="size-3.5" />{{ $scheduledTimeLabel }}</span>
+                                            </span>
+                                        @if($scheduledNotification)
+                                                </button>
+                                            </form>
+                                        @else
+                                            </a>
+                                        @endif
+                                    @empty
+                                        <p class="px-3 py-5 text-center text-sm leading-5 text-text-muted">No scheduled CI activities today.</p>
+                                    @endforelse
+                                </div>
+                                <div class="border-t border-ui-border p-1.5">
+                                    <a href="{{ route('ci-activities.index') }}" role="menuitem" class="flex min-h-9 items-center justify-center rounded-control px-3 py-1.5 text-xs font-bold text-brand-primary transition hover:bg-brand-soft focus-visible:bg-brand-soft focus-visible:outline-none">View CI Activities</a>
+                                </div>
+                            </div>
+                        </x-ui.context-menu>
+                    @endif
+                    <x-ui.context-menu label="Open account menu" class="shrink-0">
+                        <x-slot:trigger>
+                            <span class="flex min-h-11 items-center gap-2 px-1.5 py-1 transition hover:bg-brand-soft sm:gap-3 sm:px-2">
+                                @if ($currentUser->profilePhotoUrl())
+                                    <img src="{{ $currentUser->profilePhotoUrl() }}" alt="" class="size-9 shrink-0 rounded-full border border-ui-border object-cover [aspect-ratio:1/1]" aria-hidden="true">
+                                @else
+                                    <span class="grid size-9 shrink-0 place-items-center rounded-full bg-brand-primary text-xs font-bold text-white" aria-hidden="true">{{ $userInitials }}</span>
+                                @endif
+                                <span class="hidden min-w-0 text-left sm:block">
+                                    <span class="block max-w-44 truncate text-sm font-bold text-text-main">{{ $currentUser->full_name }}</span>
+                                    <span class="block text-xs text-text-muted">{{ $roleLabel }}</span>
+                                </span>
+                                <x-ui.icon name="chevron-down" size="size-4" class="text-text-muted" />
                             </span>
-                            <x-ui.icon name="chevron-down" size="size-4" class="text-text-muted" />
-                        </span>
-                    </x-slot:trigger>
-                    <button type="submit" form="logout-form" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary" role="menuitem"><x-ui.icon name="logout" size="size-4" />Logout</button>
-                </x-ui.context-menu>
+                        </x-slot:trigger>
+                        <button type="submit" form="logout-form" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary" role="menuitem"><x-ui.icon name="logout" size="size-4" />Logout</button>
+                    </x-ui.context-menu>
+                </div>
             </div>
             {{-- Kept outside the <details> dropdown (and outside the header's flex row itself, so
                  it never becomes an extra flex item that would shift the profile control away

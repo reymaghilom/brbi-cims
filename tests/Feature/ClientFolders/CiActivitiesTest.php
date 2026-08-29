@@ -17,6 +17,7 @@ use App\Notifications\CiActivityScheduledReminder;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Tests\TestCase;
@@ -580,6 +581,108 @@ class CiActivitiesTest extends TestCase
             ->count());
     }
 
+    public function test_completed_activity_submission_is_separate_from_status_and_preserves_creator_accountability(): void
+    {
+        $creator = User::factory()->create(['full_name' => 'Rey Creator']);
+        $submitter = User::factory()->create(['full_name' => 'Mark Submitter']);
+        [$folder, $activity] = $this->folderWithActivities($creator);
+        $activity->update([
+            'status' => ActivityStatus::Completed,
+            'completed_at' => now(),
+            'creator_id' => $creator->id,
+            'updated_by' => $creator->id,
+        ]);
+
+        $this->actingAs($submitter)->get(route('client-folders.activities.index', [$folder, 'status' => 'completed']))
+            ->assertOk()
+            ->assertSee('Mark as Submitted')
+            ->assertSee('Submitted To / Credit Analyst')
+            ->assertSee('Submission Note')
+            ->assertSee('max-w-lg overflow-y-auto', false);
+
+        $this->patch(route('client-folders.activities.submit', [$folder, $activity]), [
+            'submission_activity_id' => $activity->id,
+            'submitted_to' => '  Ana Credit Analyst  ',
+            'submission_note' => '  Endorsed with the verified field result.  ',
+        ])->assertRedirect(route('client-folders.activities.index', [$folder, 'status' => 'completed']));
+
+        $activity->refresh();
+        $this->assertSame(ActivityStatus::Completed, $activity->status);
+        $this->assertSame($creator->id, $activity->creator_id);
+        $this->assertSame($submitter->id, $activity->submitted_by);
+        $this->assertSame($submitter->id, $activity->updated_by);
+        $this->assertNotNull($activity->submitted_at);
+        $this->assertSame('Ana Credit Analyst', $activity->submitted_to);
+        $this->assertSame('Endorsed with the verified field result.', $activity->submission_note);
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'ci_activity.submitted',
+            'user_id' => $submitter->id,
+            'client_folder_id' => $folder->id,
+            'metadata->activity_id' => $activity->id,
+            'metadata->submitted_to' => 'Ana Credit Analyst',
+        ]);
+
+        $page = $this->get(route('client-folders.activities.index', [$folder, 'status' => 'completed']))->assertOk();
+        $page->assertSee('Proof / Submission')
+            ->assertSee('No Proof')
+            ->assertSee('Submitted')
+            ->assertSee('to Ana Credit Analyst')
+            ->assertSee('Update Submission')
+            ->assertSee('submitted to Credit Analyst')
+            ->assertSee('Submitted to: Ana Credit Analyst')
+            ->assertSee('Endorsed with the verified field result.')
+            ->assertSee('by Mark Submitter');
+
+        $this->actingAs($creator)->patch(route('client-folders.activities.submit', [$folder, $activity]), [
+            'submission_activity_id' => $activity->id,
+            'submitted_to' => 'Ben Credit Analyst',
+            'submission_note' => 'Re-endorsed after review.',
+        ])->assertRedirect();
+        $activity->refresh();
+        $this->assertSame($creator->id, $activity->creator_id);
+        $this->assertSame($creator->id, $activity->submitted_by);
+        $this->assertSame('Ben Credit Analyst', $activity->submitted_to);
+        $this->assertSame(2, AuditLog::query()->where('action', 'ci_activity.submitted')->where('metadata->activity_id', $activity->id)->count());
+    }
+
+    public function test_submission_requires_completed_status_and_exact_folder_person_scope(): void
+    {
+        $ci = User::factory()->create();
+        [$folder, $activity] = $this->folderWithActivities($ci);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'ALPHA MAKER', 'first_name' => 'Alpha', 'last_name' => 'Maker']);
+        $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $foreignActivity = CiActivity::create([
+            'client_folder_id' => $otherFolder->id,
+            'activity_definition_id' => $activity->activity_definition_id,
+            'name' => $activity->name,
+            'status' => ActivityStatus::Completed,
+            'completed_at' => now(),
+            'creator_id' => $ci->id,
+        ]);
+
+        $this->actingAs($ci)->patch(route('client-folders.activities.submit', [$folder, $activity]), [
+            'submission_activity_id' => $activity->id,
+        ])->assertSessionHasErrors('submission_activity_id', null, 'submission');
+        $this->assertNull($activity->fresh()->submitted_at);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'ci_activity.submitted']);
+
+        $activity->update(['status' => ActivityStatus::Completed, 'completed_at' => now()]);
+        $this->patch(route('client-folders.activities.submit', [$folder, $activity]), [
+            'submission_activity_id' => $activity->id,
+            'co_maker_id' => $coMaker->id,
+        ])->assertForbidden();
+        $this->patch(route('client-folders.activities.submit', [$folder, $foreignActivity]), [
+            'submission_activity_id' => $foreignActivity->id,
+        ])->assertNotFound();
+        $this->assertNull($activity->fresh()->submitted_at);
+        $this->assertNull($foreignActivity->fresh()->submitted_at);
+
+        auth()->logout();
+        $this->patch(route('client-folders.activities.submit', [$folder, $activity]), [
+            'submission_activity_id' => $activity->id,
+        ])->assertRedirect(route('login'));
+    }
+
     public function test_bulk_delete_selects_visible_rows_and_permanently_deletes_only_confirmed_ids(): void
     {
         $creator = User::factory()->create();
@@ -600,9 +703,10 @@ class CiActivitiesTest extends TestCase
         $this->assertCount(2, $page->viewData('visibleActivityIds'));
         $page->assertSee('aria-label="Select all visible activities"', false)
             ->assertSee('data-clear-selected-button hidden', false)
-            ->assertSee('ui-button-secondary shrink-0 !min-h-8 !rounded-control !px-2.5 !py-1 text-xs sm:text-sm', false)
+            ->assertSee('ui-button-secondary-compact shrink-0', false)
             ->assertSee('Clear Selected')
             ->assertSee('data-bulk-delete-button disabled', false)
+            ->assertSee('ui-button-danger-compact shrink-0', false)
             ->assertSee('Delete Selected')
             ->assertSee('Permanently Delete Selected Activities?')
             ->assertSee('The selected activities will be permanently deleted and cannot be restored.')
@@ -1032,7 +1136,7 @@ class CiActivitiesTest extends TestCase
         $media = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'uploaded_by' => $ci->id, 'file_name' => 'residence-front.jpg']);
         $activity->mediaReferences()->attach($media, ['label' => 'Residence frontage']);
 
-        $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->assertSee('With proof');
+        $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->assertSee('With Proof');
         $this->actingAs($ci)->get(route('client-folders.activities.edit', [$folder, $activity]))
             ->assertOk()->assertSee('Residence frontage')->assertDontSee('type="file"', false);
     }
@@ -1252,7 +1356,7 @@ class CiActivitiesTest extends TestCase
             ->assertSee(route('client-folders.index'), false)
             ->assertSee(route('client-folders.show', $folder), false)
             ->assertDontSee('Current View:')->assertDontSee('Switch Person')
-            ->assertSee('xl:grid-cols-[minmax(0,4fr)_minmax(15rem,1fr)]', false)->assertSee('Activity History')->assertSee('No proof')
+            ->assertSee('xl:grid-cols-[minmax(0,4fr)_minmax(15rem,1fr)]', false)->assertSee('Activity History')->assertSee('No Proof')->assertSee('Not Submitted')
             ->assertSee('min-w-[64rem]', false)
             ->assertSee('Scheduled Today')->assertSee('For Follow-up')->assertSee('All Activities')
             ->assertSee('data-ci-activity-tab', false)
@@ -1262,7 +1366,7 @@ class CiActivitiesTest extends TestCase
             ->assertSee('data-ci-sort="schedule"', false)
             ->assertSee('data-ci-sort="creator"', false)
             ->assertSee('data-ci-sort="updated"', false)
-            ->assertSee("event.preventDefault();", false)
+            ->assertSee('event.preventDefault();', false)
             ->assertSee("window.history.replaceState({}, '', url);", false)
             ->assertSee('const matchesFilter = (row, filter) =>', false)
             ->assertSee('+ Add New Activity Type')->assertSee('data-new-activity-type-fields', false)
@@ -1290,12 +1394,44 @@ class CiActivitiesTest extends TestCase
             ->assertSee(route('client-folders.media.index', $folder), false);
     }
 
+    public function test_bulk_selection_controls_reuse_the_residence_business_compact_icon_pattern(): void
+    {
+        $activityView = file_get_contents(resource_path('views/client-folders/activities/index.blade.php'));
+        $referenceView = file_get_contents(resource_path('views/client-folders/residence-business/edit.blade.php'));
+
+        $this->assertStringContainsString(
+            '<button type="button" class="ui-button-secondary-compact" data-check-clear-selection><x-ui.icon name="close" size="size-3.5" />Clear Selection</button>',
+            $referenceView,
+        );
+        $this->assertStringContainsString(
+            '<button type="button" class="ui-button-secondary-compact shrink-0" data-clear-selected-button hidden><x-ui.icon name="close" size="size-3.5" />Clear Selected</button>',
+            $activityView,
+        );
+        $this->assertStringContainsString(
+            '<button type="button" class="ui-button-danger-compact shrink-0" data-modal-open="bulk-delete-activities" data-bulk-delete-button disabled>',
+            $activityView,
+        );
+        $this->assertStringContainsString('<x-ui.icon name="trash" size="size-3.5" />', $activityView);
+        $this->assertStringContainsString('flex shrink-0 flex-wrap items-center justify-end gap-2', $activityView);
+        $this->assertStringNotContainsString('name="circle-x"', $activityView);
+
+        preg_match('/const clearSelections = \(\) => \{(.*?)\n\s*\};/s', $activityView, $clearSelectionFunction);
+        $this->assertStringContainsString('checkbox.checked = false', $clearSelectionFunction[1] ?? '');
+        $this->assertStringContainsString('syncBulkSelection();', $clearSelectionFunction[1] ?? '');
+        $this->assertStringNotContainsString('activeFilter', $clearSelectionFunction[1] ?? '');
+        $this->assertStringNotContainsString('activeSort', $clearSelectionFunction[1] ?? '');
+        $this->assertStringContainsString("clearButton.addEventListener('click', clearSelections);", $activityView);
+    }
+
     public function test_activity_creation_locks_creator_and_another_ci_can_update_without_replacing_them(): void
     {
         $creator = User::factory()->create(['full_name' => 'Rey Creator']);
         $other = User::factory()->create(['full_name' => 'Mark Updater']);
         [$folder] = $this->folderWithActivities($creator);
-        $definition = ActivityDefinition::query()->where('is_active', true)->firstOrFail();
+        $definition = ActivityDefinition::factory()->create([
+            'name' => 'Accountability Check',
+            'is_active' => true,
+        ]);
 
         $this->actingAs($creator)->post(route('client-folders.activities.store', $folder), [
             'activity_definition_id' => $definition->id,
@@ -1367,6 +1503,90 @@ class CiActivitiesTest extends TestCase
         $this->assertNull($activity->refresh()->reminder_sent_at);
     }
 
+    public function test_explicit_manila_schedule_round_trips_through_create_edit_display_today_and_reminder_without_a_shift(): void
+    {
+        Notification::fake();
+        Carbon::setTestNow(Carbon::parse('2026-08-29 05:59:00', 'UTC'));
+
+        try {
+            $creator = User::factory()->create();
+            [$folder] = $this->folderWithActivities($creator);
+            $definition = ActivityDefinition::factory()->create([
+                'name' => 'Timezone Round Trip',
+                'code' => 'timezone_round_trip',
+            ]);
+
+            $this->actingAs($creator)->post(route('client-folders.activities.store', $folder), [
+                'activity_definition_id' => $definition->id,
+                'status' => 'scheduled',
+                'scheduled_at' => '2026-08-29',
+                'scheduled_time' => '14:00',
+            ])->assertRedirect();
+
+            $activity = CiActivity::query()->where('activity_definition_id', $definition->id)->sole();
+            $this->assertTrue($activity->scheduled_has_time);
+            $this->assertSame('2026-08-29 06:00:00', DB::table('ci_activities')->where('id', $activity->id)->value('scheduled_at'));
+            $this->assertSame('2026-08-29 14:00', $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('Y-m-d H:i'));
+
+            $indexResponse = $this->get(route('client-folders.activities.index', [$folder, 'status' => 'scheduled_today']))
+                ->assertOk()
+                ->assertSee('Aug 29, 2026')
+                ->assertSee('2:00 PM');
+            $this->assertSame(1, $indexResponse->viewData('counts')['scheduled_today']);
+            $this->assertTrue($indexResponse->viewData('visibleActivityIds')->contains($activity->id));
+            $this->get(route('home'))
+                ->assertOk()
+                ->assertSee('Timezone Round Trip')
+                ->assertSee('2:00 PM');
+
+            $this->get(route('client-folders.activities.edit', [$folder, $activity]))
+                ->assertOk()
+                ->assertSee('name="scheduled_at" type="date" value="2026-08-29"', false)
+                ->assertSee('name="scheduled_time" type="time" value="14:00"', false);
+
+            $this->artisan('ci-activities:send-reminders')->assertSuccessful();
+            Notification::assertNothingSent();
+
+            Carbon::setTestNow(Carbon::parse('2026-08-29 06:00:00', 'UTC'));
+            $this->artisan('ci-activities:send-reminders')->assertSuccessful();
+            Notification::assertSentTo($creator, CiActivityScheduledReminder::class);
+
+            Notification::fake();
+            Carbon::setTestNow(Carbon::parse('2026-08-29 06:01:00', 'UTC'));
+            $this->actingAs($creator)->put(route('client-folders.activities.update', [$folder, $activity]), [
+                'status' => 'scheduled',
+                'scheduled_at' => '2026-08-29',
+                'scheduled_time' => '15:30',
+            ])->assertRedirect();
+
+            $activity->refresh();
+            $this->assertSame('2026-08-29 07:30:00', DB::table('ci_activities')->where('id', $activity->id)->value('scheduled_at'));
+            $this->assertSame('2026-08-29 15:30', $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('Y-m-d H:i'));
+            $this->assertNull($activity->reminder_sent_at);
+            $this->get(route('client-folders.activities.index', [$folder, 'status' => 'scheduled_today']))
+                ->assertOk()
+                ->assertSee('Aug 29, 2026')
+                ->assertSee('3:30 PM');
+            $this->get(route('home'))
+                ->assertOk()
+                ->assertSee('Timezone Round Trip')
+                ->assertSee('3:30 PM');
+
+            $audit = AuditLog::query()->where('action', 'ci_activity.rescheduled')->latest('id')->firstOrFail();
+            $this->assertSame('2026-08-29T07:30:00.000000Z', $audit->metadata['scheduled_at']);
+
+            Carbon::setTestNow(Carbon::parse('2026-08-29 07:29:00', 'UTC'));
+            $this->artisan('ci-activities:send-reminders')->assertSuccessful();
+            Notification::assertNothingSent();
+
+            Carbon::setTestNow(Carbon::parse('2026-08-29 07:30:00', 'UTC'));
+            $this->artisan('ci-activities:send-reminders')->assertSuccessful();
+            Notification::assertSentTo($creator, CiActivityScheduledReminder::class);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     public function test_due_reminder_goes_only_to_creator_and_completed_activity_stops_future_reminders(): void
     {
         Notification::fake();
@@ -1384,6 +1604,99 @@ class CiActivitiesTest extends TestCase
         $activity->update(['status' => ActivityStatus::Completed, 'reminder_sent_at' => null]);
         $this->artisan('ci-activities:send-reminders')->assertSuccessful();
         Notification::assertNothingSent();
+    }
+
+    public function test_date_only_schedule_reminds_the_original_creator_at_eight_and_exact_time_remains_exact(): void
+    {
+        Notification::fake();
+        Carbon::setTestNow(Carbon::parse('2026-08-29 23:59:00', 'UTC'));
+
+        try {
+            $creator = User::factory()->create();
+            $updater = User::factory()->create();
+            [$folder, $activity] = $this->folderWithActivities($creator);
+
+            $this->actingAs($creator)->get(route('client-folders.activities.index', $folder))
+                ->assertOk()
+                ->assertSee('name="scheduled_at" type="date"', false)
+                ->assertSee('name="scheduled_time" type="time"', false)
+                ->assertSee('Without one, the creator is reminded at 8:00 AM', false);
+
+            $this->actingAs($creator)->get(route('client-folders.activities.edit', [$folder, $activity]))
+                ->assertOk()
+                ->assertSee('name="scheduled_at" type="date"', false)
+                ->assertSee('name="scheduled_time" type="time"', false)
+                ->assertSee('Time <span class="font-normal text-text-muted">(optional)</span>', false);
+
+            $this->actingAs($updater)->put(route('client-folders.activities.update', [$folder, $activity]), [
+                'status' => 'scheduled',
+                'scheduled_at' => '2026-08-30',
+                'scheduled_time' => '',
+            ])->assertRedirect();
+
+            $activity->refresh();
+            $this->assertSame($creator->id, $activity->creator_id);
+            $this->assertSame($updater->id, $activity->updated_by);
+            $this->assertFalse($activity->scheduled_has_time);
+            $this->assertSame('2026-08-30 00:00:00', $activity->scheduled_at->utc()->format('Y-m-d H:i:s'));
+            $this->assertNull($activity->reminder_sent_at);
+
+            $this->artisan('ci-activities:send-reminders')->assertSuccessful();
+            Notification::assertNothingSent();
+
+            Carbon::setTestNow(Carbon::parse('2026-08-30 00:00:00', 'UTC'));
+            $this->artisan('ci-activities:send-reminders')->assertSuccessful();
+            Notification::assertSentTo($creator, CiActivityScheduledReminder::class, function (CiActivityScheduledReminder $notification) use ($activity, $creator): bool {
+                $payload = $notification->toArray($creator);
+
+                return $payload['scheduled_has_time'] === false
+                    && $payload['message'] === $activity->name.' is scheduled today.';
+            });
+            Notification::assertNotSentTo($updater, CiActivityScheduledReminder::class);
+
+            Notification::fake();
+            Carbon::setTestNow(Carbon::parse('2026-08-30 00:01:00', 'UTC'));
+            $this->actingAs($updater)->put(route('client-folders.activities.update', [$folder, $activity]), [
+                'status' => 'scheduled',
+                'scheduled_at' => '2026-08-31',
+                'scheduled_time' => '14:00',
+            ])->assertRedirect();
+
+            $activity->refresh();
+            $this->assertSame($creator->id, $activity->creator_id);
+            $this->assertTrue($activity->scheduled_has_time);
+            $this->assertSame('2026-08-31 06:00:00', $activity->scheduled_at->utc()->format('Y-m-d H:i:s'));
+            $this->assertNull($activity->reminder_sent_at);
+
+            Carbon::setTestNow(Carbon::parse('2026-08-31 05:59:00', 'UTC'));
+            $this->artisan('ci-activities:send-reminders')->assertSuccessful();
+            Notification::assertNothingSent();
+
+            Carbon::setTestNow(Carbon::parse('2026-08-31 06:00:00', 'UTC'));
+            $this->artisan('ci-activities:send-reminders')->assertSuccessful();
+            Notification::assertSentTo($creator, CiActivityScheduledReminder::class, function (CiActivityScheduledReminder $notification) use ($activity, $creator): bool {
+                $payload = $notification->toArray($creator);
+
+                return $payload['scheduled_has_time'] === true
+                    && $payload['message'] === $activity->name.' is scheduled now.';
+            });
+            Notification::assertNotSentTo($updater, CiActivityScheduledReminder::class);
+
+            $newDefinition = ActivityDefinition::factory()->create();
+            $this->actingAs($creator)->post(route('client-folders.activities.store', $folder), [
+                'activity_definition_id' => $newDefinition->id,
+                'status' => 'scheduled',
+                'scheduled_at' => '2026-09-01',
+                'scheduled_time' => '',
+            ])->assertRedirect();
+
+            $createdActivity = CiActivity::query()->where('activity_definition_id', $newDefinition->id)->sole();
+            $this->assertSame($creator->id, $createdActivity->creator_id);
+            $this->assertFalse($createdActivity->scheduled_has_time);
+            $this->assertSame('2026-09-01 00:00:00', $createdActivity->scheduled_at->utc()->format('Y-m-d H:i:s'));
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_activity_list_query_count_stays_constant_with_related_records(): void

@@ -35,7 +35,13 @@ class BusinessBatchExportTest extends TestCase
             ->assertSee('data-business-batch-pdf-submit', false)
             ->assertSee('data-business-batch-excel-submit', false)
             ->assertSee('data-business-selected-count', false)
-            ->assertSee('Print Summary')
+            ->assertSee('Print Selected')
+            ->assertSee('Download Selected')
+            ->assertSee('data-business-sort-table', false)
+            ->assertDontSee('Print Summary')
+            ->assertDontSee('Printing Tip')
+            ->assertDontSee('data-business-selected-summary-count', false)
+            ->assertDontSee('xl:grid-cols-[minmax(0,1fr)_minmax(15rem,23%)]', false)
             // Existing per-row actions must still be present for every saved business.
             ->assertSee("business-{$truck->id}-export-pdf-form", false)
             ->assertSee("business-{$truck->id}-export-excel-form", false)
@@ -48,6 +54,41 @@ class BusinessBatchExportTest extends TestCase
             ->assertSee(route('client-folders.income-sources.batch-export-excel', $folder), false);
     }
 
+    public function test_co_maker_manage_page_uses_the_same_compact_batch_controls_without_print_summary(): void
+    {
+        [$ci, $folder, $applicantSource] = $this->createSource('leasing_truck_equipment');
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Juan Dela Cruz', 'first_name' => 'Juan', 'last_name' => 'Dela Cruz']);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_agricultural')->firstOrFail();
+        $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), [
+            'income_source_template_id' => $template->id,
+            'source_name' => 'Co-Maker Business',
+            'business_name' => 'Co-Maker Farm',
+            'main_business_address' => 'Co-Maker Street',
+            'start_date' => '2026-01-01',
+            'year_established' => 2018,
+            'co_maker_id' => $coMaker->id,
+        ])->assertRedirect();
+        $coMakerSource = $folder->incomeSources()->where('co_maker_id', $coMaker->id)->sole();
+
+        $response = $this->get(route('client-folders.income-sources.manage', [
+            $folder,
+            'person' => 'co-maker',
+            'co_maker_id' => $coMaker->id,
+        ]))->assertOk();
+
+        $response->assertSee($coMakerSource->displayName())
+            ->assertDontSee($applicantSource->displayName())
+            ->assertSee('data-business-select-all', false)
+            ->assertSee('data-business-print-selected', false)
+            ->assertSee('data-business-download-selected-trigger', false)
+            ->assertSee('data-business-selected-count', false)
+            ->assertSee('data-business-sort-table', false)
+            ->assertDontSee('Print Summary')
+            ->assertDontSee('Printing Tip')
+            ->assertDontSee('data-business-selected-summary-count', false)
+            ->assertDontSee('xl:grid-cols-[minmax(0,1fr)_minmax(15rem,23%)]', false);
+    }
+
     public function test_each_saved_businesses_download_dropdown_is_the_floating_context_menu_scoped_to_its_own_record(): void
     {
         [$ci, $folder, $truck] = $this->createSource('leasing_truck_equipment');
@@ -55,17 +96,17 @@ class BusinessBatchExportTest extends TestCase
 
         $content = $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))->assertOk()->getContent();
 
-        // Every Download dropdown (batch + one per saved business, table and card variants) uses
+        // Every Download dropdown (batch + one per saved business row) uses
         // the shared floating context-menu component — the panel carries the JS positioning hook
         // that keeps it anchored to its own trigger instead of participating in normal document
-        // flow inside the table's overflow-x-auto wrapper.
-        $this->assertGreaterThanOrEqual(5, substr_count($content, 'data-context-menu-panel'));
+        // flow inside the table's overflow-x-auto wrapper. The fourth menu is the account menu.
+        $this->assertSame(4, substr_count($content, 'data-context-menu-panel'));
 
-        // Each business's own row/card is scoped between its "Edit business" trigger and the
+        // Each business's own row is scoped between its Update trigger and the
         // next one — its Download menu must submit only that exact business's own export forms,
         // never another business's, even when multiple are saved side by side.
-        $truckRowStart = strpos($content, 'aria-label="Edit '.$truck->displayName().'"');
-        $agriRowStart = strpos($content, 'aria-label="Edit '.$agri->displayName().'"');
+        $truckRowStart = strpos($content, 'aria-label="Update Business Report for '.$truck->displayName().'"');
+        $agriRowStart = strpos($content, 'aria-label="Update Business Report for '.$agri->displayName().'"');
         $this->assertNotFalse($truckRowStart);
         $this->assertNotFalse($agriRowStart);
         [$firstStart, $secondStart] = $truckRowStart < $agriRowStart ? [$truckRowStart, $agriRowStart] : [$agriRowStart, $truckRowStart];
