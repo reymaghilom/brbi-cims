@@ -3,6 +3,7 @@
 namespace App\Actions\ClientFolders;
 
 use App\Enums\ActivityStatus;
+use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\CiActivity;
 use App\Models\ClientFolder;
@@ -25,6 +26,15 @@ class UpdateCiActivity
     public function execute(User $actor, ClientFolder $folder, CiActivity $activity, array $data): void
     {
         DB::transaction(function () use ($actor, $folder, $activity, $data): void {
+            if (in_array($activity->definition->code, [
+                ActivityDefinition::BANK_COOP_CHECK_CODE,
+                ActivityDefinition::ASSET_CHECK_CODE,
+            ], true)) {
+                throw ValidationException::withMessages([
+                    'status' => 'This parent status is managed through its tracker targets.',
+                ]);
+            }
+
             if (filled($data['expected_updated_at'] ?? null) && ! Carbon::parse($data['expected_updated_at'])->equalTo($activity->updated_at)) {
                 throw ValidationException::withMessages([
                     'expected_updated_at' => 'This record has been updated by another CI. Please review the latest version before saving.',
@@ -36,9 +46,16 @@ class UpdateCiActivity
             $previousSchedule = $activity->scheduled_at?->copy();
             $previousScheduleHasTime = $activity->scheduled_has_time;
             $status = ActivityStatus::from($data['status']);
+            $isDefaultCheck = in_array($activity->definition->code, [
+                ActivityDefinition::BARANGAY_CHECK_CODE,
+                ActivityDefinition::NEIGHBOR_CHECK_CODE,
+            ], true);
             [$nextSchedule, $nextScheduleHasTime] = in_array($status, [ActivityStatus::Scheduled, ActivityStatus::FollowUp], true)
                 ? CiActivity::normalizeScheduleInput($data['scheduled_at'] ?? null, $data['scheduled_time'] ?? null)
-                : [null, true];
+                : [null, ! $isDefaultCheck];
+            if ($isDefaultCheck && $nextSchedule === null) {
+                $nextScheduleHasTime = false;
+            }
             $data['scheduled_at'] = $nextSchedule;
             $data['scheduled_has_time'] = $nextScheduleHasTime;
             $reopenedNow = $previousStatus === ActivityStatus::Completed && $status === ActivityStatus::Pending;
@@ -55,7 +72,7 @@ class UpdateCiActivity
             ];
             if ($reopenedNow) {
                 $updates['scheduled_at'] = null;
-                $updates['scheduled_has_time'] = true;
+                $updates['scheduled_has_time'] = ! $isDefaultCheck;
                 $updates['reminder_sent_at'] = null;
             }
             $activity->update($updates);

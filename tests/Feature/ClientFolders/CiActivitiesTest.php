@@ -9,12 +9,15 @@ use App\Models\ActivityDefinition;
 use App\Models\ActivityNote;
 use App\Models\AuditLog;
 use App\Models\CiActivity;
+use App\Models\CiActivityAssetTarget;
+use App\Models\CiActivityBankTarget;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\MediaReference;
 use App\Models\User;
 use App\Notifications\CiActivityScheduledReminder;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
+use App\Services\Media\CloudinaryCiActivityProofStorage;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -180,7 +183,7 @@ class CiActivitiesTest extends TestCase
         $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'ALPHA MAKER', 'first_name' => 'Alpha', 'last_name' => 'Maker']);
         $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'BETA MAKER', 'first_name' => 'Beta', 'last_name' => 'Maker']);
-        $definition = ActivityDefinition::query()->where('is_active', true)->firstOrFail();
+        $definition = $this->optionalDefinition();
         $activity = CiActivity::create([
             'client_folder_id' => $folder->id,
             'co_maker_id' => $coMakerA->id,
@@ -228,8 +231,8 @@ class CiActivitiesTest extends TestCase
             ->get(route('client-folders.activities.index', [$folder, 'status' => 'all']))
             ->assertOk()
             ->assertSee('Delete Activity')
-            ->assertSee('Permanently Delete Activity?')
-            ->assertSee('This activity will be permanently deleted and cannot be restored. Continue only if this activity was created by mistake or is no longer needed.')
+            ->assertSee('Permanently delete '.$activity->name.'?')
+            ->assertSee('This action cannot be undone.')
             ->assertSee('Permanently Delete')
             ->assertSee('ui-button-danger', false)
             ->assertSee('data-modal-close', false);
@@ -272,7 +275,7 @@ class CiActivitiesTest extends TestCase
         $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'ALPHA MAKER', 'first_name' => 'Alpha', 'last_name' => 'Maker']);
         $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'BETA MAKER', 'first_name' => 'Beta', 'last_name' => 'Maker']);
-        $definition = ActivityDefinition::query()->where('is_active', true)->firstOrFail();
+        $definition = $this->optionalDefinition();
         $applicantActivity = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'target' => 'APPLICANT DELETE SCOPE', 'creator_id' => $ci->id]);
         $coMakerAActivity = CiActivity::create(['client_folder_id' => $folder->id, 'co_maker_id' => $coMakerA->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'target' => 'CO-MAKER A DELETE SCOPE', 'creator_id' => $ci->id]);
         $coMakerBActivity = CiActivity::create(['client_folder_id' => $folder->id, 'co_maker_id' => $coMakerB->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'target' => 'CO-MAKER B DELETE SCOPE', 'creator_id' => $ci->id]);
@@ -303,7 +306,7 @@ class CiActivitiesTest extends TestCase
     public function test_unauthenticated_user_cannot_reopen_or_delete_an_activity(): void
     {
         $folder = ClientFolder::factory()->create();
-        $definition = ActivityDefinition::query()->where('is_active', true)->firstOrFail();
+        $definition = $this->optionalDefinition();
         $activity = CiActivity::create([
             'client_folder_id' => $folder->id,
             'activity_definition_id' => $definition->id,
@@ -320,7 +323,7 @@ class CiActivitiesTest extends TestCase
         $this->assertDatabaseHas('ci_activities', ['id' => $activity->id]);
     }
 
-    public function test_fresh_ci_activity_contexts_start_empty_until_a_ci_adds_the_first_activity(): void
+    public function test_fresh_ci_activity_contexts_receive_only_barangay_and_neighbor_defaults(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -330,37 +333,29 @@ class CiActivitiesTest extends TestCase
         app(SeedCiActivities::class)->execute($folder);
         app(SeedCiActivities::class)->execute($folder, $coMakerA);
         app(SeedCiActivities::class)->execute($folder, $coMakerB);
-        $this->assertSame(0, $folder->activities()->count());
+        $this->assertSame(6, $folder->activities()->count());
 
-        $activeDefinition = ActivityDefinition::query()->where('is_active', true)->orderBy('sort_order')->firstOrFail();
-        $emptyApplicantResponse = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
-        $emptyApplicantResponse
+        $applicantResponse = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
+        $applicantResponse
             ->assertOk()
-            ->assertSee('No CI activities yet.')
-            ->assertSee('Add an activity when there is something to process, schedule, follow up, or document.')
-            ->assertSee($activeDefinition->name)
-            ->assertSee('+ Add New Activity Type')
-            ->assertDontSee('Residence Check')
-            ->assertDontSee('Business Check');
-        $this->assertSame(1, substr_count($emptyApplicantResponse->getContent(), 'data-ci-activity-dialog-open'));
+            ->assertViewHas('activities', fn ($activities): bool => $activities->pluck('definition.code')->all() === [
+                ActivityDefinition::BARANGAY_CHECK_CODE,
+                ActivityDefinition::NEIGHBOR_CHECK_CODE,
+            ]);
+        $this->assertSame(1, substr_count($applicantResponse->getContent(), 'data-ci-activity-dialog-open'));
         foreach ([$coMakerA, $coMakerB] as $coMaker) {
             $this->get(route('client-folders.activities.index', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]))
                 ->assertOk()
-                ->assertSee('No CI activities yet.');
+                ->assertViewHas('activities', fn ($activities): bool => $activities->pluck('definition.code')->all() === [
+                    ActivityDefinition::BARANGAY_CHECK_CODE,
+                    ActivityDefinition::NEIGHBOR_CHECK_CODE,
+                ]);
         }
 
-        $this->post(route('client-folders.activities.store', $folder), [
-            'activity_definition_id' => $activeDefinition->id,
-            'status' => 'pending',
-            'remarks' => 'FIRST MANUAL ACTIVITY',
-        ])->assertRedirect();
-
-        $manualActivity = $folder->activities()->whereNull('co_maker_id')->sole();
-        $this->assertSame($activeDefinition->id, $manualActivity->activity_definition_id);
-        $this->assertSame(0, $folder->activities()->whereIn('co_maker_id', [$coMakerA->id, $coMakerB->id])->count());
         app(SeedCiActivities::class)->execute($folder);
-        $this->assertDatabaseHas('ci_activities', ['id' => $manualActivity->id, 'remarks' => 'FIRST MANUAL ACTIVITY']);
-        $this->assertSame(1, $folder->activities()->count());
+        app(SeedCiActivities::class)->execute($folder, $coMakerA);
+        app(SeedCiActivities::class)->execute($folder, $coMakerB);
+        $this->assertSame(6, $folder->activities()->count());
     }
 
     public function test_target_is_absent_from_add_and_edit_while_forged_input_is_ignored_and_historical_data_is_preserved(): void
@@ -373,7 +368,7 @@ class CiActivitiesTest extends TestCase
             'first_name' => 'Isolated',
             'last_name' => 'Maker',
         ]);
-        $definition = ActivityDefinition::query()->where('is_active', true)->orderBy('sort_order')->firstOrFail();
+        $definition = $this->optionalDefinition();
 
         $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))
             ->assertOk()
@@ -475,7 +470,7 @@ class CiActivitiesTest extends TestCase
             'completed_at' => now(),
             'creator_id' => $ci->id,
         ]);
-        CiActivity::create([
+        $applicantAsset = CiActivity::create([
             'client_folder_id' => $folder->id,
             'activity_definition_id' => $asset->id,
             'name' => $asset->name,
@@ -567,18 +562,126 @@ class CiActivitiesTest extends TestCase
         $this->assertSame($definitionCount, ActivityDefinition::query()->count());
         $this->assertSame($creationAuditCount, AuditLog::query()->where('action', 'ci_activity.created')->count());
 
-        $this->delete(route('client-folders.activities.destroy', [$folder, $applicantNeighbor]), ['co_maker_id' => null])
+        $this->delete(route('client-folders.activities.destroy', [$folder, $applicantAsset]), ['co_maker_id' => null])
             ->assertRedirect(route('client-folders.activities.index', [$folder, 'status' => 'all']));
-        $this->assertDatabaseMissing('ci_activities', ['id' => $applicantNeighbor->id]);
+        $this->assertDatabaseMissing('ci_activities', ['id' => $applicantAsset->id]);
         $this->post(route('client-folders.activities.store', $folder), [
-            'activity_definition_id' => $neighbor->id,
+            'activity_definition_id' => $asset->id,
             'status' => 'pending',
+            'asset_targets' => [[
+                'assessor_type' => 'city_assessor',
+                'office_location' => 'City Assessor Office',
+                'status' => 'pending',
+            ]],
         ])->assertRedirect();
         $this->assertSame(1, CiActivity::query()
             ->where('client_folder_id', $folder->id)
             ->whereNull('co_maker_id')
-            ->where('activity_definition_id', $neighbor->id)
+            ->where('activity_definition_id', $asset->id)
             ->count());
+    }
+
+    public function test_mandatory_defaults_hide_delete_actions_and_reject_direct_and_bulk_deletion_atomically(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        app(SeedCiActivities::class)->execute($folder);
+        $barangay = $folder->activities()->whereHas('definition', fn ($query) => $query->where('code', ActivityDefinition::BARANGAY_CHECK_CODE))->sole();
+        $neighbor = $folder->activities()->whereHas('definition', fn ($query) => $query->where('code', ActivityDefinition::NEIGHBOR_CHECK_CODE))->sole();
+        $mandatoryOnlyPage = $this->actingAs($ci)->get(route('client-folders.activities.index', [$folder, 'status' => 'all']));
+        $mandatoryOnlyPage->assertOk()
+            ->assertDontSee('title="Mandatory activity"', false)
+            ->assertDontSee('data-ci-select-all', false)
+            ->assertDontSee('data-bulk-delete-button', false)
+            ->assertDontSee('Delete Selected');
+        preg_match_all('/<input[^>]+data-ci-activity-select/', $mandatoryOnlyPage->getContent(), $mandatoryOnlySelections);
+        $this->assertCount(0, $mandatoryOnlySelections[0]);
+        $bankDefinition = ActivityDefinition::query()->where('code', ActivityDefinition::BANK_COOP_CHECK_CODE)->sole();
+        $assetDefinition = ActivityDefinition::query()->where('code', ActivityDefinition::ASSET_CHECK_CODE)->sole();
+        $bank = CiActivity::create([
+            'client_folder_id' => $folder->id,
+            'activity_definition_id' => $bankDefinition->id,
+            'name' => $bankDefinition->name,
+            'creator_id' => $ci->id,
+        ]);
+        $asset = CiActivity::create([
+            'client_folder_id' => $folder->id,
+            'activity_definition_id' => $assetDefinition->id,
+            'name' => $assetDefinition->name,
+            'creator_id' => $ci->id,
+        ]);
+
+        $page = $this->actingAs($ci)->get(route('client-folders.activities.index', [$folder, 'status' => 'all']));
+        $page->assertOk()
+            ->assertDontSee('data-ci-activity-select', false)
+            ->assertDontSee('data-ci-select-all', false)
+            ->assertDontSee('Delete Selected')
+            ->assertDontSee('id="delete-activity-'.$barangay->id.'"', false)
+            ->assertDontSee('id="delete-activity-'.$neighbor->id.'"', false)
+            ->assertSee('id="delete-activity-'.$bank->id.'"', false)
+            ->assertSee('id="delete-activity-'.$asset->id.'"', false);
+        preg_match_all('/<input[^>]+data-ci-activity-select/', $page->getContent(), $selectionInputs);
+        $this->assertCount(0, $selectionInputs[0]);
+
+        foreach ([$barangay, $neighbor] as $mandatory) {
+            $this->delete(route('client-folders.activities.destroy', [$folder, $mandatory]), ['co_maker_id' => null])
+                ->assertSessionHasErrors('activity');
+            $this->assertDatabaseHas('ci_activities', ['id' => $mandatory->id]);
+        }
+
+        $this->delete(route('client-folders.activities.bulk-destroy', $folder), [
+            'activity_ids' => [$asset->id, $barangay->id],
+            'status' => 'all',
+        ])->assertSessionHasErrors('activity');
+        $this->assertDatabaseHas('ci_activities', ['id' => $asset->id]);
+        $this->assertDatabaseHas('ci_activities', ['id' => $barangay->id]);
+    }
+
+    public function test_optional_activity_hard_delete_cascades_only_its_bank_and_asset_targets(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $bankDefinition = ActivityDefinition::query()->where('code', ActivityDefinition::BANK_COOP_CHECK_CODE)->sole();
+        $assetDefinition = ActivityDefinition::query()->where('code', ActivityDefinition::ASSET_CHECK_CODE)->sole();
+        $bank = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $bankDefinition->id, 'name' => $bankDefinition->name, 'creator_id' => $ci->id]);
+        $otherBank = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $bankDefinition->id, 'name' => 'Other bank check', 'creator_id' => $ci->id]);
+        $asset = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $assetDefinition->id, 'name' => $assetDefinition->name, 'creator_id' => $ci->id]);
+        $otherAsset = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $assetDefinition->id, 'name' => 'Other asset check', 'creator_id' => $ci->id]);
+        $bankTarget = CiActivityBankTarget::create(['ci_activity_id' => $bank->id, 'institution_name' => 'Exact bank', 'status' => ActivityStatus::Pending, 'created_by' => $ci->id]);
+        $otherBankTarget = CiActivityBankTarget::create(['ci_activity_id' => $otherBank->id, 'institution_name' => 'Other bank', 'status' => ActivityStatus::Pending, 'created_by' => $ci->id]);
+        $assetTarget = CiActivityAssetTarget::create(['ci_activity_id' => $asset->id, 'assessor_type' => 'city_assessor', 'office_location' => 'Exact city office', 'status' => ActivityStatus::Pending, 'created_by' => $ci->id]);
+        $otherAssetTarget = CiActivityAssetTarget::create(['ci_activity_id' => $otherAsset->id, 'assessor_type' => 'municipal_assessor', 'office_location' => 'Other municipal office', 'status' => ActivityStatus::Pending, 'created_by' => $ci->id]);
+
+        $this->actingAs($ci)->delete(route('client-folders.activities.bulk-destroy', $folder), [
+            'activity_ids' => [$bank->id, $asset->id], 'status' => 'all',
+        ])->assertRedirect();
+
+        $this->assertDatabaseMissing('ci_activity_bank_targets', ['id' => $bankTarget->id]);
+        $this->assertDatabaseMissing('ci_activity_asset_targets', ['id' => $assetTarget->id]);
+        $this->assertDatabaseHas('ci_activity_bank_targets', ['id' => $otherBankTarget->id]);
+        $this->assertDatabaseHas('ci_activity_asset_targets', ['id' => $otherAssetTarget->id]);
+    }
+
+    public function test_optional_activity_deletion_retires_only_an_orphaned_cloudinary_proof_after_commit(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $activity = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $this->optionalDefinition()->id, 'name' => 'Cloud proof deletion', 'creator_id' => $ci->id]);
+        $sharedDefinition = ActivityDefinition::query()->where('is_active', true)->whereNotIn('code', [ActivityDefinition::BARANGAY_CHECK_CODE, ActivityDefinition::NEIGHBOR_CHECK_CODE])->whereKeyNot($activity->activity_definition_id)->firstOrFail();
+        $sharedActivity = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $sharedDefinition->id, 'name' => 'Shared cloud proof', 'creator_id' => $ci->id]);
+        $orphan = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'uploaded_by' => $ci->id, 'storage_provider' => MediaReference::STORAGE_PROVIDER_CLOUDINARY, 'cloudinary_public_id' => 'stored/orphan-proof', 'cloudinary_resource_type' => 'image']);
+        $shared = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'uploaded_by' => $ci->id, 'storage_provider' => MediaReference::STORAGE_PROVIDER_CLOUDINARY, 'cloudinary_public_id' => 'stored/shared-proof', 'cloudinary_resource_type' => 'video']);
+        $activity->mediaReferences()->attach([$orphan->id, $shared->id]);
+        $sharedActivity->mediaReferences()->attach($shared->id);
+        $storage = $this->mock(CloudinaryCiActivityProofStorage::class);
+        $storage->shouldReceive('delete')->once()->with('stored/orphan-proof', 'image');
+        $storage->shouldNotReceive('store');
+
+        $this->actingAs($ci)->delete(route('client-folders.activities.destroy', [$folder, $activity]), ['co_maker_id' => null])->assertRedirect();
+
+        $this->assertSoftDeleted('media_references', ['id' => $orphan->id]);
+        $this->assertDatabaseHas('media_references', ['id' => $shared->id, 'deleted_at' => null]);
+        $this->assertDatabaseHas('activity_media', ['ci_activity_id' => $sharedActivity->id, 'media_reference_id' => $shared->id]);
     }
 
     public function test_completed_activity_submission_is_separate_from_status_and_preserves_creator_accountability(): void
@@ -705,39 +808,30 @@ class CiActivitiesTest extends TestCase
         ])->assertRedirect(route('login'));
     }
 
-    public function test_bulk_delete_selects_visible_rows_and_permanently_deletes_only_confirmed_ids(): void
+    public function test_hidden_bulk_delete_endpoint_retains_scope_protection_and_deletes_only_confirmed_ids(): void
     {
         $creator = User::factory()->create();
         $actor = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $creator->id]);
-        $definition = ActivityDefinition::query()->where('is_active', true)->firstOrFail();
+        $definition = $this->optionalDefinition();
         $pendingA = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'target' => 'VISIBLE PENDING A', 'status' => ActivityStatus::Pending, 'creator_id' => $creator->id]);
         $pendingB = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'target' => 'VISIBLE PENDING B', 'status' => ActivityStatus::Pending, 'creator_id' => $creator->id]);
-        $completed = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'target' => 'HIDDEN COMPLETED', 'status' => ActivityStatus::Completed, 'completed_at' => now(), 'creator_id' => $creator->id]);
+        $completed = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $definition->id, 'name' => 'HIDDEN COMPLETED', 'target' => 'HIDDEN COMPLETED', 'status' => ActivityStatus::Completed, 'completed_at' => now(), 'creator_id' => $creator->id]);
         $sharedMedia = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'uploaded_by' => $creator->id, 'file_name' => 'bulk-shared-proof.pdf']);
         $pendingA->mediaReferences()->attach($sharedMedia, ['label' => 'Selected proof']);
         $completed->mediaReferences()->attach($sharedMedia, ['label' => 'Unselected shared proof']);
 
         $page = $this->actingAs($actor)->get(route('client-folders.activities.index', [$folder, 'status' => 'pending']))->assertOk();
         preg_match_all('/<input[^>]+data-ci-activity-select/', $page->getContent(), $rowCheckboxes);
-        $this->assertCount(3, $rowCheckboxes[0]);
+        $this->assertCount(0, $rowCheckboxes[0]);
         $this->assertCount(3, $page->viewData('activities'));
         $this->assertCount(2, $page->viewData('visibleActivityIds'));
-        $page->assertSee('aria-label="Select all visible activities"', false)
-            ->assertSee('data-clear-selected-button hidden', false)
-            ->assertSee('ui-button-secondary-compact shrink-0', false)
-            ->assertSee('Clear Selected')
-            ->assertSee('data-bulk-delete-button disabled', false)
-            ->assertSee('ui-button-danger-compact shrink-0', false)
-            ->assertSee('Delete Selected')
-            ->assertSee('Permanently Delete Selected Activities?')
-            ->assertSee('The selected activities will be permanently deleted and cannot be restored.')
-            ->assertSee('0 activities selected')
-            ->assertSee('Delete Selected (${selected.length})', false)
-            ->assertSee('const visibleSelections = () =>', false)
-            ->assertSee('visibleSelections().forEach', false)
-            ->assertSee('clearButton.hidden = selected.length === 0;', false)
-            ->assertSee("clearButton.addEventListener('click', clearSelections);", false);
+        $page->assertDontSee('aria-label="Select all visible activities"', false)
+            ->assertDontSee('data-ci-activity-select', false)
+            ->assertDontSee('data-clear-selected-button', false)
+            ->assertDontSee('data-bulk-delete-button', false)
+            ->assertDontSee('Delete Selected')
+            ->assertDontSee('Permanently Delete Selected Activities?');
         $this->assertDatabaseHas('ci_activities', ['id' => $pendingA->id]);
         $this->assertDatabaseHas('ci_activities', ['id' => $pendingB->id]);
 
@@ -786,7 +880,7 @@ class CiActivitiesTest extends TestCase
         $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'ALPHA MAKER', 'first_name' => 'Alpha', 'last_name' => 'Maker']);
         $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'BETA MAKER', 'first_name' => 'Beta', 'last_name' => 'Maker']);
-        $definition = ActivityDefinition::query()->where('is_active', true)->firstOrFail();
+        $definition = $this->optionalDefinition();
         $applicantActivity = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'creator_id' => $ci->id]);
         $coMakerAActivity = CiActivity::create(['client_folder_id' => $folder->id, 'co_maker_id' => $coMakerA->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'creator_id' => $ci->id]);
         $coMakerAActivityB = CiActivity::create(['client_folder_id' => $folder->id, 'co_maker_id' => $coMakerA->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'target' => 'SECOND ALPHA ACTIVITY', 'creator_id' => $ci->id]);
@@ -1129,7 +1223,7 @@ class CiActivitiesTest extends TestCase
         $this->actingAs($ci);
         app(SeedCiActivities::class)->execute($newFolder);
         $this->assertSame(0, $newFolder->activities()->where('status', 'not_started')->count());
-        $this->assertSame(0, $newFolder->activities()->where('status', 'pending')->count());
+        $this->assertSame(2, $newFolder->activities()->where('status', 'pending')->count());
     }
 
     public function test_visit_date_and_time_order_are_validated(): void
@@ -1316,7 +1410,7 @@ class CiActivitiesTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $definition = ActivityDefinition::query()->where('is_active', true)->firstOrFail();
+        $definition = $this->optionalDefinition();
 
         $storeResponse = $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
             'activity_definition_id' => $definition->id,
@@ -1714,33 +1808,19 @@ class CiActivitiesTest extends TestCase
             ->assertSee(route('client-folders.media.index', $folder), false);
     }
 
-    public function test_bulk_selection_controls_reuse_the_residence_business_compact_icon_pattern(): void
+    public function test_bulk_selection_controls_and_javascript_are_absent_from_ci_activities(): void
     {
         $activityView = file_get_contents(resource_path('views/client-folders/activities/index.blade.php'));
-        $referenceView = file_get_contents(resource_path('views/client-folders/residence-business/edit.blade.php'));
 
-        $this->assertStringContainsString(
-            '<button type="button" class="ui-button-secondary-compact" data-check-clear-selection><x-ui.icon name="close" size="size-3.5" />Clear Selection</button>',
-            $referenceView,
-        );
-        $this->assertStringContainsString(
-            '<button type="button" class="ui-button-secondary-compact shrink-0" data-clear-selected-button hidden><x-ui.icon name="close" size="size-3.5" />Clear Selected</button>',
-            $activityView,
-        );
-        $this->assertStringContainsString(
-            '<button type="button" class="ui-button-danger-compact shrink-0" data-modal-open="bulk-delete-activities" data-bulk-delete-button disabled>',
-            $activityView,
-        );
-        $this->assertStringContainsString('<x-ui.icon name="trash" size="size-3.5" />', $activityView);
-        $this->assertStringContainsString('flex shrink-0 flex-wrap items-center justify-end gap-2', $activityView);
-        $this->assertStringNotContainsString('name="circle-x"', $activityView);
-
-        preg_match('/const clearSelections = \(\) => \{(.*?)\n\s*\};/s', $activityView, $clearSelectionFunction);
-        $this->assertStringContainsString('checkbox.checked = false', $clearSelectionFunction[1] ?? '');
-        $this->assertStringContainsString('syncBulkSelection();', $clearSelectionFunction[1] ?? '');
-        $this->assertStringNotContainsString('activeFilter', $clearSelectionFunction[1] ?? '');
-        $this->assertStringNotContainsString('activeSort', $clearSelectionFunction[1] ?? '');
-        $this->assertStringContainsString("clearButton.addEventListener('click', clearSelections);", $activityView);
+        $this->assertStringNotContainsString('data-ci-select-all', $activityView);
+        $this->assertStringNotContainsString('data-ci-activity-select', $activityView);
+        $this->assertStringNotContainsString('data-clear-selected-button', $activityView);
+        $this->assertStringNotContainsString('data-bulk-delete-button', $activityView);
+        $this->assertStringNotContainsString('bulk-delete-activities', $activityView);
+        $this->assertStringNotContainsString('Delete Selected', $activityView);
+        $this->assertStringNotContainsString('visibleSelections', $activityView);
+        $this->assertStringNotContainsString('syncBulkSelection', $activityView);
+        $this->assertStringNotContainsString('clearSelections', $activityView);
     }
 
     public function test_activity_creation_locks_creator_and_another_ci_can_update_without_replacing_them(): void
@@ -1779,7 +1859,7 @@ class CiActivitiesTest extends TestCase
         [$folder] = $this->folderWithActivities($ci);
         $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'ALPHA MAKER', 'first_name' => 'Alpha', 'last_name' => 'Maker']);
         $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'BETA MAKER', 'first_name' => 'Beta', 'last_name' => 'Maker']);
-        $definition = ActivityDefinition::query()->where('is_active', true)->firstOrFail();
+        $definition = $this->optionalDefinition();
 
         foreach ([[$coMakerA, 'ALPHA DETAILS'], [$coMakerB, 'BETA DETAILS']] as [$person, $remarks]) {
             $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
@@ -2352,14 +2432,26 @@ class CiActivitiesTest extends TestCase
     {
         $ci ??= User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $activities = ActivityDefinition::query()->where('is_active', true)->orderBy('sort_order')->get()->map(fn (ActivityDefinition $definition) => CiActivity::create([
-            'client_folder_id' => $folder->id,
-            'activity_definition_id' => $definition->id,
-            'name' => $definition->name,
-            'creator_id' => $ci->id,
-        ]));
+        $activities = ActivityDefinition::query()
+            ->where('is_active', true)
+            ->whereNotIn('code', [ActivityDefinition::BARANGAY_CHECK_CODE, ActivityDefinition::NEIGHBOR_CHECK_CODE])
+            ->orderBy('sort_order')->get()->map(fn (ActivityDefinition $definition) => CiActivity::create([
+                'client_folder_id' => $folder->id,
+                'activity_definition_id' => $definition->id,
+                'name' => $definition->name,
+                'creator_id' => $ci->id,
+            ]));
 
         return [$folder, $activities->first()];
+    }
+
+    private function optionalDefinition(): ActivityDefinition
+    {
+        return ActivityDefinition::query()
+            ->where('is_active', true)
+            ->whereNotIn('code', [ActivityDefinition::BARANGAY_CHECK_CODE, ActivityDefinition::NEIGHBOR_CHECK_CODE])
+            ->orderBy('sort_order')
+            ->firstOrFail();
     }
 
     private function payload(): array

@@ -40,7 +40,7 @@ class CreateClientFolder
                 'progress_percent' => 0,
             ]);
 
-            $this->seedActivities->execute($folder);
+            $this->seedActivities->execute($folder, actor: $actor);
 
             AuditLog::create([
                 'user_id' => $actor->id,

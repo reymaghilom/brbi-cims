@@ -77,9 +77,26 @@ class CiActivity extends Model
         return $this->hasMany(CiActivityBankTarget::class);
     }
 
+    public function assetTargets(): HasMany
+    {
+        return $this->hasMany(CiActivityAssetTarget::class);
+    }
+
     public function mediaReferences(): BelongsToMany
     {
         return $this->belongsToMany(MediaReference::class, 'activity_media')->withPivot('label')->withTimestamps();
+    }
+
+    public function isMandatoryDefault(): bool
+    {
+        $definitionCode = $this->relationLoaded('definition')
+            ? $this->definition?->code
+            : $this->definition()->value('code');
+
+        return in_array($definitionCode, [
+            ActivityDefinition::BARANGAY_CHECK_CODE,
+            ActivityDefinition::NEIGHBOR_CHECK_CODE,
+        ], true);
     }
 
     public function scopeScheduledTodayForCreator(Builder $query, User|int $creator, ?string $timezone = null): Builder

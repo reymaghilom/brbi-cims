@@ -10,14 +10,20 @@
         $selectedActivityDefinitionId = $addingNewActivityType ? App\Models\ActivityDefinition::NEW_TYPE_VALUE : (string) old('activity_definition_id', '');
         $selectedActivityDefinition = $definitions->firstWhere('id', (int) $selectedActivityDefinitionId);
         $addingBankCoopCheck = ! $addingNewActivityType && $selectedActivityDefinition?->code === App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE;
+        $addingAssetCheck = ! $addingNewActivityType && $selectedActivityDefinition?->code === App\Models\ActivityDefinition::ASSET_CHECK_CODE;
+        $bankTargetRowsFromOldInput = is_array(old('bank_targets'));
         $bankTargetRows = old('bank_targets');
         if (! is_array($bankTargetRows) || $bankTargetRows === []) {
-            $bankTargetRows = [['institution_name' => '', 'branch_location' => '', 'status' => 'pending', 'scheduled_at' => '', 'scheduled_time' => '', 'remarks' => '']];
+            $bankTargetRows = [['inquiry_type' => '', 'institution_name' => '', 'branch_location' => '', 'status' => 'pending', 'scheduled_at' => '', 'scheduled_time' => '', 'remarks' => '']];
+        }
+        $assetTargetRows = old('asset_targets');
+        if (! is_array($assetTargetRows) || $assetTargetRows === []) {
+            $assetTargetRows = [['assessor_type' => '', 'office_location' => '', 'status' => 'pending', 'scheduled_at' => '', 'scheduled_time' => '', 'remarks' => '']];
         }
         $addActivityStatus = $addingBankCoopCheck
             ? App\Models\CiActivityBankTarget::deriveParentStatus(array_column($bankTargetRows, 'status'))->value
-            : old('status', App\Enums\ActivityStatus::Pending->value);
-        $addScheduleEnabled = ! $addingBankCoopCheck && in_array($addActivityStatus, [App\Enums\ActivityStatus::Scheduled->value, App\Enums\ActivityStatus::FollowUp->value], true);
+            : ($addingAssetCheck ? App\Models\CiActivityAssetTarget::deriveParentStatus(array_column($assetTargetRows, 'status'))->value : old('status', App\Enums\ActivityStatus::Pending->value));
+        $addScheduleEnabled = ! $addingBankCoopCheck && ! $addingAssetCheck && in_array($addActivityStatus, [App\Enums\ActivityStatus::Scheduled->value, App\Enums\ActivityStatus::FollowUp->value], true);
         $addActivityProofEnabled = ! $addingNewActivityType && $addActivityStatus === App\Enums\ActivityStatus::Completed->value;
         $builtInActivityDefinitions = $definitions->reject->isCustom();
         $customActivityDefinitions = $definitions->filter->isCustom();
@@ -187,10 +193,6 @@
                         <input id="ci-activity-search" type="search" class="ui-control !min-h-9 !py-1.5 !pl-9 !pr-9 text-sm" placeholder="Search activities..." autocomplete="off" data-ci-activity-search>
                         <button type="button" class="absolute inset-y-0 right-0 grid w-9 place-items-center rounded-r-control text-text-muted transition hover:text-brand-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary/30" aria-label="Clear activity search" data-ci-activity-search-clear hidden><x-ui.icon name="close" size="size-3.5" /></button>
                     </div>
-                    <button type="button" class="ui-button-secondary-compact shrink-0" data-clear-selected-button hidden><x-ui.icon name="close" size="size-3.5" />Clear Selected</button>
-                    <button type="button" class="ui-button-danger-compact shrink-0" data-modal-open="bulk-delete-activities" data-bulk-delete-button disabled>
-                        <x-ui.icon name="trash" size="size-3.5" /><span data-bulk-delete-label>Delete Selected</span>
-                    </button>
                 </div>
             </div>
 
@@ -198,7 +200,6 @@
                 <table class="w-full min-w-[64rem] text-left text-sm">
                     <thead class="bg-surface-subtle text-xs font-bold text-text-muted">
                         <tr>
-                            <th scope="col" class="w-10 px-3 py-3 text-center"><input type="checkbox" class="size-4 rounded border-ui-border text-brand-primary focus:ring-brand-primary" aria-label="Select all visible activities" data-ci-select-all></th>
                             @foreach(['activity' => 'Activity', 'status' => 'Status', 'schedule' => 'Schedule'] as $sortKey => $sortLabel)
                                 <th scope="col" class="{{ $sortKey === 'activity' ? 'px-4' : 'px-3' }} py-3" aria-sort="none" data-ci-sort-header="{{ $sortKey }}"><button type="button" class="inline-flex items-center gap-1.5 hover:text-brand-sidebar" data-ci-sort="{{ $sortKey }}">{{ $sortLabel }}<span class="inline-flex flex-col text-[0.5rem] leading-[0.4rem]" aria-hidden="true"><span class="opacity-30" data-sort-arrow="asc">▲</span><span class="opacity-30" data-sort-arrow="desc">▼</span></span></button></th>
                             @endforeach
@@ -221,12 +222,60 @@
                                 $singleAttachmentIsPreviewable = $singleAttachment
                                     && (Str::startsWith($singleAttachment->mime_type, 'image/') || Str::startsWith($singleAttachment->mime_type, 'video/'));
                                 $isBankCoopCheck = $activity->definition?->code === App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE;
+                                $isAssetCheck = $activity->definition?->code === App\Models\ActivityDefinition::ASSET_CHECK_CODE;
+                                $isMandatoryDefault = $activity->isMandatoryDefault();
+                                $isDefaultCheck = $isMandatoryDefault;
+                                $hasQuickCompletion = $isDefaultCheck || $isBankCoopCheck || $isAssetCheck;
+                                $completionIsChecked = match (true) {
+                                    $isBankCoopCheck => $activity->bank_targets_count > 0 && $activity->bank_targets_count === $activity->completed_bank_targets_count,
+                                    $isAssetCheck => $activity->asset_targets_count > 0 && $activity->asset_targets_count === $activity->completed_asset_targets_count,
+                                    default => $activity->status === App\Enums\ActivityStatus::Completed,
+                                };
+                                $completionKind = match (true) {
+                                    $isBankCoopCheck => 'bank',
+                                    $isAssetCheck => 'asset',
+                                    default => 'default',
+                                };
                             @endphp
-                            <tr class="align-middle transition hover:bg-surface-subtle/70" data-ci-activity-row data-status="{{ $activity->status->value }}" data-scheduled-today="{{ $scheduledToday ? 'true' : 'false' }}" data-sort-activity="{{ Str::lower($activity->name) }}" data-sort-status="{{ Str::lower($activity->status->label()) }}" data-sort-schedule="{{ $activitySchedule?->timestamp ?? 0 }}" data-sort-creator="{{ Str::lower($activity->creator?->full_name ?? 'System-created') }}" data-sort-updated="{{ $activity->updated_at->timestamp }}" @if(! $visibleActivityIds->contains($activity->id)) hidden @endif>
-                                <td class="px-3 py-3 text-center"><input type="checkbox" value="{{ $activity->id }}" class="size-4 rounded border-ui-border text-brand-primary focus:ring-brand-primary" aria-label="Select {{ $activity->name }}" data-ci-activity-select></td>
-                                <td class="px-4 py-3"><div class="flex items-start gap-2.5"><span class="grid size-8 shrink-0 place-items-center rounded-full border border-ui-border bg-surface-subtle text-text-muted"><x-ui.icon name="report" size="size-4" /></span><div class="min-w-0">@if($isBankCoopCheck)<a href="{{ route('client-folders.activities.bank-coop.show', [$clientFolder, $activity] + $personParams) }}" class="group block rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30" data-bank-coop-open="{{ $activity->id }}" data-bank-coop-url="{{ route('client-folders.activities.bank-coop.show', [$clientFolder, $activity] + $personParams) }}" aria-haspopup="dialog" aria-controls="bank-coop-tracker-modal"><p class="font-bold text-brand-primary group-hover:underline">{{ $activity->name }}</p><p class="mt-0.5 max-w-52 truncate text-xs text-text-muted group-hover:text-brand-primary" data-bank-coop-progress="{{ $activity->id }}">{{ $activity->bank_targets_count }} {{ str('institution')->plural($activity->bank_targets_count) }} · {{ $activity->completed_bank_targets_count }} completed</p></a>@else<p class="font-bold text-text-main">{{ $activity->name }}</p><p class="mt-0.5 max-w-52 truncate text-xs text-text-muted">{{ $activity->target ?: ($activity->definition?->is_required ? 'Required investigation activity' : 'General investigation activity') }}</p>@endif</div></div></td>
-                                <td class="px-3 py-3"><span data-bank-coop-status="{{ $isBankCoopCheck ? $activity->id : '' }}" @class(['inline-flex rounded-full px-2.5 py-1 text-xs font-bold', 'bg-progress-soft text-progress' => $activity->status === App\Enums\ActivityStatus::Pending, 'bg-brand-soft text-brand-primary' => $activity->status === App\Enums\ActivityStatus::Scheduled, 'bg-[#fff0e7] text-[#c85b12]' => $activity->status === App\Enums\ActivityStatus::FollowUp, 'bg-success-soft text-success' => $activity->status === App\Enums\ActivityStatus::Completed])>{{ $activity->status->label() }}</span></td>
-                                <td class="px-3 py-3 text-xs leading-5 text-text-muted">@if($activity->scheduled_at)<span class="block font-semibold text-text-main">{{ $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->scheduled_has_time ? $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time' }}@elseif($activity->visit_date)<span class="block font-semibold text-text-main">{{ $activity->visit_date->format('M j, Y') }}</span>Completed visit @else — @endif</td>
+                            <tr class="align-middle transition hover:bg-surface-subtle/70" data-ci-activity-row data-ci-activity-id="{{ $activity->id }}" data-status="{{ $activity->status->value }}" data-scheduled-today="{{ $scheduledToday ? 'true' : 'false' }}" data-sort-activity="{{ Str::lower($activity->name) }}" data-sort-status="{{ Str::lower($activity->status->label()) }}" data-sort-schedule="{{ $activitySchedule?->timestamp ?? 0 }}" data-sort-creator="{{ Str::lower($activity->creator?->full_name ?? 'System-created') }}" data-sort-updated="{{ $activity->updated_at->timestamp }}" @if(! $visibleActivityIds->contains($activity->id)) hidden @endif>
+                                <td class="px-4 py-3">
+                                    <div class="flex min-w-0 items-start gap-2.5">
+                                        @if($hasQuickCompletion)
+                                            <label class="mt-0.5 inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-control border border-success/25 bg-success-soft/60 transition hover:border-success/45 hover:bg-success-soft focus-within:ring-2 focus-within:ring-success/30 has-[:disabled]:cursor-default" title="{{ $completionIsChecked ? $activity->name.' completed' : ($completionKind === 'default' ? 'Mark '.$activity->name.' as completed' : 'Open '.$activity->name.' tracker to complete remaining targets') }}">
+                                                <input
+                                                    type="checkbox"
+                                                    class="size-5 rounded-md border-2 border-success/50 text-success focus:ring-success"
+                                                    aria-label="{{ $completionIsChecked ? $activity->name.' completed' : ($completionKind === 'default' ? 'Mark '.$activity->name.' as completed' : 'Open '.$activity->name.' tracker to complete remaining targets') }}"
+                                                    data-ci-activity-completion="{{ $activity->id }}"
+                                                    data-completion-kind="{{ $completionKind }}"
+                                                    @if($isDefaultCheck)
+                                                        data-completion-name="{{ $activity->name }}"
+                                                        data-completion-update-url="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}"
+                                                        data-completion-tracker-url="{{ route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}"
+                                                        data-completion-expected-updated-at="{{ $activity->updated_at->toISOString() }}"
+                                                        data-completion-co-maker-id="{{ $activePerson?->id }}"
+                                                    @endif
+                                                    @checked($completionIsChecked)
+                                                    @disabled($completionIsChecked)
+                                                >
+                                            </label>
+                                        @endif
+                                        <div class="min-w-0">
+                                            <p class="break-words font-bold text-text-main">{{ $activity->name }}</p>
+                                            @if($isBankCoopCheck)
+                                                <p class="mt-0.5 max-w-52 break-words text-xs text-text-muted" data-bank-coop-progress="{{ $activity->id }}">{{ $activity->bank_targets_count }} {{ str('institution')->plural($activity->bank_targets_count) }} · {{ $activity->completed_bank_targets_count }} completed</p>
+                                            @elseif($isAssetCheck)
+                                                <p class="mt-0.5 max-w-52 break-words text-xs text-text-muted" data-asset-check-progress="{{ $activity->id }}">{{ $activity->asset_targets_count }} {{ str('assessor')->plural($activity->asset_targets_count) }} · {{ $activity->completed_asset_targets_count }} completed</p>
+                                            @elseif($isDefaultCheck)
+                                                <p class="mt-0.5 max-w-52 break-words text-xs text-text-muted" data-default-check-summary="{{ $activity->id }}">{{ $activity->status->label() }} · {{ $activity->remarks ?: 'No remarks yet' }}</p>
+                                            @else
+                                                <p class="mt-0.5 max-w-52 truncate text-xs text-text-muted">{{ $activity->target ?: ($activity->definition?->is_required ? 'Required investigation activity' : 'General investigation activity') }}</p>
+                                            @endif
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="px-3 py-3"><span data-bank-coop-status="{{ $isBankCoopCheck ? $activity->id : '' }}" data-ci-activity-status-badge="{{ $activity->id }}" @class(['inline-flex rounded-full px-2.5 py-1 text-xs font-bold', 'bg-progress-soft text-progress' => $activity->status === App\Enums\ActivityStatus::Pending, 'bg-brand-soft text-brand-primary' => $activity->status === App\Enums\ActivityStatus::Scheduled, 'bg-[#fff0e7] text-[#c85b12]' => $activity->status === App\Enums\ActivityStatus::FollowUp, 'bg-success-soft text-success' => $activity->status === App\Enums\ActivityStatus::Completed])>{{ $activity->status->label() }}</span></td>
+                                <td class="px-3 py-3 text-xs leading-5 text-text-muted" data-ci-activity-schedule-cell="{{ $activity->id }}">@if($activity->scheduled_at)<span class="block font-semibold text-text-main">{{ $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->scheduled_has_time ? $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time' }}@elseif($activity->visit_date)<span class="block font-semibold text-text-main">{{ $activity->visit_date->format('M j, Y') }}</span>Completed visit @else — @endif</td>
                                 <td class="px-3 py-3" data-submission-cell="{{ $activity->id }}">
                                     <div class="min-w-36 space-y-2 text-xs">
                                         @if($attachmentCount === 1 && $singleAttachmentIsPreviewable)
@@ -256,13 +305,20 @@
                                     </div>
                                 </td>
                                 <td class="px-3 py-3 text-xs leading-5"><span class="block max-w-36 truncate font-semibold text-text-main">{{ $activity->creator?->full_name ?? 'System-created' }}</span><span class="text-text-muted">Locked creator</span></td>
-                                <td class="px-3 py-3 text-xs leading-5 text-text-muted"><span class="block font-semibold text-text-main">{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('g:i A') }}@if($activity->updater) · {{ $activity->updater->full_name }}@endif</td>
+                                <td class="px-3 py-3 text-xs leading-5 text-text-muted" data-ci-activity-updated-cell="{{ $activity->id }}"><span class="block font-semibold text-text-main">{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('g:i A') }}@if($activity->updater) · {{ $activity->updater->full_name }}@endif</td>
                                 <td class="px-3 py-3">
                                     <div class="flex items-center justify-center gap-1">
-                                        <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="View {{ $activity->name }}" title="View"><x-ui.icon name="eye" size="size-4" /></a>
-                                        <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Update {{ $activity->name }}" title="Update"><x-ui.icon name="edit" size="size-4" /></a>
-                                        <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#schedule" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Schedule or reschedule {{ $activity->name }}" title="Schedule / Reschedule"><x-ui.icon name="calendar" size="size-4" /></a>
-                                        @if($activity->status !== App\Enums\ActivityStatus::Completed)<form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}">@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at->toISOString() }}"><input type="hidden" name="status" value="completed"><input type="hidden" name="intent" value="return"><button type="submit" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Complete {{ $activity->name }}" title="Complete"><x-ui.icon name="check-circle" size="size-4" /></button></form>@endif
+                                        @if($isDefaultCheck)
+                                            <button type="button" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Edit {{ $activity->name }}" title="Edit" data-default-check-open="{{ $activity->id }}" data-default-check-url="{{ route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="edit" size="size-4" /></button>
+                                        @elseif($isBankCoopCheck)
+                                            <button type="button" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Edit {{ $activity->name }}" title="Edit" data-bank-coop-open="{{ $activity->id }}" data-bank-coop-url="{{ route('client-folders.activities.bank-coop.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="edit" size="size-4" /></button>
+                                        @elseif($isAssetCheck)
+                                            <button type="button" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Edit {{ $activity->name }}" title="Edit" data-asset-check-open="{{ $activity->id }}" data-asset-check-url="{{ route('client-folders.activities.asset-check.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="edit" size="size-4" /></button>
+                                        @else
+                                            <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Update {{ $activity->name }}" title="Update"><x-ui.icon name="edit" size="size-4" /></a>
+                                            <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#schedule" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Schedule or reschedule {{ $activity->name }}" title="Schedule / Reschedule"><x-ui.icon name="calendar" size="size-4" /></a>
+                                            @if($activity->status !== App\Enums\ActivityStatus::Completed)<form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}">@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at->toISOString() }}"><input type="hidden" name="status" value="completed"><input type="hidden" name="intent" value="return"><button type="submit" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Complete {{ $activity->name }}" title="Complete"><x-ui.icon name="check-circle" size="size-4" /></button></form>@endif
+                                        @endif
                                         <x-ui.context-menu :label="$activity->name.' more actions'">
                                             <x-slot:trigger><span class="ui-dots-trigger !size-8"><x-ui.icon name="more-vertical" size="size-4" /></span></x-slot:trigger>
                                             <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#notes-title" role="menuitem" class="client-folder-menu-item">View notes</a>
@@ -270,13 +326,15 @@
                                             @if($activity->status === App\Enums\ActivityStatus::Completed)
                                                 <button type="button" role="menuitem" class="client-folder-menu-item" data-modal-open="reopen-activity-{{ $activity->id }}">Reopen Activity</button>
                                             @endif
-                                            <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}">Delete Activity</button>
+                                            @unless($isMandatoryDefault)
+                                                <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}">Delete Activity</button>
+                                            @endunless
                                         </x-ui.context-menu>
                                     </div>
                                 </td>
                             </tr>
                         @endforeach
-                        <tr data-ci-empty-state @if($visibleActivityIds->isNotEmpty()) hidden @endif><td colspan="8" class="px-6 py-12 text-center"><div data-ci-empty-fresh @if($counts['all'] !== 0) hidden @endif><p class="font-semibold text-text-main">No CI activities yet.</p><p class="mt-1 text-sm text-text-muted">Add an activity when there is something to process, schedule, follow up, or document.</p></div><div data-ci-empty-filter @if($counts['all'] === 0) hidden @endif><p class="font-semibold text-text-main">No activities in this view.</p><p class="mt-1 text-sm text-text-muted">Choose another status or add an activity.</p></div><div data-ci-empty-search hidden><p class="font-semibold text-text-main">No activities match your search.</p><p class="mt-1 text-sm text-text-muted">Try a different activity, status, date, creator, or submission term.</p></div></td></tr>
+                        <tr data-ci-empty-state @if($visibleActivityIds->isNotEmpty()) hidden @endif><td colspan="7" class="px-6 py-12 text-center"><div data-ci-empty-fresh @if($counts['all'] !== 0) hidden @endif><p class="font-semibold text-text-main">No CI activities yet.</p><p class="mt-1 text-sm text-text-muted">Add an activity when there is something to process, schedule, follow up, or document.</p></div><div data-ci-empty-filter @if($counts['all'] === 0) hidden @endif><p class="font-semibold text-text-main">No activities in this view.</p><p class="mt-1 text-sm text-text-muted">Choose another status or add an activity.</p></div><div data-ci-empty-search hidden><p class="font-semibold text-text-main">No activities match your search.</p><p class="mt-1 text-sm text-text-muted">Try a different activity, status, date, creator, or submission term.</p></div></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -292,6 +350,34 @@
                     </div>
                     <div class="flex shrink-0 justify-end border-t border-ui-border px-5 py-3.5 sm:px-6"><button type="button" class="ui-button-secondary-compact" data-bank-coop-modal-close>Close</button></div>
                 </div>
+            </dialog>
+
+            <dialog id="asset-check-tracker-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-4xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-asset-check-modal aria-labelledby="asset-check-tracker-title">
+                <div class="flex max-h-[calc(100dvh-2rem)] flex-col">
+                    <div class="relative flex shrink-0 flex-col gap-3 border-b border-ui-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                        <div class="min-w-0 pr-10 sm:pr-0"><h2 id="asset-check-tracker-title" class="text-lg font-bold text-brand-sidebar">Asset Check</h2><p class="mt-1 break-words text-sm text-text-muted" data-asset-check-modal-context>Loading exact activity context…</p></div>
+                        <div class="flex flex-wrap items-center gap-2 pr-10 sm:pr-0"><button type="button" class="ui-button-primary !min-h-9 !px-3 !py-1.5 !text-xs" data-asset-check-modal-add disabled><x-ui.icon name="plus" size="size-3.5" />Add Assessor</button><button type="button" class="ui-icon-button absolute right-3 top-3 sm:static" data-asset-check-modal-close aria-label="Close Asset Check"><x-ui.icon name="close" size="size-5" /></button></div>
+                    </div>
+                    <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-subtle/40 p-3 sm:p-4" data-asset-check-modal-body><div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading assessor targets…</div></div>
+                    <div class="flex shrink-0 justify-end border-t border-ui-border px-5 py-3.5 sm:px-6"><button type="button" class="ui-button-secondary-compact" data-asset-check-modal-close>Close</button></div>
+                </div>
+            </dialog>
+
+            <dialog id="default-check-tracker-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-3xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-default-check-modal aria-labelledby="default-check-tracker-title">
+                <div class="flex max-h-[calc(100dvh-2rem)] flex-col">
+                    <div class="relative flex shrink-0 items-start justify-between gap-3 border-b border-ui-border px-5 py-4 sm:px-6"><div class="min-w-0 pr-10"><h2 id="default-check-tracker-title" class="break-words text-lg font-bold text-brand-sidebar">Activity Tracker</h2><p class="mt-1 break-words text-sm text-text-muted" data-default-check-modal-context>Loading exact activity context…</p></div><button type="button" class="ui-icon-button absolute right-3 top-3" data-default-check-modal-close aria-label="Close activity tracker"><x-ui.icon name="close" size="size-5" /></button></div>
+                    <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-subtle/40 p-3 sm:p-4" data-default-check-modal-body><div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading activity tracker…</div></div>
+                    <div class="flex shrink-0 justify-end border-t border-ui-border px-5 py-3.5 sm:px-6"><button type="button" class="ui-button-secondary-compact" data-default-check-modal-close>Close</button></div>
+                </div>
+            </dialog>
+
+            <dialog id="quick-complete-activity-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-quick-complete-modal aria-labelledby="quick-complete-activity-title">
+                <div class="border-b border-ui-border px-5 py-4"><h2 id="quick-complete-activity-title" class="break-words text-lg font-bold text-brand-sidebar" data-quick-complete-title>Mark activity as completed?</h2></div>
+                <div class="space-y-3 px-5 py-5 text-sm leading-6 text-text-muted">
+                    <p>The schedule and time will be cleared. Completion will be recorded in Activity History under the actual user confirming this action.</p>
+                    <p class="rounded-control border border-danger/25 bg-danger-soft px-3 py-2 font-semibold text-danger" role="alert" data-quick-complete-error hidden></p>
+                </div>
+                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-cancel>Cancel</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-quick-complete-confirm>Mark Completed</button></div>
             </dialog>
 
             @foreach($activities as $activity)
@@ -379,26 +465,13 @@
                         </x-slot:formFields>
                     </x-ui.confirmation-dialog>
                 @endif
-                <x-ui.confirmation-dialog id="delete-activity-{{ $activity->id }}" title="Permanently Delete Activity?" :action="route('client-folders.activities.destroy', [$clientFolder, $activity])" method="DELETE" confirm-label="Permanently Delete" destructive>
-                    <p>This activity will be permanently deleted and cannot be restored. Continue only if this activity was created by mistake or is no longer needed.</p>
-                    <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
-                </x-ui.confirmation-dialog>
+                @unless($activity->isMandatoryDefault())
+                    <x-ui.confirmation-dialog id="delete-activity-{{ $activity->id }}" :title="'Permanently delete '.$activity->name.'?'" :action="route('client-folders.activities.destroy', [$clientFolder, $activity])" method="DELETE" confirm-label="Permanently Delete" destructive>
+                        <p>This action cannot be undone.</p>
+                        <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
+                    </x-ui.confirmation-dialog>
+                @endunless
             @endforeach
-
-            <x-ui.modal id="bulk-delete-activities" title="Permanently Delete Selected Activities?">
-                <p>The selected activities will be permanently deleted and cannot be restored.</p>
-                <p class="mt-3 font-semibold text-text-main" data-bulk-delete-summary>0 activities selected</p>
-                <x-slot:footer>
-                    <button type="button" data-modal-close class="ui-button-secondary">Cancel</button>
-                    <form method="POST" action="{{ route('client-folders.activities.bulk-destroy', $clientFolder) }}">
-                        @csrf @method('DELETE')
-                        <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
-                        <input type="hidden" name="status" value="{{ $filter }}" data-ci-bulk-filter>
-                        <span data-bulk-delete-inputs></span>
-                        <button class="ui-button-danger">Permanently Delete</button>
-                    </form>
-                </x-slot:footer>
-            </x-ui.modal>
 
             <div class="mt-4 flex items-start gap-2 rounded-control border border-progress/20 bg-progress-soft/70 px-4 py-3 text-sm text-[#76520c]"><x-ui.icon name="warning" size="size-4" class="mt-0.5" /><p>Only the activity creator receives scheduled notifications. Other authorized CI users may view and update the activity as needed.</p></div>
         </section>
@@ -511,30 +584,19 @@
                 <div class="sm:col-span-2" data-standard-activity-field @if($addingNewActivityType || $addingBankCoopCheck) hidden @endif><label for="activity-remarks" class="ui-label">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="activity-remarks" name="remarks" rows="3" class="ui-control" placeholder="Add concise operational details." data-ci-activity-remarks @disabled($addingNewActivityType || $addingBankCoopCheck)>{{ old('remarks') }}</textarea><x-form.validation-message for="remarks" /></div>
                 <section class="sm:col-span-2 rounded-card border border-ui-border bg-surface-subtle/50 p-3.5 sm:p-4" data-bank-targets-section @if(! $addingBankCoopCheck) hidden @endif>
                     <div><h3 class="text-xs font-bold uppercase tracking-wide text-brand-sidebar">Banks / Cooperatives</h3><p class="mt-1 text-xs text-text-muted">Add each institution with its own status and schedule.</p></div>
-                    @if($bankInstitutionPrefillCandidates !== [])
-                        <div class="mt-3 rounded-control border border-brand-primary/20 bg-brand-soft/60 p-3" data-bank-prefill-candidates>
-                            <p class="text-xs font-bold text-brand-sidebar">Available from this person&rsquo;s CIBI report</p>
-                            <p class="mt-1 text-xs leading-5 text-text-muted">Choose an institution to fill an empty target row. Existing values are never replaced.</p>
-                            <div class="mt-2 flex flex-wrap gap-2">
-                                @foreach($bankInstitutionPrefillCandidates as $candidate)
-                                    <button type="button" class="ui-button-secondary-compact !text-left" data-bank-prefill-candidate data-institution="{{ $candidate['institution_name'] }}" data-branch="{{ $candidate['branch_location'] }}" title="{{ $candidate['source'] }}">
-                                        {{ $candidate['institution_name'] }}@if($candidate['branch_location']) <span class="font-normal text-text-muted">&mdash; {{ $candidate['branch_location'] }}</span>@endif
-                                    </button>
-                                @endforeach
-                            </div>
-                        </div>
-                    @endif
                     <div class="mt-3 space-y-3" data-bank-target-rows>
                         @foreach($bankTargetRows as $index => $target)
                             @php
+                                $targetInquiryType = $target['inquiry_type'] ?? '';
                                 $targetStatus = $target['status'] ?? 'pending';
                                 $targetSupportsSchedule = in_array($targetStatus, ['scheduled', 'follow_up'], true);
                             @endphp
                             <article class="rounded-control border border-ui-border bg-surface p-3" data-bank-target-row data-bank-target-index="{{ $index }}">
                                 <div class="mb-3 flex justify-end"><button type="button" class="ui-button-danger-compact" data-bank-target-remove><x-ui.icon name="trash" size="size-3.5" />Remove</button></div>
                                 <div class="grid gap-3 sm:grid-cols-2">
+                                    <div><label for="bank-target-inquiry-type-{{ $index }}" class="ui-label">Inquiry Type</label><select id="bank-target-inquiry-type-{{ $index }}" name="bank_targets[{{ $index }}][inquiry_type]" class="ui-control" required data-bank-target-inquiry-type data-bank-target-control @disabled(! $addingBankCoopCheck)><option value="">Select inquiry type</option>@foreach(App\Models\CiActivityBankTarget::INQUIRY_TYPES as $value => $label)<option value="{{ $value }}" @selected($targetInquiryType === $value)>{{ $label }}</option>@endforeach</select>@error('bank_targets.'.$index.'.inquiry_type')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror<p class="mt-1.5 text-sm font-semibold text-danger" data-bank-target-inquiry-type-error hidden>Select an inquiry type.</p></div>
                                     <div><label for="bank-target-name-{{ $index }}" class="ui-label">Bank / Coop Name</label><input id="bank-target-name-{{ $index }}" name="bank_targets[{{ $index }}][institution_name]" value="{{ $target['institution_name'] ?? '' }}" class="ui-control" maxlength="255" required data-bank-target-control @disabled(! $addingBankCoopCheck)>@error('bank_targets.'.$index.'.institution_name')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror<p class="mt-1.5 text-sm font-semibold text-danger" data-bank-target-name-error hidden>Enter the Bank / Coop name.</p></div>
-                                    <div><label for="bank-target-branch-{{ $index }}" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-branch-{{ $index }}" name="bank_targets[{{ $index }}][branch_location]" value="{{ $target['branch_location'] ?? '' }}" class="ui-control" maxlength="255" data-bank-target-control @disabled(! $addingBankCoopCheck)>@error('bank_targets.'.$index.'.branch_location')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
+                                    <div data-bank-target-branch-field @if($targetInquiryType === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY) hidden @endif><label for="bank-target-branch-{{ $index }}" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-branch-{{ $index }}" name="bank_targets[{{ $index }}][branch_location]" value="{{ $targetInquiryType === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY ? '' : ($target['branch_location'] ?? '') }}" class="ui-control" maxlength="255" data-bank-target-branch data-bank-target-control @disabled(! $addingBankCoopCheck || $targetInquiryType === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY)>@error('bank_targets.'.$index.'.branch_location')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
                                     <div><label for="bank-target-status-{{ $index }}" class="ui-label">Status</label><select id="bank-target-status-{{ $index }}" name="bank_targets[{{ $index }}][status]" class="ui-control" required data-bank-target-status data-bank-target-control @disabled(! $addingBankCoopCheck)><option value="pending" @selected($targetStatus === 'pending')>Pending</option><option value="scheduled" @selected($targetStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($targetStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($targetStatus === 'completed')>Completed</option></select>@error('bank_targets.'.$index.'.status')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
                                     <div class="grid gap-3 sm:grid-cols-2"><div><label for="bank-target-date-{{ $index }}" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-date-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_at]" type="date" value="{{ $targetSupportsSchedule ? ($target['scheduled_at'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-bank-target-control @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule)>@error('bank_targets.'.$index.'.scheduled_at')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><div><label for="bank-target-time-{{ $index }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_time]" type="time" value="{{ $targetSupportsSchedule ? ($target['scheduled_time'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule || blank($target['scheduled_at'] ?? null))>@error('bank_targets.'.$index.'.scheduled_time')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
                                     <div class="sm:col-span-2"><label for="bank-target-remarks-{{ $index }}" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="bank-target-remarks-{{ $index }}" name="bank_targets[{{ $index }}][remarks]" rows="2" class="ui-control" data-bank-target-control @disabled(! $addingBankCoopCheck)>{{ $target['remarks'] ?? '' }}</textarea>@error('bank_targets.'.$index.'.remarks')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
@@ -548,11 +610,47 @@
                         <article class="rounded-control border border-ui-border bg-surface p-3" data-bank-target-row data-bank-target-index="__INDEX__">
                             <div class="mb-3 flex justify-end"><button type="button" class="ui-button-danger-compact" data-bank-target-remove><x-ui.icon name="trash" size="size-3.5" />Remove</button></div>
                             <div class="grid gap-3 sm:grid-cols-2">
+                                <div><label for="bank-target-inquiry-type-__INDEX__" class="ui-label">Inquiry Type</label><select id="bank-target-inquiry-type-__INDEX__" name="bank_targets[__INDEX__][inquiry_type]" class="ui-control" required data-bank-target-inquiry-type data-bank-target-control><option value="">Select inquiry type</option>@foreach(App\Models\CiActivityBankTarget::INQUIRY_TYPES as $value => $label)<option value="{{ $value }}">{{ $label }}</option>@endforeach</select><p class="mt-1.5 text-sm font-semibold text-danger" data-bank-target-inquiry-type-error hidden>Select an inquiry type.</p></div>
                                 <div><label for="bank-target-name-__INDEX__" class="ui-label">Bank / Coop Name</label><input id="bank-target-name-__INDEX__" name="bank_targets[__INDEX__][institution_name]" class="ui-control" maxlength="255" required data-bank-target-control><p class="mt-1.5 text-sm font-semibold text-danger" data-bank-target-name-error hidden>Enter the Bank / Coop name.</p></div>
-                                <div><label for="bank-target-branch-__INDEX__" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-branch-__INDEX__" name="bank_targets[__INDEX__][branch_location]" class="ui-control" maxlength="255" data-bank-target-control></div>
+                                <div data-bank-target-branch-field><label for="bank-target-branch-__INDEX__" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-branch-__INDEX__" name="bank_targets[__INDEX__][branch_location]" class="ui-control" maxlength="255" data-bank-target-branch data-bank-target-control></div>
                                 <div><label for="bank-target-status-__INDEX__" class="ui-label">Status</label><select id="bank-target-status-__INDEX__" name="bank_targets[__INDEX__][status]" class="ui-control" required data-bank-target-status data-bank-target-control><option value="pending">Pending</option><option value="scheduled">Scheduled</option><option value="follow_up">For Follow-up</option><option value="completed">Completed</option></select></div>
                                 <div class="grid gap-3 sm:grid-cols-2"><div><label for="bank-target-date-__INDEX__" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-date-__INDEX__" name="bank_targets[__INDEX__][scheduled_at]" type="date" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-bank-target-control disabled></div><div><label for="bank-target-time-__INDEX__" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-__INDEX__" name="bank_targets[__INDEX__][scheduled_time]" type="time" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control disabled></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
                                 <div class="sm:col-span-2"><label for="bank-target-remarks-__INDEX__" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="bank-target-remarks-__INDEX__" name="bank_targets[__INDEX__][remarks]" rows="2" class="ui-control" data-bank-target-control></textarea></div>
+                            </div>
+                        </article>
+                    </template>
+                </section>
+                <section class="sm:col-span-2 rounded-card border border-ui-border bg-surface-subtle/50 p-3.5 sm:p-4" data-asset-targets-section @if(! $addingAssetCheck) hidden @endif>
+                    <div><h3 class="text-xs font-bold uppercase tracking-wide text-brand-sidebar">Assessor Offices</h3><p class="mt-1 text-xs leading-5 text-text-muted">Add only the assessor offices required for this client. Each row keeps its own status and schedule.</p></div>
+                    <div class="mt-3 space-y-3" data-asset-target-rows>
+                        @foreach($assetTargetRows as $index => $target)
+                            @php
+                                $assetStatus = $target['status'] ?? 'pending';
+                                $assetSupportsSchedule = in_array($assetStatus, ['scheduled', 'follow_up'], true);
+                            @endphp
+                            <article class="rounded-control border border-ui-border bg-surface p-3" data-asset-target-row data-asset-target-index="{{ $index }}">
+                                <div class="mb-3 flex justify-end"><button type="button" class="ui-button-danger-compact" data-asset-target-remove><x-ui.icon name="trash" size="size-3.5" />Remove</button></div>
+                                <div class="grid gap-3 sm:grid-cols-2">
+                                    <div><label class="ui-label" for="asset-target-type-{{ $index }}">Assessor Office / Type</label><select id="asset-target-type-{{ $index }}" name="asset_targets[{{ $index }}][assessor_type]" class="ui-control" required data-asset-target-control @disabled(! $addingAssetCheck)><option value="">Select assessor office</option>@foreach(App\Models\CiActivityAssetTarget::ASSESSOR_TYPES as $value => $label)<option value="{{ $value }}" @selected(($target['assessor_type'] ?? '') === $value)>{{ $label }}</option>@endforeach</select>@error('asset_targets.'.$index.'.assessor_type')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
+                                    <div><label class="ui-label" for="asset-target-location-{{ $index }}">Office / Municipality / City / Location</label><input id="asset-target-location-{{ $index }}" name="asset_targets[{{ $index }}][office_location]" value="{{ $target['office_location'] ?? '' }}" class="ui-control" maxlength="255" required data-asset-target-location data-asset-target-control @disabled(! $addingAssetCheck)>@error('asset_targets.'.$index.'.office_location')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
+                                    <div><label class="ui-label" for="asset-target-status-{{ $index }}">Status</label><select id="asset-target-status-{{ $index }}" name="asset_targets[{{ $index }}][status]" class="ui-control" required data-asset-target-status data-asset-target-control @disabled(! $addingAssetCheck)><option value="pending" @selected($assetStatus === 'pending')>Pending</option><option value="scheduled" @selected($assetStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($assetStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($assetStatus === 'completed')>Completed</option></select></div>
+                                    <div class="grid gap-3 sm:grid-cols-2"><div><label class="ui-label" for="asset-target-date-{{ $index }}">Schedule / Follow-up Date <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-date-{{ $index }}" name="asset_targets[{{ $index }}][scheduled_at]" type="date" value="{{ $assetSupportsSchedule ? ($target['scheduled_at'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-date data-asset-target-control @disabled(! $addingAssetCheck || ! $assetSupportsSchedule)></div><div><label class="ui-label" for="asset-target-time-{{ $index }}">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-time-{{ $index }}" name="asset_targets[{{ $index }}][scheduled_time]" type="time" value="{{ $assetSupportsSchedule ? ($target['scheduled_time'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-time data-asset-target-control @disabled(! $addingAssetCheck || ! $assetSupportsSchedule || blank($target['scheduled_at'] ?? null))></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Select a date to enable a specific time.</p></div>
+                                    <div class="sm:col-span-2"><label class="ui-label" for="asset-target-remarks-{{ $index }}">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="asset-target-remarks-{{ $index }}" name="asset_targets[{{ $index }}][remarks]" rows="2" class="ui-control" data-asset-target-control @disabled(! $addingAssetCheck)>{{ $target['remarks'] ?? '' }}</textarea></div>
+                                </div>
+                            </article>
+                        @endforeach
+                    </div>
+                    @error('asset_targets')<p class="mt-2 text-sm font-semibold text-danger">{{ $message }}</p>@enderror
+                    <button type="button" class="ui-button-secondary-compact mt-3" data-asset-target-add><x-ui.icon name="plus" size="size-3.5" />Add Assessor</button>
+                    <template data-asset-target-template>
+                        <article class="rounded-control border border-ui-border bg-surface p-3" data-asset-target-row data-asset-target-index="__INDEX__">
+                            <div class="mb-3 flex justify-end"><button type="button" class="ui-button-danger-compact" data-asset-target-remove><x-ui.icon name="trash" size="size-3.5" />Remove</button></div>
+                            <div class="grid gap-3 sm:grid-cols-2">
+                                <div><label class="ui-label" for="asset-target-type-__INDEX__">Assessor Office / Type</label><select id="asset-target-type-__INDEX__" name="asset_targets[__INDEX__][assessor_type]" class="ui-control" required data-asset-target-control><option value="">Select assessor office</option>@foreach(App\Models\CiActivityAssetTarget::ASSESSOR_TYPES as $value => $label)<option value="{{ $value }}">{{ $label }}</option>@endforeach</select></div>
+                                <div><label class="ui-label" for="asset-target-location-__INDEX__">Office / Municipality / City / Location</label><input id="asset-target-location-__INDEX__" name="asset_targets[__INDEX__][office_location]" class="ui-control" maxlength="255" required data-asset-target-location data-asset-target-control></div>
+                                <div><label class="ui-label" for="asset-target-status-__INDEX__">Status</label><select id="asset-target-status-__INDEX__" name="asset_targets[__INDEX__][status]" class="ui-control" required data-asset-target-status data-asset-target-control><option value="pending">Pending</option><option value="scheduled">Scheduled</option><option value="follow_up">For Follow-up</option><option value="completed">Completed</option></select></div>
+                                <div class="grid gap-3 sm:grid-cols-2"><div><label class="ui-label" for="asset-target-date-__INDEX__">Schedule / Follow-up Date <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-date-__INDEX__" name="asset_targets[__INDEX__][scheduled_at]" type="date" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-date data-asset-target-control disabled></div><div><label class="ui-label" for="asset-target-time-__INDEX__">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-time-__INDEX__" name="asset_targets[__INDEX__][scheduled_time]" type="time" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-time data-asset-target-control disabled></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Select a date to enable a specific time.</p></div>
+                                <div class="sm:col-span-2"><label class="ui-label" for="asset-target-remarks-__INDEX__">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="asset-target-remarks-__INDEX__" name="asset_targets[__INDEX__][remarks]" rows="2" class="ui-control" data-asset-target-control></textarea></div>
                             </div>
                         </article>
                     </template>
@@ -608,7 +706,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             const dialog = document.querySelector('[data-ci-activity-dialog]');
             const dialogBody = document.querySelector('[data-ci-activity-dialog-body]');
-            const openButton = document.querySelector('[data-ci-activity-dialog-open]');
+            const openButton = document.querySelector('[data-ci-activity-dialog-' + 'open]');
             if (!(dialog instanceof HTMLDialogElement)
                 || !(dialogBody instanceof HTMLElement)
                 || !(openButton instanceof HTMLButtonElement)) return;
@@ -833,7 +931,15 @@
             const bankTargetRows = document.querySelector('[data-bank-target-rows]');
             const bankTargetTemplate = document.querySelector('[data-bank-target-template]');
             const bankTargetAdd = document.querySelector('[data-bank-target-add]');
-            const bankPrefillCandidates = [...document.querySelectorAll('[data-bank-prefill-candidate]')];
+            const assetTargetSection = document.querySelector('[data-asset-targets-section]');
+            const assetTargetRows = document.querySelector('[data-asset-target-rows]');
+            const assetTargetTemplate = document.querySelector('[data-asset-target-template]');
+            const assetTargetAdd = document.querySelector('[data-asset-target-add]');
+            const bankPrefillCandidates = @js(collect($bankInstitutionPrefillCandidates)->map(fn (array $candidate): array => [
+                'inquiry_type' => $candidate['inquiry_type'],
+                'institution_name' => $candidate['institution_name'],
+                'branch_location' => $candidate['branch_location'],
+            ])->values());
             if (!(select instanceof HTMLInputElement)
                 || !(selector instanceof HTMLElement)
                 || !(trigger instanceof HTMLButtonElement)
@@ -856,15 +962,85 @@
                 || !(bankTargetSection instanceof HTMLElement)
                 || !(bankTargetRows instanceof HTMLElement)
                 || !(bankTargetTemplate instanceof HTMLTemplateElement)
-                || !(bankTargetAdd instanceof HTMLButtonElement)) return;
+                || !(bankTargetAdd instanceof HTMLButtonElement)
+                || !(assetTargetSection instanceof HTMLElement)
+                || !(assetTargetRows instanceof HTMLElement)
+                || !(assetTargetTemplate instanceof HTMLTemplateElement)
+                || !(assetTargetAdd instanceof HTMLButtonElement)) return;
 
             const addingNewActivityType = () => select.value === @js(App\Models\ActivityDefinition::NEW_TYPE_VALUE);
             const addingBankCoopCheck = () => options.some((option) => option.dataset.value === select.value
                 && option.dataset.code === @js(App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE));
+            const addingAssetCheck = () => options.some((option) => option.dataset.value === select.value
+                && option.dataset.code === @js(App\Models\ActivityDefinition::ASSET_CHECK_CODE));
             let nextBankTargetIndex = Math.max(-1, ...[...bankTargetRows.querySelectorAll('[data-bank-target-index]')]
                 .map((row) => Number.parseInt(row.dataset.bankTargetIndex ?? '-1', 10))) + 1;
+            let bankPrefillInitialized = @js($bankTargetRowsFromOldInput);
 
             const currentBankTargetRows = () => [...bankTargetRows.querySelectorAll('[data-bank-target-row]')];
+            let nextAssetTargetIndex = Math.max(-1, ...[...assetTargetRows.querySelectorAll('[data-asset-target-index]')]
+                .map((row) => Number.parseInt(row.dataset.assetTargetIndex ?? '-1', 10))) + 1;
+            const currentAssetTargetRows = () => [...assetTargetRows.querySelectorAll('[data-asset-target-row]')];
+
+            const derivedAssetParentStatus = () => {
+                const statuses = currentAssetTargetRows().map((row) => row.querySelector('[data-asset-target-status]')?.value).filter(Boolean);
+                if (statuses.length > 0 && statuses.every((targetStatus) => targetStatus === 'completed')) return 'completed';
+                if (statuses.includes('follow_up')) return 'follow_up';
+                if (statuses.includes('scheduled')) return 'scheduled';
+                return 'pending';
+            };
+
+            const syncAssetTargetRow = (row) => {
+                const active = ! assetTargetSection.hidden;
+                const targetStatus = row.querySelector('[data-asset-target-status]');
+                const date = row.querySelector('[data-asset-target-date]');
+                const time = row.querySelector('[data-asset-target-time]');
+                if (!(targetStatus instanceof HTMLSelectElement) || !(date instanceof HTMLInputElement) || !(time instanceof HTMLInputElement)) return;
+                row.querySelectorAll('[data-asset-target-control]').forEach((control) => {
+                    if (control !== date && control !== time) control.disabled = ! active;
+                });
+                const supportsSchedule = ['scheduled', 'follow_up'].includes(targetStatus.value);
+                if (! supportsSchedule) { date.value = ''; time.value = ''; }
+                date.disabled = ! active || ! supportsSchedule;
+                if (! active || ! supportsSchedule || date.value === '') time.value = '';
+                time.disabled = ! active || ! supportsSchedule || date.value === '';
+                syncAttachmentAvailability();
+            };
+
+            const syncAssetTargetRows = () => {
+                const rows = currentAssetTargetRows();
+                rows.forEach((row) => {
+                    const remove = row.querySelector('[data-asset-target-remove]');
+                    if (remove instanceof HTMLButtonElement) remove.disabled = assetTargetSection.hidden || rows.length === 1;
+                    syncAssetTargetRow(row);
+                });
+                assetTargetAdd.disabled = assetTargetSection.hidden;
+            };
+
+            const bindAssetTargetRow = (row) => {
+                if (row.dataset.assetTargetBound === 'true') return;
+                row.dataset.assetTargetBound = 'true';
+                row.querySelector('[data-asset-target-status]')?.addEventListener('change', () => syncAssetTargetRow(row));
+                row.querySelector('[data-asset-target-date]')?.addEventListener('input', () => syncAssetTargetRow(row));
+                row.querySelector('[data-asset-target-remove]')?.addEventListener('click', () => {
+                    if (currentAssetTargetRows().length === 1) return;
+                    row.remove();
+                    syncAssetTargetRows();
+                });
+            };
+
+            const addAssetTargetRow = () => {
+                assetTargetRows.insertAdjacentHTML('beforeend', assetTargetTemplate.innerHTML.replaceAll('__INDEX__', String(nextAssetTargetIndex++)));
+                const row = currentAssetTargetRows().at(-1);
+                if (row) { bindAssetTargetRow(row); syncAssetTargetRows(); row.querySelector('select')?.focus(); }
+            };
+
+            const syncAssetTargetSection = () => {
+                assetTargetSection.hidden = ! addingAssetCheck() || addingNewActivityType();
+                currentAssetTargetRows().forEach(bindAssetTargetRow);
+                if (! assetTargetSection.hidden && currentAssetTargetRows().length === 0) addAssetTargetRow();
+                syncAssetTargetRows();
+            };
 
             const derivedBankParentStatus = () => {
                 const statuses = currentBankTargetRows()
@@ -879,16 +1055,26 @@
 
             const syncBankTargetRow = (row) => {
                 const active = ! bankTargetSection.hidden;
+                const inquiryTypeControl = row.querySelector('[data-bank-target-inquiry-type]');
+                const branchField = row.querySelector('[data-bank-target-branch-field]');
+                const branchControl = row.querySelector('[data-bank-target-branch]');
                 const statusControl = row.querySelector('[data-bank-target-status]');
                 const dateControl = row.querySelector('[data-bank-target-date]');
                 const timeControl = row.querySelector('[data-bank-target-time]');
-                if (!(statusControl instanceof HTMLSelectElement)
+                if (!(inquiryTypeControl instanceof HTMLSelectElement)
+                    || !(branchField instanceof HTMLElement)
+                    || !(branchControl instanceof HTMLInputElement)
+                    || !(statusControl instanceof HTMLSelectElement)
                     || !(dateControl instanceof HTMLInputElement)
                     || !(timeControl instanceof HTMLInputElement)) return;
 
                 row.querySelectorAll('[data-bank-target-control]').forEach((control) => {
                     if (control !== dateControl && control !== timeControl) control.disabled = ! active;
                 });
+                const isLoanInquiry = inquiryTypeControl.value === @js(App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY);
+                branchField.hidden = isLoanInquiry;
+                if (isLoanInquiry) branchControl.value = '';
+                branchControl.disabled = ! active || isLoanInquiry;
                 const supportsSchedule = ['scheduled', 'follow_up'].includes(statusControl.value);
                 if (! supportsSchedule) {
                     dateControl.value = '';
@@ -916,9 +1102,11 @@
                 if (row.dataset.bankTargetBound === 'true') return;
                 row.dataset.bankTargetBound = 'true';
                 const statusControl = row.querySelector('[data-bank-target-status]');
+                const inquiryTypeControl = row.querySelector('[data-bank-target-inquiry-type]');
                 const dateControl = row.querySelector('[data-bank-target-date]');
                 const remove = row.querySelector('[data-bank-target-remove]');
                 statusControl?.addEventListener('change', () => syncBankTargetRow(row));
+                inquiryTypeControl?.addEventListener('change', () => syncBankTargetRow(row));
                 dateControl?.addEventListener('input', () => syncBankTargetRow(row));
                 remove?.addEventListener('click', () => {
                     if (currentBankTargetRows().length === 1) return;
@@ -941,65 +1129,85 @@
             };
 
             const normalizeBankPrefill = (value) => value.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
-            const applyBankPrefillCandidate = (button) => {
-                const institution = button.dataset.institution ?? '';
-                const branch = button.dataset.branch ?? '';
+            const applyBankPrefillCandidate = (candidate) => {
+                const institution = candidate.institution_name ?? '';
+                const inquiryType = candidate.inquiry_type ?? '';
+                const branch = candidate.branch_location ?? '';
+                const inquiryTypeKey = normalizeBankPrefill(inquiryType);
                 const institutionKey = normalizeBankPrefill(institution);
                 const branchKey = normalizeBankPrefill(branch);
                 if (institutionKey === '') return;
 
                 const rows = currentBankTargetRows();
-                const sameInstitution = rows.filter((row) => {
+                const sameTargetType = rows.filter((row) => {
+                    const type = row.querySelector('[data-bank-target-inquiry-type]');
                     const name = row.querySelector('[name$="[institution_name]"]');
-                    return name instanceof HTMLInputElement && normalizeBankPrefill(name.value) === institutionKey;
+                    return type instanceof HTMLSelectElement
+                        && name instanceof HTMLInputElement
+                        && normalizeBankPrefill(type.value) === inquiryTypeKey
+                        && normalizeBankPrefill(name.value) === institutionKey;
                 });
-                const exact = sameInstitution.find((row) => {
+                const exact = sameTargetType.find((row) => {
                     const location = row.querySelector('[name$="[branch_location]"]');
                     return location instanceof HTMLInputElement && normalizeBankPrefill(location.value) === branchKey;
                 });
                 if (exact) {
-                    exact.querySelector('[name$="[institution_name]"]')?.focus();
                     return;
                 }
 
-                let target = branchKey !== ''
-                    ? sameInstitution.find((row) => {
-                        const location = row.querySelector('[name$="[branch_location]"]');
-                        return location instanceof HTMLInputElement && location.value.trim() === '';
-                    })
-                    : (sameInstitution.length === 1 ? sameInstitution[0] : null);
-                if (target && branchKey === '') {
-                    target.querySelector('[name$="[institution_name]"]')?.focus();
-                    return;
-                }
-
-                target ??= rows.find((row) => {
+                let target = rows.find((row) => {
                     const name = row.querySelector('[name$="[institution_name]"]');
                     const location = row.querySelector('[name$="[branch_location]"]');
-                    return name instanceof HTMLInputElement
+                    const type = row.querySelector('[data-bank-target-inquiry-type]');
+                    return type instanceof HTMLSelectElement
+                        && name instanceof HTMLInputElement
                         && location instanceof HTMLInputElement
+                        && type.value === ''
                         && name.value.trim() === ''
                         && location.value.trim() === '';
                 });
                 target ??= addBankTargetRow(false);
                 const name = target?.querySelector('[name$="[institution_name]"]');
                 const location = target?.querySelector('[name$="[branch_location]"]');
-                if (!(name instanceof HTMLInputElement) || !(location instanceof HTMLInputElement)) return;
+                const type = target?.querySelector('[data-bank-target-inquiry-type]');
+                if (!(type instanceof HTMLSelectElement) || !(name instanceof HTMLInputElement) || !(location instanceof HTMLInputElement)) return;
 
+                if (type.value === '') type.value = inquiryType;
                 if (name.value.trim() === '') name.value = institution;
                 if (location.value.trim() === '') location.value = branch;
+                type.dispatchEvent(new Event('change', { bubbles: true }));
                 name.dispatchEvent(new Event('input', { bubbles: true }));
-                name.focus();
+            };
+
+            const bankTargetCollectionIsPristine = () => currentBankTargetRows().every((row) => {
+                const name = row.querySelector('[name$="[institution_name]"]');
+                const inquiryType = row.querySelector('[data-bank-target-inquiry-type]');
+                const location = row.querySelector('[name$="[branch_location]"]');
+                const date = row.querySelector('[name$="[scheduled_at]"]');
+                const time = row.querySelector('[name$="[scheduled_time]"]');
+                const remarks = row.querySelector('[name$="[remarks]"]');
+
+                return [inquiryType, name, location, date, time, remarks].every((control) => ! (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement) || control.value.trim() === '');
+            });
+
+            const initializeBankTargetsFromCibi = () => {
+                if (bankPrefillInitialized || bankTargetSection.hidden) return;
+                if (! bankTargetCollectionIsPristine()) {
+                    bankPrefillInitialized = true;
+                    return;
+                }
+
+                bankPrefillCandidates.forEach(applyBankPrefillCandidate);
+                bankPrefillInitialized = true;
             };
 
             const syncBankTargetSection = () => {
                 bankTargetSection.hidden = ! addingBankCoopCheck() || addingNewActivityType();
                 currentBankTargetRows().forEach(bindBankTargetRow);
                 if (! bankTargetSection.hidden && currentBankTargetRows().length === 0) addBankTargetRow();
+                initializeBankTargetsFromCibi();
                 syncBankTargetRows();
             };
-
-            bankPrefillCandidates.forEach((button) => button.addEventListener('click', () => applyBankPrefillCandidate(button)));
 
             const syncAttachmentName = () => {
                 const fileName = attachment.files?.[0]?.name ?? '';
@@ -1044,7 +1252,7 @@
             };
 
             const syncScheduleAvailability = () => {
-                const parentFieldsEnabled = ! addingNewActivityType() && ! addingBankCoopCheck();
+                const parentFieldsEnabled = ! addingNewActivityType() && ! addingBankCoopCheck() && ! addingAssetCheck();
                 const enabled = parentFieldsEnabled && ['scheduled', 'follow_up'].includes(status.value);
                 if (! enabled) {
                     schedule.value = '';
@@ -1061,7 +1269,7 @@
             };
 
             const syncAttachmentAvailability = () => {
-                const effectiveStatus = addingBankCoopCheck() ? derivedBankParentStatus() : status.value;
+                const effectiveStatus = addingBankCoopCheck() ? derivedBankParentStatus() : (addingAssetCheck() ? derivedAssetParentStatus() : status.value);
                 const enabled = ! addingNewActivityType() && effectiveStatus === 'completed';
                 attachmentSection.hidden = ! enabled;
                 attachment.disabled = ! enabled;
@@ -1074,7 +1282,8 @@
             const syncNewActivityType = () => {
                 const addingNewType = addingNewActivityType();
                 const bankCoopCheck = ! addingNewType && addingBankCoopCheck();
-                const parentFieldsHidden = addingNewType || bankCoopCheck;
+                const assetCheck = ! addingNewType && addingAssetCheck();
+                const parentFieldsHidden = addingNewType || bankCoopCheck || assetCheck;
                 fields.hidden = ! addingNewType;
                 input.required = addingNewType;
                 input.disabled = ! addingNewType;
@@ -1098,11 +1307,13 @@
                 syncScheduleAvailability();
                 syncAttachmentAvailability();
                 syncBankTargetSection();
+                syncAssetTargetSection();
                 window.requestAnimationFrame(() => { dialogBody.scrollTop = 0; });
             };
 
             select.addEventListener('change', syncNewActivityType);
             bankTargetAdd.addEventListener('click', addBankTargetRow);
+            assetTargetAdd.addEventListener('click', addAssetTargetRow);
             attachmentOpen.addEventListener('click', () => attachment.click());
             attachment.addEventListener('change', syncAttachmentName);
             attachmentRemove.addEventListener('click', () => {
@@ -1222,6 +1433,7 @@
             const requestError = form?.querySelector('[data-ci-activity-request-error]');
             const requestErrorMessage = form?.querySelector('[data-ci-activity-request-error-message]');
             const bankTargetSection = form?.querySelector('[data-bank-targets-section]');
+            const assetTargetSection = form?.querySelector('[data-asset-targets-section]');
             if (!(form instanceof HTMLFormElement)
                 || !(dialog instanceof HTMLDialogElement)
                 || !(submitButton instanceof HTMLButtonElement)
@@ -1237,7 +1449,8 @@
                 || !(scheduleError instanceof HTMLElement)
                 || !(requestError instanceof HTMLElement)
                 || !(requestErrorMessage instanceof HTMLElement)
-                || !(bankTargetSection instanceof HTMLElement)) return;
+                || !(bankTargetSection instanceof HTMLElement)
+                || !(assetTargetSection instanceof HTMLElement)) return;
 
             const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             const invalidClasses = ['border-danger', 'ring-2', 'ring-danger/20'];
@@ -1293,26 +1506,57 @@
             const validateActivityForm = () => {
                 const addingActivityType = form.dataset.submissionMode === 'activity-type';
                 const addingBankActivity = ! addingActivityType && ! bankTargetSection.hidden;
+                const addingAssetActivity = ! addingActivityType && ! assetTargetSection.hidden;
+                const addingMultiTargetActivity = addingBankActivity || addingAssetActivity;
                 const missingActivityType = activityType.value === '';
                 const missingNewActivityType = addingActivityType && newActivityType.value.trim() === '';
-                const missingStatus = ! addingActivityType && ! addingBankActivity && status.value === '';
-                const missingSchedule = ! addingActivityType && ! addingBankActivity && status.value === 'scheduled' && schedule.value === '';
+                const missingStatus = ! addingActivityType && ! addingMultiTargetActivity && status.value === '';
+                const missingSchedule = ! addingActivityType && ! addingMultiTargetActivity && status.value === 'scheduled' && schedule.value === '';
                 let firstInvalidBankTarget = null;
+                let firstInvalidAssetTarget = null;
 
                 if (! bankTargetSection.hidden) {
                     bankTargetSection.querySelectorAll('[data-bank-target-row]').forEach((row) => {
+                        const inquiryType = row.querySelector('[data-bank-target-inquiry-type]');
+                        const inquiryTypeError = row.querySelector('[data-bank-target-inquiry-type-error]');
                         const name = row.querySelector('[name$="[institution_name]"]');
                         const nameError = row.querySelector('[data-bank-target-name-error]');
-                        if (!(name instanceof HTMLInputElement)
+                        if (!(inquiryType instanceof HTMLSelectElement)
+                            || !(inquiryTypeError instanceof HTMLElement)
+                            || !(name instanceof HTMLInputElement)
                             || !(nameError instanceof HTMLElement)) return;
 
+                        const missingInquiryType = inquiryType.value === '';
                         const missingName = name.value.trim() === '';
+                        setInvalid(inquiryType, inquiryTypeError, missingInquiryType);
                         setInvalid(name, nameError, missingName);
+                        if (! firstInvalidBankTarget && missingInquiryType) firstInvalidBankTarget = inquiryType;
                         if (! firstInvalidBankTarget && missingName) firstInvalidBankTarget = name;
                     });
                 }
 
-                if (missingActivityType || missingNewActivityType || missingStatus || missingSchedule || firstInvalidBankTarget) {
+                if (! assetTargetSection.hidden) {
+                    assetTargetSection.querySelectorAll('[data-asset-target-row]').forEach((row) => {
+                        const location = row.querySelector('[data-asset-target-location]');
+                        if (!(location instanceof HTMLInputElement)) return;
+                        const missingLocation = location.value.trim() === '';
+                        location.classList.toggle('border-danger', missingLocation);
+                        location.classList.toggle('ring-2', missingLocation);
+                        location.classList.toggle('ring-danger/20', missingLocation);
+                        location.setAttribute('aria-invalid', missingLocation ? 'true' : 'false');
+                        let error = row.querySelector('[data-asset-target-location-error]');
+                        if (missingLocation && !(error instanceof HTMLElement)) {
+                            error = document.createElement('p');
+                            error.dataset.assetTargetLocationError = '';
+                            error.className = 'mt-1.5 text-sm font-semibold text-danger';
+                            error.textContent = 'Enter the office, municipality, city, or location.';
+                            location.insertAdjacentElement('afterend', error);
+                        } else if (! missingLocation) error?.remove();
+                        if (! firstInvalidAssetTarget && missingLocation) firstInvalidAssetTarget = location;
+                    });
+                }
+
+                if (missingActivityType || missingNewActivityType || missingStatus || missingSchedule || firstInvalidBankTarget || firstInvalidAssetTarget) {
                     stabilizeDialogFrame();
                 }
 
@@ -1326,6 +1570,7 @@
                 if (missingStatus) return status;
                 if (missingSchedule) return schedule;
                 if (firstInvalidBankTarget) return firstInvalidBankTarget;
+                if (firstInvalidAssetTarget) return firstInvalidAssetTarget;
                 return null;
             };
 
@@ -1340,6 +1585,12 @@
                 const control = event.target;
                 if (!(control instanceof HTMLInputElement)) return;
                 const row = control.closest('[data-bank-target-row]');
+                const assetRow = control.closest('[data-asset-target-row]');
+                if (assetRow && control.matches('[data-asset-target-location]')) {
+                    control.classList.remove('border-danger', 'ring-2', 'ring-danger/20');
+                    control.setAttribute('aria-invalid', 'false');
+                    assetRow.querySelector('[data-asset-target-location-error]')?.remove();
+                }
                 if (! row) return;
                 const error = control.matches('[name$="[institution_name]"]')
                     ? row.querySelector('[data-bank-target-name-error]')
@@ -1404,6 +1655,99 @@
         });
 
         document.addEventListener('DOMContentLoaded', () => {
+            const completionCheckboxes = [...document.querySelectorAll('[data-ci-activity-completion]')];
+            const modal = document.querySelector('[data-quick-complete-modal]');
+            const title = modal?.querySelector('[data-quick-complete-title]');
+            const error = modal?.querySelector('[data-quick-complete-error]');
+            const cancel = modal?.querySelector('[data-quick-complete-cancel]');
+            const confirm = modal?.querySelector('[data-quick-complete-confirm]');
+            if (!(modal instanceof HTMLDialogElement)
+                || !(title instanceof HTMLElement)
+                || !(error instanceof HTMLElement)
+                || !(cancel instanceof HTMLButtonElement)
+                || !(confirm instanceof HTMLButtonElement)) return;
+
+            let pendingCheckbox = null;
+
+            const resetDialog = () => {
+                error.hidden = true;
+                error.textContent = '';
+                confirm.disabled = false;
+                confirm.textContent = 'Mark Completed';
+            };
+
+            completionCheckboxes.forEach((checkbox) => checkbox.addEventListener('change', () => {
+                if (!(checkbox instanceof HTMLInputElement) || ! checkbox.checked) return;
+                checkbox.checked = false;
+
+                if (checkbox.dataset.completionKind !== 'default') {
+                    const activityId = checkbox.dataset.ciActivityCompletion ?? '';
+                    const trackerAttribute = checkbox.dataset.completionKind === 'bank' ? 'data-bank-coop-open' : 'data-asset-check-open';
+                    const tracker = document.querySelector(`[${trackerAttribute}="${activityId}"]`);
+                    if (tracker instanceof HTMLElement) tracker.click();
+                    return;
+                }
+
+                pendingCheckbox = checkbox;
+                resetDialog();
+                title.textContent = `Mark ${checkbox.dataset.completionName ?? 'activity'} as completed?`;
+                modal.showModal();
+            }));
+
+            cancel.addEventListener('click', () => modal.close());
+            modal.addEventListener('close', () => {
+                if (pendingCheckbox instanceof HTMLInputElement && ! pendingCheckbox.disabled) pendingCheckbox.checked = false;
+                pendingCheckbox = null;
+                resetDialog();
+            });
+
+            confirm.addEventListener('click', async () => {
+                if (!(pendingCheckbox instanceof HTMLInputElement)) return;
+                const checkbox = pendingCheckbox;
+                const updateUrl = checkbox.dataset.completionUpdateUrl ?? '';
+                const trackerUrl = checkbox.dataset.completionTrackerUrl ?? '';
+                const formData = new FormData();
+                formData.set('_method', 'PUT');
+                formData.set('_token', document.querySelector('meta[name="csrf-token"]')?.content ?? '');
+                formData.set('co_maker_id', checkbox.dataset.completionCoMakerId ?? '');
+                formData.set('expected_updated_at', checkbox.dataset.completionExpectedUpdatedAt ?? '');
+                formData.set('status', 'completed');
+                formData.set('intent', 'return');
+                confirm.disabled = true;
+                confirm.textContent = 'Completing…';
+                checkbox.disabled = true;
+                checkbox.checked = false;
+                error.hidden = true;
+
+                try {
+                    const response = await fetch(updateUrl, {
+                        method: 'POST',
+                        body: formData,
+                        credentials: 'same-origin',
+                        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    });
+                    if (! response.ok) {
+                        const payload = await response.json().catch(() => ({}));
+                        throw new Error(Object.values(payload.errors ?? {}).flat().join(' ') || 'Unable to complete this activity.');
+                    }
+
+                    checkbox.checked = true;
+                    document.dispatchEvent(new CustomEvent('ci-default-check-refresh-request', {
+                        detail: { activityId: checkbox.dataset.ciActivityCompletion ?? '', url: trackerUrl },
+                    }));
+                    modal.close();
+                } catch (requestError) {
+                    checkbox.checked = false;
+                    checkbox.disabled = false;
+                    error.textContent = requestError instanceof Error ? requestError.message : 'Unable to complete this activity.';
+                    error.hidden = false;
+                    confirm.disabled = false;
+                    confirm.textContent = 'Mark Completed';
+                }
+            });
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
             const modal = document.querySelector('[data-bank-coop-modal]');
             const modalBody = modal?.querySelector('[data-bank-coop-modal-body]');
             const modalContext = modal?.querySelector('[data-bank-coop-modal-context]');
@@ -1446,14 +1790,24 @@
             };
 
             const syncScheduleForm = (form) => {
+                const inquiryType = form.querySelector('[data-bank-target-detail-inquiry-type]');
+                const branchField = form.querySelector('[data-bank-target-detail-branch-field]');
+                const branch = form.querySelector('[data-bank-target-detail-branch]');
                 const status = form.querySelector('[data-bank-target-detail-status]');
                 const date = form.querySelector('[data-bank-target-detail-date]');
                 const time = form.querySelector('[data-bank-target-detail-time]');
-                if (!(status instanceof HTMLSelectElement)
+                if (!(inquiryType instanceof HTMLSelectElement)
+                    || !(branchField instanceof HTMLElement)
+                    || !(branch instanceof HTMLInputElement)
+                    || !(status instanceof HTMLSelectElement)
                     || !(date instanceof HTMLInputElement)
                     || !(time instanceof HTMLInputElement)) return;
 
                 const sync = () => {
+                    const isLoanInquiry = inquiryType.value === @js(App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY);
+                    branchField.hidden = isLoanInquiry;
+                    if (isLoanInquiry) branch.value = '';
+                    branch.disabled = isLoanInquiry;
                     const supportsSchedule = ['scheduled', 'follow_up'].includes(status.value);
                     if (! supportsSchedule) {
                         date.value = '';
@@ -1467,6 +1821,7 @@
                 };
 
                 status.addEventListener('change', sync);
+                inquiryType.addEventListener('change', sync);
                 date.addEventListener('input', sync);
                 sync();
             };
@@ -1479,6 +1834,7 @@
                 const statusLabel = source.dataset.bankCoopStatusLabel ?? 'Pending';
                 const progress = document.querySelector(`[data-bank-coop-progress="${activityId}"]`);
                 const statusBadge = document.querySelector(`[data-bank-coop-status="${activityId}"]`);
+                const completionCheckbox = document.querySelector(`[data-ci-activity-completion="${activityId}"]`);
                 const row = progress?.closest('[data-ci-activity-row]');
 
                 if (progress instanceof HTMLElement) {
@@ -1488,6 +1844,11 @@
                     Object.values(statusClasses).flat().forEach((className) => statusBadge.classList.remove(className));
                     (statusClasses[status] ?? statusClasses.pending).forEach((className) => statusBadge.classList.add(className));
                     statusBadge.textContent = statusLabel;
+                }
+                if (completionCheckbox instanceof HTMLInputElement) {
+                    const completed = targetCount > 0 && targetCount === completedCount;
+                    completionCheckbox.checked = completed;
+                    completionCheckbox.disabled = completed;
                 }
                 if (row instanceof HTMLTableRowElement) {
                     row.dataset.status = status;
@@ -1574,15 +1935,18 @@
                     event.preventDefault();
                     event.stopPropagation();
                     const dialog = prefill.closest('dialog');
+                    const inquiryType = dialog?.querySelector('[name="inquiry_type"]');
                     const institution = dialog?.querySelector('[name="institution_name"]');
                     const branch = dialog?.querySelector('[name="branch_location"]');
-                    if (!(institution instanceof HTMLInputElement) || !(branch instanceof HTMLInputElement)) return;
+                    if (!(inquiryType instanceof HTMLSelectElement) || !(institution instanceof HTMLInputElement) || !(branch instanceof HTMLInputElement)) return;
 
                     const candidateInstitution = prefill.dataset.institution ?? '';
                     const normalize = (value) => value.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
                     if (institution.value.trim() !== '' && normalize(institution.value) !== normalize(candidateInstitution)) return;
                     if (institution.value.trim() === '') institution.value = candidateInstitution;
+                    if (inquiryType.value === '') inquiryType.value = prefill.dataset.inquiryType ?? '';
                     if (branch.value.trim() === '') branch.value = prefill.dataset.branch ?? '';
+                    inquiryType.dispatchEvent(new Event('change', { bubbles: true }));
                     institution.dispatchEvent(new Event('input', { bubbles: true }));
                     institution.focus();
                     return;
@@ -1642,8 +2006,6 @@
         });
 
         document.addEventListener('DOMContentLoaded', () => {
-            const selectAll = document.querySelector('[data-ci-select-all]');
-            const selections = [...document.querySelectorAll('[data-ci-activity-select]')];
             const rows = [...document.querySelectorAll('[data-ci-activity-row]')];
             const tabs = [...document.querySelectorAll('[data-ci-activity-tab]')];
             const sortButtons = [...document.querySelectorAll('[data-ci-sort]')];
@@ -1654,21 +2016,9 @@
             const emptySearch = document.querySelector('[data-ci-empty-search]');
             const searchInput = document.querySelector('[data-ci-activity-search]');
             const searchClear = document.querySelector('[data-ci-activity-search-clear]');
-            const clearButton = document.querySelector('[data-clear-selected-button]');
-            const bulkButton = document.querySelector('[data-bulk-delete-button]');
-            const bulkLabel = document.querySelector('[data-bulk-delete-label]');
-            const bulkSummary = document.querySelector('[data-bulk-delete-summary]');
-            const bulkInputs = document.querySelector('[data-bulk-delete-inputs]');
-            const bulkFilter = document.querySelector('[data-ci-bulk-filter]');
-            if (!(selectAll instanceof HTMLInputElement)
-                || !(searchInput instanceof HTMLInputElement)
+            if (!(searchInput instanceof HTMLInputElement)
                 || !(searchClear instanceof HTMLButtonElement)
-                || !(emptySearch instanceof HTMLElement)
-                || !(clearButton instanceof HTMLButtonElement)
-                || !(bulkButton instanceof HTMLButtonElement)
-                || !bulkLabel
-                || !bulkSummary
-                || !bulkInputs) return;
+                || !(emptySearch instanceof HTMLElement)) return;
 
             let activeFilter = @js($filter);
             let activeSort = null;
@@ -1678,30 +2028,6 @@
 
             const normalizeSearch = (value) => value.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
             rows.forEach((row) => { row.dataset.searchText = normalizeSearch(row.textContent ?? ''); });
-
-            const visibleSelections = () => selections.filter((checkbox) => {
-                const row = checkbox.closest('[data-ci-activity-row]');
-                return checkbox instanceof HTMLInputElement && row instanceof HTMLTableRowElement && !row.hidden;
-            });
-
-            const syncBulkSelection = () => {
-                const visible = visibleSelections();
-                const selected = visible.filter((checkbox) => checkbox.checked);
-                selectAll.disabled = visible.length === 0;
-                selectAll.checked = visible.length > 0 && selected.length === visible.length;
-                selectAll.indeterminate = selected.length > 0 && selected.length < visible.length;
-                clearButton.hidden = selected.length === 0;
-                bulkButton.disabled = selected.length === 0;
-                bulkLabel.textContent = selected.length > 0 ? `Delete Selected (${selected.length})` : 'Delete Selected';
-                bulkSummary.textContent = `${selected.length} ${selected.length === 1 ? 'activity' : 'activities'} selected`;
-                bulkInputs.replaceChildren(...selected.map((checkbox) => {
-                    const input = document.createElement('input');
-                    input.type = 'hidden';
-                    input.name = 'activity_ids[]';
-                    input.value = checkbox.value;
-                    return input;
-                }));
-            };
 
             const matchesFilter = (row, filter) => {
                 if (filter === 'all') return true;
@@ -1733,17 +2059,10 @@
                         ? Number(leftValue) - Number(rightValue)
                         : leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: 'base' });
                     if (comparison !== 0) return comparison * multiplier;
-                    return Number(left.querySelector('[data-ci-activity-select]')?.value ?? 0) - Number(right.querySelector('[data-ci-activity-select]')?.value ?? 0);
+                    return Number(left.dataset.ciActivityId ?? 0) - Number(right.dataset.ciActivityId ?? 0);
                 });
                 rows.forEach((row) => tableBody.insertBefore(row, emptyState));
                 updateSortIndicators();
-            };
-
-            const clearSelections = () => {
-                selections.forEach((checkbox) => {
-                    if (checkbox instanceof HTMLInputElement) checkbox.checked = false;
-                });
-                syncBulkSelection();
             };
 
             const applyFilter = (filter, updateUrl = true) => {
@@ -1758,12 +2077,10 @@
                     tab.dataset.active = selected ? 'true' : 'false';
                     tab.setAttribute('aria-current', selected ? 'page' : 'false');
                 });
-                if (bulkFilter instanceof HTMLInputElement) bulkFilter.value = filter;
                 if (emptyState instanceof HTMLTableRowElement) emptyState.hidden = visibleRows.length > 0;
                 if (emptyFresh instanceof HTMLElement) emptyFresh.hidden = rows.length > 0;
                 if (emptyFilter instanceof HTMLElement) emptyFilter.hidden = rows.length === 0 || searchQuery !== '';
                 emptySearch.hidden = rows.length === 0 || searchQuery === '' || visibleRows.length > 0;
-                clearSelections();
                 sortRows();
 
                 if (updateUrl) {
@@ -1780,14 +2097,6 @@
                 applyFilter(activeFilter, false);
             };
 
-            selectAll.addEventListener('change', () => {
-                visibleSelections().forEach((checkbox) => {
-                    checkbox.checked = selectAll.checked;
-                });
-                syncBulkSelection();
-            });
-            selections.forEach((checkbox) => checkbox.addEventListener('change', syncBulkSelection));
-            clearButton.addEventListener('click', clearSelections);
             searchInput.addEventListener('input', () => {
                 searchClear.hidden = normalizeSearch(searchInput.value) === '';
                 if (searchTimer !== null) window.clearTimeout(searchTimer);
@@ -1817,7 +2126,7 @@
             }));
             document.addEventListener('ci-bank-coop-updated', (event) => {
                 const activityId = String(event.detail?.activityId ?? '');
-                const row = rows.find((candidate) => candidate.querySelector('[data-ci-activity-select]')?.value === activityId);
+                const row = rows.find((candidate) => candidate.dataset.ciActivityId === activityId);
                 if (!(row instanceof HTMLTableRowElement)) return;
 
                 row.dataset.searchText = normalizeSearch(row.textContent ?? '');
@@ -1828,9 +2137,253 @@
                 if (emptyFilter instanceof HTMLElement) emptyFilter.hidden = rows.length === 0 || searchQuery !== '';
                 emptySearch.hidden = rows.length === 0 || searchQuery === '' || visibleRows.length > 0;
                 sortRows();
-                syncBulkSelection();
             });
             applyFilter(activeFilter, false);
+        });
+    </script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const modal = document.querySelector('[data-asset-check-modal]');
+            const body = modal?.querySelector('[data-asset-check-modal-body]');
+            const context = modal?.querySelector('[data-asset-check-modal-context]');
+            const add = modal?.querySelector('[data-asset-check-modal-add]');
+            const openers = [...document.querySelectorAll('[data-asset-check-open]')];
+            if (!(modal instanceof HTMLDialogElement) || !(body instanceof HTMLElement) || !(context instanceof HTMLElement) || !(add instanceof HTMLButtonElement)) return;
+            let currentUrl = '';
+            let currentOpener = null;
+
+            const bindSchedule = (form) => {
+                const status = form.querySelector('[data-asset-detail-status]'); const date = form.querySelector('[data-asset-detail-date]'); const time = form.querySelector('[data-asset-detail-time]');
+                if (!(status instanceof HTMLSelectElement) || !(date instanceof HTMLInputElement) || !(time instanceof HTMLInputElement)) return;
+                const sync = () => { const enabled = ['scheduled', 'follow_up'].includes(status.value); if (! enabled) { date.value = ''; time.value = ''; } date.disabled = ! enabled; if (! enabled || date.value === '') time.value = ''; time.disabled = ! enabled || date.value === ''; };
+                status.addEventListener('change', sync); date.addEventListener('input', sync); sync();
+            };
+
+            const render = (html) => {
+                const page = new DOMParser().parseFromString(html, 'text/html');
+                const source = page.querySelector('[data-asset-check-modal-source]');
+                if (!(source instanceof HTMLElement)) throw new Error('Asset Check tracker could not be loaded.');
+                body.replaceChildren(...[...source.childNodes].map((node) => document.importNode(node, true)));
+                context.textContent = source.dataset.assetContext ?? 'Asset Check';
+                add.disabled = false;
+                const activityId = source.dataset.assetActivityId ?? '';
+                const progress = document.querySelector(`[data-asset-check-progress="${activityId}"]`);
+                const completionCheckbox = document.querySelector(`[data-ci-activity-completion="${activityId}"]`);
+                const targetCount = Number.parseInt(source.dataset.assetTargetCount ?? '0', 10);
+                const completedCount = Number.parseInt(source.dataset.assetCompletedCount ?? '0', 10);
+                if (progress) progress.textContent = `${source.dataset.assetTargetCount ?? '0'} assessor${source.dataset.assetTargetCount === '1' ? '' : 's'} · ${source.dataset.assetCompletedCount ?? '0'} completed`;
+                const row = currentOpener?.closest('tr');
+                const badge = row?.querySelector('td:nth-child(3) span');
+                if (row) row.dataset.status = source.dataset.assetStatus ?? row.dataset.status;
+                if (badge) {
+                    badge.textContent = source.dataset.assetStatusLabel ?? badge.textContent;
+                    badge.className = `inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${source.dataset.assetStatus === 'completed' ? 'bg-success-soft text-success' : (source.dataset.assetStatus === 'follow_up' ? 'bg-[#fff0e7] text-[#c85b12]' : (source.dataset.assetStatus === 'scheduled' ? 'bg-brand-soft text-brand-primary' : 'bg-progress-soft text-progress'))}`;
+                }
+                if (completionCheckbox instanceof HTMLInputElement) {
+                    const completed = targetCount > 0 && targetCount === completedCount;
+                    completionCheckbox.checked = completed;
+                    completionCheckbox.disabled = completed;
+                }
+                body.querySelectorAll('[data-asset-target-form]').forEach((form) => bindSchedule(form));
+                document.dispatchEvent(new CustomEvent('ci-asset-check-updated', { detail: { activityId } }));
+                document.dispatchEvent(new CustomEvent('ci-bank-coop-updated', { detail: { activityId } }));
+            };
+
+            const load = async (url) => {
+                body.innerHTML = '<div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading assessor targets…</div>';
+                const response = await fetch(url, { headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } });
+                if (! response.ok) throw new Error('Asset Check tracker could not be loaded.');
+                currentUrl = response.url || url;
+                render(await response.text());
+            };
+
+            openers.forEach((opener) => opener.addEventListener('click', async (event) => {
+                event.preventDefault(); currentOpener = opener; currentUrl = opener.dataset.assetCheckUrl ?? opener.href;
+                if (! modal.open) modal.showModal();
+                try { await load(currentUrl); } catch (error) { body.innerHTML = `<div class="rounded-card border border-danger/30 bg-danger-soft p-5 text-sm font-semibold text-danger">${error.message}</div>`; }
+            }));
+            modal.querySelectorAll('[data-asset-check-modal-close]').forEach((button) => button.addEventListener('click', () => { modal.close(); currentOpener?.focus(); }));
+            add.addEventListener('click', () => { const dialog = body.querySelector('#add-asset-target'); if (dialog instanceof HTMLDialogElement) dialog.showModal(); });
+            body.addEventListener('click', (event) => {
+                const trigger = event.target.closest('[data-asset-modal-open]'); const close = event.target.closest('[data-asset-modal-close]');
+                if (close) { close.closest('dialog')?.close(); return; }
+                if (! trigger) return;
+                event.preventDefault();
+                if (trigger.matches('[data-asset-target-complete]')) trigger.checked = false;
+                const dialog = body.querySelector(`#${trigger.dataset.assetModalOpen}`); if (dialog instanceof HTMLDialogElement) dialog.showModal();
+            });
+            body.addEventListener('submit', async (event) => {
+                const form = event.target;
+                if (!(form instanceof HTMLFormElement) || ! form.matches('[data-asset-target-form]')) return;
+                event.preventDefault();
+                const submit = form.querySelector('[type="submit"]'); if (submit instanceof HTMLButtonElement) submit.disabled = true;
+                const response = await fetch(form.action, { method: form.method, body: new FormData(form), headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+                if (! response.ok) { if (submit instanceof HTMLButtonElement) submit.disabled = false; return; }
+                await load(response.url || currentUrl);
+            });
+        });
+    </script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const modal = document.querySelector('[data-default-check-modal]');
+            const body = modal?.querySelector('[data-default-check-modal-body]');
+            const context = modal?.querySelector('[data-default-check-modal-context]');
+            const openers = [...document.querySelectorAll('[data-default-check-open]')];
+            if (!(modal instanceof HTMLDialogElement) || !(body instanceof HTMLElement) || !(context instanceof HTMLElement)) return;
+
+            let currentUrl = '';
+            let currentOpener = null;
+            const loadingMarkup = '<div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading activity tracker…</div>';
+            const statusClasses = {
+                pending: ['bg-progress-soft', 'text-progress'],
+                scheduled: ['bg-brand-soft', 'text-brand-primary'],
+                follow_up: ['bg-[#fff0e7]', 'text-[#c85b12]'],
+                completed: ['bg-success-soft', 'text-success'],
+            };
+
+            const synchronizeTable = (source) => {
+                const activityId = source.dataset.defaultCheckActivityId ?? '';
+                const status = source.dataset.defaultCheckStatus ?? 'pending';
+                const row = document.querySelector(`[data-ci-activity-row] [data-ci-activity-status-badge="${activityId}"]`)?.closest('[data-ci-activity-row]');
+                const badge = document.querySelector(`[data-ci-activity-status-badge="${activityId}"]`);
+                const scheduleCell = document.querySelector(`[data-ci-activity-schedule-cell="${activityId}"]`);
+                const updatedCell = document.querySelector(`[data-ci-activity-updated-cell="${activityId}"]`);
+                const summary = document.querySelector(`[data-default-check-summary="${activityId}"]`);
+                const completionCheckbox = document.querySelector(`[data-ci-activity-completion="${activityId}"]`);
+
+                if (badge instanceof HTMLElement) {
+                    Object.values(statusClasses).flat().forEach((className) => badge.classList.remove(className));
+                    (statusClasses[status] ?? statusClasses.pending).forEach((className) => badge.classList.add(className));
+                    badge.textContent = source.dataset.defaultCheckStatusLabel ?? 'Pending';
+                }
+                if (scheduleCell instanceof HTMLElement) {
+                    scheduleCell.replaceChildren();
+                    const schedule = source.dataset.defaultCheckSchedule ?? '—';
+                    if (schedule !== '—') {
+                        const date = document.createElement('span');
+                        date.className = 'block font-semibold text-text-main';
+                        date.textContent = schedule;
+                        scheduleCell.append(date, document.createTextNode(source.dataset.defaultCheckScheduleTime ?? ''));
+                    } else {
+                        scheduleCell.textContent = '—';
+                    }
+                }
+                if (updatedCell instanceof HTMLElement) {
+                    updatedCell.replaceChildren();
+                    const date = document.createElement('span');
+                    date.className = 'block font-semibold text-text-main';
+                    date.textContent = source.dataset.defaultCheckUpdatedDate ?? '';
+                    updatedCell.append(date, document.createTextNode(source.dataset.defaultCheckUpdatedDetail ?? ''));
+                }
+                if (summary instanceof HTMLElement) summary.textContent = `${source.dataset.defaultCheckStatusLabel ?? 'Pending'} · ${source.dataset.defaultCheckRemarks || 'No remarks yet'}`;
+                if (completionCheckbox instanceof HTMLInputElement) {
+                    const completed = status === 'completed';
+                    completionCheckbox.checked = completed;
+                    completionCheckbox.disabled = completed;
+                    completionCheckbox.dataset.completionExpectedUpdatedAt = source.dataset.defaultCheckUpdatedIso ?? completionCheckbox.dataset.completionExpectedUpdatedAt;
+                }
+                if (row instanceof HTMLTableRowElement) {
+                    row.dataset.status = status;
+                    row.dataset.sortStatus = (source.dataset.defaultCheckStatusLabel ?? status).toLocaleLowerCase();
+                    row.dataset.sortSchedule = source.dataset.defaultCheckSortSchedule ?? '0';
+                    row.dataset.sortUpdated = source.dataset.defaultCheckUpdatedTimestamp ?? row.dataset.sortUpdated;
+                }
+                document.dispatchEvent(new CustomEvent('ci-bank-coop-updated', { detail: { activityId } }));
+            };
+
+            document.addEventListener('ci-default-check-refresh-request', async (event) => {
+                const url = String(event.detail?.url ?? '');
+                const activityId = String(event.detail?.activityId ?? '');
+                if (url === '' || activityId === '') return;
+                const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } });
+                if (! response.ok) return;
+                const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+                const source = page.querySelector('[data-default-check-modal-source]');
+                if (source instanceof HTMLElement && source.dataset.defaultCheckActivityId === activityId) synchronizeTable(source);
+            });
+
+            const bindSource = (source) => {
+                const form = body.querySelector('[data-default-check-form]');
+                if (!(form instanceof HTMLFormElement)) return;
+                const status = form.querySelector('[data-default-check-status-control]');
+                const date = form.querySelector('[data-default-check-date]');
+                const time = form.querySelector('[data-default-check-time]');
+                const completion = body.querySelector('[data-default-check-completion]');
+                if (!(status instanceof HTMLSelectElement) || !(date instanceof HTMLInputElement) || !(time instanceof HTMLInputElement)) return;
+
+                const syncSchedule = () => {
+                    const enabled = ['scheduled', 'follow_up'].includes(status.value);
+                    if (! enabled) { date.value = ''; time.value = ''; }
+                    date.disabled = ! enabled;
+                    if (! enabled || date.value === '') time.value = '';
+                    time.disabled = ! enabled || date.value === '';
+                };
+                status.addEventListener('change', syncSchedule);
+                date.addEventListener('input', syncSchedule);
+                syncSchedule();
+
+                form.addEventListener('submit', async (event) => {
+                    event.preventDefault();
+                    if (status.value === 'completed' && form.dataset.currentStatus !== 'completed' && form.dataset.completionConfirmed !== 'true' && completion instanceof HTMLDialogElement) {
+                        completion.showModal();
+                        return;
+                    }
+
+                    const submit = form.querySelector('[data-default-check-submit]');
+                    const errors = form.querySelector('[data-default-check-errors]');
+                    if (submit instanceof HTMLButtonElement) submit.disabled = true;
+                    if (errors instanceof HTMLElement) { errors.hidden = true; errors.replaceChildren(); }
+                    const response = await fetch(form.action, {
+                        method: form.method,
+                        body: new FormData(form),
+                        credentials: 'same-origin',
+                        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    });
+                    if (! response.ok) {
+                        const payload = await response.json().catch(() => ({}));
+                        if (errors instanceof HTMLElement) {
+                            errors.textContent = Object.values(payload.errors ?? {}).flat().join(' ') || 'Unable to save this activity.';
+                            errors.hidden = false;
+                        }
+                        if (submit instanceof HTMLButtonElement) submit.disabled = false;
+                        return;
+                    }
+                    await loadDetail();
+                });
+
+                body.querySelector('[data-default-check-completion-cancel]')?.addEventListener('click', () => completion?.close());
+                body.querySelector('[data-default-check-completion-confirm]')?.addEventListener('click', () => {
+                    if (completion instanceof HTMLDialogElement) completion.close();
+                    form.dataset.completionConfirmed = 'true';
+                    form.requestSubmit();
+                });
+                body.querySelector('[data-default-check-close]')?.addEventListener('click', () => modal.close());
+                synchronizeTable(source);
+            };
+
+            const loadDetail = async () => {
+                body.innerHTML = loadingMarkup;
+                const response = await fetch(currentUrl, { credentials: 'same-origin', headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } });
+                if (! response.ok) throw new Error('Unable to load this activity tracker.');
+                const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+                const source = page.querySelector('[data-default-check-modal-source]');
+                if (!(source instanceof HTMLElement)) throw new Error('The exact activity context could not be loaded.');
+                body.replaceChildren(...[...source.childNodes].map((node) => document.importNode(node, true)));
+                context.textContent = source.dataset.defaultCheckContext ?? 'Activity tracker';
+                bindSource(source);
+            };
+
+            openers.forEach((opener) => opener.addEventListener('click', async (event) => {
+                event.preventDefault();
+                currentUrl = opener.dataset.defaultCheckUrl ?? opener.href ?? '';
+                currentOpener = opener;
+                context.textContent = 'Loading exact activity context…';
+                if (! modal.open) modal.showModal();
+                try { await loadDetail(); } catch (error) { body.innerHTML = `<div class="rounded-card border border-danger/25 bg-danger-soft p-5 text-sm font-semibold text-danger">${error instanceof Error ? error.message : 'Unable to load this activity tracker.'}</div>`; }
+            }));
+            modal.querySelectorAll('[data-default-check-modal-close]').forEach((button) => button.addEventListener('click', () => modal.close()));
+            modal.addEventListener('click', (event) => { if (event.target === modal) modal.close(); });
+            modal.addEventListener('close', () => { body.innerHTML = loadingMarkup; currentOpener?.focus(); });
         });
     </script>
 @endsection

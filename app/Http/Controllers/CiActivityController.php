@@ -55,6 +55,8 @@ class CiActivityController extends Controller
                 'notes',
                 'bankTargets',
                 'bankTargets as completed_bank_targets_count' => fn ($query) => $query->where('status', ActivityStatus::Completed->value),
+                'assetTargets',
+                'assetTargets as completed_asset_targets_count' => fn ($query) => $query->where('status', ActivityStatus::Completed->value),
                 'mediaReferences' => fn ($query) => $query
                     ->where('media_references.client_folder_id', $clientFolder->id)
                     ->where('media_references.co_maker_id', $activePerson?->id),
@@ -117,6 +119,10 @@ class CiActivityController extends Controller
                         'ci_activity.rescheduled' => data_get($metadata, 'activity_title').' rescheduled',
                         'ci_activity.completed' => data_get($metadata, 'activity_title').' completed',
                         'ci_activity.bank_target_completed' => data_get($metadata, 'bank_target_label', 'Bank / Coop target').' completed',
+                        'ci_activity.asset_target_completed' => data_get($metadata, 'asset_target_label', 'Asset target').' completed',
+                        'ci_activity.asset_target_created' => data_get($metadata, 'asset_target_label', 'Asset target').' added',
+                        'ci_activity.asset_target_updated' => data_get($metadata, 'asset_target_label', 'Asset target').' updated',
+                        'ci_activity.asset_target_deleted' => data_get($metadata, 'asset_target_label', 'Asset target').' deleted',
                         'ci_activity.submitted' => data_get($metadata, 'activity_title').' submitted to Credit Analyst',
                         'ci_activity.reopened' => data_get($metadata, 'activity_title').' reopened',
                         'ci_activity.deleted' => data_get($metadata, 'activity_title').' deleted',
@@ -133,7 +139,7 @@ class CiActivityController extends Controller
                         default => null,
                     },
                     'tone' => match ($event->action) {
-                        'ci_activity.completed', 'ci_activity.bank_target_completed', 'ci_activity.submitted', 'media.uploaded' => 'success',
+                        'ci_activity.completed', 'ci_activity.bank_target_completed', 'ci_activity.asset_target_completed', 'ci_activity.submitted', 'media.uploaded' => 'success',
                         'ci_activity.scheduled', 'ci_activity.rescheduled', 'ci_activity.reopened' => 'progress',
                         default => 'neutral',
                     },
@@ -280,11 +286,41 @@ class CiActivityController extends Controller
         ]);
     }
 
-    public function update(UpdateCiActivityRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, UpdateCiActivity $update): RedirectResponse
+    public function showDefaultCheck(ClientFolder $clientFolder, CiActivity $ciActivity): View
+    {
+        Gate::authorize('view', $clientFolder);
+        Gate::authorize('update', $ciActivity);
+        $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
+        ActivePersonResolver::assertOwnedBy($ciActivity, $activePerson);
+        abort_unless($ciActivity->client_folder_id === $clientFolder->id, 404);
+
+        $ciActivity->load([
+            'definition:id,name,code',
+            'updater:id,full_name',
+            'creator:id,full_name',
+        ]);
+        abort_unless(in_array($ciActivity->definition->code, [
+            ActivityDefinition::BARANGAY_CHECK_CODE,
+            ActivityDefinition::NEIGHBOR_CHECK_CODE,
+        ], true), 404);
+
+        return view('client-folders.activities.default-check-show', [
+            'clientFolder' => $clientFolder,
+            'activity' => $ciActivity,
+            'statuses' => ActivityStatus::cases(),
+            'activePerson' => $activePerson,
+        ]);
+    }
+
+    public function update(UpdateCiActivityRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, UpdateCiActivity $update): JsonResponse|RedirectResponse
     {
         $update->execute($request->user(), $clientFolder, $ciActivity, $request->validated());
         $activePerson = ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id'));
         $personParams = ActivePersonResolver::queryParams($activePerson);
+
+        if ($request->expectsJson()) {
+            return response()->json(['updated' => true]);
+        }
 
         $destination = $request->string('intent')->toString() === 'return'
             ? route('client-folders.activities.index', [$clientFolder] + $personParams)
@@ -377,7 +413,7 @@ class CiActivityController extends Controller
         $activities = $clientFolder->activities()
             ->where('co_maker_id', $activePerson?->id)
             ->whereKey($activityIds)
-            ->with('definition:id,name')
+            ->with('definition:id,name,code')
             ->get();
         abort_unless($activities->count() === $activityIds->count(), 404);
         $filter = $validated['status'] ?? 'all';

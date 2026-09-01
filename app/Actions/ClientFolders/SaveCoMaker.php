@@ -56,7 +56,7 @@ class SaveCoMaker
                 // A brand-new co-maker needs their own CI Activities checklist immediately,
                 // mirroring how the Applicant's is seeded when the folder itself is created —
                 // there is no "add activity" UI, so without this a new co-maker would have none.
-                $this->seedActivities->execute($folder, $coMaker);
+                $this->seedActivities->execute($folder, $coMaker, $actor);
             }
 
             AuditLog::create([

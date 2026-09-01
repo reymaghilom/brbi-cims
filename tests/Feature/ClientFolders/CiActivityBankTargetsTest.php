@@ -39,6 +39,8 @@ class CiActivityBankTargetsTest extends TestCase
             ->assertSee('data-code="'.ActivityDefinition::BANK_COOP_CHECK_CODE.'"', false)
             ->assertSee('data-bank-targets-section', false)
             ->assertSee('data-bank-target-row', false)
+            ->assertSee('data-bank-target-inquiry-type', false)
+            ->assertSee('<option value="">Select inquiry type</option>', false)
             ->assertSee('Add Another Bank / Coop')
             ->assertSee('Schedule / Follow-up Date')
             ->assertSee('Short Remarks')
@@ -72,6 +74,53 @@ class CiActivityBankTargetsTest extends TestCase
         $completedBankPage->assertOk();
         $this->assertDoesNotMatchRegularExpression('/data-activity-create-only[^>]*\shidden(?:\s|>)/', $completedBankPage->getContent());
         $this->assertDoesNotMatchRegularExpression('/data-ci-activity-attachment[^>]*\sdisabled(?:\s|>)/', $completedBankPage->getContent());
+    }
+
+    public function test_inquiry_type_is_validated_persisted_and_clears_forged_loan_branch(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+
+        $payload = $this->bankActivityPayload([
+            [
+                'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
+                'institution_name' => 'Shared Institution',
+                'branch_location' => 'Carmen Branch',
+                'status' => ActivityStatus::Pending->value,
+            ],
+            [
+                'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY,
+                'institution_name' => 'Shared Institution',
+                'branch_location' => 'Forged Branch',
+                'status' => ActivityStatus::Pending->value,
+            ],
+        ]);
+
+        $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), $payload)->assertRedirect();
+
+        $activity = $folder->activities()->where('activity_definition_id', $this->bankDefinition()->id)->sole();
+        $bankTarget = $activity->bankTargets()->where('inquiry_type', CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK)->sole();
+        $loanTarget = $activity->bankTargets()->where('inquiry_type', CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY)->sole();
+        $this->assertSame('Carmen Branch', $bankTarget->branch_location);
+        $this->assertNull($loanTarget->branch_location);
+        $this->assertSame('Shared Institution', $loanTarget->institution_name);
+
+        $detailUrl = route('client-folders.activities.bank-coop.show', [$folder, $activity]);
+        $this->get($detailUrl)->assertOk()
+            ->assertSee('Bank / Coop Check')
+            ->assertSee('Loan Inquiry')
+            ->assertSee('data-bank-target-detail-inquiry-type', false)
+            ->assertSee('data-bank-target-detail-branch-field', false);
+
+        foreach (['', 'unknown_type', 'Bank / Coop Check'] as $invalidType) {
+            $this->from($detailUrl)->post(route('client-folders.activities.bank-targets.store', [$folder, $activity]), [
+                'co_maker_id' => '',
+                'inquiry_type' => $invalidType,
+                'institution_name' => 'Rejected Institution',
+                'status' => ActivityStatus::Pending->value,
+            ])->assertRedirect($detailUrl)->assertSessionHasErrors('inquiry_type');
+        }
+        $this->assertSame(2, $activity->bankTargets()->count());
     }
 
     public function test_one_three_and_sparse_index_bank_target_payloads_create_every_target(): void
@@ -305,7 +354,7 @@ class CiActivityBankTargetsTest extends TestCase
         $folder = $this->folderFor($ci);
         $data = $this->bankActivityPayload([
             $this->target('First Valid Bank', ActivityStatus::Pending),
-            ['institution_name' => 'Invalid Bank', 'status' => 'invalid-status'],
+            ['inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK, 'institution_name' => 'Invalid Bank', 'status' => 'invalid-status'],
         ]);
 
         try {
@@ -335,7 +384,7 @@ class CiActivityBankTargetsTest extends TestCase
         $this->assertDatabaseCount('ci_activity_bank_targets', 0);
     }
 
-    public function test_table_shows_progress_and_only_name_subtitle_links_to_detail(): void
+    public function test_table_shows_progress_and_edit_opens_the_tracker(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -350,14 +399,15 @@ class CiActivityBankTargetsTest extends TestCase
 
         $page->assertOk()
             ->assertSee('3 institutions · 2 completed')
-            ->assertSee('href="'.$detailUrl.'"', false)
             ->assertSee('data-bank-coop-open="'.$activity->id.'"', false)
             ->assertSee('data-bank-coop-url="'.$detailUrl.'"', false)
+            ->assertSee('aria-label="Edit Bank / Coop Check"', false)
+            ->assertSee('title="Edit"', false)
             ->assertSee('id="bank-coop-tracker-modal"', false)
             ->assertSee('data-bank-coop-modal-body', false)
             ->assertSee('event.preventDefault();', false)
             ->assertSee("headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' }", false);
-        $this->assertSame(1, substr_count($page->getContent(), 'href="'.$detailUrl.'"'));
+        $this->assertSame(0, substr_count($page->getContent(), 'href="'.$detailUrl.'"'));
         $this->assertDoesNotMatchRegularExpression('/<tr[^>]*href="'.preg_quote($detailUrl, '/').'"/i', $page->getContent());
 
         $detail = $this->get($detailUrl);
@@ -394,6 +444,7 @@ class CiActivityBankTargetsTest extends TestCase
 
         $this->from($detailUrl)->post(route('client-folders.activities.bank-targets.store', [$folder, $activity]), [
             'co_maker_id' => '',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'Invalid Time Bank',
             'status' => ActivityStatus::Scheduled->value,
             'scheduled_at' => '',
@@ -405,6 +456,7 @@ class CiActivityBankTargetsTest extends TestCase
 
         $this->post(route('client-folders.activities.bank-targets.store', [$folder, $activity]), [
             'co_maker_id' => '',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'BDO',
             'branch_location' => 'Carmen Branch',
             'status' => ActivityStatus::Scheduled->value,
@@ -430,6 +482,7 @@ class CiActivityBankTargetsTest extends TestCase
         $folder->update(['assigned_ci_id' => $updater->id]);
         $this->actingAs($updater)->put(route('client-folders.activities.bank-targets.update', [$folder, $activity, $target]), [
             'co_maker_id' => '',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'BDO Updated',
             'branch_location' => 'Carmen Branch',
             'status' => ActivityStatus::FollowUp->value,
@@ -449,6 +502,7 @@ class CiActivityBankTargetsTest extends TestCase
 
         $this->put(route('client-folders.activities.bank-targets.update', [$folder, $activity, $target]), [
             'co_maker_id' => '',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'BDO Updated',
             'branch_location' => 'Carmen Branch',
             'status' => ActivityStatus::FollowUp->value,
@@ -463,6 +517,7 @@ class CiActivityBankTargetsTest extends TestCase
 
         $this->put(route('client-folders.activities.bank-targets.update', [$folder, $activity, $target]), [
             'co_maker_id' => '',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'BDO Updated',
             'branch_location' => 'Carmen Branch',
             'status' => ActivityStatus::FollowUp->value,
@@ -476,6 +531,7 @@ class CiActivityBankTargetsTest extends TestCase
 
         $this->put(route('client-folders.activities.bank-targets.update', [$folder, $activity, $target]), [
             'co_maker_id' => '',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'BDO Updated',
             'branch_location' => 'Carmen Branch',
             'status' => ActivityStatus::Completed->value,
@@ -486,6 +542,7 @@ class CiActivityBankTargetsTest extends TestCase
 
         $this->post(route('client-folders.activities.bank-targets.store', [$folder, $activity]), [
             'co_maker_id' => '',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'LandBank',
             'status' => ActivityStatus::Pending->value,
         ])->assertRedirect($detailUrl);
@@ -530,7 +587,7 @@ class CiActivityBankTargetsTest extends TestCase
             ->assertSee('id="complete-bank-target-'.$scheduled->id.'"', false)
             ->assertSee('Mark as completed?')
             ->assertSee('Mark BDO – Carmen Branch as completed?')
-            ->assertSee('This confirms that the Bank / Coop check for this institution has been completed.')
+            ->assertSee('This confirms that the Bank / Coop Check for this institution has been completed.')
             ->assertSee('Mark Completed');
         foreach ([$pending, $scheduled, $followUp] as $incompleteTarget) {
             $this->assertMatchesRegularExpression(
@@ -609,6 +666,7 @@ class CiActivityBankTargetsTest extends TestCase
 
         $payload = [
             'co_maker_id' => '',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'Substitution',
             'status' => ActivityStatus::Pending->value,
         ];
@@ -659,6 +717,7 @@ class CiActivityBankTargetsTest extends TestCase
     private function target(string $name, ActivityStatus $status, ?string $date = null, ?string $time = null): array
     {
         return [
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => $name,
             'branch_location' => $name.' Branch',
             'status' => $status->value,
@@ -684,6 +743,7 @@ class CiActivityBankTargetsTest extends TestCase
     private function createTarget(CiActivity $activity, User $actor, string $name, ActivityStatus $status): CiActivityBankTarget
     {
         return $activity->bankTargets()->create([
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => $name,
             'status' => $status,
             'scheduled_has_time' => false,

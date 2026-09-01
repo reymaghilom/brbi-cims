@@ -5,6 +5,7 @@ namespace App\Http\Requests\ClientFolders;
 use App\Enums\ActivityStatus;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
+use App\Models\ActivityDefinition;
 use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -39,7 +40,9 @@ class UpdateCiActivityRequest extends FormRequest
             ],
             'expected_updated_at' => ['nullable', 'date'],
             'status' => ['required', Rule::enum(ActivityStatus::class)],
-            'scheduled_at' => ['nullable', 'date', Rule::requiredIf($this->input('status') === ActivityStatus::Scheduled->value)],
+            'scheduled_at' => ['nullable', 'date', Rule::requiredIf(
+                $this->input('status') === ActivityStatus::Scheduled->value && ! $this->isDefaultCheck()
+            )],
             'scheduled_time' => ['nullable', 'date_format:H:i'],
             'visit_date' => ['nullable', 'date', 'before_or_equal:today'],
             'time_in' => ['nullable', 'date_format:H:i'],
@@ -59,6 +62,10 @@ class UpdateCiActivityRequest extends FormRequest
 
             if (filled($timeIn) && filled($timeOut) && $timeOut < $timeIn) {
                 $validator->errors()->add('time_out', 'The time out must be at or after the time in.');
+            }
+
+            if ($this->isDefaultCheck() && filled($this->input('scheduled_time')) && blank($this->input('scheduled_at'))) {
+                $validator->errors()->add('scheduled_time', 'Select a date to use a specific time.');
             }
         });
     }
@@ -88,6 +95,23 @@ class UpdateCiActivityRequest extends FormRequest
         $value = $this->trimmed($value);
 
         return $value === null ? null : (string) preg_replace('/\s+/u', ' ', $value);
+    }
+
+    private function isDefaultCheck(): bool
+    {
+        $activity = $this->route('ciActivity');
+        if (! $activity) {
+            return false;
+        }
+
+        $code = $activity->relationLoaded('definition')
+            ? $activity->definition?->code
+            : $activity->definition()->value('code');
+
+        return in_array($code, [
+            ActivityDefinition::BARANGAY_CHECK_CODE,
+            ActivityDefinition::NEIGHBOR_CHECK_CODE,
+        ], true);
     }
 
     private function trimmed(mixed $value): ?string

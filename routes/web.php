@@ -8,6 +8,7 @@ use App\Http\Controllers\Admin\UserStatusController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\RequiredPasswordChangeController;
 use App\Http\Controllers\BusinessCheckController;
+use App\Http\Controllers\CiActivityAssetTargetController;
 use App\Http\Controllers\CiActivityBankTargetController;
 use App\Http\Controllers\CiActivityController;
 use App\Http\Controllers\CiActivityNotificationReadController;
@@ -110,6 +111,25 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::delete('/client-folders/{clientFolder}/activities/{ciActivity}/bank-targets/{bankTarget}', [CiActivityBankTargetController::class, 'destroy'])
             ->scopeBindings()
             ->name('client-folders.activities.bank-targets.destroy');
+        Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/asset-check', [CiActivityAssetTargetController::class, 'show'])
+            ->scopeBindings()
+            ->name('client-folders.activities.asset-check.show');
+        Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/default-check', [CiActivityController::class, 'showDefaultCheck'])
+            ->whereNumber('clientFolder')
+            ->whereNumber('ciActivity')
+            ->name('client-folders.activities.default-check.show');
+        Route::post('/client-folders/{clientFolder}/activities/{ciActivity}/asset-targets', [CiActivityAssetTargetController::class, 'store'])
+            ->scopeBindings()
+            ->name('client-folders.activities.asset-targets.store');
+        Route::put('/client-folders/{clientFolder}/activities/{ciActivity}/asset-targets/{assetTarget}', [CiActivityAssetTargetController::class, 'update'])
+            ->scopeBindings()
+            ->name('client-folders.activities.asset-targets.update');
+        Route::patch('/client-folders/{clientFolder}/activities/{ciActivity}/asset-targets/{assetTarget}/complete', [CiActivityAssetTargetController::class, 'complete'])
+            ->scopeBindings()
+            ->name('client-folders.activities.asset-targets.complete');
+        Route::delete('/client-folders/{clientFolder}/activities/{ciActivity}/asset-targets/{assetTarget}', [CiActivityAssetTargetController::class, 'destroy'])
+            ->scopeBindings()
+            ->name('client-folders.activities.asset-targets.destroy');
         Route::delete('/client-folders/{clientFolder}/activity-definitions/{activityDefinition}', [CiActivityController::class, 'deactivateDefinition'])
             ->name('client-folders.activity-definitions.deactivate');
         Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/edit', [CiActivityController::class, 'edit'])

@@ -4,9 +4,9 @@ namespace Tests\Feature\ClientFolders;
 
 use App\Enums\ActivityStatus;
 use App\Models\ActivityDefinition;
-use App\Models\CibiReport;
 use App\Models\CiActivity;
 use App\Models\CiActivityBankTarget;
+use App\Models\CibiReport;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\User;
@@ -43,22 +43,101 @@ class CibiBankCoopPrefillTest extends TestCase
         $candidates = app(BankInstitutionPrefill::class)->bankTargetsFromCibi($folder, null);
 
         $this->assertSame([
-            ['institution_name' => 'MCCB', 'branch_location' => 'Manticao Branch', 'source' => 'CIBI Bank / Financial Institution'],
-            ['institution_name' => 'FICCO', 'branch_location' => null, 'source' => 'CIBI Bank / Financial Institution'],
-            ['institution_name' => 'BDO', 'branch_location' => 'Carmen Branch', 'source' => 'CIBI Bank / Financial Institution'],
-            ['institution_name' => 'BDO', 'branch_location' => 'Lapasan Branch', 'source' => 'CIBI Bank / Financial Institution'],
-            ['institution_name' => 'BDO', 'branch_location' => null, 'source' => 'CIBI Credit / Loan'],
-            ['institution_name' => 'OIC', 'branch_location' => null, 'source' => 'CIBI Credit / Loan'],
+            ['inquiry_type' => 'bank_coop_check', 'institution_name' => 'MCCB', 'branch_location' => 'Manticao Branch', 'source' => 'CIBI Bank / Financial Institution'],
+            ['inquiry_type' => 'bank_coop_check', 'institution_name' => 'FICCO', 'branch_location' => null, 'source' => 'CIBI Bank / Financial Institution'],
+            ['inquiry_type' => 'bank_coop_check', 'institution_name' => 'BDO', 'branch_location' => 'Carmen Branch', 'source' => 'CIBI Bank / Financial Institution'],
+            ['inquiry_type' => 'bank_coop_check', 'institution_name' => 'BDO', 'branch_location' => 'Lapasan Branch', 'source' => 'CIBI Bank / Financial Institution'],
+            ['inquiry_type' => 'loan_inquiry', 'institution_name' => 'MCCB', 'branch_location' => null, 'source' => 'CIBI Credit / Loan'],
+            ['inquiry_type' => 'loan_inquiry', 'institution_name' => 'FICCO', 'branch_location' => null, 'source' => 'CIBI Credit / Loan'],
+            ['inquiry_type' => 'loan_inquiry', 'institution_name' => 'BDO', 'branch_location' => null, 'source' => 'CIBI Credit / Loan'],
+            ['inquiry_type' => 'loan_inquiry', 'institution_name' => 'OIC', 'branch_location' => null, 'source' => 'CIBI Credit / Loan'],
         ], $candidates);
 
         $index = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
         $index->assertOk()
-            ->assertSee('Available from this person&rsquo;s CIBI report', false)
-            ->assertSee('data-bank-prefill-candidate data-institution="MCCB" data-branch="Manticao Branch"', false)
-            ->assertSee('data-bank-prefill-candidate data-institution="OIC" data-branch=""', false)
+            ->assertDontSee('Available from this person&rsquo;s CIBI report', false)
+            ->assertDontSee('populate automatically when this section is first selected')
+            ->assertDontSee('data-bank-prefill-candidate', false)
+            ->assertSee('const bankPrefillCandidates =', false)
+            ->assertSee('let bankPrefillInitialized = false;', false)
+            ->assertSee('if (bankPrefillInitialized || bankTargetSection.hidden) return;', false)
+            ->assertSee('bankPrefillCandidates.forEach(applyBankPrefillCandidate);', false)
+            ->assertSee('initializeBankTargetsFromCibi();', false)
             ->assertSee("if (name.value.trim() === '') name.value = institution;", false)
             ->assertSee("if (location.value.trim() === '') location.value = branch;", false)
             ->assertDontSee('Loan-only finding');
+    }
+
+    public function test_add_activity_prefill_initializes_once_preserves_user_rows_and_never_persists_on_open(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $report = $this->reportFor($folder, $ci);
+        $this->bankAccount($report, 'BDO', 'CDO Branch', 1);
+        $this->bankAccount($report, 'Metrobank', 'Divisoria', 2);
+        $this->bankAccount($report, 'FICCO', null, 3);
+        $this->loan($report, 'Loan Cooperative', 1, ['remarks' => 'Never map this remark']);
+
+        $page = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
+        $page->assertOk()
+            ->assertSee('BDO')
+            ->assertSee('CDO Branch')
+            ->assertSee('Metrobank')
+            ->assertSee('Divisoria')
+            ->assertSee('FICCO')
+            ->assertSee('Loan Cooperative')
+            ->assertDontSee('data-bank-prefill-candidate', false)
+            ->assertSee('const bankTargetCollectionIsPristine = () =>', false)
+            ->assertSee('bankPrefillInitialized = true;', false)
+            ->assertSee('bankPrefillCandidates.forEach(applyBankPrefillCandidate);', false)
+            ->assertSee('data-bank-target-add', false)
+            ->assertDontSee('Never map this remark');
+
+        $this->assertDatabaseCount('ci_activities', 0);
+        $this->assertDatabaseCount('ci_activity_bank_targets', 0);
+
+        $oldInput = [
+            'activity_definition_id' => $this->bankDefinition()->id,
+            'create_new_activity_type' => false,
+            'bank_targets' => [
+                4 => [
+                    'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
+                    'institution_name' => 'User Edited Bank',
+                    'branch_location' => 'User Edited Branch',
+                    'status' => ActivityStatus::Pending->value,
+                    'scheduled_at' => '',
+                    'scheduled_time' => '',
+                    'remarks' => 'Manual row stays authoritative.',
+                ],
+            ],
+        ];
+        $roundTrip = $this->withSession(['_old_input' => $oldInput])->get(route('client-folders.activities.index', $folder));
+        $roundTrip->assertOk()
+            ->assertSee('name="bank_targets[4][institution_name]" value="User Edited Bank"', false)
+            ->assertSee('name="bank_targets[4][inquiry_type]"', false)
+            ->assertSee('name="bank_targets[4][branch_location]" value="User Edited Branch"', false)
+            ->assertSee('Manual row stays authoritative.')
+            ->assertSee('let bankPrefillInitialized = true;', false);
+
+        $this->assertDatabaseCount('ci_activities', 0);
+        $this->assertDatabaseCount('ci_activity_bank_targets', 0);
+    }
+
+    public function test_add_activity_has_no_hard_coded_institution_candidates_without_exact_cibi_data(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+
+        $page = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
+        $page->assertOk()
+            ->assertDontSee('data-bank-prefill-candidate', false)
+            ->assertSee('const bankPrefillCandidates = [];', false)
+            ->assertDontSee('MCCB')
+            ->assertDontSee('FICCO')
+            ->assertDontSee('OIC')
+            ->assertDontSee('BDO')
+            ->assertDontSee('PNB')
+            ->assertDontSee('Metrobank');
     }
 
     public function test_existing_bank_target_candidates_are_excluded_from_the_add_target_dialog(): void
@@ -74,7 +153,7 @@ class CibiBankCoopPrefillTest extends TestCase
         $page = $this->actingAs($ci)->get(route('client-folders.activities.bank-coop.show', [$folder, $activity]));
 
         $page->assertOk()
-            ->assertSee('data-bank-target-prefill data-institution="OIC" data-branch=""', false)
+            ->assertSee('data-bank-target-prefill data-inquiry-type="bank_coop_check" data-institution="OIC" data-branch=""', false)
             ->assertDontSee('data-bank-target-prefill data-institution="MCCB"', false)
             ->assertSee("if (institution.value.trim() !== '' && normalize(institution.value) !== normalize(candidateInstitution)) return;", false)
             ->assertSee("if (institution.value.trim() === '') institution.value = candidateInstitution;", false)
@@ -93,7 +172,7 @@ class CibiBankCoopPrefillTest extends TestCase
             'scheduled_has_time' => true,
             'remarks' => 'Workflow-only secret remark',
         ]);
-        $this->target($activity, $ci, 'FICCO', null);
+        $this->target($activity, $ci, 'FICCO', null, CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY);
 
         $page = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder));
 
@@ -102,10 +181,8 @@ class CibiBankCoopPrefillTest extends TestCase
             ->assertSee('data-cibi-bank-prefill-note="loan_records"', false)
             ->assertSee('name="bank_accounts[0][institution]" value="MCCB"', false)
             ->assertSee('name="bank_accounts[0][branch]" value="Manticao Branch"', false)
-            ->assertSee('name="bank_accounts[1][institution]" value="FICCO"', false)
-            ->assertSee('name="bank_accounts[1][branch]" value=""', false)
-            ->assertSee('name="loan_records[0][institution]" value="MCCB"', false)
-            ->assertSee('name="loan_records[1][institution]" value="FICCO"', false)
+            ->assertDontSee('name="bank_accounts[1][institution]" value="FICCO"', false)
+            ->assertSee('name="loan_records[0][institution]" value="FICCO"', false)
             ->assertSee('name="loan_records[0][original_amount]" value=""', false)
             ->assertSee('name="loan_records[0][remaining_balance]" value=""', false)
             ->assertSee('name="loan_records[0][amortization_amount]" value=""', false)
@@ -126,7 +203,7 @@ class CibiBankCoopPrefillTest extends TestCase
         $activity = $this->bankActivity($folder, $ci);
         $this->target($activity, $ci, 'Manual Bank', 'Saved Branch');
         $this->target($activity, $ci, 'Manual Bank', 'Other Branch');
-        $this->target($activity, $ci, 'Another Bank', null);
+        $this->target($activity, $ci, 'Another Bank', null, CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY);
 
         $page = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder));
 
@@ -135,7 +212,7 @@ class CibiBankCoopPrefillTest extends TestCase
             ->assertSee('name="bank_accounts[0][branch]" value="Saved Branch"', false)
             ->assertSee('name="bank_accounts[1][institution]" value="Manual Bank"', false)
             ->assertSee('name="bank_accounts[1][branch]" value="Other Branch"', false)
-            ->assertSee('name="bank_accounts[2][institution]" value="Another Bank"', false)
+            ->assertDontSee('name="bank_accounts[2][institution]" value="Another Bank"', false)
             ->assertSee('name="loan_records[0][institution]" value="Manual Bank"', false)
             ->assertSee('name="loan_records[0][original_amount]" value="125000.00"', false)
             ->assertSee('name="loan_records[1][institution]" value="Another Bank"', false);
@@ -192,7 +269,7 @@ class CibiBankCoopPrefillTest extends TestCase
 
         $this->target($this->bankActivity($folder, $ci), $ci, 'Applicant Target', null);
         $this->target($this->bankActivity($folder, $ci, $makerA->id), $ci, 'Maker A Target', null);
-        $this->target($this->bankActivity($folder, $ci, $makerB->id), $ci, 'Maker B Target', null);
+        $this->target($this->bankActivity($folder, $ci, $makerB->id), $ci, 'Maker B Target', null, CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY);
         $this->target($this->bankActivity($otherFolder, $ci, $otherMaker->id), $ci, 'Other Folder Target', null);
 
         $prefill = app(BankInstitutionPrefill::class);
@@ -209,10 +286,10 @@ class CibiBankCoopPrefillTest extends TestCase
             'co_maker_id' => $makerA->id,
         ]));
         $makerPage->assertOk()
-            ->assertSee('data-institution="Maker A CIBI"', false)
-            ->assertDontSee('data-institution="Applicant CIBI"', false)
-            ->assertDontSee('data-institution="Maker B CIBI"', false)
-            ->assertDontSee('data-institution="Other Folder CIBI"', false);
+            ->assertSee('Maker A CIBI')
+            ->assertDontSee('Applicant CIBI')
+            ->assertDontSee('Maker B CIBI')
+            ->assertDontSee('Other Folder CIBI');
     }
 
     private function reportFor(ClientFolder $folder, User $ci, ?int $coMakerId = null): CibiReport
@@ -258,9 +335,10 @@ class CibiBankCoopPrefillTest extends TestCase
         ]);
     }
 
-    private function target(CiActivity $activity, User $actor, string $institution, ?string $branch): CiActivityBankTarget
+    private function target(CiActivity $activity, User $actor, string $institution, ?string $branch, string $inquiryType = CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK): CiActivityBankTarget
     {
         return $activity->bankTargets()->create([
+            'inquiry_type' => $inquiryType,
             'institution_name' => $institution,
             'branch_location' => $branch,
             'status' => ActivityStatus::Pending,

@@ -65,8 +65,8 @@
                         <div class="min-w-0 flex-1">
                             <div class="flex items-start justify-between gap-3">
                                 <div class="min-w-0">
-                                    <h3 class="truncate text-base font-bold text-brand-sidebar">{{ $target->institution_name }}</h3>
-                                    <p class="mt-0.5 truncate text-sm text-text-muted">{{ $target->branch_location ?: 'No branch specified' }}</p>
+                                    <h3 class="break-words text-base font-bold text-brand-sidebar">{{ $target->institution_name }}@if($target->branch_location) <span class="font-normal text-text-muted">&mdash; {{ $target->branch_location }}</span>@endif</h3>
+                                    <span class="mt-1.5 inline-flex rounded-full bg-brand-soft px-2.5 py-1 text-xs font-bold text-brand-primary">{{ $target->inquiryTypeLabel() }}</span>
                                 </div>
                                 <x-ui.status-badge :status="$target->status" />
                             </div>
@@ -113,16 +113,17 @@
                         <p class="mt-1 text-xs leading-5 text-text-muted">Choose a candidate to fill empty fields. Existing values are never replaced.</p>
                         <div class="mt-2 flex flex-wrap gap-2">
                             @foreach($bankInstitutionPrefillCandidates as $candidate)
-                                <button type="button" class="ui-button-secondary-compact !text-left" data-bank-target-prefill data-institution="{{ $candidate['institution_name'] }}" data-branch="{{ $candidate['branch_location'] }}" title="{{ $candidate['source'] }}">
-                                    {{ $candidate['institution_name'] }}@if($candidate['branch_location']) <span class="font-normal text-text-muted">&mdash; {{ $candidate['branch_location'] }}</span>@endif
+                                <button type="button" class="ui-button-secondary-compact !text-left" data-bank-target-prefill data-inquiry-type="{{ $candidate['inquiry_type'] }}" data-institution="{{ $candidate['institution_name'] }}" data-branch="{{ $candidate['branch_location'] }}" title="{{ $candidate['source'] }}">
+                                    {{ App\Models\CiActivityBankTarget::INQUIRY_TYPES[$candidate['inquiry_type']] }} &middot; {{ $candidate['institution_name'] }}@if($candidate['branch_location']) <span class="font-normal text-text-muted">&mdash; {{ $candidate['branch_location'] }}</span>@endif
                                 </button>
                             @endforeach
                         </div>
                     </div>
                 @endif
                 <div class="grid gap-4 sm:grid-cols-2">
+                    <div><label for="add-inquiry-type" class="ui-label">Inquiry Type</label><select id="add-inquiry-type" name="inquiry_type" class="ui-control" required data-bank-target-detail-inquiry-type><option value="">Select inquiry type</option>@foreach(App\Models\CiActivityBankTarget::INQUIRY_TYPES as $value => $label)<option value="{{ $value }}" @selected(old('inquiry_type') === $value)>{{ $label }}</option>@endforeach</select><x-form.validation-message for="inquiry_type" /></div>
                     <div><label for="add-institution-name" class="ui-label">Bank / Coop Name</label><input id="add-institution-name" name="institution_name" value="{{ old('institution_name') }}" class="ui-control" maxlength="255" required><x-form.validation-message for="institution_name" /></div>
-                    <div><label for="add-branch-location" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="add-branch-location" name="branch_location" value="{{ old('branch_location') }}" class="ui-control" maxlength="255"><x-form.validation-message for="branch_location" /></div>
+                    <div data-bank-target-detail-branch-field><label for="add-branch-location" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="add-branch-location" name="branch_location" value="{{ old('branch_location') }}" class="ui-control" maxlength="255" data-bank-target-detail-branch><x-form.validation-message for="branch_location" /></div>
                     <div><label for="add-target-status" class="ui-label">Status</label><select id="add-target-status" name="status" class="ui-control" required data-bank-target-detail-status>@foreach($statuses as $status)<option value="{{ $status->value }}" @selected(old('status', 'pending') === $status->value)>{{ $status->label() }}</option>@endforeach</select><x-form.validation-message for="status" /></div>
                     <div class="grid gap-3 sm:grid-cols-2" data-bank-target-detail-schedule><div><label for="add-target-date" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="add-target-date" name="scheduled_at" type="date" value="{{ old('scheduled_at') }}" class="ui-control" data-bank-target-detail-date><x-form.validation-message for="scheduled_at" /></div><div><label for="add-target-time" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="add-target-time" name="scheduled_time" type="time" value="{{ old('scheduled_time') }}" class="ui-control" data-bank-target-detail-time><x-form.validation-message for="scheduled_time" /></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
                     <div class="sm:col-span-2"><label for="add-target-remarks" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="add-target-remarks" name="remarks" rows="3" class="ui-control">{{ old('remarks') }}</textarea><x-form.validation-message for="remarks" /></div>
@@ -141,7 +142,7 @@
             <x-ui.confirmation-dialog id="complete-bank-target-{{ $target->id }}" title="Mark as completed?" :action="route('client-folders.activities.bank-targets.complete', [$clientFolder, $activity, $target])" method="PATCH" confirm-label="Mark Completed">
                 <div class="space-y-2">
                     <p class="font-semibold text-text-main">Mark {{ $completionLabel }} as completed?</p>
-                    <p>This confirms that the Bank / Coop check for this institution has been completed.</p>
+                    <p>This confirms that the {{ $target->inquiryTypeLabel() }} for this institution has been completed.</p>
                 </div>
                 <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
             </x-ui.confirmation-dialog>
@@ -154,8 +155,9 @@
                 <div class="flex items-start justify-between gap-4 border-b border-ui-border px-5 py-4 sm:px-6"><div><h2 class="text-lg font-bold text-brand-sidebar">Edit Bank / Coop</h2><p class="mt-1 truncate text-sm text-text-muted">{{ $target->institution_name }}</p></div><button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close"><x-ui.icon name="close" size="size-5" /></button></div>
                 <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
                     <div class="grid gap-4 sm:grid-cols-2">
+                        <div><label for="inquiry-type-{{ $target->id }}" class="ui-label">Inquiry Type</label><select id="inquiry-type-{{ $target->id }}" name="inquiry_type" class="ui-control" required data-bank-target-detail-inquiry-type>@foreach(App\Models\CiActivityBankTarget::INQUIRY_TYPES as $value => $label)<option value="{{ $value }}" @selected($target->inquiry_type === $value)>{{ $label }}</option>@endforeach</select></div>
                         <div><label for="institution-name-{{ $target->id }}" class="ui-label">Bank / Coop Name</label><input id="institution-name-{{ $target->id }}" name="institution_name" value="{{ $target->institution_name }}" class="ui-control" maxlength="255" required></div>
-                        <div><label for="branch-location-{{ $target->id }}" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="branch-location-{{ $target->id }}" name="branch_location" value="{{ $target->branch_location }}" class="ui-control" maxlength="255"></div>
+                        <div data-bank-target-detail-branch-field @if($target->inquiry_type === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY) hidden @endif><label for="branch-location-{{ $target->id }}" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="branch-location-{{ $target->id }}" name="branch_location" value="{{ $target->branch_location }}" class="ui-control" maxlength="255" data-bank-target-detail-branch @disabled($target->inquiry_type === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY)></div>
                         <div><label for="target-status-{{ $target->id }}" class="ui-label">Status</label><select id="target-status-{{ $target->id }}" name="status" class="ui-control" required data-bank-target-detail-status>@foreach($statuses as $status)<option value="{{ $status->value }}" @selected($target->status === $status)>{{ $status->label() }}</option>@endforeach</select></div>
                         <div class="grid gap-3 sm:grid-cols-2" data-bank-target-detail-schedule><div><label for="target-date-{{ $target->id }}" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="target-date-{{ $target->id }}" name="scheduled_at" type="date" value="{{ $editSchedule?->format('Y-m-d') }}" class="ui-control" data-bank-target-detail-date></div><div><label for="target-time-{{ $target->id }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="target-time-{{ $target->id }}" name="scheduled_time" type="time" value="{{ $target->scheduled_has_time ? $editSchedule?->format('H:i') : '' }}" class="ui-control" data-bank-target-detail-time></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
                         <div class="sm:col-span-2"><label for="target-remarks-{{ $target->id }}" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="target-remarks-{{ $target->id }}" name="remarks" rows="3" class="ui-control">{{ $target->remarks }}</textarea></div>
@@ -175,12 +177,20 @@
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const syncForm = (form) => {
+                const inquiryType = form.querySelector('[data-bank-target-detail-inquiry-type]');
+                const branchField = form.querySelector('[data-bank-target-detail-branch-field]');
+                const branch = form.querySelector('[data-bank-target-detail-branch]');
                 const status = form.querySelector('[data-bank-target-detail-status]');
                 const date = form.querySelector('[data-bank-target-detail-date]');
                 const time = form.querySelector('[data-bank-target-detail-time]');
-                if (!(status instanceof HTMLSelectElement) || !(date instanceof HTMLInputElement) || !(time instanceof HTMLInputElement)) return;
+                if (!(inquiryType instanceof HTMLSelectElement) || !(branchField instanceof HTMLElement) || !(branch instanceof HTMLInputElement)
+                    || !(status instanceof HTMLSelectElement) || !(date instanceof HTMLInputElement) || !(time instanceof HTMLInputElement)) return;
 
                 const sync = () => {
+                    const isLoanInquiry = inquiryType.value === @js(App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY);
+                    branchField.hidden = isLoanInquiry;
+                    if (isLoanInquiry) branch.value = '';
+                    branch.disabled = isLoanInquiry;
                     const supportsSchedule = ['scheduled', 'follow_up'].includes(status.value);
                     if (! supportsSchedule) {
                         date.value = '';
@@ -194,6 +204,7 @@
                 };
 
                 status.addEventListener('change', sync);
+                inquiryType.addEventListener('change', sync);
                 date.addEventListener('input', sync);
                 sync();
             };
@@ -205,14 +216,17 @@
                 button.addEventListener('click', () => {
                     const dialog = button.closest('dialog');
                     const institution = dialog?.querySelector('[name="institution_name"]');
+                    const inquiryType = dialog?.querySelector('[name="inquiry_type"]');
                     const branch = dialog?.querySelector('[name="branch_location"]');
-                    if (!(institution instanceof HTMLInputElement) || !(branch instanceof HTMLInputElement)) return;
+                    if (!(inquiryType instanceof HTMLSelectElement) || !(institution instanceof HTMLInputElement) || !(branch instanceof HTMLInputElement)) return;
 
                     const candidateInstitution = button.dataset.institution ?? '';
                     const normalize = (value) => value.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
                     if (institution.value.trim() !== '' && normalize(institution.value) !== normalize(candidateInstitution)) return;
                     if (institution.value.trim() === '') institution.value = candidateInstitution;
+                    if (inquiryType.value === '') inquiryType.value = button.dataset.inquiryType ?? '';
                     if (branch.value.trim() === '') branch.value = button.dataset.branch ?? '';
+                    inquiryType.dispatchEvent(new Event('change', { bubbles: true }));
                     institution.dispatchEvent(new Event('input', { bubbles: true }));
                     institution.focus();
                 });

@@ -8,17 +8,15 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
 
-class CiActivityBankTarget extends Model
+class CiActivityAssetTarget extends Model
 {
     use HasFactory;
 
-    public const INQUIRY_TYPE_BANK_COOP_CHECK = 'bank_coop_check';
-
-    public const INQUIRY_TYPE_LOAN_INQUIRY = 'loan_inquiry';
-
-    public const INQUIRY_TYPES = [
-        self::INQUIRY_TYPE_BANK_COOP_CHECK => 'Bank / Coop Check',
-        self::INQUIRY_TYPE_LOAN_INQUIRY => 'Loan Inquiry',
+    public const ASSESSOR_TYPES = [
+        'city_assessor' => 'City Assessor',
+        'provincial_assessor' => 'Provincial Assessor',
+        'municipal_assessor' => 'Municipal Assessor',
+        'other' => 'Other',
     ];
 
     protected $guarded = [];
@@ -47,9 +45,9 @@ class CiActivityBankTarget extends Model
         return $this->belongsTo(User::class, 'updated_by');
     }
 
-    public function inquiryTypeLabel(): string
+    public function assessorLabel(): string
     {
-        return self::INQUIRY_TYPES[$this->inquiry_type] ?? $this->inquiry_type;
+        return self::ASSESSOR_TYPES[$this->assessor_type] ?? $this->assessor_type;
     }
 
     /** @return array{0: Carbon|null, 1: bool} */

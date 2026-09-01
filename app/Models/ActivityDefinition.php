@@ -17,6 +17,12 @@ class ActivityDefinition extends Model
 
     public const BANK_COOP_CHECK_CODE = 'bank_coop_check';
 
+    public const ASSET_CHECK_CODE = 'asset_check';
+
+    public const BARANGAY_CHECK_CODE = 'barangay_check';
+
+    public const NEIGHBOR_CHECK_CODE = 'neighbor_check';
+
     protected $guarded = [];
 
     protected function casts(): array

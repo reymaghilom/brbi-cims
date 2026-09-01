@@ -4,6 +4,7 @@ namespace App\Http\Requests\ClientFolders;
 
 use App\Enums\ActivityStatus;
 use App\Models\ActivityDefinition;
+use App\Models\CiActivityAssetTarget;
 use App\Models\CiActivityBankTarget;
 use App\Services\ClientFolders\ActivePersonResolver;
 use Closure;
@@ -29,10 +30,12 @@ class StoreCiActivityRequest extends FormRequest
     public function rules(): array
     {
         $bankCoopCheck = $this->isBankCoopCheck();
-        $excludeParentFields = $this->boolean('create_new_activity_type') || $bankCoopCheck;
+        $assetCheck = $this->isAssetCheck();
+        $multiTargetCheck = $bankCoopCheck || $assetCheck;
+        $excludeParentFields = $this->boolean('create_new_activity_type') || $multiTargetCheck;
         $effectiveStatus = $bankCoopCheck
             ? $this->derivedBankCoopStatus()->value
-            : $this->input('status');
+            : ($assetCheck ? $this->derivedAssetStatus()->value : $this->input('status'));
 
         return [
             'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
@@ -82,12 +85,27 @@ class StoreCiActivityRequest extends FormRequest
                 'max:50',
             ],
             'bank_targets.*' => ['required', 'array'],
+            'bank_targets.*.inquiry_type' => ['required', Rule::in(array_keys(CiActivityBankTarget::INQUIRY_TYPES))],
             'bank_targets.*.institution_name' => ['required', 'string', 'max:255'],
             'bank_targets.*.branch_location' => ['nullable', 'string', 'max:255'],
             'bank_targets.*.status' => ['required', Rule::enum(ActivityStatus::class)],
             'bank_targets.*.scheduled_at' => ['nullable', 'date'],
             'bank_targets.*.scheduled_time' => ['nullable', 'date_format:H:i'],
             'bank_targets.*.remarks' => ['nullable', 'string', 'max:20000'],
+            'asset_targets' => [
+                Rule::excludeIf(! $assetCheck),
+                Rule::requiredIf($assetCheck),
+                'array',
+                'min:1',
+                'max:50',
+            ],
+            'asset_targets.*' => ['required', 'array'],
+            'asset_targets.*.assessor_type' => ['required', Rule::in(array_keys(CiActivityAssetTarget::ASSESSOR_TYPES))],
+            'asset_targets.*.office_location' => ['required', 'string', 'max:255'],
+            'asset_targets.*.status' => ['required', Rule::enum(ActivityStatus::class)],
+            'asset_targets.*.scheduled_at' => ['nullable', 'date'],
+            'asset_targets.*.scheduled_time' => ['nullable', 'date_format:H:i'],
+            'asset_targets.*.remarks' => ['nullable', 'string', 'max:20000'],
             'attachment' => [
                 Rule::prohibitedIf($this->boolean('create_new_activity_type') || $effectiveStatus !== ActivityStatus::Completed->value),
                 'nullable',
@@ -106,7 +124,11 @@ class StoreCiActivityRequest extends FormRequest
             'attachment.max' => 'The selected proof exceeds the 50 MB video limit.',
             'bank_targets.required' => 'Add at least one Bank / Coop target.',
             'bank_targets.*.institution_name.required' => 'Enter the Bank / Coop name.',
+            'bank_targets.*.inquiry_type.required' => 'Select an inquiry type.',
             'bank_targets.*.status.required' => 'Select a target status.',
+            'asset_targets.required' => 'Add at least one assessor target.',
+            'asset_targets.*.assessor_type.required' => 'Select an assessor office.',
+            'asset_targets.*.office_location.required' => 'Enter the office, municipality, city, or location.',
         ];
     }
 
@@ -126,19 +148,15 @@ class StoreCiActivityRequest extends FormRequest
                 }
             }
 
-            if (! $this->isBankCoopCheck() || ! is_array($this->input('bank_targets'))) {
-                return;
-            }
-
-            foreach ($this->input('bank_targets') as $index => $target) {
-                if (! is_array($target)) {
+            foreach (['bank_targets', 'asset_targets'] as $collection) {
+                if (! is_array($this->input($collection))) {
                     continue;
                 }
 
-                $date = $target['scheduled_at'] ?? null;
-                $time = $target['scheduled_time'] ?? null;
-                if (filled($time) && blank($date)) {
-                    $validator->errors()->add("bank_targets.{$index}.scheduled_time", 'Select a date to use a specific time.');
+                foreach ($this->input($collection) as $index => $target) {
+                    if (is_array($target) && filled($target['scheduled_time'] ?? null) && blank($target['scheduled_at'] ?? null)) {
+                        $validator->errors()->add("{$collection}.{$index}.scheduled_time", 'Select a date to use a specific time.');
+                    }
                 }
             }
         });
@@ -149,7 +167,9 @@ class StoreCiActivityRequest extends FormRequest
         $createNewType = $this->input('activity_definition_id') === ActivityDefinition::NEW_TYPE_VALUE
             || $this->boolean('create_new_activity_type');
         $bankCoopCheck = $this->isBankCoopCheck();
-        $statusSupportsSchedule = ! $bankCoopCheck && in_array($this->input('status'), [
+        $assetCheck = $this->isAssetCheck();
+        $multiTargetCheck = $bankCoopCheck || $assetCheck;
+        $statusSupportsSchedule = ! $multiTargetCheck && in_array($this->input('status'), [
             ActivityStatus::Scheduled->value,
             ActivityStatus::FollowUp->value,
         ], true);
@@ -166,14 +186,36 @@ class StoreCiActivityRequest extends FormRequest
                 ], true);
 
                 return [
+                    'inquiry_type' => $target['inquiry_type'] ?? null,
                     'institution_name' => $this->normalizeNested($target['institution_name'] ?? null),
-                    'branch_location' => $this->normalizeNested($target['branch_location'] ?? null),
+                    'branch_location' => ($target['inquiry_type'] ?? null) === CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY
+                        ? null
+                        : $this->normalizeNested($target['branch_location'] ?? null),
                     'status' => $target['status'] ?? null,
                     'scheduled_at' => $statusSupportsSchedule ? ($target['scheduled_at'] ?? null) : null,
                     'scheduled_time' => $statusSupportsSchedule ? ($target['scheduled_time'] ?? null) : null,
                     'remarks' => $this->normalizeNested($target['remarks'] ?? null),
                 ];
             }, $bankTargets);
+        }
+        $assetTargets = $this->input('asset_targets');
+        if (is_array($assetTargets)) {
+            $assetTargets = array_map(function (mixed $target): mixed {
+                if (! is_array($target)) {
+                    return $target;
+                }
+
+                $supportsSchedule = in_array($target['status'] ?? null, ['scheduled', 'follow_up'], true);
+
+                return [
+                    'assessor_type' => $target['assessor_type'] ?? null,
+                    'office_location' => $this->normalizeNested($target['office_location'] ?? null),
+                    'status' => $target['status'] ?? null,
+                    'scheduled_at' => $supportsSchedule ? ($target['scheduled_at'] ?? null) : null,
+                    'scheduled_time' => $supportsSchedule ? ($target['scheduled_time'] ?? null) : null,
+                    'remarks' => $this->normalizeNested($target['remarks'] ?? null),
+                ];
+            }, $assetTargets);
         }
 
         $this->merge([
@@ -185,8 +227,9 @@ class StoreCiActivityRequest extends FormRequest
                 : null,
             'scheduled_at' => $statusSupportsSchedule ? $this->input('scheduled_at') : null,
             'scheduled_time' => $statusSupportsSchedule ? $this->input('scheduled_time') : null,
-            'remarks' => $bankCoopCheck ? null : $this->normalized('remarks'),
+            'remarks' => $multiTargetCheck ? null : $this->normalized('remarks'),
             'bank_targets' => $bankTargets,
+            'asset_targets' => $assetTargets,
         ]);
     }
 
@@ -211,6 +254,32 @@ class StoreCiActivityRequest extends FormRequest
         }
 
         return CiActivityBankTarget::deriveParentStatus(array_map(
+            fn (mixed $target): mixed => is_array($target) ? ($target['status'] ?? null) : null,
+            $targets,
+        ));
+    }
+
+    private function isAssetCheck(): bool
+    {
+        if ($this->boolean('create_new_activity_type') || ! ctype_digit((string) $this->input('activity_definition_id'))) {
+            return false;
+        }
+
+        return ActivityDefinition::query()
+            ->whereKey((int) $this->input('activity_definition_id'))
+            ->where('is_active', true)
+            ->where('code', ActivityDefinition::ASSET_CHECK_CODE)
+            ->exists();
+    }
+
+    private function derivedAssetStatus(): ActivityStatus
+    {
+        $targets = $this->input('asset_targets');
+        if (! is_array($targets)) {
+            return ActivityStatus::Pending;
+        }
+
+        return CiActivityAssetTarget::deriveParentStatus(array_map(
             fn (mixed $target): mixed => is_array($target) ? ($target['status'] ?? null) : null,
             $targets,
         ));

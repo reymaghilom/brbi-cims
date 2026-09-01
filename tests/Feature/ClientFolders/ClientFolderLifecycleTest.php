@@ -20,7 +20,18 @@ class ClientFolderLifecycleTest extends TestCase
     {
         $administrator = User::factory()->administrator()->create();
         $investigator = User::factory()->create(['full_name' => 'Active Investigator']);
-        ActivityDefinition::factory()->count(2)->create(['is_active' => true]);
+        ActivityDefinition::factory()->create([
+            'code' => ActivityDefinition::BARANGAY_CHECK_CODE,
+            'name' => 'Barangay Check',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+        ActivityDefinition::factory()->create([
+            'code' => ActivityDefinition::NEIGHBOR_CHECK_CODE,
+            'name' => 'Neighbor Check',
+            'is_active' => true,
+            'sort_order' => 2,
+        ]);
 
         $response = $this->actingAs($administrator)->post(route('client-folders.store'), [
             'last_name' => ' dela cruz ',

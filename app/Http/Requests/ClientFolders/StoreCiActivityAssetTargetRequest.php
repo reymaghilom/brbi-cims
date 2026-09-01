@@ -4,13 +4,13 @@ namespace App\Http\Requests\ClientFolders;
 
 use App\Enums\ActivityStatus;
 use App\Models\ActivityDefinition;
-use App\Models\CiActivityBankTarget;
+use App\Models\CiActivityAssetTarget;
 use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
-class StoreCiActivityBankTargetRequest extends FormRequest
+class StoreCiActivityAssetTargetRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -24,16 +24,15 @@ class StoreCiActivityBankTargetRequest extends FormRequest
             && $this->user()->can('update', $activity)
             && $activity->client_folder_id === $folder->id
             && $activity->co_maker_id === $expectedCoMakerId
-            && $activity->definition()->where('code', ActivityDefinition::BANK_COOP_CHECK_CODE)->exists();
+            && $activity->definition()->where('code', ActivityDefinition::ASSET_CHECK_CODE)->exists();
     }
 
     public function rules(): array
     {
         return [
             'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
-            'inquiry_type' => ['required', Rule::in(array_keys(CiActivityBankTarget::INQUIRY_TYPES))],
-            'institution_name' => ['required', 'string', 'max:255'],
-            'branch_location' => ['nullable', 'string', 'max:255'],
+            'assessor_type' => ['required', Rule::in(array_keys(CiActivityAssetTarget::ASSESSOR_TYPES))],
+            'office_location' => ['required', 'string', 'max:255'],
             'status' => ['required', Rule::enum(ActivityStatus::class)],
             'scheduled_at' => ['nullable', 'date'],
             'scheduled_time' => ['nullable', 'date_format:H:i'],
@@ -52,19 +51,13 @@ class StoreCiActivityBankTargetRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        $statusSupportsSchedule = in_array($this->input('status'), [
-            ActivityStatus::Scheduled->value,
-            ActivityStatus::FollowUp->value,
-        ], true);
-
+        $supportsSchedule = in_array($this->input('status'), ['scheduled', 'follow_up'], true);
         $this->merge([
             'co_maker_id' => filled($this->input('co_maker_id')) ? (int) $this->input('co_maker_id') : null,
-            'institution_name' => $this->normalized('institution_name'),
-            'branch_location' => $this->input('inquiry_type') === CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY
-                ? null
-                : $this->normalized('branch_location'),
-            'scheduled_at' => $statusSupportsSchedule ? $this->input('scheduled_at') : null,
-            'scheduled_time' => $statusSupportsSchedule ? $this->input('scheduled_time') : null,
+            'assessor_type' => $this->input('assessor_type'),
+            'office_location' => $this->normalized('office_location'),
+            'scheduled_at' => $supportsSchedule ? $this->input('scheduled_at') : null,
+            'scheduled_time' => $supportsSchedule ? $this->input('scheduled_time') : null,
             'remarks' => $this->normalized('remarks'),
         ]);
     }

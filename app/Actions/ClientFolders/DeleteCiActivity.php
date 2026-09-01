@@ -2,6 +2,7 @@
 
 namespace App\Actions\ClientFolders;
 
+use App\Actions\Media\RemoveCiActivityProof;
 use App\Models\AuditLog;
 use App\Models\CiActivity;
 use App\Models\ClientFolder;
@@ -9,12 +10,14 @@ use App\Models\User;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class DeleteCiActivity
 {
     public function __construct(
         private readonly CiActivitiesCompletionEvaluator $completion,
         private readonly ClientProgressService $progress,
+        private readonly RemoveCiActivityProof $proofRemoval,
     ) {}
 
     public function execute(User $actor, ClientFolder $folder, CiActivity $activity): void
@@ -25,14 +28,31 @@ class DeleteCiActivity
     /** @param iterable<CiActivity> $activities */
     public function executeMany(User $actor, ClientFolder $folder, iterable $activities): void
     {
-        DB::transaction(function () use ($actor, $folder, $activities): void {
+        $activities = collect($activities)->values();
+
+        if ($activities->contains(fn (CiActivity $activity): bool => $activity->isMandatoryDefault())) {
+            throw ValidationException::withMessages([
+                'activity' => 'Barangay Check and Neighbor Check are mandatory and cannot be deleted.',
+            ]);
+        }
+
+        $cleanups = DB::transaction(function () use ($actor, $folder, $activities): array {
+            $cleanups = [];
+
             foreach ($activities as $activity) {
+                array_push($cleanups, ...$this->proofRemoval->detachForActivityDeletion($folder, $activity));
                 $this->deleteOne($actor, $folder, $activity);
             }
 
             $this->completion->evaluate($folder);
             $this->progress->recalculate($folder);
+
+            return $cleanups;
         });
+
+        foreach ($cleanups as $cleanup) {
+            $this->proofRemoval->retireStorage($cleanup);
+        }
     }
 
     private function deleteOne(User $actor, ClientFolder $folder, CiActivity $activity): void

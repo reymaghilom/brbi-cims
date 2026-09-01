@@ -3,6 +3,7 @@
 namespace App\Services\ClientFolders;
 
 use App\Models\ActivityDefinition;
+use App\Models\CiActivityBankTarget;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use Illuminate\Database\Eloquent\Model;
@@ -11,7 +12,7 @@ class BankInstitutionPrefill
 {
     private const ROW_LIMIT = 50;
 
-    /** @return array<int, array{institution_name: string, branch_location: string|null, source: string}> */
+    /** @return array<int, array{inquiry_type: string, institution_name: string, branch_location: string|null, source: string}> */
     public function bankTargetsFromCibi(ClientFolder $folder, ?CoMaker $person, iterable $existingTargets = []): array
     {
         $this->assertPersonBelongsToFolder($folder, $person);
@@ -20,195 +21,135 @@ class BankInstitutionPrefill
             return [];
         }
 
-        $candidates = $report->bankAccounts()
-            ->orderBy('sort_order')
-            ->orderBy('id')
-            ->get(['institution', 'branch'])
+        $candidates = $report->bankAccounts()->orderBy('sort_order')->orderBy('id')->get(['institution', 'branch'])
             ->map(fn ($row): array => [
+                'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
                 'institution' => $row->institution,
                 'branch' => $row->branch,
                 'source' => 'CIBI Bank / Financial Institution',
-            ])
-            ->all();
-
-        $loanCandidates = $report->loanRecords()
-            ->orderBy('sort_order')
-            ->orderBy('id')
-            ->get(['institution'])
+            ]);
+        $candidates->push(...$report->loanRecords()->orderBy('sort_order')->orderBy('id')->get(['institution'])
             ->map(fn ($row): array => [
+                'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY,
                 'institution' => $row->institution,
                 'branch' => null,
                 'source' => 'CIBI Credit / Loan',
-            ])
-            ->all();
+            ]));
 
         $destination = collect($existingTargets)->map(fn ($target): array => [
+            'inquiry_type' => $this->value($target, 'inquiry_type') ?: CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution' => $this->value($target, 'institution_name'),
             'branch' => $this->value($target, 'branch_location'),
         ])->all();
 
-        return array_map(
-            fn (array $candidate): array => [
-                'institution_name' => $candidate['institution'],
-                'branch_location' => $candidate['branch'],
-                'source' => $candidate['source'],
-            ],
-            $this->missingPairs(array_merge($candidates, $loanCandidates), $destination),
-        );
+        return array_map(fn (array $candidate): array => [
+            'inquiry_type' => $candidate['inquiry_type'],
+            'institution_name' => $candidate['institution'],
+            'branch_location' => $candidate['branch'],
+            'source' => $candidate['source'],
+        ], $this->missingTargets($candidates->all(), $destination, count($destination)));
     }
 
     /** @return array<int, array{institution: string, branch: string|null}> */
     public function cibiBankAccountsFromTargets(ClientFolder $folder, ?CoMaker $person, iterable $existingAccounts = []): array
     {
-        $targets = $this->bankTargets($folder, $person);
-        $destination = collect($existingAccounts)->map(fn ($account): array => [
+        $existingAccounts = collect($existingAccounts);
+        $destination = $existingAccounts->map(fn ($account): array => [
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution' => $this->value($account, 'institution'),
             'branch' => $this->value($account, 'branch'),
         ])->all();
 
-        return array_map(
-            fn (array $candidate): array => [
-                'institution' => $candidate['institution'],
-                'branch' => $candidate['branch'],
-            ],
-            $this->missingPairs($targets, $destination),
-        );
+        return array_map(fn (array $candidate): array => [
+            'institution' => $candidate['institution'],
+            'branch' => $candidate['branch'],
+        ], $this->missingTargets(
+            $this->bankTargets($folder, $person, CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK),
+            $destination,
+            $existingAccounts->count(),
+        ));
     }
 
     /** @return array<int, array{institution: string}> */
     public function cibiLoanRecordsFromTargets(ClientFolder $folder, ?CoMaker $person, iterable $existingLoans = []): array
     {
-        $targets = $this->bankTargets($folder, $person);
         $existingLoans = collect($existingLoans);
-        $existingNames = $existingLoans
-            ->map(fn ($loan): string => $this->normalize($this->value($loan, 'institution')))
-            ->filter()
-            ->flip();
-        $seen = [];
-        $candidates = [];
+        $destination = $existingLoans->map(fn ($loan): array => [
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY,
+            'institution' => $this->value($loan, 'institution'),
+            'branch' => null,
+        ])->all();
 
-        foreach ($targets as $target) {
-            $key = $this->normalize($target['institution']);
-            if ($key === '' || isset($seen[$key]) || $existingNames->has($key)) {
-                continue;
-            }
-
-            $seen[$key] = true;
-            $candidates[] = ['institution' => $target['institution']];
-        }
-
-        $remaining = max(0, self::ROW_LIMIT - $existingLoans->count());
-
-        return array_slice($candidates, 0, $remaining);
+        return array_map(fn (array $candidate): array => ['institution' => $candidate['institution']], $this->missingTargets(
+            $this->bankTargets($folder, $person, CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY),
+            $destination,
+            $existingLoans->count(),
+        ));
     }
 
-    /** @return array<int, array{institution: string, branch: string|null, source: string}> */
-    private function bankTargets(ClientFolder $folder, ?CoMaker $person): array
+    /** @return array<int, array{inquiry_type: string, institution: string, branch: string|null, source: string}> */
+    private function bankTargets(ClientFolder $folder, ?CoMaker $person, string $inquiryType): array
     {
         $this->assertPersonBelongsToFolder($folder, $person);
 
         return $folder->activities()
             ->where('co_maker_id', $person?->id)
             ->whereHas('definition', fn ($query) => $query->where('code', ActivityDefinition::BANK_COOP_CHECK_CODE))
-            ->with(['bankTargets' => fn ($query) => $query->oldest('id')])
-            ->oldest('id')
-            ->get()
+            ->with(['bankTargets' => fn ($query) => $query->where('inquiry_type', $inquiryType)->oldest('id')])
+            ->oldest('id')->get()
             ->flatMap(fn ($activity) => $activity->bankTargets->map(fn ($target): array => [
+                'inquiry_type' => $target->inquiry_type,
                 'institution' => $target->institution_name,
-                'branch' => $target->branch_location,
+                'branch' => $inquiryType === CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY ? null : $target->branch_location,
                 'source' => 'Bank / Coop Check',
-            ]))
-            ->values()
-            ->all();
+            ]))->values()->all();
     }
 
     /**
-     * @param  array<int, array{institution: mixed, branch?: mixed, source?: string}>  $candidates
-     * @param  array<int, array{institution: mixed, branch?: mixed}>  $destination
-     * @return array<int, array{institution: string, branch: string|null, source: string}>
+     * @param  array<int, array{inquiry_type: string, institution: mixed, branch?: mixed, source?: string}>  $candidates
+     * @param  array<int, array{inquiry_type: string, institution: mixed, branch?: mixed}>  $destination
+     * @return array<int, array{inquiry_type: string, institution: string, branch: string|null, source: string}>
      */
-    private function missingPairs(array $candidates, array $destination): array
+    private function missingTargets(array $candidates, array $destination, int $destinationCount): array
     {
-        $destinationCount = count($destination);
-        $candidates = $this->deduplicatePairs($candidates);
-        $destination = $this->deduplicatePairs($destination);
-        $destinationByInstitution = collect($destination)->groupBy(fn (array $row): string => $this->normalize($row['institution']));
-        $missing = array_values(array_filter($candidates, function (array $candidate) use ($destinationByInstitution): bool {
-            $sameInstitution = $destinationByInstitution->get($this->normalize($candidate['institution']), collect());
-            if ($sameInstitution->isEmpty()) {
-                return true;
-            }
-
-            $candidateBranch = $this->normalize($candidate['branch']);
-            $destinationBranches = $sameInstitution
-                ->map(fn (array $row): string => $this->normalize($row['branch']))
-                ->unique()
-                ->values();
-
-            if ($destinationBranches->contains($candidateBranch)) {
-                return false;
-            }
-
-            // A single branch-bearing row and a blank row are an unambiguous representation of
-            // the same institution. Do not manufacture a duplicate, and never overwrite either.
-            if ($candidateBranch === '' && $destinationBranches->count() === 1) {
-                return false;
-            }
-
-            return ! ($destinationBranches->count() === 1 && $destinationBranches->first() === '');
-        }));
-        $remaining = max(0, self::ROW_LIMIT - $destinationCount);
-
-        return array_slice($missing, 0, $remaining);
-    }
-
-    /**
-     * @param  array<int, array{institution: mixed, branch?: mixed, source?: string}>  $rows
-     * @return array<int, array{institution: string, branch: string|null, source: string}>
-     */
-    private function deduplicatePairs(array $rows): array
-    {
-        $unique = [];
+        $destinationKeys = collect($destination)->map(fn (array $row): string => $this->identity($row))->filter()->flip();
         $seen = [];
+        $missing = [];
 
-        foreach ($rows as $row) {
-            $institution = is_string($row['institution'] ?? null) ? $row['institution'] : '';
-            $branch = is_string($row['branch'] ?? null) && $this->normalize($row['branch']) !== '' ? $row['branch'] : null;
-            $institutionKey = $this->normalize($institution);
-            if ($institutionKey === '') {
+        foreach ($candidates as $candidate) {
+            $row = $this->canonical($candidate);
+            $key = $this->identity($row);
+            if ($key === '' || isset($seen[$key]) || $destinationKeys->has($key)) {
                 continue;
             }
-
-            $pairKey = $institutionKey."\0".$this->normalize($branch);
-            if (isset($seen[$pairKey])) {
-                continue;
-            }
-
-            $seen[$pairKey] = true;
-            $unique[] = [
-                'institution' => $institution,
-                'branch' => $branch,
-                'source' => $row['source'] ?? '',
-            ];
+            $seen[$key] = true;
+            $missing[] = $row;
         }
 
-        $explicitBranchCounts = collect($unique)
-            ->groupBy(fn (array $row): string => $this->normalize($row['institution']))
-            ->map(fn ($group): int => $group
-                ->map(fn (array $row): string => $this->normalize($row['branch']))
-                ->filter()
-                ->unique()
-                ->count());
+        return array_slice($missing, 0, max(0, self::ROW_LIMIT - $destinationCount));
+    }
 
-        return array_values(array_filter($unique, function (array $row) use ($explicitBranchCounts): bool {
-            if ($this->normalize($row['branch']) !== '') {
-                return true;
-            }
+    private function canonical(array $row): array
+    {
+        $type = $row['inquiry_type'];
+        $institution = is_string($row['institution'] ?? null) ? $row['institution'] : '';
+        $branch = $type === CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY
+            ? null
+            : (is_string($row['branch'] ?? null) && $this->normalize($row['branch']) !== '' ? $row['branch'] : null);
 
-            // A branchless source is redundant only when exactly one explicit branch exists.
-            // With multiple branches it remains separate because choosing one would be a guess.
-            return $explicitBranchCounts->get($this->normalize($row['institution']), 0) !== 1;
-        }));
+        return ['inquiry_type' => $type, 'institution' => $institution, 'branch' => $branch, 'source' => $row['source'] ?? ''];
+    }
+
+    private function identity(array $row): string
+    {
+        $institution = $this->normalize($row['institution'] ?? null);
+        if ($institution === '') {
+            return '';
+        }
+        $type = (string) ($row['inquiry_type'] ?? '');
+        $branch = $type === CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY ? '' : $this->normalize($row['branch'] ?? null);
+
+        return $type."\0".$institution."\0".$branch;
     }
 
     private function normalize(mixed $value): string
