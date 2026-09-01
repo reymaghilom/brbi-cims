@@ -1,5 +1,6 @@
 @php
     $rows = old($section);
+    $hasOldInput = $rows !== null;
     if ($rows === null) {
         $rows = $records->map(function ($record) use ($section) {
             $row = $record->toArray();
@@ -17,6 +18,15 @@
             return $row;
         })->all();
     }
+    $prefillRows = match($section) {
+        'bank_accounts' => $bankAccountPrefillRows ?? [],
+        'loan_records' => $loanRecordPrefillRows ?? [],
+        default => [],
+    };
+    if (! $hasOldInput && $prefillRows !== []) {
+        $rows = array_merge($rows, array_map(fn (array $row): array => $row + ['_prefill' => true], $prefillRows));
+    }
+    $prefilledCount = ! $hasOldInput ? count($prefillRows) : 0;
     // III (Bank) and IV (Loan) always show a minimum of 3 rows so encoders have room to work in
     // without first clicking "Add". V (Income Sources Validation) starts with just 1 — the extra
     // blank rows are display-only either way and are dropped on save (SaveCibiReport never
@@ -29,4 +39,4 @@
         default => ['Income Source Validated', 'Stability', 'Key Information', ''],
     };
 @endphp
-<section id="{{ $section }}-section" class="cibi-paper-section scroll-mt-24" data-repeater="{{ $section }}"><header class="cibi-section-heading flex items-start justify-between gap-3"><h2>{{ $title }}</h2><button type="button" class="ui-button-secondary !min-h-9 !px-3 !py-1.5 text-xs" data-repeater-add>+ {{ $addLabel }}</button></header><div class="cibi-entry-table-wrap overflow-x-auto rounded-control border border-ui-border"><table @class(['cibi-entry-table min-w-full', 'cibi-bank-entry-table' => $section === 'bank_accounts', 'cibi-loan-entry-table' => $section === 'loan_records', 'cibi-income-entry-table' => $section === 'income_summaries'])><thead><tr>@foreach($headers as $header)<th scope="col">{{ $header }}</th>@endforeach</tr></thead><tbody data-repeater-rows>@foreach($rows as $index => $row)@include('client-folders.cibi-report._official-table-row', compact('section', 'index', 'row') + ['template' => false])@endforeach</tbody></table></div><template data-repeater-template>@include('client-folders.cibi-report._official-table-row', ['section' => $section, 'index' => '__INDEX__', 'row' => [], 'template' => true])</template>@error($section)<p class="ui-error mt-3" role="alert">{{ $message }}</p>@enderror</section>
+<section id="{{ $section }}-section" class="cibi-paper-section scroll-mt-24" data-repeater="{{ $section }}"><header class="cibi-section-heading flex items-start justify-between gap-3"><h2>{{ $title }}</h2><button type="button" class="ui-button-secondary !min-h-9 !px-3 !py-1.5 text-xs" data-repeater-add>+ {{ $addLabel }}</button></header>@if($prefilledCount > 0)<p class="mx-4 mt-3 rounded-control border border-brand-primary/20 bg-brand-soft px-3 py-2 text-xs leading-5 text-brand-primary" data-cibi-bank-prefill-note="{{ $section }}">{{ $prefilledCount }} {{ str('institution')->plural($prefilledCount) }} prefilled from Bank / Coop Check. These rows remain unsaved until you save this report.</p>@endif<div class="cibi-entry-table-wrap overflow-x-auto rounded-control border border-ui-border"><table @class(['cibi-entry-table min-w-full', 'cibi-bank-entry-table' => $section === 'bank_accounts', 'cibi-loan-entry-table' => $section === 'loan_records', 'cibi-income-entry-table' => $section === 'income_summaries'])><thead><tr>@foreach($headers as $header)<th scope="col">{{ $header }}</th>@endforeach</tr></thead><tbody data-repeater-rows>@foreach($rows as $index => $row)@include('client-folders.cibi-report._official-table-row', compact('section', 'index', 'row') + ['template' => false])@endforeach</tbody></table></div><template data-repeater-template>@include('client-folders.cibi-report._official-table-row', ['section' => $section, 'index' => '__INDEX__', 'row' => [], 'template' => true])</template>@error($section)<p class="ui-error mt-3" role="alert">{{ $message }}</p>@enderror</section>

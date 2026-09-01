@@ -528,8 +528,8 @@ class CiActivityBankTargetsTest extends TestCase
         $detail->assertOk()
             ->assertSee('data-bank-target-complete', false)
             ->assertSee('id="complete-bank-target-'.$scheduled->id.'"', false)
-            ->assertSee('Mark as Completed?')
-            ->assertSee('BDO – Carmen Branch')
+            ->assertSee('Mark as completed?')
+            ->assertSee('Mark BDO – Carmen Branch as completed?')
             ->assertSee('This confirms that the Bank / Coop check for this institution has been completed.')
             ->assertSee('Mark Completed');
         foreach ([$pending, $scheduled, $followUp] as $incompleteTarget) {

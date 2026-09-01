@@ -107,6 +107,19 @@
             <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
             <div class="flex items-start justify-between gap-4 border-b border-ui-border px-5 py-4 sm:px-6"><div><h2 class="text-lg font-bold text-brand-sidebar">Add Bank / Coop</h2><p class="mt-1 text-sm text-text-muted">Add another institution to this activity.</p></div><button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close"><x-ui.icon name="close" size="size-5" /></button></div>
             <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+                @if($bankInstitutionPrefillCandidates !== [])
+                    <div class="mb-4 rounded-control border border-brand-primary/20 bg-brand-soft/60 p-3" data-bank-target-prefill-list>
+                        <p class="text-xs font-bold text-brand-sidebar">Available from this person&rsquo;s CIBI report</p>
+                        <p class="mt-1 text-xs leading-5 text-text-muted">Choose a candidate to fill empty fields. Existing values are never replaced.</p>
+                        <div class="mt-2 flex flex-wrap gap-2">
+                            @foreach($bankInstitutionPrefillCandidates as $candidate)
+                                <button type="button" class="ui-button-secondary-compact !text-left" data-bank-target-prefill data-institution="{{ $candidate['institution_name'] }}" data-branch="{{ $candidate['branch_location'] }}" title="{{ $candidate['source'] }}">
+                                    {{ $candidate['institution_name'] }}@if($candidate['branch_location']) <span class="font-normal text-text-muted">&mdash; {{ $candidate['branch_location'] }}</span>@endif
+                                </button>
+                            @endforeach
+                        </div>
+                    </div>
+                @endif
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div><label for="add-institution-name" class="ui-label">Bank / Coop Name</label><input id="add-institution-name" name="institution_name" value="{{ old('institution_name') }}" class="ui-control" maxlength="255" required><x-form.validation-message for="institution_name" /></div>
                     <div><label for="add-branch-location" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="add-branch-location" name="branch_location" value="{{ old('branch_location') }}" class="ui-control" maxlength="255"><x-form.validation-message for="branch_location" /></div>
@@ -125,9 +138,9 @@
             $completionLabel = $target->institution_name.($target->branch_location ? ' – '.$target->branch_location : '');
         @endphp
         @if($target->status !== App\Enums\ActivityStatus::Completed)
-            <x-ui.confirmation-dialog id="complete-bank-target-{{ $target->id }}" title="Mark as Completed?" :action="route('client-folders.activities.bank-targets.complete', [$clientFolder, $activity, $target])" method="PATCH" confirm-label="Mark Completed">
+            <x-ui.confirmation-dialog id="complete-bank-target-{{ $target->id }}" title="Mark as completed?" :action="route('client-folders.activities.bank-targets.complete', [$clientFolder, $activity, $target])" method="PATCH" confirm-label="Mark Completed">
                 <div class="space-y-2">
-                    <p class="font-semibold text-text-main">{{ $completionLabel }}</p>
+                    <p class="font-semibold text-text-main">Mark {{ $completionLabel }} as completed?</p>
                     <p>This confirms that the Bank / Coop check for this institution has been completed.</p>
                 </div>
                 <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
@@ -187,6 +200,22 @@
 
             document.querySelectorAll('[data-bank-target-form]').forEach((form) => {
                 if (form instanceof HTMLFormElement) syncForm(form);
+            });
+            document.querySelectorAll('[data-bank-target-prefill]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    const dialog = button.closest('dialog');
+                    const institution = dialog?.querySelector('[name="institution_name"]');
+                    const branch = dialog?.querySelector('[name="branch_location"]');
+                    if (!(institution instanceof HTMLInputElement) || !(branch instanceof HTMLInputElement)) return;
+
+                    const candidateInstitution = button.dataset.institution ?? '';
+                    const normalize = (value) => value.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+                    if (institution.value.trim() !== '' && normalize(institution.value) !== normalize(candidateInstitution)) return;
+                    if (institution.value.trim() === '') institution.value = candidateInstitution;
+                    if (branch.value.trim() === '') branch.value = button.dataset.branch ?? '';
+                    institution.dispatchEvent(new Event('input', { bubbles: true }));
+                    institution.focus();
+                });
             });
             document.querySelectorAll('[data-bank-target-follow-up]').forEach((button) => {
                 button.addEventListener('click', () => {

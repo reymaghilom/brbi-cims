@@ -11,6 +11,7 @@ use App\Models\CiActivity;
 use App\Models\CiActivityBankTarget;
 use App\Models\ClientFolder;
 use App\Services\ClientFolders\ActivePersonResolver;
+use App\Services\ClientFolders\BankInstitutionPrefill;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -18,7 +19,11 @@ use Illuminate\View\View;
 
 class CiActivityBankTargetController extends Controller
 {
-    public function show(ClientFolder $clientFolder, CiActivity $ciActivity): View
+    public function show(
+        ClientFolder $clientFolder,
+        CiActivity $ciActivity,
+        BankInstitutionPrefill $prefill,
+    ): View
     {
         Gate::authorize('view', $clientFolder);
         Gate::authorize('update', $ciActivity);
@@ -34,6 +39,11 @@ class CiActivityBankTargetController extends Controller
             'activity' => $ciActivity,
             'activePerson' => $activePerson,
             'statuses' => ActivityStatus::cases(),
+            'bankInstitutionPrefillCandidates' => $prefill->bankTargetsFromCibi(
+                $clientFolder,
+                $activePerson,
+                $ciActivity->bankTargets,
+            ),
         ]);
     }
 

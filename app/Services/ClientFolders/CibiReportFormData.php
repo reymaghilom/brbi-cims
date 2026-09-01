@@ -8,7 +8,10 @@ use App\Models\CoMaker;
 
 class CibiReportFormData
 {
-    public function __construct(private readonly ClientNameFormatter $names) {}
+    public function __construct(
+        private readonly ClientNameFormatter $names,
+        private readonly BankInstitutionPrefill $bankInstitutionPrefill,
+    ) {}
 
     public function for(ClientFolder $clientFolder, ?CoMaker $activePerson = null): array
     {
@@ -58,6 +61,16 @@ class CibiReportFormData
             'defaultStartDate' => $defaultStartDate,
             'personalSnapshot' => $personalSnapshot,
             'summaryTotals' => $summaryTotals,
+            'bankAccountPrefillRows' => $this->bankInstitutionPrefill->cibiBankAccountsFromTargets(
+                $clientFolder,
+                $activePerson,
+                $clientFolder->cibiReport?->bankAccounts ?? [],
+            ),
+            'loanRecordPrefillRows' => $this->bankInstitutionPrefill->cibiLoanRecordsFromTargets(
+                $clientFolder,
+                $activePerson,
+                $clientFolder->cibiReport?->loanRecords ?? [],
+            ),
             'partyTypes' => PartyType::cases(),
             'addresses' => $clientFolder->addresses->keyBy(fn ($address): string => $address->address_type->value),
             'purposeOptions' => [

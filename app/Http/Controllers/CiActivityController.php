@@ -20,6 +20,7 @@ use App\Models\CiActivity;
 use App\Models\ClientFolder;
 use App\Models\MediaReference;
 use App\Services\ClientFolders\ActivePersonResolver;
+use App\Services\ClientFolders\BankInstitutionPrefill;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -29,7 +30,7 @@ use Illuminate\View\View;
 
 class CiActivityController extends Controller
 {
-    public function index(ClientFolder $clientFolder): View
+    public function index(ClientFolder $clientFolder, BankInstitutionPrefill $prefill): View
     {
         Gate::authorize('view', $clientFolder);
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
@@ -149,6 +150,7 @@ class CiActivityController extends Controller
             'visibleActivityIds' => $visibleActivities->pluck('id'),
             'existingDefinitionIds' => $activities->pluck('activity_definition_id')->unique(),
             'activePerson' => $activePerson,
+            'bankInstitutionPrefillCandidates' => $prefill->bankTargetsFromCibi($clientFolder, $activePerson),
             'coMakers' => $clientFolder->coMakers()->oldest('id')->get(),
             'definitions' => ActivityDefinition::query()
                 ->select(['id', 'name', 'code'])

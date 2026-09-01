@@ -511,6 +511,19 @@
                 <div class="sm:col-span-2" data-standard-activity-field @if($addingNewActivityType || $addingBankCoopCheck) hidden @endif><label for="activity-remarks" class="ui-label">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="activity-remarks" name="remarks" rows="3" class="ui-control" placeholder="Add concise operational details." data-ci-activity-remarks @disabled($addingNewActivityType || $addingBankCoopCheck)>{{ old('remarks') }}</textarea><x-form.validation-message for="remarks" /></div>
                 <section class="sm:col-span-2 rounded-card border border-ui-border bg-surface-subtle/50 p-3.5 sm:p-4" data-bank-targets-section @if(! $addingBankCoopCheck) hidden @endif>
                     <div><h3 class="text-xs font-bold uppercase tracking-wide text-brand-sidebar">Banks / Cooperatives</h3><p class="mt-1 text-xs text-text-muted">Add each institution with its own status and schedule.</p></div>
+                    @if($bankInstitutionPrefillCandidates !== [])
+                        <div class="mt-3 rounded-control border border-brand-primary/20 bg-brand-soft/60 p-3" data-bank-prefill-candidates>
+                            <p class="text-xs font-bold text-brand-sidebar">Available from this person&rsquo;s CIBI report</p>
+                            <p class="mt-1 text-xs leading-5 text-text-muted">Choose an institution to fill an empty target row. Existing values are never replaced.</p>
+                            <div class="mt-2 flex flex-wrap gap-2">
+                                @foreach($bankInstitutionPrefillCandidates as $candidate)
+                                    <button type="button" class="ui-button-secondary-compact !text-left" data-bank-prefill-candidate data-institution="{{ $candidate['institution_name'] }}" data-branch="{{ $candidate['branch_location'] }}" title="{{ $candidate['source'] }}">
+                                        {{ $candidate['institution_name'] }}@if($candidate['branch_location']) <span class="font-normal text-text-muted">&mdash; {{ $candidate['branch_location'] }}</span>@endif
+                                    </button>
+                                @endforeach
+                            </div>
+                        </div>
+                    @endif
                     <div class="mt-3 space-y-3" data-bank-target-rows>
                         @foreach($bankTargetRows as $index => $target)
                             @php
@@ -820,6 +833,7 @@
             const bankTargetRows = document.querySelector('[data-bank-target-rows]');
             const bankTargetTemplate = document.querySelector('[data-bank-target-template]');
             const bankTargetAdd = document.querySelector('[data-bank-target-add]');
+            const bankPrefillCandidates = [...document.querySelectorAll('[data-bank-prefill-candidate]')];
             if (!(select instanceof HTMLInputElement)
                 || !(selector instanceof HTMLElement)
                 || !(trigger instanceof HTMLButtonElement)
@@ -913,15 +927,69 @@
                 });
             };
 
-            const addBankTargetRow = () => {
+            const addBankTargetRow = (focus = true) => {
                 const html = bankTargetTemplate.innerHTML.replaceAll('__INDEX__', String(nextBankTargetIndex++));
                 bankTargetRows.insertAdjacentHTML('beforeend', html);
                 const row = currentBankTargetRows().at(-1);
                 if (row) {
                     bindBankTargetRow(row);
                     syncBankTargetRows();
-                    row.querySelector('input')?.focus();
+                    if (focus) row.querySelector('input')?.focus();
                 }
+
+                return row ?? null;
+            };
+
+            const normalizeBankPrefill = (value) => value.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+            const applyBankPrefillCandidate = (button) => {
+                const institution = button.dataset.institution ?? '';
+                const branch = button.dataset.branch ?? '';
+                const institutionKey = normalizeBankPrefill(institution);
+                const branchKey = normalizeBankPrefill(branch);
+                if (institutionKey === '') return;
+
+                const rows = currentBankTargetRows();
+                const sameInstitution = rows.filter((row) => {
+                    const name = row.querySelector('[name$="[institution_name]"]');
+                    return name instanceof HTMLInputElement && normalizeBankPrefill(name.value) === institutionKey;
+                });
+                const exact = sameInstitution.find((row) => {
+                    const location = row.querySelector('[name$="[branch_location]"]');
+                    return location instanceof HTMLInputElement && normalizeBankPrefill(location.value) === branchKey;
+                });
+                if (exact) {
+                    exact.querySelector('[name$="[institution_name]"]')?.focus();
+                    return;
+                }
+
+                let target = branchKey !== ''
+                    ? sameInstitution.find((row) => {
+                        const location = row.querySelector('[name$="[branch_location]"]');
+                        return location instanceof HTMLInputElement && location.value.trim() === '';
+                    })
+                    : (sameInstitution.length === 1 ? sameInstitution[0] : null);
+                if (target && branchKey === '') {
+                    target.querySelector('[name$="[institution_name]"]')?.focus();
+                    return;
+                }
+
+                target ??= rows.find((row) => {
+                    const name = row.querySelector('[name$="[institution_name]"]');
+                    const location = row.querySelector('[name$="[branch_location]"]');
+                    return name instanceof HTMLInputElement
+                        && location instanceof HTMLInputElement
+                        && name.value.trim() === ''
+                        && location.value.trim() === '';
+                });
+                target ??= addBankTargetRow(false);
+                const name = target?.querySelector('[name$="[institution_name]"]');
+                const location = target?.querySelector('[name$="[branch_location]"]');
+                if (!(name instanceof HTMLInputElement) || !(location instanceof HTMLInputElement)) return;
+
+                if (name.value.trim() === '') name.value = institution;
+                if (location.value.trim() === '') location.value = branch;
+                name.dispatchEvent(new Event('input', { bubbles: true }));
+                name.focus();
             };
 
             const syncBankTargetSection = () => {
@@ -930,6 +998,8 @@
                 if (! bankTargetSection.hidden && currentBankTargetRows().length === 0) addBankTargetRow();
                 syncBankTargetRows();
             };
+
+            bankPrefillCandidates.forEach((button) => button.addEventListener('click', () => applyBankPrefillCandidate(button)));
 
             const syncAttachmentName = () => {
                 const fileName = attachment.files?.[0]?.name ?? '';
@@ -1493,10 +1563,28 @@
             modalBody.addEventListener('click', (event) => {
                 const trigger = event.target.closest('[data-modal-open]');
                 const close = event.target.closest('[data-modal-close]');
+                const prefill = event.target.closest('[data-bank-target-prefill]');
                 if (close) {
                     event.preventDefault();
                     event.stopPropagation();
                     close.closest('dialog')?.close();
+                    return;
+                }
+                if (prefill instanceof HTMLButtonElement) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const dialog = prefill.closest('dialog');
+                    const institution = dialog?.querySelector('[name="institution_name"]');
+                    const branch = dialog?.querySelector('[name="branch_location"]');
+                    if (!(institution instanceof HTMLInputElement) || !(branch instanceof HTMLInputElement)) return;
+
+                    const candidateInstitution = prefill.dataset.institution ?? '';
+                    const normalize = (value) => value.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+                    if (institution.value.trim() !== '' && normalize(institution.value) !== normalize(candidateInstitution)) return;
+                    if (institution.value.trim() === '') institution.value = candidateInstitution;
+                    if (branch.value.trim() === '') branch.value = prefill.dataset.branch ?? '';
+                    institution.dispatchEvent(new Event('input', { bubbles: true }));
+                    institution.focus();
                     return;
                 }
                 if (! trigger) return;
