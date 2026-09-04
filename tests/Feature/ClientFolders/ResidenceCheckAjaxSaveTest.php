@@ -10,6 +10,7 @@ use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Mockery\MockInterface;
 use Tests\TestCase;
 
 /**
@@ -49,7 +50,7 @@ class ResidenceCheckAjaxSaveTest extends TestCase
 
         $response->assertOk()->assertJson([
             'result' => 'success',
-            'message' => 'Residence Check saved successfully. Photos uploaded to cloud storage.',
+            'message' => 'Residence Check saved successfully. Files saved to Cloud Storage (Cloudinary).',
             'status_type' => 'success',
         ]);
         $response->assertJsonStructure(['return_url']);
@@ -94,7 +95,7 @@ class ResidenceCheckAjaxSaveTest extends TestCase
         // an unrelated request could age out before the reload read it).
         $response->assertOk()->assertJson([
             'result' => 'success',
-            'message' => 'Residence Check updated successfully. Photos uploaded to cloud storage.',
+            'message' => 'Residence Check updated successfully. Files saved to Cloud Storage (Cloudinary).',
             'status_type' => 'success',
         ]);
         $response->assertJsonStructure(['return_url']);
@@ -123,7 +124,7 @@ class ResidenceCheckAjaxSaveTest extends TestCase
 
         $response->assertOk()->assertJson([
             'result' => 'success',
-            'message' => 'Residence Check updated successfully. Media uploaded to cloud storage.',
+            'message' => 'Residence Check updated successfully. Files saved to Cloud Storage (Cloudinary).',
         ]);
     }
 
@@ -131,7 +132,7 @@ class ResidenceCheckAjaxSaveTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
-        // No mockCloud() — Cloud Storage genuinely isn't configured for this test.
+        // No mockCloud() — this save runs in the pilot default (Local) Evidence Storage mode.
 
         $response = $this->ajaxPost($ci, $folder, [
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
@@ -139,7 +140,7 @@ class ResidenceCheckAjaxSaveTest extends TestCase
 
         $response->assertOk()->assertJson([
             'result' => 'success',
-            'message' => 'Residence Check saved successfully.',
+            'message' => 'Residence Check saved successfully. Files saved to Local Storage.',
         ]);
     }
 
@@ -160,7 +161,7 @@ class ResidenceCheckAjaxSaveTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
-        $this->mockCloud()->shouldReceive('store')->once()->andThrow(new CloudMediaUploadException());
+        $this->mockCloud()->shouldReceive('store')->once()->andThrow(new CloudMediaUploadException);
 
         $response = $this->ajaxPost($ci, $folder, [
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
@@ -211,12 +212,13 @@ class ResidenceCheckAjaxSaveTest extends TestCase
 
         $check = $folder->residenceChecks()->firstOrFail();
         $response->assertRedirect(route('client-folders.residence-checks.edit', [$folder, $check]));
-        $response->assertSessionHas('status', 'Residence Check saved successfully.');
+        $response->assertSessionHas('status', 'Residence Check saved successfully. Files saved to Local Storage.');
     }
 
     /** Binds a mock CloudinaryMediaStorage (enabled() => true by default) and remembers it on $this->mockedCloud for further expectations — same convention as CloudinaryMediaTest. */
-    private function mockCloud(): \Mockery\MockInterface
+    private function mockCloud(): MockInterface
     {
+        $this->useCloudEvidenceStorage();
         $this->mockedCloud = $this->mock(CloudinaryMediaStorage::class, function ($mock) {
             $mock->shouldReceive('enabled')->andReturn(true);
         });

@@ -3,61 +3,19 @@
 namespace Tests\Feature\Dashboard;
 
 use App\Enums\ClientFolderStatus;
-use App\Enums\GenerationStatus;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\CiActivity;
 use App\Models\ClientFolder;
-use App\Models\GeneratedReport;
 use App\Models\User;
-use App\Services\Dashboard\DashboardData;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class DashboardTest extends TestCase
 {
     use RefreshDatabase;
-
-    public function test_administrator_summary_counts_all_active_authorized_folders_and_completed_reports(): void
-    {
-        $administrator = User::factory()->administrator()->create();
-        $firstCi = User::factory()->create();
-        $secondCi = User::factory()->create();
-        $first = ClientFolder::factory()->create(['assigned_ci_id' => $firstCi->id, 'status' => ClientFolderStatus::OnProgress]);
-        $second = ClientFolder::factory()->create(['assigned_ci_id' => $firstCi->id, 'status' => ClientFolderStatus::Completed]);
-        $third = ClientFolder::factory()->create(['assigned_ci_id' => $secondCi->id, 'status' => ClientFolderStatus::Completed]);
-        $deleted = ClientFolder::factory()->create(['assigned_ci_id' => $secondCi->id]);
-        $deleted->delete();
-
-        GeneratedReport::factory()->create(['client_folder_id' => $first->id, 'generated_by' => $firstCi->id, 'status' => GenerationStatus::Completed]);
-        GeneratedReport::factory()->create(['client_folder_id' => $second->id, 'generated_by' => $firstCi->id, 'status' => GenerationStatus::Completed]);
-        GeneratedReport::factory()->create(['client_folder_id' => $third->id, 'generated_by' => $secondCi->id, 'status' => GenerationStatus::Processing]);
-
-        $response = $this->actingAs($administrator)->get(route('home'));
-
-        $response->assertOk();
-        $this->assertSame(['total' => 3, 'on_progress' => 1, 'completed' => 2, 'reports_generated' => 2], $response->viewData('summary'));
-    }
-
-    public function test_credit_investigator_counts_cover_the_shared_workspace(): void
-    {
-        $ci = User::factory()->create();
-        $otherCi = User::factory()->create();
-        $ownProgress = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'status' => ClientFolderStatus::OnProgress]);
-        $ownCompleted = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'status' => ClientFolderStatus::Completed]);
-        $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'status' => ClientFolderStatus::Completed]);
-
-        GeneratedReport::factory()->create(['client_folder_id' => $ownProgress->id, 'generated_by' => $ci->id, 'status' => GenerationStatus::Completed]);
-        GeneratedReport::factory()->create(['client_folder_id' => $otherFolder->id, 'generated_by' => $otherCi->id, 'status' => GenerationStatus::Completed]);
-
-        $response = $this->actingAs($ci)->get(route('home'));
-
-        $this->assertSame(['total' => 3, 'on_progress' => 1, 'completed' => 2, 'reports_generated' => 2], $response->viewData('summary'));
-        $this->assertCount(3, $response->viewData('recentFolders'));
-        $this->assertTrue($response->viewData('recentFolders')->contains($ownCompleted));
-        $this->assertTrue($response->viewData('recentFolders')->contains($otherFolder));
-    }
 
     public function test_recent_folders_show_the_shared_workspace_without_folder_numbers(): void
     {
@@ -66,7 +24,7 @@ class DashboardTest extends TestCase
         ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'AUTHORIZED RECENT CLIENT', 'folder_number' => 'BRBI-CI-2026-10001']);
         ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'SHARED WORKSPACE CLIENT', 'folder_number' => 'BRBI-CI-2026-10002']);
 
-        $this->actingAs($ci)->get(route('home'))
+        $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('AUTHORIZED RECENT CLIENT')
             ->assertDontSee('BRBI-CI-2026-10001')
@@ -82,7 +40,7 @@ class DashboardTest extends TestCase
 
         CiActivity::create(['client_folder_id' => $ownFolder->id, 'activity_definition_id' => $ownDefinition->id, 'name' => 'Residence Check', 'visited_by' => 'Assigned Investigator', 'remarks' => 'Authorized activity remarks.', 'updated_by' => $ci->id]);
 
-        $response = $this->actingAs($ci)->get(route('home'));
+        $response = $this->actingAs($ci)->get(route('client-folders.index'));
 
         $response->assertSee('AUTHORIZED ACTIVITY CLIENT')
             ->assertDontSee('Recent CI Activities')
@@ -94,11 +52,9 @@ class DashboardTest extends TestCase
     {
         $ci = User::factory()->create();
 
-        $this->actingAs($ci)->get(route('home'))
+        $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('No client folders yet')
-            ->assertSee('No completed folders yet.')
-            ->assertSee('No generated reports yet.')
             ->assertSee('data-modal-open="create-client-folder-dialog"', false)
             ->assertSee('id="create-client-folder-dialog"', false)
             ->assertSee('action="'.route('client-folders.store').'"', false)
@@ -114,16 +70,10 @@ class DashboardTest extends TestCase
     {
         $ci = User::factory()->create();
         ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $response = $this->actingAs($ci)->get(route('home'));
+        $response = $this->actingAs($ci)->get(route('client-folders.index'));
 
         $response->assertOk()
-            ->assertSee('sm:grid-cols-2 xl:grid-cols-4', false)
-            ->assertSeeInOrder(['Dashboard summary', 'data-folder-browser'], false)
             ->assertDontSee('Digital Filing Cabinet')
-            ->assertSee('grid gap-2 sm:grid-cols-2 xl:grid-cols-4', false)
-            ->assertSee('bg-surface-muted px-3 py-2.5', false)
-            ->assertSee('size-8', false)
-            ->assertSee('text-xl font-bold tabular-nums', false)
             ->assertSee('client-folder-browser-layout', false)
             ->assertSee('client-folder-grid', false)
             ->assertSee('data-folder-preview-panel', false)
@@ -142,25 +92,6 @@ class DashboardTest extends TestCase
             ->assertDontSee('CRM')
             ->assertDontSee('Sales')
             ->assertDontSee('Inventory');
-    }
-
-    public function test_dashboard_query_count_remains_constant_with_multiple_records(): void
-    {
-        $ci = User::factory()->create();
-        $definitions = ActivityDefinition::factory()->count(8)->create();
-
-        foreach (range(1, 8) as $index) {
-            $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-            CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $definitions[$index - 1]->id, 'name' => "Activity $index", 'updated_by' => $ci->id]);
-        }
-
-        DB::flushQueryLog();
-        DB::enableQueryLog();
-        app(DashboardData::class)->for($ci);
-        $queryCount = count(DB::getQueryLog());
-        DB::disableQueryLog();
-
-        $this->assertLessThanOrEqual(9, $queryCount);
     }
 
     public function test_dashboard_folder_browser_preserves_policy_scoped_search_filters_sorting_and_pagination(): void
@@ -184,7 +115,7 @@ class DashboardTest extends TestCase
             'status' => ClientFolderStatus::OnProgress,
         ]);
 
-        $response = $this->actingAs($ci)->get(route('home', [
+        $response = $this->actingAs($ci)->get(route('client-folders.index', [
             'search' => 'MATCHING',
             'status' => 'on_progress',
             'sort' => 'created',
@@ -213,7 +144,7 @@ class DashboardTest extends TestCase
             'folder_number' => 'BRBI-CI-2026-88001',
             'progress_percent' => 50,
         ]);
-        $this->actingAs($ci)->get(route('home'))
+        $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('role="listbox"', false)
             ->assertSee('role="option"', false)
@@ -227,7 +158,7 @@ class DashboardTest extends TestCase
             ->assertSee('Business / Income Sources')
             ->assertSee('Residence &amp; Business Report', false)
             ->assertSee('CI Activities')
-            ->assertSee(route('client-folders.media.index', $folder), false)
+            ->assertDontSee('/client-folders/'.$folder->id.'/media', false)
             ->assertSee('Generated Reports')
             ->assertSee('Attachments / Documents')
             ->assertDontSee('View Client Info')
@@ -260,11 +191,11 @@ class DashboardTest extends TestCase
             'updated_by' => $updater->id,
             // Stored in UTC (app timezone); these are the UTC instants for
             // Aug 9, 2026 9:42 AM and Aug 21, 2026 3:18 PM in Asia/Manila (UTC+8).
-            'created_at' => \Illuminate\Support\Carbon::parse('2026-08-09 01:42:00', 'UTC'),
-            'updated_at' => \Illuminate\Support\Carbon::parse('2026-08-21 07:18:00', 'UTC'),
+            'created_at' => Carbon::parse('2026-08-09 01:42:00', 'UTC'),
+            'updated_at' => Carbon::parse('2026-08-21 07:18:00', 'UTC'),
         ]);
 
-        $this->actingAs($ci)->get(route('home'))
+        $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('client-folder-preview-'.$folder->id, false)
             ->assertSeeInOrder(['Created', 'Aug 9, 2026', '9:42 AM', 'by REASAN MARK Q. GURA'])
@@ -283,7 +214,7 @@ class DashboardTest extends TestCase
             'updated_by' => null,
         ]);
 
-        $this->actingAs($ci)->get(route('home'))
+        $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('client-folder-preview-'.$folder->id, false)
             ->assertSeeInOrder(['by ORIGINAL CREATOR', 'Last updated'])
@@ -296,7 +227,7 @@ class DashboardTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED']);
 
-        $this->actingAs($ci)->get(route('home'))
+        $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSeeInOrder(['client-folder-preview-'.$folder->id, 'Folder History'], false);
     }
@@ -306,7 +237,7 @@ class DashboardTest extends TestCase
         $ci = User::factory()->create();
         ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
 
-        $this->actingAs($ci)->get(route('home'))
+        $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertDontSee('Folder History');
     }
@@ -330,7 +261,7 @@ class DashboardTest extends TestCase
         AuditLog::where('client_folder_id', $folder->id)->where('metadata->new_name', 'REYES, JUAN JR.')
             ->update(['created_at' => '2026-08-23 03:45:00']);
 
-        $this->actingAs($first)->get(route('home'))
+        $this->actingAs($first)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSeeInOrder([
                 '11:45 AM', 'Folder Updated', 'REYES, JUAN', 'REYES, JUAN JR.', 'REY C. MAGHILOM',
@@ -350,7 +281,7 @@ class DashboardTest extends TestCase
         AuditLog::where('client_folder_id', $folder->id)->where('action', 'client_folder.created')
             ->update(['created_at' => '2026-08-23 01:42:00']);
 
-        $this->actingAs($creator)->get(route('home'))
+        $this->actingAs($creator)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSeeInOrder(['Aug 23, 2026', '9:42 AM', 'Folder Created', 'by REASAN MARK Q. GURA']);
     }
@@ -374,7 +305,7 @@ class DashboardTest extends TestCase
             AuditLog::create($event + ['user_id' => $ci->id, 'client_folder_id' => $folder->id, 'metadata' => []]);
         }
 
-        $content = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+        $content = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
         $modalStart = strpos($content, 'id="folder-history-dialog"');
         $modalEnd = strpos($content, '</dialog>', $modalStart);
         $modal = substr($content, $modalStart, $modalEnd - $modalStart);
@@ -398,7 +329,7 @@ class DashboardTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $owner->id]);
         $this->actingAs($owner)->patch(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED']);
 
-        $this->actingAs($other)->get(route('home'))
+        $this->actingAs($other)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('Folder History')
             ->assertSee('RENAMED');
@@ -411,7 +342,7 @@ class DashboardTest extends TestCase
         $own = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'OWN BROWSER FOLDER']);
         $other = ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'SHARED BROWSER FOLDER']);
 
-        $response = $this->actingAs($ci)->get(route('home'));
+        $response = $this->actingAs($ci)->get(route('client-folders.index'));
 
         $response->assertOk()
             ->assertSee('OWN BROWSER FOLDER')
@@ -436,7 +367,7 @@ class DashboardTest extends TestCase
     {
         $ci = User::factory()->create();
 
-        $this->actingAs($ci)->get(route('home', ['status' => 'deleted', 'sort' => 'unknown']))
+        $this->actingAs($ci)->get(route('client-folders.index', ['status' => 'deleted', 'sort' => 'unknown']))
             ->assertSessionHasErrors(['status', 'sort']);
     }
 }

@@ -145,7 +145,7 @@ class RecentActivityAccountabilityTest extends TestCase
         AuditLog::where('client_folder_id', $folder->id)->where('action', 'client_folder.renamed')
             ->update(['created_at' => '2026-08-23 05:55:00']);
 
-        $this->actingAs($ci)->get(route('home'))
+        $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSeeInOrder(['Folder History', 'Aug 23, 2026', '1:55 PM']);
     }

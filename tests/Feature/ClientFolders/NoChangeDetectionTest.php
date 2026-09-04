@@ -9,6 +9,7 @@ use App\Models\CoMaker;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -171,8 +172,10 @@ class NoChangeDetectionTest extends TestCase
         $this->assertSame(1, $check->photos()->count());
         $this->assertSame($storedPhotoPath, $check->photos()->firstOrFail()->path);
         $this->assertSame($storedScreenshotPath, $check->map_screenshot_path);
-        Storage::disk('local')->assertExists($storedPhotoPath);
-        Storage::disk('local')->assertExists($storedScreenshotPath);
+        // Local mode writes into the CI Team document tree (see EvidenceStorageSetting).
+        $documents = app(CiTeamDocumentStorage::class);
+        $this->assertTrue($documents->disk()->exists($storedPhotoPath));
+        $this->assertTrue($documents->disk()->exists($storedScreenshotPath));
     }
 
     public function test_real_residence_check_remarks_edit_still_updates_normally(): void
@@ -306,7 +309,7 @@ class NoChangeDetectionTest extends TestCase
 
         // Folder History is a live query (no cache to invalidate) — the very next Dashboard
         // render must already show the fresh rename event.
-        $content = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+        $content = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
         $this->assertStringContainsString('Folder Updated', $content);
         $this->assertStringContainsString('MICABALO', $content);
         $this->assertStringContainsString('MICABALO, RONILO CABIGAS', $content);
@@ -322,7 +325,7 @@ class NoChangeDetectionTest extends TestCase
 
         $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'MICABALO, RONILO CABIGAS'])->assertRedirect();
 
-        $content = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+        $content = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
         $this->assertStringContainsString('Folder Created', $content);
         $this->assertStringContainsString('Folder Updated', $content);
         $this->assertSame(2, AuditLog::where('client_folder_id', $folder->id)->whereIn('action', ['client_folder.created', 'client_folder.renamed'])->count());

@@ -213,7 +213,7 @@ class ClientFolderIndexTest extends TestCase
             ->assertSee('data-business-report-url="'.route('client-folders.income-sources.index', $folder).'"', false)
             ->assertSee('data-business-report-frame', false)
             ->assertSee(route('client-folders.generated-reports.index', $folder), false)
-            ->assertSee(route('client-folders.media.index', $folder), false);
+            ->assertDontSee('/client-folders/'.$folder->id.'/media', false);
     }
 
     public function test_rename_and_recycle_actions_use_accessible_modals_and_existing_backend_routes(): void

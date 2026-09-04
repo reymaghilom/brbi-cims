@@ -40,11 +40,6 @@ class MediaReference extends Model
         return $this->belongsTo(IncomeSource::class);
     }
 
-    public function documentation(): BelongsTo
-    {
-        return $this->belongsTo(ResidenceBusinessDocumentation::class, 'residence_business_documentation_id');
-    }
-
     public function uploader(): BelongsTo
     {
         return $this->belongsTo(User::class, 'uploaded_by');

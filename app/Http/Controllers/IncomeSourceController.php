@@ -416,13 +416,11 @@ class IncomeSourceController extends Controller
         return $folder->incomeSources()
             ->where('co_maker_id', $activePerson?->id)
             ->where('revision', 1)
-            ->with(['template', 'businessReport', 'businessCheck.investigator:id,full_name', 'businessDocumentation'])
+            ->with(['template', 'businessReport', 'businessCheck.investigator:id,full_name'])
             ->whereHas('template', fn ($query) => $query
                 ->where('is_fallback', false)
                 ->where('form_handler', 'dedicated-business'))
-            ->where(fn ($query) => $query
-                ->whereHas('businessCheck')
-                ->orWhereHas('businessDocumentation'))
+            ->whereHas('businessCheck')
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
@@ -514,15 +512,6 @@ class IncomeSourceController extends Controller
                     'main_business_address' => $check->location,
                     'start_date' => $check->ci_date,
                 ]));
-            } else {
-                $documentation = $incomeSource->businessDocumentation()->first();
-                if ($documentation !== null) {
-                    $incomeSource->setRelation('businessReport', new BusinessReport([
-                        'income_source_id' => $incomeSource->id,
-                        'business_name' => $incomeSource->displayName(),
-                        'main_business_address' => $documentation->location,
-                    ]));
-                }
             }
 
             return;

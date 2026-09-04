@@ -77,10 +77,9 @@
                          collections (by revision) are placed one after another. --}}
                     @foreach($checkFirstCandidates as $candidate)
                         @php($candidateCheck = $candidate->businessCheck)
-                        @php($candidateDocumentation = $candidate->businessDocumentation)
                         <tr class="align-middle transition hover:bg-surface-subtle/70" data-business-row
                             data-sort-business_name="{{ strtolower($candidate->displayName()) }}"
-                            data-sort-address="{{ strtolower($candidateCheck?->location ?? $candidateDocumentation?->location ?? '') }}"
+                            data-sort-address="{{ strtolower($candidateCheck?->location ?? '') }}"
                             data-sort-ci_date="{{ optional($candidateCheck?->ci_date)->format('Y-m-d') ?? '' }}"
                         >
                             <td class="py-3 pl-3 pr-1"><span class="sr-only">Report Pending — not yet selectable for bulk actions</span></td>
@@ -91,7 +90,7 @@
                                     <p class="mt-0.5 text-xs leading-5 text-text-muted">Business Check created by: {{ $candidateCheck->investigator->full_name }}</p>
                                 @endif
                             </td>
-                            <td class="px-3 py-3 break-words text-xs leading-5 text-text-muted">{{ $candidateCheck?->location ?: ($candidateDocumentation?->location ?: '—') }}</td>
+                            <td class="px-3 py-3 break-words text-xs leading-5 text-text-muted">{{ $candidateCheck?->location ?: '—' }}</td>
                             <td class="px-3 py-3 text-xs leading-5 text-text-muted">{{ $candidateCheck?->ci_date?->format('M j, Y') ?? '—' }}</td>
                             <td class="px-3 py-3">
                                 <span class="inline-flex items-center rounded-full bg-progress-soft px-2 py-0.5 text-xs font-bold text-progress">Report Pending</span>

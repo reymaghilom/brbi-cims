@@ -73,8 +73,9 @@ class ClientFolderContentsTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk()->assertSee('Residence & Business Report');
         $contents->assertSee('Generated Reports')->assertSee(route('client-folders.generated-reports.index', $folder), false);
         $this->actingAs($ci)->get(route('client-folders.generated-reports.index', $folder))->assertOk()->assertSee('Protected official artifacts');
-        $contents->assertSee('Photos &amp; Videos', false)->assertSee(route('client-folders.media.index', $folder), false);
-        $this->actingAs($ci)->get(route('client-folders.media.index', $folder))->assertOk()->assertSee('Protected field evidence');
+        $contents->assertDontSee('Photos &amp; Videos', false)->assertDontSee('/client-folders/'.$folder->id.'/media', false);
+        $this->actingAs($ci)->get('/client-folders/'.$folder->id.'/media')->assertNotFound();
+        $this->actingAs($ci)->get(route('client-folders.modules.show', [$folder, 'media']))->assertNotFound();
 
         foreach ($modules as $key => $title) {
             $contents->assertSee($title)->assertSee(route('client-folders.modules.show', [$folder, $key]), false);
@@ -162,7 +163,7 @@ class ClientFolderContentsTest extends TestCase
         $this->assertSame('draft', $modules['cibi-report']['state']);
         $this->assertSame('in_progress', $modules['income-sources']['state']);
         $this->assertNull($modules['income-sources']['description']);
-        $this->assertSame('not_started', $modules['media']['state']);
+        $this->assertFalse($modules->has('media'));
     }
 
     public function test_income_source_count_summary_is_never_rendered_for_any_business_count(): void

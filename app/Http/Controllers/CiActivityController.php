@@ -26,6 +26,7 @@ use App\Models\MediaReference;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\BankInstitutionPrefill;
 use App\Services\ClientFolders\CiActivityHistoryFeed;
+use App\Services\Media\EvidenceStorageRecorder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -316,14 +317,21 @@ class CiActivityController extends Controller
         CiActivity $ciActivity,
         MediaReference $mediaReference,
         ReplaceCiActivityProof $replace,
+        EvidenceStorageRecorder $storage,
     ): RedirectResponse|JsonResponse {
         $watermark = CiActivityHistoryFeed::watermark();
+        $storage->reset();
         $replace->execute($request->user(), $clientFolder, $ciActivity, $mediaReference, $request->file('attachment'));
 
         if ($request->expectsJson()) {
             $history = CiActivityHistoryFeed::since($clientFolder, $watermark, $ciActivity->co_maker_id);
 
-            return response()->json(['replaced' => true, 'history' => CiActivityHistoryFeed::renderHtml($history)]);
+            return response()->json([
+                'replaced' => true,
+                'history' => CiActivityHistoryFeed::renderHtml($history),
+                'storage_provider' => $storage->provider(),
+                'storage_label' => $storage->label(),
+            ]);
         }
 
         $activePerson = ActivePersonResolver::resolve($clientFolder, $ciActivity->co_maker_id);
@@ -331,7 +339,7 @@ class CiActivityController extends Controller
         return redirect()->route(
             'client-folders.activities.edit',
             [$clientFolder, $ciActivity] + ActivePersonResolver::queryParams($activePerson),
-        )->with('status', 'Proof attachment replaced successfully.');
+        )->with('status', trim('Supporting Proof replaced successfully.'.($storage->label() === null ? '' : ' New file saved to '.$storage->label().'.')));
     }
 
     public function storeProof(
@@ -339,15 +347,22 @@ class CiActivityController extends Controller
         ClientFolder $clientFolder,
         CiActivity $ciActivity,
         AddCiActivityProofPhotos $addPhotos,
+        EvidenceStorageRecorder $storage,
     ): RedirectResponse|JsonResponse {
         $watermark = CiActivityHistoryFeed::watermark();
+        $storage->reset();
         $photos = $request->file('photos', []);
         $addPhotos->execute($request->user(), $clientFolder, $ciActivity, is_array($photos) ? $photos : []);
 
         if ($request->expectsJson()) {
             $history = CiActivityHistoryFeed::since($clientFolder, $watermark, $ciActivity->co_maker_id);
 
-            return response()->json(['added' => true, 'history' => CiActivityHistoryFeed::renderHtml($history)]);
+            return response()->json([
+                'added' => true,
+                'history' => CiActivityHistoryFeed::renderHtml($history),
+                'storage_provider' => $storage->provider(),
+                'storage_label' => $storage->label(),
+            ]);
         }
 
         $activePerson = ActivePersonResolver::resolve($clientFolder, $ciActivity->co_maker_id);
@@ -355,7 +370,7 @@ class CiActivityController extends Controller
         return redirect()->route(
             'client-folders.activities.edit',
             [$clientFolder, $ciActivity] + ActivePersonResolver::queryParams($activePerson),
-        )->with('status', 'Supporting proof added successfully.');
+        )->with('status', trim('Supporting Proof uploaded successfully.'.($storage->label() === null ? '' : ' Files saved to '.$storage->label().'.')));
     }
 
     public function removeProof(

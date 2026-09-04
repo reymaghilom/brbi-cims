@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\ClientFolders;
 
+use App\Exceptions\CloudMediaUploadException;
 use App\Models\ClientFolder;
 use App\Models\User;
 use App\Services\Media\CloudinaryMediaStorage;
@@ -9,6 +10,7 @@ use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Mockery\MockInterface;
 use Tests\TestCase;
 
 /**
@@ -73,8 +75,8 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $script = file_get_contents(resource_path('js/app.js'));
 
         $this->assertStringContainsString('field.getStagedPhotoFiles = () => [...files];', $script);
-        $this->assertStringContainsString("payload.delete(photoInput.name);", $script);
-        $this->assertStringContainsString("stagedPhotos.forEach((file) => payload.append(photoInput.name, file, file.name));", $script);
+        $this->assertStringContainsString('payload.delete(photoInput.name);', $script);
+        $this->assertStringContainsString('stagedPhotos.forEach((file) => payload.append(photoInput.name, file, file.name));', $script);
         $this->assertStringContainsString("statusText.textContent = 'Uploading media to cloud storage…';", $script);
         $this->assertStringContainsString("statusText.textContent = 'Saving Residence Check…';", $script);
     }
@@ -102,7 +104,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
-        ])->assertSessionHas('status', 'Residence Check saved successfully. Photos uploaded to cloud storage.');
+        ])->assertSessionHas('status', 'Residence Check saved successfully. Files saved to Cloud Storage (Cloudinary).');
     }
 
     public function test_success_message_mentions_media_when_only_a_map_screenshot_was_newly_uploaded_to_cloud_storage(): void
@@ -123,7 +125,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id, 'map_screenshot' => UploadedFile::fake()->image('Map.png', 800, 600)->size(400),
-        ])->assertSessionHas('status', 'Residence Check updated successfully. Media uploaded to cloud storage.');
+        ])->assertSessionHas('status', 'Residence Check updated successfully. Files saved to Cloud Storage (Cloudinary).');
     }
 
     public function test_success_message_stays_plain_when_no_new_cloud_media_was_uploaded(): void
@@ -147,12 +149,12 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
-        // No mockCloud() here — Cloudinary is genuinely not configured for this test, matching
-        // ResidencePictureRequiredTest's own default local-storage path.
+        // No mockCloud() here — this save runs in the pilot default (Local) Evidence Storage mode,
+        // so the message must name Local Storage rather than cloud storage.
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
-        ])->assertSessionHas('status', 'Residence Check saved successfully.');
+        ])->assertSessionHas('status', 'Residence Check saved successfully. Files saved to Local Storage.');
     }
 
     public function test_no_change_status_message_is_unaffected_by_cloud_wording(): void
@@ -177,7 +179,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
-        $this->mockCloud()->shouldReceive('store')->once()->andThrow(new \App\Exceptions\CloudMediaUploadException());
+        $this->mockCloud()->shouldReceive('store')->once()->andThrow(new CloudMediaUploadException);
 
         $response = $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'remarks' => 'Keep this remark.',
@@ -198,7 +200,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
         $this->mockCloud()->shouldReceive('store')->once()
-            ->andThrow(new \App\Exceptions\CloudMediaUploadException());
+            ->andThrow(new CloudMediaUploadException);
 
         $response = $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
@@ -231,7 +233,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
 
         $this->mockedCloud->shouldReceive('store')->once()
             ->with(\Mockery::type(UploadedFile::class), 'residence/map-screenshots', 'map_screenshot')
-            ->andThrow(new \App\Exceptions\CloudMediaUploadException());
+            ->andThrow(new CloudMediaUploadException);
         $this->mockedCloud->shouldNotReceive('destroy');
 
         $response = $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
@@ -246,8 +248,9 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
     }
 
     /** Binds a mock CloudinaryMediaStorage (enabled() => true by default) and remembers it on $this->mockedCloud for further expectations — same convention as CloudinaryMediaTest. */
-    private function mockCloud(): \Mockery\MockInterface
+    private function mockCloud(): MockInterface
     {
+        $this->useCloudEvidenceStorage();
         $this->mockedCloud = $this->mock(CloudinaryMediaStorage::class, function ($mock) {
             $mock->shouldReceive('enabled')->andReturn(true);
         });

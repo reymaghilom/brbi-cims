@@ -28,6 +28,9 @@ class CiActivityHistoryAutoUpdateTest extends TestCase
         parent::setUp();
         $this->seed(ReferenceDataSeeder::class);
         Storage::fake('local');
+        // These cases assert Cloudinary-backed behavior, so they run with the administrator's
+        // Evidence Storage setting in Cloud mode (the pilot default is Local).
+        $this->useCloudEvidenceStorage();
     }
 
     // ==================================================

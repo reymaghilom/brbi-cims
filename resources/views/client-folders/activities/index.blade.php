@@ -322,7 +322,7 @@
                                                     <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
                                                 @else
                                                     <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#notes-title" role="menuitem" class="client-folder-menu-item">View notes</a>
-                                                    <a href="{{ route('client-folders.media.index', [$clientFolder] + $personParams) }}" role="menuitem" class="client-folder-menu-item">Manage proof</a>
+                                                    <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#media-title" role="menuitem" class="client-folder-menu-item">Manage proof</a>
                                                     @if($activity->status === App\Enums\ActivityStatus::Completed)
                                                         <button type="button" role="menuitem" class="client-folder-menu-item" data-modal-open="reopen-activity-{{ $activity->id }}">Reopen Activity</button>
                                                     @endif

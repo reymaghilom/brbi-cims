@@ -44,9 +44,7 @@
     {{-- TOP TOOLBAR — its own card, a complete sibling of the animated layout below. It is not
          inside the main content container, not inside the animated grid, and not inside the
          preview container, so that grid's animated grid-template-columns can never resize or
-         reposition any control in here. Same separation principle as the Photos & Videos page,
-         whose tab/panel toolbar row likewise sits above (never inside) its animated support-panel
-         grid. `min-w-0` throughout is deliberate: flex items default to `min-width: auto`, which
+         reposition any control in here. `min-w-0` throughout is deliberate: flex items default to `min-width: auto`, which
          — combined with the search's own intrinsic content width — is exactly what can force a
          flex row wider than its container and produce an unwanted horizontal scrollbar; every
          flexible piece here is explicitly allowed to shrink below its content's natural size
@@ -77,8 +75,7 @@
         {{-- Far right, after Create — the last flex child in a row that no longer has any
              auto-margin group to travel with; Search filling the remaining space already pins
              this to the end of the row. Two separate buttons — not one button with a swapped
-             icon/label — the same technique, and the same wording, as the Photos & Videos support
-             panel: it lets the pre-paint CSS above show the correct one immediately via a plain
+             icon/label: it lets the pre-paint CSS above show the correct one immediately via a plain
              [hidden] attribute, with no JS needed to settle the initial label/icon before first
              paint. --}}
         <div class="hidden shrink-0 xl:block" data-folder-toolbar-preview-toggle data-dashboard-preview-toggle>
@@ -215,7 +212,6 @@
                 ['label' => 'Business / Income Sources', 'description' => 'Business information and income-source evaluation', 'icon' => 'folder', 'tone' => 'violet', 'url' => route('client-folders.income-sources.index', $clientFolder)],
                 ['label' => 'Residence & Business Report', 'description' => 'Residence and business verification', 'icon' => 'report', 'tone' => 'orange', 'url' => route('client-folders.residence-business.edit', $clientFolder)],
                 ['label' => 'CI Activities', 'description' => 'Field investigation checklist and findings', 'icon' => 'activity', 'tone' => 'green', 'url' => route('client-folders.activities.index', $clientFolder)],
-                ['label' => 'Photos & Videos', 'description' => 'Investigation photos and videos', 'icon' => 'media', 'tone' => 'blue', 'url' => route('client-folders.media.index', $clientFolder)],
                 ['label' => 'Generated Reports', 'description' => 'PDF/DOCX reports ready for download and printing', 'icon' => 'report', 'tone' => 'red', 'url' => route('client-folders.generated-reports.index', $clientFolder)],
                 ['label' => 'Attachments / Documents', 'description' => 'Supporting documents', 'icon' => 'attachment', 'tone' => 'neutral', 'url' => route('client-folders.modules.show', [$clientFolder, 'attachments'])],
             ];

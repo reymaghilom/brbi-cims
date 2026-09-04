@@ -23,7 +23,6 @@
             'income-sources' => route('client-folders.income-sources.manage', [$clientFolder] + $personParams),
             'residence-business' => route('client-folders.residence-business.edit', [$clientFolder] + $personParams),
             'generated-reports' => route('client-folders.generated-reports.index', [$clientFolder] + $personParams),
-            'media' => route('client-folders.media.index', [$clientFolder] + $personParams),
         ];
         $moduleHref = fn (array $module) => $moduleRoutes[$module['key']] ?? route('client-folders.modules.show', [$clientFolder, $module['key']]);
         $displayTimezone = config('cims.display_timezone');
@@ -31,7 +30,6 @@
         $moduleBadges = [
             'income-sources' => $countBadge($clientFolder->income_sources_count, 'Business'),
             'activities' => $countBadge($clientFolder->activities_count, 'Activity'),
-            'media' => $countBadge($clientFolder->media_references_count, 'File'),
             'generated-reports' => $countBadge($clientFolder->generated_reports_count, 'Report'),
             'attachments' => $countBadge($clientFolder->attachments_count, 'File'),
             'google-drive' => $countBadge($clientFolder->drive_references_count, 'Reference'),

@@ -19,6 +19,8 @@ use App\Models\User;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CiParticipantService;
 use App\Services\Media\CloudinaryMediaStorage;
+use App\Services\Media\EvidenceStorageRecorder;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
@@ -55,10 +57,12 @@ class BusinessCheckController extends Controller
         return redirect()->route('client-folders.business-checks.edit', [$clientFolder, $businessCheck] + $personParams)->with('status', 'Contributors updated successfully.');
     }
 
-    public function store(SaveBusinessCheckRequest $request, ClientFolder $clientFolder, SaveBusinessCheck $save): RedirectResponse|JsonResponse
+    public function store(SaveBusinessCheckRequest $request, ClientFolder $clientFolder, SaveBusinessCheck $save, EvidenceStorageRecorder $storage): RedirectResponse|JsonResponse
     {
         $personParams = ActivePersonResolver::queryParams(ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id')));
         $wantsJson = $request->expectsJson();
+        // The recorder only ever describes THIS save, never anything an earlier one stored.
+        $storage->reset();
 
         try {
             $check = $save->execute($request->user(), $clientFolder, $request->validated());
@@ -73,13 +77,19 @@ class BusinessCheckController extends Controller
         // wasRecentlyCreated is Eloquent's own "this exact save() call inserted a new row" flag,
         // set inside SaveBusinessCheck::execute() and left untouched by its closing ->refresh() —
         // reading it here distinguishes Add from Update without changing that action's save logic.
-        $message = $check->wasRecentlyCreated ? 'Business Check saved successfully.' : 'Business Check updated successfully.';
+        $baseMessage = $check->wasRecentlyCreated ? 'Business Check saved successfully.' : 'Business Check updated successfully.';
+        // Named from where the files in THIS request actually landed — a text-only save keeps the
+        // plain message; see ResidenceCheckController::store() for the same rule.
+        $storageLabel = $storage->label();
+        $message = trim($baseMessage.($storageLabel === null ? '' : ' Files saved to '.$storageLabel.'.'));
 
         if ($wantsJson) {
             return response()->json([
                 'result' => 'success',
                 'message' => $message,
                 'status_type' => 'success',
+                'storage_provider' => $storage->provider(),
+                'storage_label' => $storageLabel,
                 'return_url' => route('client-folders.residence-business.edit', [$clientFolder] + $personParams),
             ]);
         }
@@ -114,8 +124,11 @@ class BusinessCheckController extends Controller
 
         $thumbnail = $wantsThumbnail && filled($photo->thumbnail_path);
         $path = $thumbnail ? $photo->thumbnail_path : $photo->path;
-        $disk = Storage::disk(config('cims.media_disk'));
-        abort_unless(filled($path) && $disk->exists($path), 404);
+        abort_unless(filled($path), 404);
+        // The record's own stored path decides where the file lives — never the current Evidence
+        // Storage setting — so pictures saved before an administrator switched modes keep opening.
+        $disk = app(CiTeamDocumentStorage::class)->evidenceDisk((string) $path);
+        abort_unless($disk->exists($path), 404);
 
         return $disk->response($path, $photo->file_name, [
             'Content-Type' => $thumbnail ? 'image/jpeg' : $photo->mime_type,
@@ -141,8 +154,11 @@ class BusinessCheckController extends Controller
 
         $thumbnail = $wantsThumbnail && filled($businessCheck->map_screenshot_thumbnail_path);
         $path = $thumbnail ? $businessCheck->map_screenshot_thumbnail_path : $businessCheck->map_screenshot_path;
-        $disk = Storage::disk(config('cims.media_disk'));
-        abort_unless(filled($path) && $disk->exists($path), 404);
+        abort_unless(filled($path), 404);
+        // The record's own stored path decides where the file lives — never the current Evidence
+        // Storage setting — so pictures saved before an administrator switched modes keep opening.
+        $disk = app(CiTeamDocumentStorage::class)->evidenceDisk((string) $path);
+        abort_unless($disk->exists($path), 404);
 
         return $disk->response($path, $businessCheck->map_screenshot_file_name ?? 'map-screenshot.jpg', [
             'Content-Type' => $thumbnail ? 'image/jpeg' : $businessCheck->map_screenshot_mime_type,
@@ -182,11 +198,10 @@ class BusinessCheckController extends Controller
         // reopening this form fresh afterward will not list it until its Report is explicitly saved.
         $businesses = $clientFolder->incomeSources()
             ->where('co_maker_id', $activePerson?->id)
-            ->with(['businessReport:id,income_source_id,main_business_address,start_date', 'businessDocumentation:id,income_source_id,location', 'template'])
+            ->with(['businessReport:id,income_source_id,main_business_address,start_date', 'template'])
             ->whereHas('template', fn ($query) => $query->where('is_fallback', false)->where('form_handler', 'dedicated-business'))
             ->where(fn ($query) => $query
                 ->where(fn ($saved) => $saved->whereHas('businessReport')->where('revision', '>', 1))
-                ->orWhereHas('businessDocumentation')
                 ->when($businessCheck, fn ($query) => $query->orWhere('id', $businessCheck->income_source_id)))
             ->where(fn ($query) => $query
                 ->whereDoesntHave('businessCheck')
@@ -196,7 +211,7 @@ class BusinessCheckController extends Controller
             ->get()
             ->map(fn ($source) => [
                 'id' => $source->id, 'name' => $source->displayName(),
-                'location' => $source->businessReport?->main_business_address ?: $source->businessDocumentation?->location,
+                'location' => $source->businessReport?->main_business_address,
                 'ci_date' => $source->businessReport?->start_date?->format('Y-m-d'),
                 'existing_check_id' => $existingChecksByIncomeSource->get($source->id)?->id,
                 // Drives the "Business Report available" / "Business Report not yet created"

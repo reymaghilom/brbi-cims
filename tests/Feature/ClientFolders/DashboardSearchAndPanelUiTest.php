@@ -14,7 +14,7 @@ class DashboardSearchAndPanelUiTest extends TestCase
     {
         $ci = User::factory()->create();
 
-        $content = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+        $content = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
 
         // Same compact 40px (min-h-10) height as the neighboring Create Client Folder button and
         // Preview Panel toggle — one intentional toolbar, not "search tall, filter compact".
@@ -39,7 +39,7 @@ class DashboardSearchAndPanelUiTest extends TestCase
     {
         $ci = User::factory()->create();
 
-        foreach ([route('home'), route('client-folders.index')] as $url) {
+        foreach ([route('client-folders.index'), route('client-folders.index')] as $url) {
             $content = $this->actingAs($ci)->get($url)->assertOk()->getContent();
             $document = new \DOMDocument;
             @$document->loadHTML($content);
@@ -86,7 +86,7 @@ class DashboardSearchAndPanelUiTest extends TestCase
     {
         $ci = User::factory()->create();
 
-        foreach ([route('home'), route('client-folders.index')] as $url) {
+        foreach ([route('client-folders.index'), route('client-folders.index')] as $url) {
             $content = $this->actingAs($ci)->get($url)->assertOk()->getContent();
 
             // Search, Create Client Folder, and the Preview toggle each sit in their own
@@ -116,7 +116,7 @@ class DashboardSearchAndPanelUiTest extends TestCase
     {
         $ci = User::factory()->create();
 
-        $content = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+        $content = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
         $document = new \DOMDocument;
         @$document->loadHTML($content);
         $xpath = new \DOMXPath($document);
@@ -167,7 +167,7 @@ class DashboardSearchAndPanelUiTest extends TestCase
     {
         $ci = User::factory()->create();
 
-        foreach ([route('home'), route('client-folders.index')] as $url) {
+        foreach ([route('client-folders.index'), route('client-folders.index')] as $url) {
             $content = $this->actingAs($ci)->get($url)->assertOk()->getContent();
 
             // Two separate Show/Hide buttons (one [hidden] by default), not one button with a
@@ -213,7 +213,7 @@ class DashboardSearchAndPanelUiTest extends TestCase
     {
         $ci = User::factory()->create();
 
-        $content = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+        $content = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
 
         $this->assertStringContainsString('placeholder="Search client name..."', $content);
         $this->assertStringContainsString('data-client-search-input', $content);
@@ -283,7 +283,7 @@ class DashboardSearchAndPanelUiTest extends TestCase
         $css = file_get_contents(resource_path('css/app.css'));
         $javascript = file_get_contents(resource_path('js/app.js'));
         $ci = User::factory()->create();
-        $blade = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+        $blade = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
 
         // Zeroing the column leaves the panel a grid item, and a grid row is as tall as its
         // tallest item — so the collapsed panel must additionally be removed from layout.
@@ -332,7 +332,7 @@ class DashboardSearchAndPanelUiTest extends TestCase
         $layout = file_get_contents(resource_path('views/layouts/app.blade.php'));
         $folderBrowser = file_get_contents(resource_path('views/dashboard/_folder-browser.blade.php'));
 
-        foreach ([route('home'), route('client-folders.index')] as $url) {
+        foreach ([route('client-folders.index'), route('client-folders.index')] as $url) {
             $content = $this->actingAs($ci)->get($url)->assertOk()->getContent();
             $document = new \DOMDocument;
             @$document->loadHTML($content);

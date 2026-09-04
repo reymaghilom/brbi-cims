@@ -20,6 +20,8 @@ use App\Services\ClientFolders\CiParticipantService;
 use App\Services\ClientFolders\PersonAddressResolver;
 use App\Services\ClientFolders\PersonCiDateResolver;
 use App\Services\Media\CloudinaryMediaStorage;
+use App\Services\Media\EvidenceStorageRecorder;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
@@ -65,12 +67,14 @@ class ResidenceCheckController extends Controller
      * submission never sends that header, so $wantsJson is false and every original
      * redirect-with-flash response is completely untouched.
      */
-    public function store(SaveResidenceCheckRequest $request, ClientFolder $clientFolder, SaveResidenceCheck $save, CloudinaryMediaStorage $cloud): RedirectResponse|JsonResponse
+    public function store(SaveResidenceCheckRequest $request, ClientFolder $clientFolder, SaveResidenceCheck $save, EvidenceStorageRecorder $storage): RedirectResponse|JsonResponse
     {
         $wasCreate = blank($request->validated('check_id'));
         $checkId = $request->validated('check_id');
         $personParams = ActivePersonResolver::queryParams(ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id')));
         $wantsJson = $request->expectsJson();
+        // The recorder only ever describes THIS save, never anything an earlier one stored.
+        $storage->reset();
 
         try {
             $check = $save->execute($request->user(), $clientFolder, $request->validated());
@@ -107,7 +111,10 @@ class ResidenceCheckController extends Controller
         }
 
         $baseMessage = $wasCreate ? 'Residence Check saved successfully.' : 'Residence Check updated successfully.';
-        $message = trim($baseMessage.' '.$this->cloudUploadSuffix($request, $cloud));
+        // Named from where the files in THIS request actually landed, so a text-only save keeps the
+        // plain message and a switched Evidence Storage setting can never mislabel an upload.
+        $storageLabel = $storage->label();
+        $message = trim($baseMessage.($storageLabel === null ? '' : ' Files saved to '.$storageLabel.'.'));
 
         if ($wantsJson) {
             // The modal closes and the parent reloads the listing page immediately on this
@@ -123,6 +130,8 @@ class ResidenceCheckController extends Controller
                 'result' => 'success',
                 'message' => $message,
                 'status_type' => 'success',
+                'storage_provider' => $storage->provider(),
+                'storage_label' => $storageLabel,
                 'return_url' => route('client-folders.residence-business.edit', [$clientFolder] + $personParams),
             ]);
         }
@@ -143,21 +152,6 @@ class ResidenceCheckController extends Controller
      * New Residence Photos take priority over a Map Screenshot when both were uploaded in the same
      * save, mirroring the Saving… loading text's own priority.
      */
-    private function cloudUploadSuffix(SaveResidenceCheckRequest $request, CloudinaryMediaStorage $cloud): string
-    {
-        if (! $cloud->enabled()) {
-            return '';
-        }
-        if (filled($request->validated('photos'))) {
-            return 'Photos uploaded to cloud storage.';
-        }
-        if (filled($request->validated('map_screenshot'))) {
-            return 'Media uploaded to cloud storage.';
-        }
-
-        return '';
-    }
-
     public function destroy(ClientFolder $clientFolder, ResidenceCheck $residenceCheck, DeleteResidenceCheck $delete): RedirectResponse
     {
         Gate::authorize('update', $clientFolder);
@@ -191,8 +185,11 @@ class ResidenceCheckController extends Controller
 
         $thumbnail = $wantsThumbnail && filled($photo->thumbnail_path);
         $path = $thumbnail ? $photo->thumbnail_path : $photo->path;
-        $disk = Storage::disk(config('cims.media_disk'));
-        abort_unless(filled($path) && $disk->exists($path), 404);
+        abort_unless(filled($path), 404);
+        // The record's own stored path decides where the file lives — never the current Evidence
+        // Storage setting — so pictures saved before an administrator switched modes keep opening.
+        $disk = app(CiTeamDocumentStorage::class)->evidenceDisk((string) $path);
+        abort_unless($disk->exists($path), 404);
 
         return $disk->response($path, $photo->file_name, [
             'Content-Type' => $thumbnail ? 'image/jpeg' : $photo->mime_type,
@@ -218,8 +215,11 @@ class ResidenceCheckController extends Controller
 
         $thumbnail = $wantsThumbnail && filled($residenceCheck->map_screenshot_thumbnail_path);
         $path = $thumbnail ? $residenceCheck->map_screenshot_thumbnail_path : $residenceCheck->map_screenshot_path;
-        $disk = Storage::disk(config('cims.media_disk'));
-        abort_unless(filled($path) && $disk->exists($path), 404);
+        abort_unless(filled($path), 404);
+        // The record's own stored path decides where the file lives — never the current Evidence
+        // Storage setting — so pictures saved before an administrator switched modes keep opening.
+        $disk = app(CiTeamDocumentStorage::class)->evidenceDisk((string) $path);
+        abort_unless($disk->exists($path), 404);
 
         return $disk->response($path, $residenceCheck->map_screenshot_file_name ?? 'map-screenshot.jpg', [
             'Content-Type' => $thumbnail ? 'image/jpeg' : $residenceCheck->map_screenshot_mime_type,

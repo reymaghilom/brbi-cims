@@ -5,7 +5,6 @@ namespace App\Services\Media;
 use App\Enums\MediaType;
 use App\Models\ClientFolder;
 use App\Models\MediaReference;
-use App\Models\ResidenceBusinessDocumentation;
 use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
@@ -29,41 +28,37 @@ class PrivateMediaStorage
         return $this->result($file, $mime, $type, $name, $path, $thumbnail, MediaReference::STORAGE_PROVIDER_LOCAL);
     }
 
-    public function storeDocumentation(ResidenceBusinessDocumentation $documentation, UploadedFile $file, string $kind): array
+    /**
+     * Stores one evidence file inside the CI Team document tree (the exact Applicant/Co-Maker
+     * directory the caller resolved) instead of the flat `client-media/...` media disk. No
+     * thumbnail is generated: these directories are browsed directly by CI staff, so a sibling
+     * `thumbnails` folder would be visible clutter — readers already fall back to the original
+     * whenever `thumbnail_path` is null.
+     */
+    public function storeInDirectory(UploadedFile $file, string $directory): array
     {
-        $documentation->loadMissing(['clientFolder', 'coMaker']);
         [$mime, $type, $extension] = $this->metadata($file);
         $name = Str::uuid()->toString().'.'.$extension;
-        try {
-            $directory = $this->documents->documentationDirectory(
-                $documentation->clientFolder,
-                $documentation->coMaker,
-                $documentation->category,
-                $kind,
-                $documentation,
-            );
-            $disk = $this->documents->disk();
-            $path = $disk->putFileAs($directory, $file, $name);
-            throw_unless(is_string($path), \RuntimeException::class);
-        } catch (\Throwable $exception) {
-            $label = match ($kind) {
-                'video' => 'video',
-                'map' => 'Google Map Screenshot',
-                default => 'picture',
-            };
-
-            throw new DocumentationStorageException("Unable to save the {$label} to local CI Team storage.", 0, $exception);
-        }
+        $directory = $this->documents->relative($directory);
+        $path = $this->documents->disk()->putFileAs($directory, $file, $name);
+        throw_unless(is_string($path), \RuntimeException::class, 'The media file could not be stored.');
 
         return $this->result($file, $mime, $type, $name, $path, null, MediaReference::STORAGE_PROVIDER_CI_TEAM);
     }
 
+    /**
+     * Deletes stored files using each path's own location, never a global setting: `client-media/`
+     * paths belong to the configured media disk and everything else to the CI Team tree, so a
+     * record saved under one Evidence Storage mode is still removed correctly under the other.
+     */
     public function deleteStoredFiles(array $paths, string $provider = MediaReference::STORAGE_PROVIDER_LOCAL): void
     {
-        $disk = $provider === MediaReference::STORAGE_PROVIDER_CI_TEAM
-            ? $this->documents->disk()
-            : Storage::disk(config('cims.media_disk'));
-        $disk->delete(array_values(array_filter($paths)));
+        foreach (array_values(array_filter($paths)) as $path) {
+            $disk = $provider === MediaReference::STORAGE_PROVIDER_CI_TEAM
+                ? $this->documents->disk()
+                : $this->documents->evidenceDisk((string) $path);
+            $disk->delete($path);
+        }
     }
 
     private function result(UploadedFile $file, string $mime, MediaType $type, string $name, string $path, ?string $thumbnail, string $provider): array

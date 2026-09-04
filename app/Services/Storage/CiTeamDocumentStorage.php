@@ -6,7 +6,6 @@ use App\Enums\OfficialReportType;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\MediaReference;
-use App\Models\ResidenceBusinessDocumentation;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -93,17 +92,45 @@ class CiTeamDocumentStorage
             return Storage::disk(config('cims.media_disk'));
         }
 
-        $path = $this->relative($path ?? (string) $media->temporary_local_path);
+        return $this->ciTeamDiskFor($path ?? (string) $media->temporary_local_path);
+    }
+
+    /**
+     * Picks the right local disk for one stored evidence path without consulting any global
+     * setting: a legacy `client-media/...` path was written by PrivateMediaStorage::store() onto
+     * the configured media disk, while anything else lives in the CI Team document tree. This is
+     * what keeps pictures saved before an Evidence Storage switch readable afterwards.
+     */
+    public function evidenceDisk(string $path): FilesystemAdapter
+    {
+        return $this->isLegacyMediaPath($path)
+            ? Storage::disk(config('cims.media_disk'))
+            : $this->ciTeamDiskFor($path);
+    }
+
+    public function isLegacyMediaPath(string $path): bool
+    {
+        return str_starts_with(str_replace('\\', '/', $path), 'client-media/');
+    }
+
+    /** Resolves a CI Team relative path against the current root, falling back to the former explicit "Clients" root for installations that still hold files there. */
+    private function ciTeamDiskFor(string $path): FilesystemAdapter
+    {
+        $path = $this->relative($path);
         $disk = $this->disk();
         if ($disk->exists($path)) {
             return $disk;
         }
 
-        $legacyDisk = Storage::build([
-            'driver' => 'local',
-            'root' => $this->root().DIRECTORY_SEPARATOR.'Clients',
-            'throw' => true,
-        ]);
+        // Read-only fallback: building a local adapter CREATES its root directory, so the legacy
+        // root is only ever opened when it genuinely exists already. Otherwise a failed lookup for
+        // a file that was never there would leave an empty "Clients" folder behind.
+        $legacyRoot = $this->root().DIRECTORY_SEPARATOR.'Clients';
+        if (! is_dir($legacyRoot)) {
+            return $disk;
+        }
+
+        $legacyDisk = Storage::build(['driver' => 'local', 'root' => $legacyRoot, 'throw' => true]);
 
         return $legacyDisk->exists($path) ? $legacyDisk : $disk;
     }
@@ -129,7 +156,48 @@ class CiTeamDocumentStorage
 
     public function personDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
     {
-        $base = $this->clientDirectory($client);
+        return $this->personDirectoryUnder($this->clientDirectory($client), $client, $coMaker);
+    }
+
+    /**
+     * Top-level directory for LOCAL field evidence: the client's name on its own, which is what CI
+     * staff actually browse by. Official report paths keep their existing "CI-#### - NAME" folder —
+     * this deliberately does not rename anything that was already written.
+     *
+     * Two client folders can legitimately carry the same name, and two different names can sanitize
+     * down to the same segment, so the plain name is only granted to the single folder that owns it
+     * unambiguously: the earliest-created folder whose display name needs no sanitizing. Every other
+     * folder keeps its own client number as a suffix, which is what makes it impossible for one
+     * client's evidence to land in another client's directory.
+     */
+    public function evidenceClientDirectory(ClientFolder $client): string
+    {
+        $rawName = trim((string) ($client->display_name ?: 'Unnamed Client'));
+        $name = $this->segment($rawName);
+
+        if ($name === $rawName && ! $this->clientNameIsShared($client, $rawName)) {
+            return $name;
+        }
+
+        return $name.' - '.$this->segment($this->filesystemClientNumber($client));
+    }
+
+    public function evidencePersonDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
+    {
+        return $this->personDirectoryUnder($this->evidenceClientDirectory($client), $client, $coMaker);
+    }
+
+    /** True when any OTHER client folder would claim the same plain-name directory. */
+    private function clientNameIsShared(ClientFolder $client, string $rawName): bool
+    {
+        return ClientFolder::withTrashed()
+            ->where('display_name', $rawName)
+            ->whereKeyNot($client->getKey())
+            ->exists();
+    }
+
+    private function personDirectoryUnder(string $base, ClientFolder $client, ?CoMaker $coMaker): string
+    {
         if ($coMaker === null) {
             return $base;
         }
@@ -138,43 +206,6 @@ class CiTeamDocumentStorage
         }
 
         return $base.'/Co-Makers/CM-'.str_pad((string) $coMaker->getKey(), 6, '0', STR_PAD_LEFT).' - '.$this->segment($coMaker->full_name ?: 'Unnamed Co-Maker');
-    }
-
-    public function residenceGoogleMapDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
-    {
-        return $this->personDirectory($client, $coMaker).'/Residence Pictures/Google Map';
-    }
-
-    public function residencePicturesDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
-    {
-        return $this->personDirectory($client, $coMaker).'/Residence Pictures/Pictures';
-    }
-
-    public function residenceVideosDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
-    {
-        return $this->personDirectory($client, $coMaker).'/Residence Pictures/Videos';
-    }
-
-    public function businessGoogleMapDirectory(ClientFolder $client, ?CoMaker $coMaker, ResidenceBusinessDocumentation $documentation): string
-    {
-        return $this->businessPicturesRoot($client, $coMaker, $documentation).'/Google Map';
-    }
-
-    public function businessPicturesDirectory(ClientFolder $client, ?CoMaker $coMaker, ResidenceBusinessDocumentation $documentation): string
-    {
-        return $this->businessPicturesRoot($client, $coMaker, $documentation).'/Pictures';
-    }
-
-    public function businessVideosDirectory(ClientFolder $client, ?CoMaker $coMaker, ResidenceBusinessDocumentation $documentation): string
-    {
-        return $this->businessPicturesRoot($client, $coMaker, $documentation).'/Videos';
-    }
-
-    private function businessPicturesRoot(ClientFolder $client, ?CoMaker $coMaker, ResidenceBusinessDocumentation $documentation): string
-    {
-        $root = $this->personDirectory($client, $coMaker).'/Business Pictures';
-
-        return $root.'/BD-'.str_pad((string) $documentation->getKey(), 6, '0', STR_PAD_LEFT);
     }
 
     public function cibiReportDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
@@ -202,15 +233,35 @@ class CiTeamDocumentStorage
         return $this->personDirectory($client, $coMaker).'/Business Check Report';
     }
 
-    public function documentationDirectory(ClientFolder $client, ?CoMaker $coMaker, string $category, string $kind, ResidenceBusinessDocumentation $documentation): string
+    /**
+     * Local homes for the three administrator-controlled evidence kinds, each nested inside the
+     * exact Applicant/Co-Maker directory beneath that client's own name (evidenceClientDirectory).
+     * Nothing here creates a directory — the folder only appears when a real file is written into
+     * it, so resolving a path for a page render leaves the filesystem untouched.
+     */
+    public function residenceCheckPicturesDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
     {
-        $business = $category === 'business';
+        return $this->evidencePersonDirectory($client, $coMaker).'/Residence Check Report/Pictures';
+    }
 
-        return match ($kind) {
-            'map' => $business ? $this->businessGoogleMapDirectory($client, $coMaker, $documentation) : $this->residenceGoogleMapDirectory($client, $coMaker),
-            'video' => $business ? $this->businessVideosDirectory($client, $coMaker, $documentation) : $this->residenceVideosDirectory($client, $coMaker),
-            default => $business ? $this->businessPicturesDirectory($client, $coMaker, $documentation) : $this->residencePicturesDirectory($client, $coMaker),
-        };
+    public function residenceCheckMapDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
+    {
+        return $this->evidencePersonDirectory($client, $coMaker).'/Residence Check Report/Google Map';
+    }
+
+    public function businessCheckPicturesDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
+    {
+        return $this->evidencePersonDirectory($client, $coMaker).'/Business Check Report/Pictures';
+    }
+
+    public function businessCheckMapDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
+    {
+        return $this->evidencePersonDirectory($client, $coMaker).'/Business Check Report/Google Map';
+    }
+
+    public function ciActivityProofDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
+    {
+        return $this->evidencePersonDirectory($client, $coMaker).'/CI Activities/Supporting Proof';
     }
 
     public function officialReportPath(ClientFolder $client, OfficialReportType $type, string $filename, ?CoMaker $coMaker = null): string

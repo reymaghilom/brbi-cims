@@ -10,7 +10,6 @@ use App\Models\ClientInformation;
 use App\Models\GeneratedReport;
 use App\Models\IncomeSource;
 use App\Models\MediaReference;
-use App\Models\ResidenceBusinessDocumentation;
 use App\Models\ResidenceBusinessReport;
 use App\Models\SystemSetting;
 use App\Models\TelegramMessage;
@@ -23,11 +22,11 @@ use App\Policies\ClientInformationPolicy;
 use App\Policies\GeneratedReportPolicy;
 use App\Policies\IncomeSourcePolicy;
 use App\Policies\MediaReferencePolicy;
-use App\Policies\ResidenceBusinessDocumentationPolicy;
 use App\Policies\ResidenceBusinessReportPolicy;
 use App\Policies\SystemSettingPolicy;
 use App\Policies\TelegramMessagePolicy;
 use App\Policies\UserPolicy;
+use App\Services\Media\EvidenceStorageRecorder;
 use App\Services\Reports\Contracts\DocxGenerator;
 use App\Services\Reports\Contracts\PdfGenerator;
 use App\Services\Reports\DompdfOfficialReportGenerator;
@@ -42,6 +41,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        // One recorder per request: ClientMediaUploader/UploadCiActivityProof write into it and the
+        // controllers read it back to name the provider a new upload actually used.
+        $this->app->scoped(EvidenceStorageRecorder::class);
         $this->app->bind(PdfGenerator::class, DompdfOfficialReportGenerator::class);
         $this->app->bind(DocxGenerator::class, PhpWordOfficialReportGenerator::class);
     }
@@ -59,7 +61,6 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(ResidenceBusinessReport::class, ResidenceBusinessReportPolicy::class);
         Gate::policy(CiActivity::class, CiActivityPolicy::class);
         Gate::policy(MediaReference::class, MediaReferencePolicy::class);
-        Gate::policy(ResidenceBusinessDocumentation::class, ResidenceBusinessDocumentationPolicy::class);
         Gate::policy(GeneratedReport::class, GeneratedReportPolicy::class);
         Gate::policy(TelegramMessage::class, TelegramMessagePolicy::class);
         Gate::policy(SystemSetting::class, SystemSettingPolicy::class);

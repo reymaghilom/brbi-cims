@@ -25,6 +25,9 @@ class CiActivityIndividualSubmitProofTest extends TestCase
         parent::setUp();
         $this->seed(ReferenceDataSeeder::class);
         Storage::fake('local');
+        // These cases assert Cloudinary-backed behavior, so they run with the administrator's
+        // Evidence Storage setting in Cloud mode (the pilot default is Local).
+        $this->useCloudEvidenceStorage();
     }
 
     public function test_non_completed_activity_renders_hidden_mark_as_submitted_link_and_modal_ready_for_async_reveal(): void

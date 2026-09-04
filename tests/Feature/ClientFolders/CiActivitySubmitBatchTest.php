@@ -25,6 +25,9 @@ class CiActivitySubmitBatchTest extends TestCase
         parent::setUp();
         $this->seed(ReferenceDataSeeder::class);
         Storage::fake('local');
+        // These cases assert Cloudinary-backed behavior, so they run with the administrator's
+        // Evidence Storage setting in Cloud mode (the pilot default is Local).
+        $this->useCloudEvidenceStorage();
     }
 
     public function test_centralized_submission_ui_is_no_longer_rendered_on_the_activities_page(): void

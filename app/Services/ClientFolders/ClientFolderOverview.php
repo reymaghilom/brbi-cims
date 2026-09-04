@@ -51,7 +51,6 @@ class ClientFolderOverview
                 'activities as required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
                 'activities as completed_required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', ActivityStatus::Completed)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
                 'activities as started_required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', '!=', ActivityStatus::Pending)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
-                'mediaReferences' => fn ($query) => $query->where('co_maker_id', $personId),
                 'generatedReports' => fn ($query) => $query->where('co_maker_id', $personId),
                 'generatedReports as completed_generated_reports_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', GenerationStatus::Completed),
                 // Dormant modules (no real UI yet) stay folder-level/unscoped — see decision #1.
@@ -64,7 +63,6 @@ class ClientFolderOverview
                 'residenceChecks' => fn ($query) => $query->where('co_maker_id', $personId),
                 'businessChecks' => fn ($query) => $query->where('co_maker_id', $personId),
                 'activities' => fn ($query) => $query->where('co_maker_id', $personId),
-                'mediaReferences' => fn ($query) => $query->where('co_maker_id', $personId),
                 'generatedReports' => fn ($query) => $query->where('co_maker_id', $personId),
                 'driveReferences', 'telegramMessages', 'attachments',
             ], 'updated_at')
@@ -116,17 +114,6 @@ class ClientFolderOverview
 
     private const MEDIA_ACTIONS = ['media.uploaded', 'media.removed'];
 
-    private const DOCUMENTATION_ACTIONS = [
-        'residence_business_documentation.created',
-        'residence_business_documentation.updated',
-        'residence_business_documentation.map_screenshot_uploaded',
-        'residence_business_documentation.map_screenshot_replaced',
-        'residence_business_documentation.map_screenshot_removed',
-        'residence_business_documentation.media_uploaded',
-        'residence_business_documentation.media_removed',
-        'residence_business_documentation.telegram_sent',
-    ];
-
     /**
      * Meaningful, person-scoped activity for the Recent Activity side panel. Folder-level
      * lifecycle events (module 'client_folders') are always included, since they belong to the
@@ -140,6 +127,23 @@ class ClientFolderOverview
      * and Co-Maker-lifecycle actions never get that line: the former belongs to no one person, the
      * latter already names the affected Co-Maker via its own 'detail'.
      */
+    /**
+     * Read-only view of the shared audit-action vocabulary above, so other surfaces (the Dashboard's
+     * Recent Activity timeline) can render the same labels/icons without duplicating the map or
+     * building a second activity-history system.
+     *
+     * @return array{label: string, icon: string}
+     */
+    public static function activityLabel(string $action): array
+    {
+        $definition = self::ACTIVITY_LABELS[$action] ?? [];
+
+        return [
+            'label' => $definition['label'] ?? str($action)->afterLast('.')->replace('_', ' ')->ucfirst()->toString(),
+            'icon' => $definition['icon'] ?? 'activity',
+        ];
+    }
+
     private const ACTIVITY_LABELS = [
         'client_folder.created' => ['label' => 'Folder created', 'icon' => 'folder'],
         'client_folder.renamed' => ['label' => 'Folder renamed', 'icon' => 'edit'],
@@ -176,14 +180,6 @@ class ClientFolderOverview
         'ci_activity.assignment_changed' => ['label' => 'CI Activity assignment updated', 'icon' => 'users', 'detail' => 'activity_title', 'person' => true],
         'media.uploaded' => ['icon' => 'media', 'person' => true],
         'media.removed' => ['icon' => 'trash', 'person' => true],
-        'residence_business_documentation.created' => ['icon' => 'media', 'person' => true],
-        'residence_business_documentation.updated' => ['icon' => 'edit', 'person' => true],
-        'residence_business_documentation.map_screenshot_uploaded' => ['icon' => 'pin', 'person' => true],
-        'residence_business_documentation.map_screenshot_replaced' => ['icon' => 'pin', 'person' => true],
-        'residence_business_documentation.map_screenshot_removed' => ['icon' => 'trash', 'person' => true],
-        'residence_business_documentation.media_uploaded' => ['icon' => 'media', 'person' => true],
-        'residence_business_documentation.media_removed' => ['icon' => 'trash', 'person' => true],
-        'residence_business_documentation.telegram_sent' => ['icon' => 'telegram', 'person' => true],
     ];
 
     /**
@@ -245,45 +241,6 @@ class ClientFolderOverview
         return $this->personActivity($folder, $activePerson, self::BUSINESS_ACTIVITY_ACTIONS);
     }
 
-    /**
-     * Authoritative Field Documentation history for one exact Applicant/Co-Maker and category.
-     * Returns up to 50 events (newest first) so both the compact 5-item panel (see
-     * client-folders.media._recent-activity, which takes(5) off this same collection) and its
-     * "View All" modal (which renders the rest) share one authoritative source — never a second
-     * query for the modal.
-     */
-    public function documentationActivity(ClientFolder $folder, ?CoMaker $activePerson, string $category, ?int $documentationId = null): Collection
-    {
-        $personId = $activePerson?->id;
-
-        return AuditLog::query()
-            ->where('client_folder_id', $folder->id)
-            ->whereIn('action', self::DOCUMENTATION_ACTIONS)
-            ->with('user:id,full_name')
-            ->latest('created_at')
-            ->latest('id')
-            ->limit(150)
-            ->get(['id', 'user_id', 'action', 'metadata', 'created_at'])
-            ->filter(function (AuditLog $event) use ($personId, $category, $documentationId): bool {
-                $metadata = (array) $event->metadata;
-
-                return array_key_exists('co_maker_id', $metadata)
-                    && $metadata['co_maker_id'] === $personId
-                    && data_get($metadata, 'category') === $category
-                    && ($category !== 'business' || data_get($metadata, 'residence_business_documentation_id') === $documentationId);
-            })
-            ->take(50)
-            ->values()
-            ->map(fn (AuditLog $event) => (object) [
-                'id' => $event->id,
-                'label' => $this->documentationActivityLabel($event->action, (array) $event->metadata),
-                'detail' => null,
-                'tone' => $this->documentationActivityTone($event->action),
-                'user' => $event->user,
-                'created_at' => $event->created_at,
-            ]);
-    }
-
     /** @param  list<string>  $actionKeys */
     private function personActivity(ClientFolder $folder, ?CoMaker $activePerson, array $actionKeys): Collection
     {
@@ -330,7 +287,6 @@ class ClientFolderOverview
                 return (object) [
                     'label' => match (true) {
                         in_array($event->action, self::MEDIA_ACTIONS, true) => $this->mediaActivityLabel($event->action, $metadata),
-                        in_array($event->action, self::DOCUMENTATION_ACTIONS, true) => $this->documentationActivityLabel($event->action, $metadata),
                         default => $definition['label'],
                     },
                     // The administrative reassignment reason is captured in metadata for the full
@@ -360,56 +316,6 @@ class ClientFolderOverview
     }
 
     /** Same success/neutral/progress tone vocabulary as CiActivityHistoryFeed::mapWithProofName(), so the shared history-entry partial renders an identical dot color scheme here. */
-    private function documentationActivityTone(string $action): string
-    {
-        return match ($action) {
-            'residence_business_documentation.map_screenshot_uploaded',
-            'residence_business_documentation.map_screenshot_replaced',
-            'residence_business_documentation.media_uploaded',
-            'residence_business_documentation.telegram_sent' => 'success',
-            default => 'neutral',
-        };
-    }
-
-    private function documentationActivityLabel(string $action, array $metadata): string
-    {
-        $category = data_get($metadata, 'category') === 'business' ? 'Business' : 'Residence';
-        $kind = data_get($metadata, 'documentation_kind') === 'video' ? 'Video' : 'Picture';
-        $count = max(1, (int) data_get($metadata, 'count', 1));
-
-        $label = match ($action) {
-            'residence_business_documentation.created' => "Saved {$category} Documentation",
-            'residence_business_documentation.updated' => $this->documentationUpdatedLabel($category, (array) data_get($metadata, 'changed_fields', [])),
-            'residence_business_documentation.map_screenshot_uploaded' => "Uploaded {$category} Google Map Screenshot",
-            'residence_business_documentation.map_screenshot_replaced' => "Replaced {$category} Google Map Screenshot",
-            'residence_business_documentation.map_screenshot_removed' => "Removed {$category} Google Map Screenshot",
-            'residence_business_documentation.media_uploaded' => "Uploaded {$count} {$category} ".str($kind)->plural($count),
-            'residence_business_documentation.media_removed' => "Removed a {$category} {$kind}",
-            'residence_business_documentation.telegram_sent' => "Sent {$category} Documentation to Telegram",
-            default => "Updated {$category} Documentation",
-        };
-
-        $businessName = data_get($metadata, 'business_name');
-
-        return $category === 'Business' && filled($businessName) ? "{$label} — {$businessName}" : $label;
-    }
-
-    /** @param list<string> $changedFields */
-    private function documentationUpdatedLabel(string $category, array $changedFields): string
-    {
-        $labels = [];
-        if (in_array('location', $changedFields, true)) {
-            $labels[] = $category === 'Residence' ? 'Address' : 'Location';
-        }
-        if (in_array('remarks', $changedFields, true)) {
-            $labels[] = 'Remarks';
-        }
-
-        return $labels === []
-            ? "Updated {$category} Documentation"
-            : "Updated {$category} ".implode(' and ', $labels);
-    }
-
     /** Compact "Business Name, Main Business Address" note built only from the safe field-name allowlist — never old/new values. Null when nothing (or nothing recognized) changed, so a no-op or first save never shows a fake "Updated:" line. */
     private function changedFieldsLabel(array $metadata): ?string
     {
@@ -436,7 +342,6 @@ class ClientFolderOverview
             $this->module('income-sources', 'Business / Income Sources', 'folder', $this->collectionState($folder->income_sources_count, $folder->completed_income_sources_count), null, $folder->income_sources_max_updated_at),
             $this->module('residence-business', 'Residence & Business Report', 'media', $this->residenceBusinessState($folder), $this->residenceBusinessDescription($folder), $this->latest($folder->residence_checks_max_updated_at, $folder->business_checks_max_updated_at)),
             $this->module('activities', 'CI Activities', 'activity', $this->activityState($folder), $this->activityDescription($folder), $folder->activities_max_updated_at),
-            $this->module('media', 'Photos & Videos', 'media', $folder->media_references_count > 0 ? 'available' : 'not_started', $this->countDescription($folder->media_references_count, 'media item'), $folder->media_references_max_updated_at),
             $this->module('generated-reports', 'Generated Reports', 'report', $this->collectionState($folder->generated_reports_count, $folder->completed_generated_reports_count), $this->countDescription($folder->generated_reports_count, 'generated report'), $folder->generated_reports_max_updated_at),
             $this->module('attachments', 'Attachments / Documents', 'attachment', $folder->attachments_count > 0 ? 'available' : 'not_started', $this->countDescription($folder->attachments_count, 'document'), $folder->attachments_max_updated_at),
             $this->module('google-drive', 'Google Drive', 'drive', $folder->drive_references_count > 0 ? 'available' : 'not_configured', $this->countDescription($folder->drive_references_count, 'Drive reference'), $folder->drive_references_max_updated_at),

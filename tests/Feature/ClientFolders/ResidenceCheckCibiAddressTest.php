@@ -7,7 +7,9 @@ use App\Models\CibiReport;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\User;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Database\Seeders\ReferenceDataSeeder;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -323,8 +325,8 @@ class ResidenceCheckCibiAddressTest extends TestCase
         $this->assertSame(1, $check->photos()->count());
         $this->assertSame($storedPhotoPath, $check->photos()->firstOrFail()->path);
         $this->assertSame($storedScreenshotPath, $check->map_screenshot_path);
-        Storage::disk('local')->assertExists($storedPhotoPath);
-        Storage::disk('local')->assertExists($storedScreenshotPath);
+        $this->assertTrue($this->evidenceDisk()->exists($storedPhotoPath));
+        $this->assertTrue($this->evidenceDisk()->exists($storedScreenshotPath));
     }
 
     public function test_batch_preview_keeps_the_saved_residence_location_after_cibi_changes(): void
@@ -389,5 +391,11 @@ class ResidenceCheckCibiAddressTest extends TestCase
                 'enabled' => '1', 'address_line_1' => $presentAddressLine1, 'is_primary' => '1',
             ]],
         ];
+    }
+
+    /** Local evidence (Residence/Business Check pictures and map screenshots) is stored in the CI Team document tree — see EvidenceStorageSetting. */
+    private function evidenceDisk(): FilesystemAdapter
+    {
+        return app(CiTeamDocumentStorage::class)->disk();
     }
 }

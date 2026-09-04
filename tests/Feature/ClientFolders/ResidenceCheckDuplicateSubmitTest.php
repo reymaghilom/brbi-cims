@@ -10,6 +10,7 @@ use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Mockery\MockInterface;
 use Tests\TestCase;
 
 /**
@@ -197,8 +198,9 @@ class ResidenceCheckDuplicateSubmitTest extends TestCase
     }
 
     /** Binds a mock CloudinaryMediaStorage (enabled() => true by default) and remembers it on $this->mockedCloud for further expectations — same convention as CloudinaryMediaTest/ResidenceCheckCloudUploadFeedbackTest. */
-    private function mockCloud(): \Mockery\MockInterface
+    private function mockCloud(): MockInterface
     {
+        $this->useCloudEvidenceStorage();
         $this->mockedCloud = $this->mock(CloudinaryMediaStorage::class, function ($mock) {
             $mock->shouldReceive('enabled')->andReturn(true);
         });

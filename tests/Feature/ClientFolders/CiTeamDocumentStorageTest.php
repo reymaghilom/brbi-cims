@@ -6,12 +6,8 @@ use App\Enums\OfficialReportType;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\MediaReference;
-use App\Models\ResidenceBusinessDocumentation;
-use App\Models\User;
-use App\Services\Media\PrivateMediaStorage;
 use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use Tests\TestCase;
@@ -154,18 +150,12 @@ class CiTeamDocumentStorageTest extends TestCase
         $coMaker = CoMaker::create(['client_folder_id' => $client->id, 'full_name' => 'John: Smith?']);
         $storage = app(CiTeamDocumentStorage::class);
 
-        $this->assertSame('CI-2026-001 - Jane Doe/Residence Pictures/Google Map', $storage->residenceGoogleMapDirectory($client));
-        $this->assertSame('CI-2026-001 - Jane Doe/Residence Pictures/Pictures', $storage->residencePicturesDirectory($client));
-        $this->assertSame('CI-2026-001 - Jane Doe/Residence Pictures/Videos', $storage->residenceVideosDirectory($client));
-        $this->assertSame('CI-2026-001 - Jane Doe/Business Pictures/Google Map', $storage->businessGoogleMapDirectory($client));
-        $this->assertSame('CI-2026-001 - Jane Doe/Business Pictures/Pictures', $storage->businessPicturesDirectory($client));
-        $this->assertSame('CI-2026-001 - Jane Doe/Business Pictures/Videos', $storage->businessVideosDirectory($client));
         $this->assertSame('CI-2026-001 - Jane Doe/CIBI Report', $storage->cibiReportDirectory($client));
         $this->assertSame('CI-2026-001 - Jane Doe/Business Report', $storage->businessReportDirectory($client));
         $this->assertSame('CI-2026-001 - Jane Doe/CI Activities', $storage->ciActivitiesDirectory($client));
         $this->assertSame('CI-2026-001 - Jane Doe/Residence Check Report', $storage->residenceCheckReportDirectory($client));
         $this->assertSame('CI-2026-001 - Jane Doe/Business Check Report', $storage->businessCheckReportDirectory($client));
-        $this->assertSame('CI-2026-001 - Jane Doe/Co-Makers/CM-'.str_pad((string) $coMaker->id, 6, '0', STR_PAD_LEFT).' - John Smith/Business Pictures/Pictures', $storage->businessPicturesDirectory($client, $coMaker));
+        $this->assertSame('CI-2026-001 - Jane Doe/Co-Makers/CM-'.str_pad((string) $coMaker->id, 6, '0', STR_PAD_LEFT).' - John Smith/Business Check Report', $storage->businessCheckReportDirectory($client, $coMaker));
     }
 
     public function test_it_rejects_traversal_and_cross_client_co_makers(): void
@@ -194,64 +184,9 @@ class CiTeamDocumentStorageTest extends TestCase
         $storage = app(CiTeamDocumentStorage::class);
 
         $this->assertNotSame($storage->personDirectory($client, $first), $storage->personDirectory($client, $second));
-        $this->assertStringContainsString('/Co-Makers/CM-', $storage->residenceVideosDirectory($client, $first));
-        $this->assertStringEndsWith('/Residence Pictures/Videos', $storage->residenceVideosDirectory($client, $first));
+        $this->assertStringContainsString('/Co-Makers/CM-', $storage->residenceCheckReportDirectory($client, $first));
+        $this->assertStringEndsWith('/Residence Check Report', $storage->residenceCheckReportDirectory($client, $first));
         $this->assertStringEndsWith('/Business Check Report', $storage->businessCheckReportDirectory($client, $first));
-    }
-
-    public function test_new_documentation_media_uses_the_ci_team_root_and_collision_safe_names(): void
-    {
-        $client = ClientFolder::factory()->create(['folder_number' => 'BRBI-CI-2026-00001', 'display_name' => 'Test Client']);
-        $creator = User::factory()->create();
-        $documentation = ResidenceBusinessDocumentation::create([
-            'client_folder_id' => $client->id,
-            'category' => ResidenceBusinessDocumentation::CATEGORY_RESIDENCE,
-            'location' => 'Test location',
-            'created_by' => $creator->id,
-        ]);
-        $storage = app(PrivateMediaStorage::class);
-
-        $first = $storage->storeDocumentation($documentation, UploadedFile::fake()->image('same.jpg'), 'picture');
-        $second = $storage->storeDocumentation($documentation, UploadedFile::fake()->image('same.jpg'), 'picture');
-
-        $this->assertSame(MediaReference::STORAGE_PROVIDER_CI_TEAM, $first['storage_provider']);
-        $this->assertStringStartsWith('CI-2026-001 - Test Client/Residence Pictures/Pictures/', $first['temporary_local_path']);
-        $this->assertStringNotContainsString('Clients/', $first['temporary_local_path']);
-        $this->assertNotSame($first['temporary_local_path'], $second['temporary_local_path']);
-        $this->assertNull($first['thumbnail_path']);
-        $this->assertNull($second['thumbnail_path']);
-        $this->assertTrue(app(CiTeamDocumentStorage::class)->disk()->exists($first['temporary_local_path']));
-        $this->assertCount(2, app(CiTeamDocumentStorage::class)->disk()->allFiles(app(CiTeamDocumentStorage::class)->residencePicturesDirectory($client)));
-        $this->assertSame([], array_values(array_filter(
-            app(CiTeamDocumentStorage::class)->disk()->allFiles(),
-            fn (string $path): bool => str_contains($path, '.thumb.jpg'),
-        )));
-    }
-
-    public function test_new_business_media_uses_business_folders_and_exact_deletion_keeps_its_sibling(): void
-    {
-        $creator = User::factory()->create();
-        $client = ClientFolder::factory()->create(['folder_number' => 'BRBI-CI-2026-00025', 'display_name' => 'Business Client']);
-        $documentation = ResidenceBusinessDocumentation::create([
-            'client_folder_id' => $client->id,
-            'category' => ResidenceBusinessDocumentation::CATEGORY_BUSINESS,
-            'location' => 'Business location',
-            'created_by' => $creator->id,
-        ]);
-        $mediaStorage = app(PrivateMediaStorage::class);
-        $first = $mediaStorage->storeDocumentation($documentation, UploadedFile::fake()->image('store.jpg'), 'picture');
-        $second = $mediaStorage->storeDocumentation($documentation, UploadedFile::fake()->image('store.jpg'), 'picture');
-        $disk = app(CiTeamDocumentStorage::class)->disk();
-
-        $this->assertStringContainsString('/Business Pictures/Pictures/', $first['temporary_local_path']);
-        $this->assertStringStartsWith('CI-2026-025 - Business Client/', $first['temporary_local_path']);
-        $this->assertStringNotContainsString('Clients/', $first['temporary_local_path']);
-        $this->assertNull($first['thumbnail_path']);
-        $this->assertNull($second['thumbnail_path']);
-        $this->assertCount(2, $disk->allFiles(app(CiTeamDocumentStorage::class)->businessPicturesDirectory($client)));
-        $mediaStorage->deleteStoredFiles([$first['temporary_local_path'], $first['thumbnail_path']], MediaReference::STORAGE_PROVIDER_CI_TEAM);
-        $this->assertFalse($disk->exists($first['temporary_local_path']));
-        $this->assertTrue($disk->exists($second['temporary_local_path']));
     }
 
     public function test_legacy_media_disk_remains_selectable_and_official_reports_use_category_paths(): void

@@ -64,7 +64,6 @@
                     <x-ui.sidebar-link :href="route('client-folders.index')" icon="folder" :active="request()->routeIs('client-folders.*')">Client Folders</x-ui.sidebar-link>
                     <x-ui.sidebar-link :href="route('ci-activities.index')" icon="activity" :active="request()->routeIs('ci-activities.*')">CI Activities</x-ui.sidebar-link>
                     <x-ui.sidebar-link :href="route('reports.index')" icon="report" :active="request()->routeIs('reports.*')">Reports</x-ui.sidebar-link>
-                    <x-ui.sidebar-link :href="route('media.index')" icon="media" :active="request()->routeIs('media.*')">Photos &amp; Videos</x-ui.sidebar-link>
                 </div>
             </div>
             <div>

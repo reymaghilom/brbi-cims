@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ActivityNoteController;
 use App\Http\Controllers\Admin\AdminSectionController;
+use App\Http\Controllers\Admin\EvidenceStorageSettingController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\UserPasswordResetController;
 use App\Http\Controllers\Admin\UserStatusController;
@@ -35,7 +36,6 @@ use App\Http\Controllers\RecycleBinController;
 use App\Http\Controllers\RecycleBinPurgeController;
 use App\Http\Controllers\RecycleBinRestoreController;
 use App\Http\Controllers\ResidenceBusinessCheckReportController;
-use App\Http\Controllers\ResidenceBusinessDocumentationController;
 use App\Http\Controllers\ResidenceBusinessReportController;
 use App\Http\Controllers\ResidenceCheckController;
 use Illuminate\Support\Facades\Route;
@@ -62,7 +62,6 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
 
         Route::get('/ci-activities', GlobalCiActivityController::class)->name('ci-activities.index');
         Route::view('/reports', 'module-placeholder', ['title' => 'Reports'])->name('reports.index');
-        Route::get('/photos-videos', [MediaReferenceController::class, 'globalIndex'])->name('media.index');
         Route::view('/telegram-history', 'module-placeholder', ['title' => 'Telegram History'])->name('telegram.index');
         Route::view('/google-drive', 'module-placeholder', ['title' => 'Google Drive'])->name('drive.index');
         Route::get('/recycle-bin', RecycleBinController::class)->name('recycle-bin.index');
@@ -241,21 +240,6 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::post('/client-folders/{clientFolder}/generated-reports', [GeneratedReportController::class, 'store'])->name('client-folders.generated-reports.store');
         Route::post('/client-folders/{clientFolder}/generated-reports/{generatedReport}/regenerate', [GeneratedReportController::class, 'regenerate'])->scopeBindings()->name('client-folders.generated-reports.regenerate');
         Route::get('/client-folders/{clientFolder}/generated-reports/{generatedReport}/download', [GeneratedReportController::class, 'download'])->scopeBindings()->name('client-folders.generated-reports.download');
-        Route::get('/client-folders/{clientFolder}/media', [MediaReferenceController::class, 'index'])->name('client-folders.media.index');
-        Route::post('/client-folders/{clientFolder}/media', [MediaReferenceController::class, 'store'])->name('client-folders.media.store');
-        Route::patch('/client-folders/{clientFolder}/media/{mediaReference}', [MediaReferenceController::class, 'update'])->scopeBindings()->name('client-folders.media.update');
-        Route::delete('/client-folders/{clientFolder}/media/{mediaReference}', [MediaReferenceController::class, 'destroy'])->scopeBindings()->name('client-folders.media.destroy');
-        Route::get('/client-folders/{clientFolder}/media/{mediaReference}/content', [MediaReferenceController::class, 'content'])->scopeBindings()->name('client-folders.media.content');
-        Route::get('/client-folders/{clientFolder}/media/{mediaReference}/download', [MediaReferenceController::class, 'download'])->scopeBindings()->name('client-folders.media.download');
-        Route::post('/client-folders/{clientFolder}/media/documentation', [ResidenceBusinessDocumentationController::class, 'store'])->name('client-folders.media.documentation.store');
-        Route::patch('/client-folders/{clientFolder}/media/documentation/{documentation}', [ResidenceBusinessDocumentationController::class, 'update'])->scopeBindings()->name('client-folders.media.documentation.update');
-        Route::post('/client-folders/{clientFolder}/media/documentation/{documentation}/map-screenshot', [ResidenceBusinessDocumentationController::class, 'uploadMapScreenshot'])->scopeBindings()->name('client-folders.media.documentation.map-screenshot');
-        Route::post('/client-folders/{clientFolder}/media/documentation/{documentation}/media', [ResidenceBusinessDocumentationController::class, 'uploadMedia'])->scopeBindings()->name('client-folders.media.documentation.upload-media');
-        Route::delete('/client-folders/{clientFolder}/media/documentation/{documentation}/media/{mediaReference}', [ResidenceBusinessDocumentationController::class, 'destroyMedia'])->scopeBindings()->name('client-folders.media.documentation.destroy-media');
-        Route::get('/client-folders/{clientFolder}/media/documentation/{documentation}/preview', [ResidenceBusinessDocumentationController::class, 'preview'])->scopeBindings()->name('client-folders.media.documentation.preview');
-        Route::post('/client-folders/{clientFolder}/media/documentation/{documentation}/telegram', [ResidenceBusinessDocumentationController::class, 'sendToTelegram'])->scopeBindings()->name('client-folders.media.documentation.telegram');
-        Route::get('/client-folders/{clientFolder}/media/business-documentations/preview', [ResidenceBusinessDocumentationController::class, 'previewAllBusinesses'])->name('client-folders.media.business-documentations.preview');
-        Route::post('/client-folders/{clientFolder}/media/business-documentations/telegram', [ResidenceBusinessDocumentationController::class, 'sendAllBusinesses'])->name('client-folders.media.business-documentations.telegram');
         Route::get('/client-folders/{clientFolder}', [ClientFolderAccessController::class, 'show'])
             ->name('client-folders.show');
         Route::get('/client-folders/{clientFolder}/modules/{module}', ClientFolderModulePlaceholderController::class)
@@ -269,6 +253,7 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
             Route::patch('users/{user}/status', [UserStatusController::class, 'update'])->name('users.status.update');
             Route::post('users/{user}/reset-password', [UserPasswordResetController::class, 'store'])->name('users.password.reset');
             Route::get('settings', [AdminSectionController::class, 'settings'])->name('settings.index');
+            Route::post('settings/evidence-storage', [EvidenceStorageSettingController::class, 'update'])->name('settings.evidence-storage.update');
             Route::get('audit-logs', [AdminSectionController::class, 'auditLogs'])->name('audit-logs.index');
             Route::get('ui-foundation', [AdminSectionController::class, 'uiFoundation'])->name('ui-foundation.show');
         });

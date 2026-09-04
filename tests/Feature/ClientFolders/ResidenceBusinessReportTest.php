@@ -6,7 +6,10 @@ use App\Models\ClientFolder;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
+use App\Services\Reports\OfficialReportDataBuilder;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Database\Seeders\ReferenceDataSeeder;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -444,13 +447,13 @@ class ResidenceBusinessReportTest extends TestCase
         ]);
         $check = $folder->residenceChecks()->firstOrFail();
         $storedPath = $check->photos()->firstOrFail()->path;
-        Storage::disk('local')->assertExists($storedPath);
+        $this->assertTrue($this->evidenceDisk()->exists($storedPath));
 
         $this->actingAs($ci)->delete(route('client-folders.residence-checks.destroy', [$folder, $check]))->assertRedirect();
 
         $this->assertDatabaseMissing('residence_checks', ['id' => $check->id]);
         $this->assertDatabaseCount('residence_check_photos', 0);
-        Storage::disk('local')->assertMissing($storedPath);
+        $this->assertFalse($this->evidenceDisk()->exists($storedPath));
     }
 
     public function test_residence_check_location_is_an_editable_saved_report_value(): void
@@ -589,7 +592,7 @@ class ResidenceBusinessReportTest extends TestCase
         $this->assertTrue($check->hasMapScreenshot());
         $this->assertSame($ci->id, $check->map_screenshot_uploaded_by);
         $firstPath = $check->map_screenshot_path;
-        Storage::disk('local')->assertExists($firstPath);
+        $this->assertTrue($this->evidenceDisk()->exists($firstPath));
 
         $this->actingAs($ci)->get(route('client-folders.residence-checks.map-screenshot', [$folder, $check]))->assertOk();
 
@@ -600,8 +603,8 @@ class ResidenceBusinessReportTest extends TestCase
 
         $check->refresh();
         $this->assertNotSame($firstPath, $check->map_screenshot_path);
-        Storage::disk('local')->assertMissing($firstPath);
-        Storage::disk('local')->assertExists($check->map_screenshot_path);
+        $this->assertFalse($this->evidenceDisk()->exists($firstPath));
+        $this->assertTrue($this->evidenceDisk()->exists($check->map_screenshot_path));
 
         $secondPath = $check->map_screenshot_path;
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
@@ -610,7 +613,7 @@ class ResidenceBusinessReportTest extends TestCase
 
         $check->refresh();
         $this->assertFalse($check->hasMapScreenshot());
-        Storage::disk('local')->assertMissing($secondPath);
+        $this->assertFalse($this->evidenceDisk()->exists($secondPath));
     }
 
     public function test_business_check_map_screenshot_can_be_uploaded_replaced_and_removed(): void
@@ -630,7 +633,7 @@ class ResidenceBusinessReportTest extends TestCase
         $this->assertTrue($check->hasMapScreenshot());
         $this->assertSame($ci->id, $check->map_screenshot_uploaded_by);
         $firstPath = $check->map_screenshot_path;
-        Storage::disk('local')->assertExists($firstPath);
+        $this->assertTrue($this->evidenceDisk()->exists($firstPath));
 
         $this->actingAs($ci)->get(route('client-folders.business-checks.map-screenshot', [$folder, $check]))->assertOk();
 
@@ -642,8 +645,8 @@ class ResidenceBusinessReportTest extends TestCase
 
         $check->refresh();
         $this->assertNotSame($firstPath, $check->map_screenshot_path);
-        Storage::disk('local')->assertMissing($firstPath);
-        Storage::disk('local')->assertExists($check->map_screenshot_path);
+        $this->assertFalse($this->evidenceDisk()->exists($firstPath));
+        $this->assertTrue($this->evidenceDisk()->exists($check->map_screenshot_path));
 
         $secondPath = $check->map_screenshot_path;
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
@@ -653,7 +656,7 @@ class ResidenceBusinessReportTest extends TestCase
 
         $check->refresh();
         $this->assertFalse($check->hasMapScreenshot());
-        Storage::disk('local')->assertMissing($secondPath);
+        $this->assertFalse($this->evidenceDisk()->exists($secondPath));
     }
 
     public function test_business_check_official_output_shows_the_map_screenshot_never_the_raw_filename(): void
@@ -1242,7 +1245,7 @@ class ResidenceBusinessReportTest extends TestCase
         $this->assertSame($coMakerIds[1], $updatedCoMakerIds[0]);
         $this->assertSame($updatedApplicantIds, $applicantCheck->fresh()->competitorPhotos()->pluck('id')->all());
 
-        $applicantSection = app(\App\Services\Reports\OfficialReportDataBuilder::class)
+        $applicantSection = app(OfficialReportDataBuilder::class)
             ->businessCheckSection($applicantCheck->fresh(['photos', 'photoGroups.photos', 'incomeSource']), $folder->display_name);
         $renderedApplicantIds = collect($applicantSection['competitor_photo_pages'])
             ->flatMap(fn (array $page) => $page['photos'])
@@ -1340,5 +1343,11 @@ class ResidenceBusinessReportTest extends TestCase
                 'barangay_findings' => 'No Legal Cases', 'lifestyle' => 'Modest',
             ],
         ];
+    }
+
+    /** Local evidence (Residence/Business Check pictures and map screenshots) is stored in the CI Team document tree — see EvidenceStorageSetting. */
+    private function evidenceDisk(): FilesystemAdapter
+    {
+        return app(CiTeamDocumentStorage::class)->disk();
     }
 }

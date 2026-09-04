@@ -46,11 +46,11 @@
                 <div class="space-y-1.5 rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted sm:col-span-2">
                     <p class="text-sm"><span class="font-semibold text-text-main">Creator:</span> {{ $activity->creator?->full_name ?? 'System-created' }} <span class="ml-1">(locked)</span></p>
                     <p>The original Creator remains unchanged. Scheduled and follow-up notifications will continue to be sent only to {{ $activity->creator?->full_name ?? 'the original Creator' }}. Other authorized CI users may still update or complete this activity.</p>
-                    <p>Proof is optional and can be linked through Photos &amp; Videos after creation.</p>
+                    <p>Proof is optional and can be attached in the Supporting Proof section below after creation.</p>
                 </div>
             </x-ui.form-section>
 
-            <x-ui.form-section title="Remarks and Proof" description="Keep remarks concise. Proof remains optional and reuses Photos & Videos.">
+            <x-ui.form-section title="Remarks and Proof" description="Keep remarks concise. Proof remains optional and is attached in the Supporting Proof section below.">
                 <x-form.textarea name="remarks" label="Short Remarks" :value="$activity->remarks" class="sm:col-span-2" rows="6" />
                 <x-form.textarea name="supporting_reference" label="Supporting Reference" :value="$activity->supporting_reference" class="sm:col-span-2" rows="3" help="Optional document identifier or external reference." />
             </x-ui.form-section>

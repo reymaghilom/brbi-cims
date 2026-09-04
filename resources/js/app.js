@@ -182,7 +182,7 @@ function showToast(message, type = 'success', duration = 4500) {
 
 const FOLDER_PREVIEW_COLLAPSED_STORAGE_KEY = 'brbi-folder-preview-collapsed';
 
-// Same technique as the Photos & Videos support panel's initMediaSupportToggle(): the collapsed
+// The collapsed
 // state lives on [data-folder-browser-layout] itself (read by the CSS in _folder-browser.blade.php
 // that actually animates grid-template-columns), and on two separate Show/Hide buttons toggled via
 // the plain [hidden] attribute — never by rewriting one button's icon/label, so the browser's own
@@ -207,7 +207,7 @@ function setFolderPreviewPanelInLayout(browser, inLayout) {
     else panel.setAttribute('data-panel-hidden', 'true');
 }
 
-// Same technique as the Photos & Videos support panel's initMediaSupportToggle(): the collapsed
+// The collapsed
 // state lives on [data-folder-browser-layout] itself (read by the CSS in _folder-browser.blade.php
 // that actually animates grid-template-columns), and on two separate Show/Hide buttons toggled via
 // the plain [hidden] attribute — never by rewriting one button's icon/label, so the browser's own
@@ -3048,81 +3048,6 @@ const initializePhotoUploadField = (field) => {
 
 document.querySelectorAll('[data-photo-upload-field]').forEach(initializePhotoUploadField);
 
-// Direct multi-file video upload widget (Residence/Business Documentation videos): same staged
-// files array + rebuilt DataTransfer mechanics as initializePhotoUploadField above, but tiles show
-// a static video icon instead of a decoded frame (cheaper, and this app has no video thumbnailing).
-const initializeVideoUploadField = (field) => {
-    if (field.dataset.videoUploadReady) return;
-    field.dataset.videoUploadReady = 'true';
-    const input = field.querySelector('[data-video-upload-input]');
-    const triggers = field.querySelectorAll('[data-video-upload-trigger]');
-    const grid = field.querySelector('[data-video-upload-grid]');
-    const template = field.querySelector('[data-video-upload-tile-template]');
-    const dropzone = field.querySelector('[data-video-upload-dropzone]');
-    if (!(input instanceof HTMLInputElement) || triggers.length === 0 || !grid || !(template instanceof HTMLTemplateElement)) return;
-
-    let files = [];
-    let nextFileId = 0;
-    field.getStagedVideoFiles = () => files.map(({ file }) => file);
-
-    field.clearStagedVideoFiles = () => {
-        grid.querySelectorAll('[data-video-upload-new-tile]').forEach((tile) => tile.remove());
-        files = [];
-        input.value = '';
-    };
-
-    const rebuildInputFiles = () => {
-        const transfer = new DataTransfer();
-        files.forEach(({ file }) => transfer.items.add(file));
-        input.files = transfer.files;
-    };
-
-    const addFiles = (fileList) => {
-        const trailingTile = grid.querySelector('[data-video-upload-add-more-tile]');
-        Array.from(fileList ?? []).forEach((file) => {
-            if (!file.type.startsWith('video/')) return;
-            const fileId = String(nextFileId++);
-            files.push({ id: fileId, file });
-            const tile = template.content.firstElementChild.cloneNode(true);
-            tile.dataset.videoUploadFileId = fileId;
-            if (trailingTile) grid.insertBefore(tile, trailingTile); else grid.appendChild(tile);
-        });
-        rebuildInputFiles();
-    };
-
-    triggers.forEach((trigger) => trigger.addEventListener('click', () => input.click()));
-    input.addEventListener('change', () => addFiles(input.files));
-
-    if (dropzone) {
-        ['dragover', 'dragenter'].forEach((eventName) => dropzone.addEventListener(eventName, (event) => {
-            event.preventDefault();
-            dropzone.classList.add('border-brand-primary', 'bg-brand-soft/40');
-        }));
-        ['dragleave', 'dragend'].forEach((eventName) => dropzone.addEventListener(eventName, () => {
-            dropzone.classList.remove('border-brand-primary', 'bg-brand-soft/40');
-        }));
-        dropzone.addEventListener('drop', (event) => {
-            event.preventDefault();
-            dropzone.classList.remove('border-brand-primary', 'bg-brand-soft/40');
-            addFiles(event.dataTransfer?.files);
-        });
-    }
-
-    grid.addEventListener('click', (event) => {
-        const removeNew = event.target.closest('[data-video-upload-remove-new]');
-        if (removeNew) {
-            const tile = removeNew.closest('[data-video-upload-new-tile]');
-            const fileId = tile?.dataset.videoUploadFileId;
-            const index = files.findIndex((entry) => entry.id === fileId);
-            if (index !== -1) files.splice(index, 1);
-            tile?.remove();
-            rebuildInputFiles();
-        }
-    });
-};
-
-document.querySelectorAll('[data-video-upload-field]').forEach(initializeVideoUploadField);
-
 // Business Photos "Photo Groups" repeater: each card is its own caption + multi-file
 // photo-upload-field (initializePhotoUploadField above); this only ever handles adding/removing
 // whole GROUP cards. Removal follows the exact same id/_delete convention as every other repeater
@@ -3245,100 +3170,6 @@ document.querySelectorAll('[data-map-screenshot-field]').forEach((field) => {
             setFile(event.dataTransfer?.files?.[0]);
         });
     }
-});
-
-// Residence/Business Documentation Save Locally keeps staged browser uploads intact after
-// validation/network failure. Only an
-// authoritative success clears those file inputs and temporary previews, then reloads the URL
-// returned by the backend so the persisted thumbnails remain visible and authoritative.
-const applyDocumentationRecentActivity = (payload) => {
-    if (typeof payload?.recent_activity_category !== 'string') return;
-    const category = payload.recent_activity_category;
-    if (typeof payload.recent_activity_html === 'string') {
-        const target = document.querySelector(`[data-documentation-recent-activity="${CSS.escape(category)}"]`);
-        if (target) target.innerHTML = payload.recent_activity_html;
-    }
-    // Keeps the "View All" modal's underlying content authoritative even while it is closed, so
-    // the next time it opens it already reflects this mutation — never a second fetch just to
-    // populate it.
-    if (typeof payload.recent_activity_modal_html === 'string') {
-        const modalBody = document.querySelector(`[data-documentation-activity-modal-body="${CSS.escape(category)}"]`);
-        if (modalBody) modalBody.innerHTML = payload.recent_activity_modal_html;
-    }
-};
-
-document.querySelectorAll('[data-documentation-save-form]').forEach((form) => {
-    if (form.dataset.documentationSaveReady) return;
-    form.dataset.documentationSaveReady = 'true';
-
-    const submitButton = document.querySelector(`[data-documentation-save-submit][form="${CSS.escape(form.id)}"]`);
-    if (!(submitButton instanceof HTMLButtonElement)) return;
-    const submitLabel = submitButton.querySelector('[data-documentation-save-label]');
-    const defaultSubmitLabel = submitLabel?.textContent ?? 'Save Locally';
-    const panel = document.getElementById(form.id.replace(/-form$/, '-panel'));
-
-    const resetBusyState = () => {
-        delete form.dataset.submitting;
-        submitButton.disabled = false;
-        submitButton.removeAttribute('aria-busy');
-        if (submitLabel) submitLabel.textContent = defaultSubmitLabel;
-    };
-
-    const clearStagedUploads = () => {
-        panel?.querySelectorAll('[data-photo-upload-field]').forEach((field) => field.clearStagedPhotoFiles?.());
-        panel?.querySelectorAll('[data-video-upload-field]').forEach((field) => field.clearStagedVideoFiles?.());
-        panel?.querySelectorAll('[data-map-screenshot-field]').forEach((field) => field.clearStagedMapScreenshot?.());
-    };
-
-    form.addEventListener('submit', (event) => {
-        event.preventDefault();
-        if (form.dataset.submitting === 'true' || submitButton.disabled) return;
-        form.dataset.submitting = 'true';
-        submitButton.disabled = true;
-        submitButton.setAttribute('aria-busy', 'true');
-        if (submitLabel) submitLabel.textContent = 'Saving...';
-
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', form.action);
-        xhr.setRequestHeader('Accept', 'application/json');
-        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-
-        xhr.addEventListener('load', () => {
-            let payload = null;
-            try {
-                payload = JSON.parse(xhr.responseText);
-            } catch {
-                payload = null;
-            }
-
-            if (xhr.status === 200 && payload?.result === 'success' && payload?.return_url) {
-                applyDocumentationRecentActivity(payload);
-                clearStagedUploads();
-                form.dispatchEvent(new Event('unsaved-form-reset'));
-                window.location.assign(payload.return_url);
-                return;
-            }
-
-            resetBusyState();
-            if (xhr.status === 422 && payload?.errors) {
-                const firstMessage = Object.values(payload.errors).flat()[0];
-                showToast(firstMessage || 'Please correct the highlighted fields. No changes were saved.', 'error');
-                return;
-            }
-            if (payload?.message) {
-                showToast(payload.message, 'error');
-                return;
-            }
-            showToast('Documentation could not be saved because the server returned an unexpected response. Please try again.', 'error');
-        });
-
-        xhr.addEventListener('error', () => {
-            resetBusyState();
-            showToast('Documentation could not be saved. Please check your connection and try again.', 'error');
-        });
-
-        xhr.send(new FormData(form));
-    });
 });
 
 // Residence Check Save/Update: still submitted via XMLHttpRequest rather than a plain form POST.

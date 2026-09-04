@@ -1816,8 +1816,7 @@ class CiActivitiesTest extends TestCase
             ->assertOk()
             ->assertViewHas('filter', 'all');
         $this->actingAs($ci)->get(route('client-folders.activities.edit', [$folder, $activity]))->assertOk()
-            ->assertSee('xl:grid-cols-', false)->assertSee('No notes recorded.')->assertSee('No proof is linked. Proof is optional.')
-            ->assertSee(route('client-folders.media.index', $folder), false);
+            ->assertSee('xl:grid-cols-', false)->assertSee('No notes recorded.')->assertSee('No proof is linked. Proof is optional.');
     }
 
     public function test_bulk_selection_controls_and_javascript_are_absent_from_ci_activities(): void

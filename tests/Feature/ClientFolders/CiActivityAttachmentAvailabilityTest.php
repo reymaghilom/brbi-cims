@@ -30,6 +30,9 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
         parent::setUp();
         $this->seed(ReferenceDataSeeder::class);
         Storage::fake('local');
+        // These cases assert Cloudinary-backed behavior, so they run with the administrator's
+        // Evidence Storage setting in Cloud mode (the pilot default is Local).
+        $this->useCloudEvidenceStorage();
     }
 
     public static function nonCompletedStatuses(): array
@@ -227,7 +230,7 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
                 'attachment' => UploadedFile::fake()->image('replacement-proof.jpg'),
             ])
             ->assertRedirect(route('client-folders.activities.edit', [$folder, $activity]))
-            ->assertSessionHas('status', 'Proof attachment replaced successfully.');
+            ->assertSessionHas('status', 'Supporting Proof replaced successfully. New file saved to Cloud Storage (Cloudinary).');
 
         $replacement = MediaReference::query()->where('cloudinary_public_id', 'BRBI-CIMS/clients/current/replacement-proof')->sole();
         $this->assertSoftDeleted('media_references', ['id' => $old->id]);

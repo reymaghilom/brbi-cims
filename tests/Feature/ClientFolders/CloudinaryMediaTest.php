@@ -8,6 +8,7 @@ use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
 use App\Services\Media\CloudinaryMediaStorage;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -478,7 +479,8 @@ class CloudinaryMediaTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
         $localPhoto = $check->photos()->firstOrFail();
         $localPath = $localPhoto->path;
-        Storage::disk('local')->assertExists($localPath);
+        // Local mode writes into the CI Team document tree (see EvidenceStorageSetting).
+        $this->assertTrue(app(CiTeamDocumentStorage::class)->disk()->exists($localPath));
 
         $this->mockCloud()->shouldReceive('store')->once()
             ->andReturn($this->fakeCloudAsset('cloud-photo'));
@@ -497,7 +499,7 @@ class CloudinaryMediaTest extends TestCase
             'photos' => [UploadedFile::fake()->image('Replacement.jpg', 900, 700)->size(500)],
         ])->assertSessionHasNoErrors();
 
-        Storage::disk('local')->assertMissing($localPath);
+        $this->assertFalse(app(CiTeamDocumentStorage::class)->disk()->exists($localPath));
         $this->assertSame(1, $check->photos()->count());
     }
 
@@ -676,6 +678,7 @@ class CloudinaryMediaTest extends TestCase
     /** Binds a mock CloudinaryMediaStorage (enabled() => true by default) and remembers it on $this->mockedCloud for further expectations. */
     private function mockCloud(): MockInterface
     {
+        $this->useCloudEvidenceStorage();
         $this->mockedCloud = $this->mock(CloudinaryMediaStorage::class, function ($mock) {
             $mock->shouldReceive('enabled')->andReturn(true);
         });

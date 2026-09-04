@@ -16,7 +16,7 @@ class DashboardPaginationTest extends TestCase
         $administrator = User::factory()->administrator()->create();
         ClientFolder::factory()->count(13)->create();
 
-        $response = $this->actingAs($administrator)->get(route('home'))->assertOk();
+        $response = $this->actingAs($administrator)->get(route('client-folders.index'))->assertOk();
 
         $paginator = $response->viewData('clientFolders');
         $this->assertCount(12, $paginator->items());
@@ -36,7 +36,7 @@ class DashboardPaginationTest extends TestCase
         $administrator = User::factory()->administrator()->create();
         ClientFolder::factory()->count(13)->create();
 
-        $response = $this->actingAs($administrator)->get(route('home', ['page' => 2]))->assertOk();
+        $response = $this->actingAs($administrator)->get(route('client-folders.index', ['page' => 2]))->assertOk();
 
         $paginator = $response->viewData('clientFolders');
         $this->assertCount(1, $paginator->items());
@@ -54,7 +54,7 @@ class DashboardPaginationTest extends TestCase
         $administrator = User::factory()->administrator()->create();
         ClientFolder::factory()->count(25)->create();
 
-        $response = $this->actingAs($administrator)->get(route('home', ['page' => 3]))->assertOk();
+        $response = $this->actingAs($administrator)->get(route('client-folders.index', ['page' => 3]))->assertOk();
         $paginator = $response->viewData('clientFolders');
 
         $this->assertSame(3, $paginator->currentPage());
@@ -71,7 +71,7 @@ class DashboardPaginationTest extends TestCase
         $administrator = User::factory()->administrator()->create();
         ClientFolder::factory()->count(13)->create();
 
-        $response = $this->actingAs($administrator)->get(route('home', ['page' => 99]))->assertOk();
+        $response = $this->actingAs($administrator)->get(route('client-folders.index', ['page' => 99]))->assertOk();
 
         $paginator = $response->viewData('clientFolders');
         $this->assertSame(2, $paginator->currentPage(), 'An out-of-range page must normalise to the last valid page.');
@@ -86,11 +86,11 @@ class DashboardPaginationTest extends TestCase
 
         // Unavailable arrows render as inert aria-disabled spans rather than links, so no
         // clickable URL beyond the valid page range is ever produced.
-        $firstPage = $this->actingAs($administrator)->get(route('home'))->assertOk();
+        $firstPage = $this->actingAs($administrator)->get(route('client-folders.index'))->assertOk();
         $this->assertPaginationArrowDisabled($firstPage->getContent(), 'Previous page');
         $this->assertPaginationArrowLinked($firstPage->getContent(), 'Next page');
 
-        $lastPage = $this->actingAs($administrator)->get(route('home', ['page' => 2]))->assertOk();
+        $lastPage = $this->actingAs($administrator)->get(route('client-folders.index', ['page' => 2]))->assertOk();
         $this->assertPaginationArrowDisabled($lastPage->getContent(), 'Next page');
         $this->assertPaginationArrowLinked($lastPage->getContent(), 'Previous page');
     }
@@ -99,7 +99,7 @@ class DashboardPaginationTest extends TestCase
     {
         $administrator = User::factory()->administrator()->create();
 
-        $response = $this->actingAs($administrator)->get(route('home'))->assertOk();
+        $response = $this->actingAs($administrator)->get(route('client-folders.index'))->assertOk();
 
         $this->assertSame(0, $response->viewData('clientFolders')->total());
         $response->assertSee('No client folders yet');
@@ -112,9 +112,9 @@ class DashboardPaginationTest extends TestCase
         ClientFolder::factory()->count(5)->create(['display_name' => 'EXCLUDED CLIENT']);
 
         $firstPage = $this->actingAs($administrator)
-            ->get(route('home', ['search' => 'MATCHING']))->assertOk();
+            ->get(route('client-folders.index', ['search' => 'MATCHING']))->assertOk();
         $secondPage = $this->actingAs($administrator)
-            ->get(route('home', ['search' => 'MATCHING', 'page' => 2]))->assertOk();
+            ->get(route('client-folders.index', ['search' => 'MATCHING', 'page' => 2]))->assertOk();
 
         $this->assertSame(13, $firstPage->viewData('clientFolders')->total());
         $this->assertSame(13, $secondPage->viewData('clientFolders')->total(), 'The total must not change between pages.');
@@ -128,7 +128,7 @@ class DashboardPaginationTest extends TestCase
         $administrator = User::factory()->administrator()->create();
         ClientFolder::factory()->count(13)->create();
 
-        $content = $this->actingAs($administrator)->get(route('home'))->assertOk()->getContent();
+        $content = $this->actingAs($administrator)->get(route('client-folders.index'))->assertOk()->getContent();
 
         // The listing renders its own authoritative count line; the paginator must not print a
         // second, differently-worded one underneath it.

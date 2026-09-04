@@ -37,7 +37,7 @@ class GlobalLayoutTest extends TestCase
             ->assertSee('Client Folders')
             ->assertSee('CI Activities')
             ->assertSee('Reports')
-            ->assertSee('Photos &amp; Videos', false)
+            ->assertDontSee('Photos &amp; Videos', false)
             ->assertSee('Telegram History')
             ->assertSee('Google Drive')
             ->assertSee('Recycle Bin');
@@ -242,7 +242,7 @@ class GlobalLayoutTest extends TestCase
 
             $creatorNotifications = $creator->notifications->keyBy(fn ($notification) => (int) data_get($notification->data, 'ci_activity_id'));
 
-            $creatorResponse = $this->actingAs($creator)->get(route('home'))->assertOk();
+            $creatorResponse = $this->actingAs($creator)->get(route('client-folders.index'))->assertOk();
             $creatorResponse->assertSee('data-scheduled-today-count>2</span>', false)
                 ->assertSee('rounded-full bg-danger', false)
                 ->assertSee('2 activities')
@@ -262,7 +262,7 @@ class GlobalLayoutTest extends TestCase
                 ->assertSee(route('notifications.ci-activities.read', $creatorNotifications[$applicantActivity->id]->id), false)
                 ->assertSee(route('notifications.ci-activities.read', $creatorNotifications[$coMakerActivity->id]->id), false);
 
-            $this->actingAs($otherCi)->get(route('home'))
+            $this->actingAs($otherCi)->get(route('client-folders.index'))
                 ->assertOk()
                 ->assertSee('data-scheduled-today-count>1</span>', false)
                 ->assertSee('Other CI Only')
@@ -271,7 +271,7 @@ class GlobalLayoutTest extends TestCase
 
             $applicantActivity->update(['status' => ActivityStatus::Completed, 'completed_at' => now()]);
             $coMakerActivity->update(['scheduled_at' => $tomorrow]);
-            $emptyResponse = $this->actingAs($creator)->get(route('home'))->assertOk();
+            $emptyResponse = $this->actingAs($creator)->get(route('client-folders.index'))->assertOk();
             $emptyResponse->assertDontSee('data-scheduled-today-count', false)
                 ->assertSee('No scheduled CI activities today.');
 
@@ -310,7 +310,7 @@ class GlobalLayoutTest extends TestCase
                 $ci->notify(new CiActivityScheduledReminder($activity));
             }
 
-            $content = $this->actingAs($ci)->get(route('home'))->assertOk()->getContent();
+            $content = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
 
             $this->assertStringContainsString('data-scheduled-today-count>5</span>', $content);
             $this->assertStringContainsString('5 activities', $content);
@@ -332,7 +332,7 @@ class GlobalLayoutTest extends TestCase
                 $ci->notify(new CiActivityScheduledReminder($activity));
             }
 
-            $overflowContent = $this->get(route('home'))->assertOk()->getContent();
+            $overflowContent = $this->get(route('client-folders.index'))->assertOk()->getContent();
             $this->assertStringContainsString('data-scheduled-today-count>9+</span>', $overflowContent);
             $this->assertStringContainsString('10 activities', $overflowContent);
             $this->assertSame(5, substr_count($overflowContent, 'data-scheduled-today-item='));
