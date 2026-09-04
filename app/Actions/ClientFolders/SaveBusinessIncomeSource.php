@@ -23,6 +23,14 @@ class SaveBusinessIncomeSource
 
     private const REPORT_FIELDS = ['business_name', 'report_category', 'start_date', 'submitted_date', 'main_business_address', 'previous_business_address', 'previous_business_address_length_of_stay', 'reason_for_transfer', 'registered_owner', 'relationship_to_borrower', 'year_established', 'length_of_stay_months', 'monthly_rent', 'ownership_type', 'rented_from', 'business_type', 'scale', 'informant', 'report_remarks', 'template_data', 'branches_declared', 'branches_inspected', 'branches_not_inspected', 'branches_reason_not_inspected'];
 
+    /**
+     * Field-name-only allowlist for the "Updated: ..." changed-fields note on the Business Recent
+     * Activity feed (see ClientFolderOverview::CHANGED_FIELD_LABELS for the display labels).
+     * template_data is a JSON blob of the whole template's custom section, not a discrete field, so
+     * it's deliberately excluded from this note even though it's a legitimate REPORT_FIELDS entry.
+     */
+    private const CHANGED_FIELDS_ALLOWLIST = ['business_name', 'report_category', 'start_date', 'submitted_date', 'main_business_address', 'previous_business_address', 'previous_business_address_length_of_stay', 'reason_for_transfer', 'registered_owner', 'relationship_to_borrower', 'year_established', 'length_of_stay_months', 'monthly_rent', 'ownership_type', 'rented_from', 'business_type', 'scale', 'informant', 'report_remarks'];
+
     private const SECTIONS = [
         'branches' => ['branches', ['location', 'is_declared', 'is_inspected', 'reason_not_inspected', 'frontage_meters', 'total_area_square_meters', 'is_air_conditioned', 'operating_days_hours', 'shifts_count', 'employees_per_shift', 'average_sales_per_shift', 'inventory_level', 'monthly_rent', 'years_in_area', 'nearby_brands'], 'location'],
         'products' => ['products', ['product_name', 'unit_size', 'selling_price', 'stock_level', 'is_top_seller'], 'product_name'],
@@ -67,18 +75,13 @@ class SaveBusinessIncomeSource
             $source->fill(Arr::only($data, self::SOURCE_FIELDS));
             $sourceFieldsChanged = $source->isDirty(self::SOURCE_FIELDS);
 
-            // Include trashed rows only to distinguish a genuinely absent report from one owned
-            // by the Recycle Bin. A recycled report is never reopened or edited here.
-            $report = BusinessReport::withTrashed()
+            // Business Report delete is now permanent (see DeleteBusinessReport) — a hard-deleted
+            // report simply no longer exists here, so this always creates a fresh one on the same
+            // income_source_id rather than needing to distinguish it from a Recycle Bin state.
+            $report = BusinessReport::query()
                 ->where('income_source_id', $source->id)
                 ->lockForUpdate()
                 ->first();
-
-            if ($report?->trashed()) {
-                throw ValidationException::withMessages([
-                    'business_report' => 'This Business Report is currently in the Recycle Bin. Restore it before editing.',
-                ]);
-            }
 
             if ($report === null) {
                 $report = new BusinessReport(['income_source_id' => $source->id]);
@@ -86,6 +89,10 @@ class SaveBusinessIncomeSource
 
             $report->fill(Arr::only($data, self::REPORT_FIELDS));
             $reportFieldsChanged = $report->isDirty(self::REPORT_FIELDS);
+            // Captured before save() (and only meaningful for a genuine edit, never the first save
+            // on a brand-new report) so the Recent Activity feed can say exactly which fields
+            // changed without ever storing old/new values or the raw request payload.
+            $changedReportFields = $isFirstSave ? [] : array_values(array_intersect(array_keys($report->getDirty()), self::CHANGED_FIELDS_ALLOWLIST));
             $report->save();
             $tags = $source->template->businessReportSchema() !== [] ? [] : ($source->template->compatibility_tags ?? []);
             $changes = [];
@@ -139,7 +146,7 @@ class SaveBusinessIncomeSource
                 'user_id' => $actor->id, 'client_folder_id' => $folder->id,
                 'action' => 'business_report.updated', 'module' => 'income_sources',
                 'description' => 'A dedicated business report was updated.',
-                'metadata' => ['income_source_id' => $source->id, 'co_maker_id' => $source->co_maker_id, 'business_report_id' => $report->id, 'revision' => $source->revision, 'state' => $source->state->value, 'child_changes' => $changes, 'display_name' => $source->displayName()],
+                'metadata' => ['income_source_id' => $source->id, 'co_maker_id' => $source->co_maker_id, 'business_report_id' => $report->id, 'revision' => $source->revision, 'state' => $source->state->value, 'child_changes' => $changes, 'display_name' => $source->displayName(), 'changed_fields' => $changedReportFields],
                 'ip_address' => request()?->ip(), 'user_agent' => request()?->userAgent(),
             ]);
             AuditLog::create([

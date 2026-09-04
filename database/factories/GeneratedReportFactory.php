@@ -6,7 +6,6 @@ use App\Enums\GenerationStatus;
 use App\Enums\ReportFormat;
 use App\Models\ClientFolder;
 use App\Models\User;
-use Illuminate\Database\Eloquent\Factories\Factory;
 
 class GeneratedReportFactory extends Factory
 {

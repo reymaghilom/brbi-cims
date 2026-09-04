@@ -33,7 +33,7 @@
     <div class="cibi-section-heading cibi-personal-heading"><h2 id="validated-personal-title">I. Validated Personal Information</h2></div>
     <p class="cibi-section-note">Note: All names shall be in "Last Name, First Name, Middle Name" format.</p>
     <div class="cibi-excel-grid grid sm:grid-cols-2 lg:grid-cols-3">
-        <div class="sm:col-span-2"><label for="personal-snapshot-name-display" class="ui-label">{{ ($activePerson ?? null) ? 'NAME OF COMAKER:' : 'NAME OF CLIENT:' }}</label><input id="personal-snapshot-name-display" value="{{ data_get($personalSnapshot, 'name', $clientFolder->display_name) }}" class="ui-control bg-surface-muted" readonly aria-readonly="true"><input type="hidden" name="personal_snapshot[name]" value="{{ data_get($personalSnapshot, 'name', $clientFolder->display_name) }}"><x-form.validation-message for="personal_snapshot.name" /></div>
+        <x-form.input name="personal_snapshot.name" input-name="personal_snapshot[name]" :label="($activePerson ?? null) ? 'NAME OF COMAKER:' : 'NAME OF CLIENT:'" :value="data_get($personalSnapshot, 'name', $clientFolder->display_name)" class="sm:col-span-2" required />
         <x-form.input name="personal_snapshot.age" input-name="personal_snapshot[age]" label="Age" type="number" min="0" max="150" :value="data_get($personalSnapshot, 'age')" required />
         <x-form.input name="personal_snapshot.spouse_name" input-name="personal_snapshot[spouse_name]" label="Spouse's Name" :value="data_get($personalSnapshot, 'spouse_name')" class="sm:col-span-2" />
         <x-form.input name="personal_snapshot.spouse_age" input-name="personal_snapshot[spouse_age]" label="Spouse Age" type="number" min="0" max="150" :value="data_get($personalSnapshot, 'spouse_age')" />

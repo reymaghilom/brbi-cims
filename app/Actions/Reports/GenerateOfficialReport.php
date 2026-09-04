@@ -18,8 +18,8 @@ use App\Services\Reports\Contracts\DocxGenerator;
 use App\Services\Reports\Contracts\PdfGenerator;
 use App\Services\Reports\Data\ReportRenderOptions;
 use App\Services\Reports\OfficialReportDataBuilder;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -31,6 +31,7 @@ class GenerateOfficialReport
         private readonly DocxGenerator $docxGenerator,
         private readonly GeneratedReportsCompletionEvaluator $completion,
         private readonly ClientProgressService $progress,
+        private readonly CiTeamDocumentStorage $documents,
     ) {}
 
     public function execute(User $actor, ClientFolder $folder, OfficialReportType $type, ReportFormat $format, ?IncomeSource $source = null, ?CoMaker $activePerson = null): GeneratedReport
@@ -69,7 +70,7 @@ class GenerateOfficialReport
         // The co-maker segment must be present here too (not just in scope_key/version numbering
         // above) — otherwise the Applicant's and a Co-Maker's reports of the same type/version
         // would resolve to the exact same storage path and silently overwrite one another on disk.
-        $path = collect(['generated-reports', Str::slug($folder->folder_number), $type->value, $activePerson ? 'co-maker-'.$activePerson->id : null, $source ? Str::limit(Str::slug($source->source_name), 30, '') : null, 'v'.$report->version, $filename])->filter()->implode('/');
+        $path = $this->documents->officialReportPath($folder, $type, $filename, $activePerson);
 
         try {
             $data['_artifact_path'] = $path;
@@ -87,7 +88,7 @@ class GenerateOfficialReport
 
             return $report->refresh();
         } catch (Throwable $exception) {
-            Storage::disk(config('cims.report_disk'))->delete($path);
+            $this->documents->disk()->delete($path);
             $report->update(['status' => GenerationStatus::Failed, 'failure_code' => 'generation_failed', 'failure_message' => 'The report could not be generated. Please retry or contact an administrator.']);
             $this->audit($actor, $folder, 'generated_report.failed', 'Official report generation failed.', $report);
             report($exception);

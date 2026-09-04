@@ -89,6 +89,7 @@ class ApplicantBusinessQuickAddTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan',
+            'business_photos' => [UploadedFile::fake()->image('a.jpg', 900, 700)->size(500)],
         ])->assertSessionHasNoErrors()->assertRedirect();
 
         $check = $folder->businessChecks()->firstOrFail();
@@ -106,6 +107,7 @@ class ApplicantBusinessQuickAddTest extends TestCase
         // Business Check happens first, against the quick-added business.
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan',
+            'business_photos' => [UploadedFile::fake()->image('a.jpg', 900, 700)->size(500)],
         ]);
 
         // Later, the user opens Business / Income Sources and completes the report for that
@@ -136,29 +138,50 @@ class ApplicantBusinessQuickAddTest extends TestCase
             ->assertSee('data-report-complete="1"', false);
     }
 
-    public function test_existing_applicant_business_without_completed_report_remains_selectable(): void
+    public function test_a_quick_added_business_can_still_complete_the_current_business_check(): void
+    {
+        // The quick-add dialog's own client-side script (app.js) appends and selects the new
+        // business's <option> directly in the already-open form via a plain DOM insert — it never
+        // depends on the server-rendered $businesses list, so the resulting "Add & Continue" flow
+        // (quick-create the business, then immediately save the current Business Check against it)
+        // must keep working exactly as it does today, before this business ever becomes an
+        // Existing Business dropdown candidate on its own.
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_non_agricultural')->firstOrFail();
+        $id = $this->quickAdd($ci, $folder, $template, 'Draft Business');
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'income_source_id' => $id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan',
+            'business_photos' => [UploadedFile::fake()->image('a.jpg', 900, 700)->size(500)],
+        ])->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertSame($id, $folder->businessChecks()->firstOrFail()->income_source_id);
+    }
+
+    public function test_quick_added_business_does_not_appear_as_an_existing_business_on_a_fresh_reload(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
         $template = IncomeSourceTemplate::where('template_type', 'leasing_non_agricultural')->firstOrFail();
         $this->quickAdd($ci, $folder, $template, 'Draft Business');
 
+        // A fresh GET is a brand-new request — the client-side DOM injection from the quick-add
+        // dialog belongs to the browser session that made it, not to this new server render. The
+        // Business Report was never explicitly saved (revision stays 1), so it must not be listed.
         $this->actingAs($ci)
             ->get(route('client-folders.business-checks.create', $folder))
             ->assertOk()
-            ->assertSee('Draft Business')
-            ->assertSee('data-report-complete="0"', false);
+            ->assertDontSee('Draft Business');
     }
 
-    public function test_multiple_applicant_businesses_remain_isolated(): void
+    public function test_multiple_explicitly_saved_applicant_businesses_remain_isolated_and_ordered(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
-        $template = IncomeSourceTemplate::where('template_type', 'leasing_non_agricultural')->firstOrFail();
-        $firstId = $this->quickAdd($ci, $folder, $template, 'First Business');
-        $secondId = $this->quickAdd($ci, $folder, $template, 'Second Business');
+        $this->completedBusinessSource($folder, 'First Business');
+        $this->completedBusinessSource($folder, 'Second Business');
 
-        $this->assertNotSame($firstId, $secondId);
         $page = $this->actingAs($ci)->get(route('client-folders.business-checks.create', $folder))->assertOk();
         $page->assertSeeInOrder(['First Business', 'Second Business']);
     }
@@ -196,6 +219,7 @@ class ApplicantBusinessQuickAddTest extends TestCase
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion',
             'contributor_ids_present' => '1', 'contributor_ids' => [$mark->id],
+            'business_photos' => [UploadedFile::fake()->image('a.jpg', 900, 700)->size(500)],
         ]);
         $check = $folder->businessChecks()->firstOrFail();
         $source = IncomeSource::findOrFail($id);
@@ -217,6 +241,7 @@ class ApplicantBusinessQuickAddTest extends TestCase
 
         $this->actingAs($creator)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion',
+            'business_photos' => [UploadedFile::fake()->image('a.jpg', 900, 700)->size(500)],
         ]);
         $check = $folder->businessChecks()->firstOrFail();
 
@@ -349,12 +374,11 @@ class ApplicantBusinessQuickAddTest extends TestCase
         ])->assertOk();
         $id = $response->json('id');
 
-        // Business Check's own dropdown already carries the shared address for this business.
-        $checkPage = $this->actingAs($ci)->get(route('client-folders.business-checks.create', $folder))->assertOk()->getContent();
-        $this->assertStringContainsString('data-location="Poblacion, San Miguel, Bulacan"', $checkPage);
-
         // Opening Business / Income Sources for that same record shows the address already
-        // populated — no separate, conflicting value to re-enter.
+        // populated — no separate, conflicting value to re-enter. (The quick-added business itself
+        // is not expected to reappear as a fresh Existing Business dropdown candidate at this point —
+        // see test_quick_added_business_does_not_appear_as_an_existing_business_on_a_fresh_reload —
+        // this test is only about the Business Report side carrying the same address forward.)
         $reportPage = $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $id]))->assertOk()->getContent();
         $this->assertStringContainsString('Poblacion, San Miguel, Bulacan', $reportPage);
     }
@@ -370,7 +394,7 @@ class ApplicantBusinessQuickAddTest extends TestCase
         $this->assertStringContainsString('data-location="Rizal Street, Bulacan"', $checkPage);
     }
 
-    public function test_editing_the_address_from_business_report_updates_what_business_check_shows(): void
+    public function test_editing_the_address_from_business_report_does_not_change_an_already_saved_business_check(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -379,25 +403,28 @@ class ApplicantBusinessQuickAddTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $id, 'ci_date' => now()->toDateString(), 'location' => 'Old Address, Bulacan',
+            'business_photos' => [UploadedFile::fake()->image('a.jpg', 900, 700)->size(500)],
         ])->assertSessionHasNoErrors();
         $check = $folder->businessChecks()->firstOrFail();
 
         // The address changes from the Business Report side only, well after the Business Check
-        // above was already saved with the old one.
+        // above was already saved with the old one — prefill is not synchronization (see
+        // BusinessReportBusinessCheckIndependenceTest).
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $id]), array_merge($this->businessPayload(), [
             'source_name' => 'Micabalo Sari-Sari Store', 'business_name' => 'Micabalo Sari-Sari Store',
             'main_business_address' => 'New Address, Bulacan',
         ]))->assertSessionHasNoErrors();
 
-        // Reopening the existing Business Check must show the updated address, not the stale copy
-        // frozen on business_checks.location at the moment it was first saved.
+        // Reopening the existing Business Check must keep showing its own saved address, never
+        // the newer Business Report value.
         $editPage = $this->actingAs($ci)
             ->get(route('client-folders.business-checks.edit', [$folder, $check]))
             ->assertOk()
             ->getContent();
 
-        $this->assertMatchesRegularExpression('/id="business-check-location"[^>]*value="New Address, Bulacan"/', $editPage);
-        $this->assertStringNotContainsString('value="Old Address, Bulacan"', $editPage);
+        $this->assertMatchesRegularExpression('/id="business-check-location"[^>]*value="Old Address, Bulacan"/', $editPage);
+        $this->assertStringNotContainsString('value="New Address, Bulacan"', $editPage);
+        $this->assertSame('Old Address, Bulacan', $check->fresh()->location);
     }
 
     public function test_quick_add_requires_location(): void
@@ -439,7 +466,7 @@ class ApplicantBusinessQuickAddTest extends TestCase
         $this->assertSame(0, $folder->businessChecks()->count());
     }
 
-    public function test_business_check_first_shares_ci_date_with_business_report(): void
+    public function test_business_check_first_leaves_the_still_unfinalized_business_report_blank_in_the_database(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -448,14 +475,19 @@ class ApplicantBusinessQuickAddTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $id, 'ci_date' => '2026-01-15', 'location' => 'Poblacion, San Miguel, Bulacan',
+            'business_photos' => [UploadedFile::fake()->image('a.jpg', 900, 700)->size(500)],
         ])->assertSessionHasNoErrors();
 
+        // Saving the Check never writes into the Business Report's own columns — the report stays
+        // whatever it was (still blank/unfinalized here) until explicitly saved through its own form.
         $source = IncomeSource::findOrFail($id);
-        $this->assertSame('2026-01-15', $source->businessReport->start_date->toDateString());
+        $this->assertNull($source->businessReport->start_date);
 
-        // Business Check's own dropdown already carries the shared CI Date for this business.
-        $checkPage = $this->actingAs($ci)->get(route('client-folders.business-checks.create', $folder))->assertOk()->getContent();
-        $this->assertStringContainsString('data-ci-date="2026-01-15"', $checkPage);
+        // The still-unfinalized Business Report form prefills from the surviving Check instead
+        // (see BusinessReportBusinessCheckIndependenceTest).
+        $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $id]))
+            ->assertOk()
+            ->assertSee('value="2026-01-15"', false);
     }
 
     public function test_business_report_first_business_check_shows_the_same_ci_date(): void
@@ -470,7 +502,7 @@ class ApplicantBusinessQuickAddTest extends TestCase
         $this->assertStringContainsString('data-ci-date="2026-02-20"', $checkPage);
     }
 
-    public function test_changing_ci_date_from_business_check_updates_the_shared_value(): void
+    public function test_changing_ci_date_from_business_check_never_writes_into_the_business_report(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -479,6 +511,7 @@ class ApplicantBusinessQuickAddTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $id, 'ci_date' => '2026-01-15', 'location' => 'Poblacion, San Miguel, Bulacan',
+            'business_photos' => [UploadedFile::fake()->image('a.jpg', 900, 700)->size(500)],
         ])->assertSessionHasNoErrors();
         $check = $folder->businessChecks()->firstOrFail();
 
@@ -487,10 +520,11 @@ class ApplicantBusinessQuickAddTest extends TestCase
             'check_id' => $check->id, 'income_source_id' => $id, 'ci_date' => '2026-03-10', 'location' => 'Poblacion, San Miguel, Bulacan',
         ])->assertSessionHasNoErrors();
 
-        $this->assertSame('2026-03-10', IncomeSource::findOrFail($id)->businessReport->start_date->toDateString());
+        $this->assertNull(IncomeSource::findOrFail($id)->businessReport->start_date);
+        $this->assertSame('2026-03-10', $check->fresh()->ci_date->toDateString());
     }
 
-    public function test_changing_ci_date_from_business_report_updates_what_business_check_shows(): void
+    public function test_changing_start_date_from_business_report_does_not_change_an_already_saved_business_check(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -499,6 +533,7 @@ class ApplicantBusinessQuickAddTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $id, 'ci_date' => '2026-01-15', 'location' => 'Poblacion, San Miguel, Bulacan',
+            'business_photos' => [UploadedFile::fake()->image('a.jpg', 900, 700)->size(500)],
         ])->assertSessionHasNoErrors();
         $check = $folder->businessChecks()->firstOrFail();
 
@@ -508,7 +543,9 @@ class ApplicantBusinessQuickAddTest extends TestCase
         ]))->assertSessionHasNoErrors();
 
         $editPage = $this->actingAs($ci)->get(route('client-folders.business-checks.edit', [$folder, $check]))->assertOk()->getContent();
-        $this->assertMatchesRegularExpression('/id="ci_date"[^>]*value="2026-04-05"/', $editPage);
+        $this->assertMatchesRegularExpression('/id="ci_date"[^>]*value="2026-01-15"/', $editPage);
+        $this->assertStringNotContainsString('value="2026-04-05"', $editPage);
+        $this->assertSame('2026-01-15', $check->fresh()->ci_date->toDateString());
     }
 
     private function quickAdd(User $ci, ClientFolder $folder, IncomeSourceTemplate $template, string $name, string $location = 'Poblacion, San Miguel, Bulacan'): int
@@ -532,6 +569,11 @@ class ApplicantBusinessQuickAddTest extends TestCase
         $template = IncomeSourceTemplate::where('template_type', 'leasing_non_agricultural')->firstOrFail();
         $source = $folder->incomeSources()->create(['income_source_template_id' => $template->id, 'template_type' => $template->template_type, 'template_version' => $template->version, 'source_name' => $name, 'business_name' => $name, 'state' => RecordState::Complete]);
         $source->businessReport()->create(['business_name' => $name, 'main_business_address' => $address, 'report_category' => 'Leasing', 'year_established' => 2020]);
+        // Represents a genuinely, explicitly saved Business Report (revision > 1) — the Business
+        // Check "Select Business" dropdown is Saved-Report-based (see BusinessCheckController::form()),
+        // so a revision-1 shell would not appear as a candidate regardless of how complete its data
+        // looks.
+        $source->forceFill(['revision' => 2])->save();
 
         return $source;
     }

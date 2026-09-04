@@ -4,13 +4,84 @@ namespace App\Services\Media;
 
 use App\Enums\MediaType;
 use App\Models\ClientFolder;
+use App\Models\MediaReference;
+use App\Models\ResidenceBusinessDocumentation;
+use App\Services\Storage\CiTeamDocumentStorage;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class PrivateMediaStorage
 {
+    public function __construct(private readonly CiTeamDocumentStorage $documents) {}
+
     public function store(ClientFolder $folder, UploadedFile $file): array
+    {
+        [$mime, $type, $extension] = $this->metadata($file);
+        $name = Str::uuid()->toString().'.'.$extension;
+        $directory = 'client-media/'.$folder->id.'/'.now()->format('Y/m');
+        $path = $file->storeAs($directory.'/originals', $name, config('cims.media_disk'));
+        throw_unless(is_string($path), \RuntimeException::class, 'The media file could not be stored.');
+
+        $thumbnail = $type === MediaType::Photo ? $this->thumbnail($file, Storage::disk(config('cims.media_disk')), $directory.'/thumbnails', pathinfo($name, PATHINFO_FILENAME)) : null;
+
+        return $this->result($file, $mime, $type, $name, $path, $thumbnail, MediaReference::STORAGE_PROVIDER_LOCAL);
+    }
+
+    public function storeDocumentation(ResidenceBusinessDocumentation $documentation, UploadedFile $file, string $kind): array
+    {
+        $documentation->loadMissing(['clientFolder', 'coMaker']);
+        [$mime, $type, $extension] = $this->metadata($file);
+        $name = Str::uuid()->toString().'.'.$extension;
+        try {
+            $directory = $this->documents->documentationDirectory(
+                $documentation->clientFolder,
+                $documentation->coMaker,
+                $documentation->category,
+                $kind,
+                $documentation,
+            );
+            $disk = $this->documents->disk();
+            $path = $disk->putFileAs($directory, $file, $name);
+            throw_unless(is_string($path), \RuntimeException::class);
+        } catch (\Throwable $exception) {
+            $label = match ($kind) {
+                'video' => 'video',
+                'map' => 'Google Map Screenshot',
+                default => 'picture',
+            };
+
+            throw new DocumentationStorageException("Unable to save the {$label} to local CI Team storage.", 0, $exception);
+        }
+
+        return $this->result($file, $mime, $type, $name, $path, null, MediaReference::STORAGE_PROVIDER_CI_TEAM);
+    }
+
+    public function deleteStoredFiles(array $paths, string $provider = MediaReference::STORAGE_PROVIDER_LOCAL): void
+    {
+        $disk = $provider === MediaReference::STORAGE_PROVIDER_CI_TEAM
+            ? $this->documents->disk()
+            : Storage::disk(config('cims.media_disk'));
+        $disk->delete(array_values(array_filter($paths)));
+    }
+
+    private function result(UploadedFile $file, string $mime, MediaType $type, string $name, string $path, ?string $thumbnail, string $provider): array
+    {
+        return [
+            'media_type' => $type,
+            'storage_provider' => $provider,
+            'file_name' => $name,
+            'mime_type' => $mime,
+            'byte_size' => $file->getSize(),
+            'checksum' => hash_file('sha256', $file->getRealPath()),
+            'temporary_local_path' => $path,
+            'thumbnail_path' => $thumbnail,
+            'suggested_label' => Str::of(pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME))->replace(['_', '-'], ' ')->squish()->limit(255, '')->toString(),
+        ];
+    }
+
+    private function metadata(UploadedFile $file): array
     {
         $detector = new \finfo(FILEINFO_MIME_TYPE);
         $detectedMime = $detector->file($file->getRealPath());
@@ -23,31 +94,11 @@ class PrivateMediaStorage
             'video/mp4' => 'mp4',
             default => throw new \InvalidArgumentException('Unsupported verified media type.'),
         };
-        $name = Str::uuid()->toString().'.'.$extension;
-        $directory = 'client-media/'.$folder->id.'/'.now()->format('Y/m');
-        $path = $file->storeAs($directory.'/originals', $name, config('cims.media_disk'));
-        throw_unless(is_string($path), \RuntimeException::class, 'The media file could not be stored.');
 
-        $thumbnail = $type === MediaType::Photo ? $this->thumbnail($file, $directory, pathinfo($name, PATHINFO_FILENAME)) : null;
-
-        return [
-            'media_type' => $type,
-            'file_name' => $name,
-            'mime_type' => $mime,
-            'byte_size' => $file->getSize(),
-            'checksum' => hash_file('sha256', $file->getRealPath()),
-            'temporary_local_path' => $path,
-            'thumbnail_path' => $thumbnail,
-            'suggested_label' => Str::of(pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME))->replace(['_', '-'], ' ')->squish()->limit(255, '')->toString(),
-        ];
+        return [$mime, $type, $extension];
     }
 
-    public function deleteStoredFiles(array $paths): void
-    {
-        Storage::disk(config('cims.media_disk'))->delete(array_values(array_filter($paths)));
-    }
-
-    private function thumbnail(UploadedFile $file, string $directory, string $stem): ?string
+    private function thumbnail(UploadedFile $file, FilesystemAdapter $disk, string $directory, string $stem): ?string
     {
         $sourceBytes = file_get_contents($file->getRealPath());
         $source = $sourceBytes === false ? false : @imagecreatefromstring($sourceBytes);
@@ -74,8 +125,8 @@ class PrivateMediaStorage
             return null;
         }
 
-        $path = $directory.'/thumbnails/'.$stem.'.jpg';
+        $path = $directory.'/'.$stem.'.jpg';
 
-        return Storage::disk(config('cims.media_disk'))->put($path, $bytes) ? $path : null;
+        return $disk->put($path, $bytes) ? $path : null;
     }
 }

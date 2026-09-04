@@ -22,8 +22,8 @@
                 @error('first_name')<p id="first_name-error" class="mt-2 text-sm font-semibold text-danger" role="alert">{{ $message }}</p>@enderror
             </div>
             <div>
-                <label for="middle_name" class="ui-label">Middle name <span aria-hidden="true" class="text-danger">*</span></label>
-                <input id="middle_name" name="middle_name" value="{{ old('middle_name') }}" class="ui-control" maxlength="100" autocomplete="additional-name" required aria-describedby="middle_name-error">
+                <label for="middle_name" class="ui-label">Middle name <span class="font-normal text-text-muted">(optional)</span></label>
+                <input id="middle_name" name="middle_name" value="{{ old('middle_name') }}" class="ui-control" maxlength="100" autocomplete="additional-name" aria-describedby="middle_name-error">
                 @error('middle_name')<p id="middle_name-error" class="mt-2 text-sm font-semibold text-danger" role="alert">{{ $message }}</p>@enderror
             </div>
             <div>

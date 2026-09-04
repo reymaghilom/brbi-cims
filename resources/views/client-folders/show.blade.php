@@ -14,9 +14,6 @@
             ? $coMakers->firstWhere('id', (int) request()->query('co_maker_id'))
             : null;
         $viewingLabel = $activeCoMaker ? 'Co-Maker — '.mb_strtoupper($activeCoMaker->full_name) : 'Applicant';
-        $personSwitchUrl = fn (?App\Models\CoMaker $coMaker = null) => $coMaker
-            ? route('client-folders.show', $clientFolder).'?person=co-maker&co_maker_id='.$coMaker->id
-            : route('client-folders.show', $clientFolder);
         $personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activeCoMaker);
 
         $moduleRoutes = [
@@ -66,71 +63,9 @@
             @endif
         </x-ui.client-header>
 
-        @if($coMakers->isNotEmpty())
-        <section class="ui-panel p-3.5 sm:p-4" aria-labelledby="person-switch-title">
-            <h2 id="person-switch-title" class="sr-only">Switch active person</h2>
-            <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                    <div class="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto">
-                        <a
-                            href="{{ $personSwitchUrl() }}"
-                            class="flex shrink-0 cursor-pointer items-center gap-2.5 rounded-control px-3 py-2 transition {{ $activeCoMaker ? 'text-text-muted hover:bg-surface-muted hover:text-brand-sidebar' : 'bg-brand-soft text-brand-primary' }}"
-                        >
-                            <span class="grid size-8 shrink-0 place-items-center rounded-full {{ $activeCoMaker ? 'bg-surface-muted text-text-muted' : 'bg-white text-brand-primary' }}"><x-ui.icon name="user" size="size-4" /></span>
-                            <span class="text-left">
-                                <span class="block text-xs font-semibold uppercase tracking-wide {{ $activeCoMaker ? 'text-text-muted' : 'text-brand-primary' }}">Applicant @unless($activeCoMaker)(<span class="text-success">Active</span>)@endunless</span>
-                                <span class="block text-sm font-bold text-text-main">{{ $clientFolder->display_name }}</span>
-                            </span>
-                        </a>
-                        @foreach($coMakers as $coMaker)
-                            @php($coMakerIsActive = $activeCoMaker?->id === $coMaker->id)
-                            <div class="flex shrink-0 items-center rounded-control transition {{ $coMakerIsActive ? 'bg-brand-soft' : 'hover:bg-surface-muted' }}">
-                                <a
-                                    href="{{ $personSwitchUrl($coMaker) }}"
-                                    data-co-maker-tab="{{ $coMaker->id }}"
-                                    class="flex cursor-pointer items-center gap-2.5 px-3 py-2 {{ $coMakerIsActive ? 'text-brand-primary' : 'text-text-muted hover:text-brand-sidebar' }}"
-                                >
-                                    <span class="grid size-8 shrink-0 place-items-center rounded-full {{ $coMakerIsActive ? 'bg-white text-brand-primary' : 'bg-folder-soft text-progress' }}"><x-ui.icon name="user" size="size-4" /></span>
-                                    <span class="text-left">
-                                        <span class="block text-xs font-semibold uppercase tracking-wide {{ $coMakerIsActive ? 'text-brand-primary' : 'text-text-muted' }}">Co-Maker{{ $coMakers->count() > 1 ? ' '.$loop->iteration : '' }} @if($coMakerIsActive)(<span class="text-success">Active</span>)@endif</span>
-                                        <span class="block text-sm font-bold uppercase text-text-main" data-co-maker-tab-name>{{ $coMaker->full_name }}</span>
-                                    </span>
-                                </a>
-                                @if($canManageCoMakers)
-                                    <button
-                                        type="button"
-                                        class="ui-dots-trigger mr-1"
-                                        aria-haspopup="menu"
-                                        aria-expanded="false"
-                                        aria-label="Co-Maker{{ $coMakers->count() > 1 ? ' '.$loop->iteration : '' }} actions"
-                                        data-co-maker-menu-trigger
-                                        data-co-maker-id="{{ $coMaker->id }}"
-                                        data-co-maker-full-name="{{ $coMaker->full_name }}"
-                                        data-co-maker-first-name="{{ $coMaker->first_name }}"
-                                        data-co-maker-middle-name="{{ $coMaker->middle_name }}"
-                                        data-co-maker-last-name="{{ $coMaker->last_name }}"
-                                        data-co-maker-suffix="{{ $coMaker->suffix }}"
-                                        data-co-maker-address="{{ $coMaker->address }}"
-                                        data-co-maker-destroy-base-url="{{ route('client-folders.co-maker.store', $clientFolder) }}"
-                                    ><x-ui.icon name="more" size="size-4 rotate-90" /></button>
-                                @endif
-                            </div>
-                        @endforeach
-                    </div>
-                <div class="flex shrink-0 flex-wrap items-center justify-end gap-3 lg:ml-auto">
-                        <span class="text-xs font-medium text-text-muted">Current View: <span class="rounded-full bg-brand-soft px-2 py-1 font-bold text-brand-primary">{{ $viewingLabel }}</span></span>
-                        <x-ui.context-menu label="Switch Person">
-                            <x-slot:trigger>
-                                <span class="ui-button-secondary-compact"><x-ui.icon name="users" size="size-3.5" />Switch Person<x-ui.icon name="chevron-down" size="size-3.5" /></span>
-                            </x-slot:trigger>
-                            <a href="{{ $personSwitchUrl() }}" role="menuitem" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary">Applicant — {{ $clientFolder->display_name }}</a>
-                            @foreach($coMakers as $coMaker)
-                                <a href="{{ $personSwitchUrl($coMaker) }}" role="menuitem" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary">Co-Maker{{ $coMakers->count() > 1 ? ' '.$loop->iteration : '' }} — {{ $coMaker->full_name }}</a>
-                            @endforeach
-                        </x-ui.context-menu>
-                </div>
-            </div>
-        </section>
-        @endif
+        <div data-person-switch-region>
+            @include('client-folders.partials.person-switch', ['clientFolder' => $clientFolder, 'coMakers' => $coMakers, 'activeCoMaker' => $activeCoMaker, 'canManageCoMakers' => $canManageCoMakers])
+        </div>
 
         <div class="client-folder-contents-layout grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(15rem,23%)]">
             <section class="ui-panel p-4 sm:p-5" aria-labelledby="folder-modules-title">
@@ -141,43 +76,22 @@
                 <nav class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Client folder modules">
                     @foreach($modules as $module)
                         @continue($module['key'] === 'client-information')
+                        @if($module['key'] === 'cibi-report')
+                            @include('client-folders.partials.cibi-module-card', ['clientFolder' => $clientFolder, 'cibiReport' => $report, 'activePerson' => $activeCoMaker, 'displayTimezone' => $displayTimezone])
+                            @continue
+                        @endif
                         <x-ui.module-card
-                            :id="match($module['key']) { 'cibi-report' => 'open-cibi-report', 'income-sources' => 'open-business-report', default => null }"
+                            :id="$module['key'] === 'income-sources' ? 'open-business-report' : null"
                             :title="$module['title']"
                             :icon="$module['icon']"
                             :state="$module['state']"
                             :badge="$moduleBadges[$module['key']] ?? null"
                             :description="$module['key'] === 'income-sources' ? null : $module['description']"
                             :href="$moduleHref($module)"
-                            :modal-id="$module['key'] === 'cibi-report' ? 'cibi-report-dialog' : null"
-                            :modal-url="$module['key'] === 'cibi-report' ? $moduleHref($module) : null"
                             :updated-at="$module['updatedAt'] ? Illuminate\Support\Carbon::parse($module['updatedAt'])->timezone($displayTimezone)->format('M j, Y') : null"
                             :open-label="$moduleOpenLabels[$module['key']] ?? 'Open'"
-                            :open-icon="$module['key'] === 'cibi-report' ? ($cibiHasReport ? 'edit' : 'plus') : 'open'"
-                        >
-                            @if($module['key'] === 'cibi-report' && ($cibiComplete || ($cibiHasReport && auth()->user()->can('reassignSignatory', $report))))
-                                <x-slot:footer>
-                                    @if($cibiComplete)
-                                        <a href="{{ route('client-folders.generated-reports.preview', [$clientFolder, 'report_type' => 'cibi'] + $personParams) }}" target="_blank" rel="noopener" class="ui-action-icon-button ui-action-icon-button-neutral" title="Preview CI / BI Report" aria-label="Preview CI / BI Report"><x-ui.icon name="eye" size="size-4" /></a>
-                                        <x-ui.context-menu label="Download CI / BI Report">
-                                            <x-slot:trigger>
-                                                <span class="ui-action-icon-button ui-action-icon-button-neutral gap-0.5 !w-auto px-1.5"><x-ui.icon name="download" size="size-4" /><x-ui.icon name="chevron-down" size="size-3" /></span>
-                                            </x-slot:trigger>
-                                            <button type="submit" form="dashboard-cibi-export-pdf-form" role="menuitem" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" />Download PDF</button>
-                                            <button type="submit" form="dashboard-cibi-export-excel-form" role="menuitem" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="spreadsheet" size="size-4" />Download Excel</button>
-                                        </x-ui.context-menu>
-                                    @endif
-                                    @if($cibiHasReport && auth()->user()->can('reassignSignatory', $report))
-                                        <x-ui.context-menu label="CI/BI signatory management">
-                                            <x-slot:trigger>
-                                                <span class="ui-action-icon-button ui-action-icon-button-neutral" title="CI/BI signatory management" aria-label="CI/BI signatory management"><x-ui.icon name="more" size="size-4" /></span>
-                                            </x-slot:trigger>
-                                            <button type="button" id="cibi-reassign-signatory-trigger" role="menuitem" data-modal-open="cibi-reassign-signatory-dialog" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="edit" size="size-4" />Reassign Signatory</button>
-                                        </x-ui.context-menu>
-                                    @endif
-                                </x-slot:footer>
-                            @endif
-                        </x-ui.module-card>
+                            open-icon="open"
+                        />
                     @endforeach
                 </nav>
             </section>
@@ -189,35 +103,7 @@
                 </div>
 
                 <div data-recent-activity-body>
-                    @php($recentActivityPreview = $recentPersonActivity->take(5))
-                    @if($recentActivityPreview->isEmpty())
-                        <div class="mt-6 rounded-control bg-surface-subtle p-4 text-sm leading-6 text-text-muted">
-                            @if($coMakers->isNotEmpty())
-                                No recent activity recorded yet for {{ $viewingLabel }}.
-                            @else
-                                No recent activity recorded yet.
-                            @endif
-                        </div>
-                    @else
-                        <ol class="relative mt-6 space-y-0">
-                            @foreach($recentActivityPreview as $activity)
-                                <li class="relative grid grid-cols-[1rem_1fr] gap-3 pb-6 last:pb-0">
-                                    @unless($loop->last)<span class="absolute bottom-0 left-[0.4375rem] top-4 border-l border-dashed border-ui-border-strong" aria-hidden="true"></span>@endunless
-                                    <span class="relative z-10 mt-1 size-3.5 rounded-full border-2 border-white bg-brand-primary shadow-sm" aria-hidden="true"></span>
-                                    <div class="min-w-0">
-                                        <p class="text-sm font-bold leading-5 text-text-main">{{ $activity->label }}</p>
-                                        @if($activity->detail)
-                                            <p class="mt-1 break-words text-xs leading-5 text-text-muted">{{ $activity->detail }}</p>
-                                        @endif
-                                        @if($activity->personContext)
-                                            <p class="mt-1 break-words text-xs leading-5 text-text-muted">{{ $activity->personContext }}</p>
-                                        @endif
-                                        <p class="mt-1 text-xs leading-5 text-text-muted">{{ $activity->actorLabel }} {{ $activity->user?->full_name ?? '—' }}<br>{{ $activity->created_at->timezone($displayTimezone)->format('M j, Y · g:i A') }}</p>
-                                    </div>
-                                </li>
-                            @endforeach
-                        </ol>
-                    @endif
+                    @include('client-folders.partials.recent-activity-body', ['recentPersonActivity' => $recentPersonActivity, 'coMakers' => $coMakers, 'viewingLabel' => $viewingLabel, 'displayTimezone' => $displayTimezone])
                 </div>
                 <div class="mt-5 border-t border-ui-border pt-4">
                     <button type="button" class="w-full text-center text-sm font-bold text-brand-primary hover:underline" data-modal-open="recent-activity-dialog">View All</button>

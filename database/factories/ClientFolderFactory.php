@@ -4,7 +4,6 @@ namespace Database\Factories;
 
 use App\Enums\ClientFolderStatus;
 use App\Models\User;
-use Illuminate\Database\Eloquent\Factories\Factory;
 
 class ClientFolderFactory extends Factory
 {

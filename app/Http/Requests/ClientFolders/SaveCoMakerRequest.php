@@ -35,5 +35,14 @@ class SaveCoMakerRequest extends FormRequest
             $trimmed = trim((string) preg_replace('/\s+/u', ' ', $address));
             $this->merge(['address' => $trimmed === '' ? null : $trimmed]);
         }
+
+        // A blank Middle Name field posts as an empty string — normalized to null here (same
+        // canonical blank representation the Applicant's own name fields use) rather than storing
+        // an empty string, so "no middle name" is never ambiguous with "not yet filled in".
+        $middleName = $this->input('middle_name');
+        if (is_string($middleName)) {
+            $trimmed = trim((string) preg_replace('/\s+/u', ' ', $middleName));
+            $this->merge(['middle_name' => $trimmed === '' ? null : $trimmed]);
+        }
     }
 }

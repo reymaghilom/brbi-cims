@@ -36,16 +36,21 @@ class ApplicantCibiResidencePrefillTest extends TestCase
         $response = $this->actingAs($secondCi)->get(route('client-folders.residence-checks.create', $folder))->assertOk();
         $response->assertSee('MICABALO, RONILO CABIGAS')
             ->assertSee('CIBI Verified Applicant Address')
-            ->assertSee('July 14, 2026')
-            ->assertDontSee('name="ci_date"', false);
+            ->assertSee('name="ci_date"', false);
 
         $xpath = $this->xpath($response->getContent());
         $location = $xpath->query("//*[@id='residence-location']")->item(0);
+        $ciDate = $xpath->query("//*[@id='residence-ci-date']")->item(0);
         $this->assertSame('Second Residence Investigator', trim($xpath->query('//*[@data-ci-primary-name]')->item(0)->textContent));
         $this->assertFalse($location->hasAttribute('readonly'));
         $this->assertSame('location', $location->getAttribute('name'));
         $this->assertTrue($location->hasAttribute('required'));
         $this->assertSame('CIBI Verified Applicant Address', $location->getAttribute('value'));
+        // Prefilled from CI/BI's current Start Date, but a normal editable field — never read-only —
+        // matching Location's own prefill-before-save / independent-after-save treatment.
+        $this->assertFalse($ciDate->hasAttribute('readonly'));
+        $this->assertSame('ci_date', $ciDate->getAttribute('name'));
+        $this->assertSame('2026-07-14', $ciDate->getAttribute('value'));
 
         $this->actingAs($secondCi)->post(route('client-folders.residence-checks.store', $folder), [
             'location' => 'Residence CI Corrected Address',

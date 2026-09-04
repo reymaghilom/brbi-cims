@@ -10,6 +10,8 @@ use App\Models\ClientCompletionResult;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Services\Progress\RequiredItemsProgressCalculator;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 
 class ClientFolderOverview
 {
@@ -26,8 +28,21 @@ class ClientFolderOverview
                 'coMakers:id,client_folder_id,full_name,first_name,middle_name,last_name,relationship_to_applicant,contact_number,address',
             ])
             ->withCount([
-                'incomeSources' => fn ($query) => $query->where('co_maker_id', $personId),
-                'incomeSources as completed_income_sources_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('state', RecordState::Complete),
+                // A dedicated-business IncomeSource only counts once its Business Report has
+                // actually been explicitly saved (revision > 1, same marker as
+                // IncomeSourceController::dedicatedSources()'s $requireReport) — a Check-first
+                // "+Add Business" shell (business_reports row exists but was never submitted through
+                // its own form) must not inflate this count, and neither may one whose Report has
+                // since been hard-deleted (see DeleteBusinessReport) even though the IncomeSource
+                // itself may survive internally for a surviving Business Check. A general/fallback
+                // IncomeSource has no BusinessReport at all by design (see GeneralIncomeSourceReport)
+                // and is always counted as before.
+                'incomeSources' => fn ($query) => $query->where('co_maker_id', $personId)->where(fn ($q) => $q
+                    ->whereHas('template', fn ($template) => $template->where('is_fallback', true))
+                    ->orWhere(fn ($business) => $business->whereHas('businessReport')->where('revision', '>', 1))),
+                'incomeSources as completed_income_sources_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('state', RecordState::Complete)->where(fn ($q) => $q
+                    ->whereHas('template', fn ($template) => $template->where('is_fallback', true))
+                    ->orWhere(fn ($business) => $business->whereHas('businessReport')->where('revision', '>', 1))),
                 'residenceChecks' => fn ($query) => $query->where('co_maker_id', $personId),
                 'businessChecks' => fn ($query) => $query->where('co_maker_id', $personId),
                 'activities' => fn ($query) => $query->where('co_maker_id', $personId),
@@ -101,6 +116,17 @@ class ClientFolderOverview
 
     private const MEDIA_ACTIONS = ['media.uploaded', 'media.removed'];
 
+    private const DOCUMENTATION_ACTIONS = [
+        'residence_business_documentation.created',
+        'residence_business_documentation.updated',
+        'residence_business_documentation.map_screenshot_uploaded',
+        'residence_business_documentation.map_screenshot_replaced',
+        'residence_business_documentation.map_screenshot_removed',
+        'residence_business_documentation.media_uploaded',
+        'residence_business_documentation.media_removed',
+        'residence_business_documentation.telegram_sent',
+    ];
+
     /**
      * Meaningful, person-scoped activity for the Recent Activity side panel. Folder-level
      * lifecycle events (module 'client_folders') are always included, since they belong to the
@@ -108,51 +134,162 @@ class ClientFolderOverview
      * co_maker_id in metadata (written at the same time as the event) — an event missing that
      * key is never guessed into a person bucket and is simply excluded.
      */
-    private function recentPersonActivity(ClientFolder $folder, ?CoMaker $activePerson): \Illuminate\Support\Collection
+    /**
+     * 'person' => true means this action belongs to one specific record owner (Applicant or a
+     * Co-Maker) — the row shows the "Applicant" / "Co-Maker: NAME" context line for it. Folder-level
+     * and Co-Maker-lifecycle actions never get that line: the former belongs to no one person, the
+     * latter already names the affected Co-Maker via its own 'detail'.
+     */
+    private const ACTIVITY_LABELS = [
+        'client_folder.created' => ['label' => 'Folder created', 'icon' => 'folder'],
+        'client_folder.renamed' => ['label' => 'Folder renamed', 'icon' => 'edit'],
+        'client_folder.recycled' => ['label' => 'Moved to Recycle Bin', 'icon' => 'trash'],
+        'client_folder.restored' => ['label' => 'Restored from Recycle Bin', 'icon' => 'check-circle'],
+        'co_maker.added' => ['label' => 'Co-Maker added', 'icon' => 'users', 'detail' => 'full_name'],
+        'co_maker.updated' => ['label' => 'Co-Maker updated', 'icon' => 'users', 'detail' => 'full_name'],
+        'co_maker.removed' => ['label' => 'Co-Maker removed', 'icon' => 'users', 'detail' => 'full_name'],
+        'cibi_report.created' => ['label' => 'CI/BI created', 'icon' => 'report', 'person' => true],
+        'cibi_report.updated' => ['label' => 'CI/BI updated', 'icon' => 'report', 'person' => true],
+        'cibi_report.signatory_reassigned' => ['label' => 'CI/BI Signatory reassigned', 'icon' => 'report', 'person' => true],
+        'income_source.created' => ['label' => 'Business added', 'icon' => 'folder', 'detail' => 'display_name', 'person' => true],
+        'income_source.deleted' => ['label' => 'Business removed', 'icon' => 'trash', 'detail' => 'display_name', 'person' => true],
+        'business_report.updated' => ['label' => 'Business Report saved', 'icon' => 'folder', 'detail' => 'display_name', 'person' => true],
+        'business_report.deleted' => ['label' => 'Business Report removed', 'icon' => 'trash', 'detail' => 'business_name', 'person' => true],
+        'general_income_source_report.updated' => ['label' => 'Business updated', 'icon' => 'folder', 'detail' => 'display_name', 'person' => true],
+        'income_source.contributor_added' => ['label' => 'Business contributor added', 'icon' => 'users', 'person' => true],
+        'income_source.contributor_removed' => ['label' => 'Business contributor removed', 'icon' => 'users', 'person' => true],
+        'residence_check.created' => ['label' => 'Residence Check saved', 'icon' => 'home', 'person' => true],
+        'residence_check.updated' => ['label' => 'Residence Check saved', 'icon' => 'home', 'person' => true],
+        'residence_check.deleted' => ['label' => 'Residence Check removed', 'icon' => 'trash', 'detail' => 'location', 'person' => true],
+        'business_check.created' => ['label' => 'Business Check saved', 'icon' => 'building', 'detail' => 'business_name', 'person' => true],
+        'business_check.updated' => ['label' => 'Business Check saved', 'icon' => 'building', 'detail' => 'business_name', 'person' => true],
+        'business_check.deleted' => ['label' => 'Business Check removed', 'icon' => 'trash', 'detail' => 'business_name', 'person' => true],
+        'residence_check.contributor_added' => ['label' => 'Residence Check contributor added', 'icon' => 'users', 'person' => true],
+        'residence_check.contributor_removed' => ['label' => 'Residence Check contributor removed', 'icon' => 'users', 'person' => true],
+        'business_check.contributor_added' => ['label' => 'Business Check contributor added', 'icon' => 'users', 'person' => true],
+        'business_check.contributor_removed' => ['label' => 'Business Check contributor removed', 'icon' => 'users', 'person' => true],
+        'ci_activity.created' => ['label' => 'CI Activity created', 'icon' => 'activity', 'detail' => 'activity_title', 'person' => true],
+        'ci_activity.scheduled' => ['label' => 'CI Activity scheduled', 'icon' => 'calendar', 'detail' => 'activity_title', 'person' => true],
+        'ci_activity.rescheduled' => ['label' => 'CI Activity rescheduled', 'icon' => 'calendar', 'detail' => 'activity_title', 'person' => true],
+        'ci_activity.completed' => ['label' => 'CI Activity completed', 'icon' => 'activity', 'detail' => 'activity_title', 'person' => true],
+        'ci_activity.updated' => ['label' => 'CI Activity updated', 'icon' => 'activity', 'detail' => 'activity_title', 'person' => true],
+        'ci_activity.assignment_changed' => ['label' => 'CI Activity assignment updated', 'icon' => 'users', 'detail' => 'activity_title', 'person' => true],
+        'media.uploaded' => ['icon' => 'media', 'person' => true],
+        'media.removed' => ['icon' => 'trash', 'person' => true],
+        'residence_business_documentation.created' => ['icon' => 'media', 'person' => true],
+        'residence_business_documentation.updated' => ['icon' => 'edit', 'person' => true],
+        'residence_business_documentation.map_screenshot_uploaded' => ['icon' => 'pin', 'person' => true],
+        'residence_business_documentation.map_screenshot_replaced' => ['icon' => 'pin', 'person' => true],
+        'residence_business_documentation.map_screenshot_removed' => ['icon' => 'trash', 'person' => true],
+        'residence_business_documentation.media_uploaded' => ['icon' => 'media', 'person' => true],
+        'residence_business_documentation.media_removed' => ['icon' => 'trash', 'person' => true],
+        'residence_business_documentation.telegram_sent' => ['icon' => 'telegram', 'person' => true],
+    ];
+
+    /**
+     * Safe, professional labels for the Business Report fields SaveBusinessIncomeSource is allowed
+     * to report as changed (see its CHANGED_FIELDS_ALLOWLIST) — only field names ever flow through
+     * AuditLog metadata, never values, so this map is the only place old/new data could leak from
+     * and it deliberately contains no values, just labels.
+     */
+    private const CHANGED_FIELD_LABELS = [
+        'business_name' => 'Business Name',
+        'report_category' => 'Report Category',
+        'start_date' => 'CI Date',
+        'submitted_date' => 'Submitted Date',
+        'main_business_address' => 'Main Business Address',
+        'previous_business_address' => 'Previous Business Address',
+        'previous_business_address_length_of_stay' => 'Previous Address Length of Stay',
+        'reason_for_transfer' => 'Reason for Transfer',
+        'registered_owner' => 'Registered Owner',
+        'relationship_to_borrower' => 'Relationship to Borrower',
+        'year_established' => 'Year Established',
+        'length_of_stay_months' => 'Length of Stay (Months)',
+        'monthly_rent' => 'Monthly Rent',
+        'ownership_type' => 'Ownership Type',
+        'rented_from' => 'Rented From',
+        'business_type' => 'Business Type',
+        'scale' => 'Scale',
+        'informant' => 'Informant',
+        'report_remarks' => 'Remarks',
+    ];
+
+    /** Business / Income Sources-relevant subset of self::ACTIVITY_LABELS, for the Business page's own Recent Activity panel (see IncomeSourceController::index()). */
+    private const BUSINESS_ACTIVITY_ACTIONS = [
+        'income_source.created', 'income_source.deleted',
+        'business_report.updated', 'business_report.deleted', 'general_income_source_report.updated',
+        'income_source.contributor_added', 'income_source.contributor_removed',
+        'business_check.created', 'business_check.updated', 'business_check.deleted',
+        'business_check.contributor_added', 'business_check.contributor_removed',
+    ];
+
+    /**
+     * Same authoritative AuditLog source as businessActivity() below, covering every activity
+     * label — this is the canonical source for the Client Folder Contents page's own Recent
+     * Activity panel (see client-folders.partials.recent-activity-body), including its
+     * same-response AUTO-UPDATE after a CI/BI Report save.
+     */
+    public function recentPersonActivity(ClientFolder $folder, ?CoMaker $activePerson): Collection
+    {
+        return $this->personActivity($folder, $activePerson, array_keys(self::ACTIVITY_LABELS));
+    }
+
+    /**
+     * Same authoritative AuditLog source and exact Applicant/Co-Maker isolation as
+     * recentPersonActivity() above, filtered to only Business / Income Sources-relevant actions —
+     * used by the Business / Income Sources page's own Recent Activity panel. Never a separate
+     * history system, never client-side-only entries.
+     */
+    public function businessActivity(ClientFolder $folder, ?CoMaker $activePerson): Collection
+    {
+        return $this->personActivity($folder, $activePerson, self::BUSINESS_ACTIVITY_ACTIONS);
+    }
+
+    /**
+     * Authoritative Field Documentation history for one exact Applicant/Co-Maker and category.
+     * Returns up to 50 events (newest first) so both the compact 5-item panel (see
+     * client-folders.media._recent-activity, which takes(5) off this same collection) and its
+     * "View All" modal (which renders the rest) share one authoritative source — never a second
+     * query for the modal.
+     */
+    public function documentationActivity(ClientFolder $folder, ?CoMaker $activePerson, string $category, ?int $documentationId = null): Collection
+    {
+        $personId = $activePerson?->id;
+
+        return AuditLog::query()
+            ->where('client_folder_id', $folder->id)
+            ->whereIn('action', self::DOCUMENTATION_ACTIONS)
+            ->with('user:id,full_name')
+            ->latest('created_at')
+            ->latest('id')
+            ->limit(150)
+            ->get(['id', 'user_id', 'action', 'metadata', 'created_at'])
+            ->filter(function (AuditLog $event) use ($personId, $category, $documentationId): bool {
+                $metadata = (array) $event->metadata;
+
+                return array_key_exists('co_maker_id', $metadata)
+                    && $metadata['co_maker_id'] === $personId
+                    && data_get($metadata, 'category') === $category
+                    && ($category !== 'business' || data_get($metadata, 'residence_business_documentation_id') === $documentationId);
+            })
+            ->take(50)
+            ->values()
+            ->map(fn (AuditLog $event) => (object) [
+                'id' => $event->id,
+                'label' => $this->documentationActivityLabel($event->action, (array) $event->metadata),
+                'detail' => null,
+                'tone' => $this->documentationActivityTone($event->action),
+                'user' => $event->user,
+                'created_at' => $event->created_at,
+            ]);
+    }
+
+    /** @param  list<string>  $actionKeys */
+    private function personActivity(ClientFolder $folder, ?CoMaker $activePerson, array $actionKeys): Collection
     {
         $personId = $activePerson?->id;
         $personContextLabel = $activePerson ? 'Co-Maker: '.mb_strtoupper($activePerson->full_name) : 'Applicant';
-
-        // 'person' => true means this action belongs to one specific record owner (Applicant or
-        // a Co-Maker) — the row shows the "Applicant" / "Co-Maker: NAME" context line for it.
-        // Folder-level and Co-Maker-lifecycle actions never get that line: the former belongs to
-        // no one person, the latter already names the affected Co-Maker via its own 'detail'.
-        $labels = [
-            'client_folder.created' => ['label' => 'Folder created', 'icon' => 'folder'],
-            'client_folder.renamed' => ['label' => 'Folder renamed', 'icon' => 'edit'],
-            'client_folder.recycled' => ['label' => 'Moved to Recycle Bin', 'icon' => 'trash'],
-            'client_folder.restored' => ['label' => 'Restored from Recycle Bin', 'icon' => 'check-circle'],
-            'co_maker.added' => ['label' => 'Co-Maker added', 'icon' => 'users', 'detail' => 'full_name'],
-            'co_maker.updated' => ['label' => 'Co-Maker updated', 'icon' => 'users', 'detail' => 'full_name'],
-            'co_maker.removed' => ['label' => 'Co-Maker removed', 'icon' => 'users', 'detail' => 'full_name'],
-            'cibi_report.created' => ['label' => 'CI/BI created', 'icon' => 'report', 'person' => true],
-            'cibi_report.updated' => ['label' => 'CI/BI updated', 'icon' => 'report', 'person' => true],
-            'cibi_report.signatory_reassigned' => ['label' => 'CI/BI Signatory reassigned', 'icon' => 'report', 'person' => true],
-            'income_source.created' => ['label' => 'Business added', 'icon' => 'folder', 'detail' => 'display_name', 'person' => true],
-            'income_source.deleted' => ['label' => 'Business removed', 'icon' => 'trash', 'detail' => 'display_name', 'person' => true],
-            'business_report.updated' => ['label' => 'Business updated', 'icon' => 'folder', 'detail' => 'display_name', 'person' => true],
-            'general_income_source_report.updated' => ['label' => 'Business updated', 'icon' => 'folder', 'detail' => 'display_name', 'person' => true],
-            'income_source.contributor_added' => ['label' => 'Business contributor added', 'icon' => 'users', 'person' => true],
-            'income_source.contributor_removed' => ['label' => 'Business contributor removed', 'icon' => 'users', 'person' => true],
-            'residence_check.created' => ['label' => 'Residence Check saved', 'icon' => 'home', 'person' => true],
-            'residence_check.updated' => ['label' => 'Residence Check saved', 'icon' => 'home', 'person' => true],
-            'residence_check.deleted' => ['label' => 'Residence Check removed', 'icon' => 'trash', 'detail' => 'location', 'person' => true],
-            'business_check.created' => ['label' => 'Business Check saved', 'icon' => 'building', 'person' => true],
-            'business_check.updated' => ['label' => 'Business Check saved', 'icon' => 'building', 'person' => true],
-            'business_check.deleted' => ['label' => 'Business Check removed', 'icon' => 'trash', 'detail' => 'location', 'person' => true],
-            'residence_check.contributor_added' => ['label' => 'Residence Check contributor added', 'icon' => 'users', 'person' => true],
-            'residence_check.contributor_removed' => ['label' => 'Residence Check contributor removed', 'icon' => 'users', 'person' => true],
-            'business_check.contributor_added' => ['label' => 'Business Check contributor added', 'icon' => 'users', 'person' => true],
-            'business_check.contributor_removed' => ['label' => 'Business Check contributor removed', 'icon' => 'users', 'person' => true],
-            'ci_activity.created' => ['label' => 'CI Activity created', 'icon' => 'activity', 'detail' => 'activity_title', 'person' => true],
-            'ci_activity.scheduled' => ['label' => 'CI Activity scheduled', 'icon' => 'calendar', 'detail' => 'activity_title', 'person' => true],
-            'ci_activity.rescheduled' => ['label' => 'CI Activity rescheduled', 'icon' => 'calendar', 'detail' => 'activity_title', 'person' => true],
-            'ci_activity.completed' => ['label' => 'CI Activity completed', 'icon' => 'activity', 'detail' => 'activity_title', 'person' => true],
-            'ci_activity.updated' => ['label' => 'CI Activity updated', 'icon' => 'activity', 'detail' => 'activity_title', 'person' => true],
-            'ci_activity.assignment_changed' => ['label' => 'CI Activity assignment updated', 'icon' => 'users', 'detail' => 'activity_title', 'person' => true],
-            'media.uploaded' => ['icon' => 'media', 'person' => true],
-            'media.removed' => ['icon' => 'trash', 'person' => true],
-        ];
+        $labels = Arr::only(self::ACTIVITY_LABELS, $actionKeys);
 
         return AuditLog::query()
             ->where('client_folder_id', $folder->id)
@@ -191,12 +328,17 @@ class ClientFolderOverview
                 };
 
                 return (object) [
-                    'label' => in_array($event->action, self::MEDIA_ACTIONS, true) ? $this->mediaActivityLabel($event->action, $metadata) : $definition['label'],
+                    'label' => match (true) {
+                        in_array($event->action, self::MEDIA_ACTIONS, true) => $this->mediaActivityLabel($event->action, $metadata),
+                        in_array($event->action, self::DOCUMENTATION_ACTIONS, true) => $this->documentationActivityLabel($event->action, $metadata),
+                        default => $definition['label'],
+                    },
                     // The administrative reassignment reason is captured in metadata for the full
                     // audit record, but deliberately never surfaces here — Recent Activity is the
                     // concise operational notice, not the Admin audit trail.
                     'detail' => $detail,
                     'personContext' => ($definition['person'] ?? false) ? $personContextLabel : null,
+                    'changedFieldsLabel' => $event->action === 'business_report.updated' ? $this->changedFieldsLabel($metadata) : null,
                     'icon' => $definition['icon'],
                     'user' => $event->user,
                     'actorLabel' => $event->action === 'media.uploaded' ? 'Uploaded by' : 'by',
@@ -215,6 +357,66 @@ class ClientFolderOverview
         };
 
         return $subject.' '.($action === 'media.uploaded' ? 'uploaded' : 'removed');
+    }
+
+    /** Same success/neutral/progress tone vocabulary as CiActivityHistoryFeed::mapWithProofName(), so the shared history-entry partial renders an identical dot color scheme here. */
+    private function documentationActivityTone(string $action): string
+    {
+        return match ($action) {
+            'residence_business_documentation.map_screenshot_uploaded',
+            'residence_business_documentation.map_screenshot_replaced',
+            'residence_business_documentation.media_uploaded',
+            'residence_business_documentation.telegram_sent' => 'success',
+            default => 'neutral',
+        };
+    }
+
+    private function documentationActivityLabel(string $action, array $metadata): string
+    {
+        $category = data_get($metadata, 'category') === 'business' ? 'Business' : 'Residence';
+        $kind = data_get($metadata, 'documentation_kind') === 'video' ? 'Video' : 'Picture';
+        $count = max(1, (int) data_get($metadata, 'count', 1));
+
+        $label = match ($action) {
+            'residence_business_documentation.created' => "Saved {$category} Documentation",
+            'residence_business_documentation.updated' => $this->documentationUpdatedLabel($category, (array) data_get($metadata, 'changed_fields', [])),
+            'residence_business_documentation.map_screenshot_uploaded' => "Uploaded {$category} Google Map Screenshot",
+            'residence_business_documentation.map_screenshot_replaced' => "Replaced {$category} Google Map Screenshot",
+            'residence_business_documentation.map_screenshot_removed' => "Removed {$category} Google Map Screenshot",
+            'residence_business_documentation.media_uploaded' => "Uploaded {$count} {$category} ".str($kind)->plural($count),
+            'residence_business_documentation.media_removed' => "Removed a {$category} {$kind}",
+            'residence_business_documentation.telegram_sent' => "Sent {$category} Documentation to Telegram",
+            default => "Updated {$category} Documentation",
+        };
+
+        $businessName = data_get($metadata, 'business_name');
+
+        return $category === 'Business' && filled($businessName) ? "{$label} — {$businessName}" : $label;
+    }
+
+    /** @param list<string> $changedFields */
+    private function documentationUpdatedLabel(string $category, array $changedFields): string
+    {
+        $labels = [];
+        if (in_array('location', $changedFields, true)) {
+            $labels[] = $category === 'Residence' ? 'Address' : 'Location';
+        }
+        if (in_array('remarks', $changedFields, true)) {
+            $labels[] = 'Remarks';
+        }
+
+        return $labels === []
+            ? "Updated {$category} Documentation"
+            : "Updated {$category} ".implode(' and ', $labels);
+    }
+
+    /** Compact "Business Name, Main Business Address" note built only from the safe field-name allowlist — never old/new values. Null when nothing (or nothing recognized) changed, so a no-op or first save never shows a fake "Updated:" line. */
+    private function changedFieldsLabel(array $metadata): ?string
+    {
+        $fields = (array) data_get($metadata, 'changed_fields', []);
+        $labels = array_values(array_filter(array_map(fn ($field) => self::CHANGED_FIELD_LABELS[$field] ?? null, $fields)));
+
+        return $labels === [] ? null : implode(', ', $labels);
     }
 
     /** Old → new signatory, from name snapshots captured at reassignment time (never a live lookup). */

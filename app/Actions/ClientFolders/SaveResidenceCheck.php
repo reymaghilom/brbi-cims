@@ -25,7 +25,6 @@ class SaveResidenceCheck
     public function __construct(
         private readonly ClientMediaUploader $mediaUploader,
         private readonly ResidenceBusinessCheckCompletionEvaluator $completion,
-        private readonly SyncResidenceCheckCiDate $syncCiDate,
         private readonly CiParticipantService $participants,
         private readonly UpdateResidenceCheckContributors $updateContributors,
     ) {}
@@ -102,7 +101,6 @@ class SaveResidenceCheck
                 $created = ! $check->exists;
                 $resolvedAddress = PersonAddressResolver::resolve($folder, $activePerson);
                 $resolvedCiDate = PersonCiDateResolver::resolve($folder, $activePerson);
-                $hasScopedCibiReport = $folder->cibiReports()->where('co_maker_id', $activePerson?->id)->exists();
 
                 if (! $created && filled($data['expected_updated_at'] ?? null) && ! Carbon::parse($data['expected_updated_at'])->equalTo($check->updated_at)) {
                     throw ValidationException::withMessages([
@@ -122,32 +120,25 @@ class SaveResidenceCheck
                     ]);
                 }
 
-                if ($created) {
-                    if (! $resolvedCiDate && ($activePerson || $hasScopedCibiReport)) {
-                        throw ValidationException::withMessages([
-                            'ci_date' => 'No Start Date of CI available. Please update the CI/BI Report before creating a Residence Check.',
-                        ]);
-                    }
-                    if (! $resolvedCiDate && blank($data['ci_date'] ?? null)) {
-                        throw ValidationException::withMessages([
-                            'ci_date' => 'The CI Date field is required when no Applicant CI/BI Report exists yet.',
-                        ]);
-                    }
-                    if (! $resolvedCiDate) {
-                        $resolvedCiDate = Carbon::parse($data['ci_date']);
-                    }
+                // Same prefill-before-save / independent-after-save precedence as Location: an
+                // explicitly submitted value always wins, then this check's own already-saved
+                // date, then (create only, since an existing check always already has one) the
+                // exact person's current CI/BI Start Date as a one-time prefill source.
+                $ciDate = filled($data['ci_date'] ?? null)
+                    ? Carbon::parse($data['ci_date'])
+                    : ($check->ci_date ?: $resolvedCiDate);
+                if (blank($ciDate)) {
+                    throw ValidationException::withMessages([
+                        'ci_date' => 'The CI Date field is required.',
+                    ]);
                 }
 
                 $check->fill(Arr::only($data, ['remarks', 'google_maps_link']));
                 $check->location = $location;
-                // residence_checks.ci_date is NOT NULL, so — unlike location — a brand-new check
-                // needs this set directly before its first save rather than relying purely on the
-                // post-save sync below. An existing check only picks up a resolved change here too;
-                // if resolution is currently blank (should not happen once past the create guard
-                // above, but defensively), its existing value is left exactly as it was.
-                if ($resolvedCiDate) {
-                    $check->ci_date = $resolvedCiDate->toDateString();
-                }
+                // residence_checks.ci_date is NOT NULL — always set directly, never left to a
+                // separate post-save sync (that would silently overwrite an already-saved date
+                // whenever the CI/BI Report changes later, which violates independence-after-save).
+                $check->ci_date = $ciDate instanceof Carbon ? $ciDate->toDateString() : $ciDate;
 
                 // A genuine no-op edit (nothing the CI touched, and nothing an authoritative source
                 // needed to sync) must skip the save entirely — no timestamp bump, no audit entry, no
@@ -301,9 +292,6 @@ class SaveResidenceCheck
                     'user_agent' => request()?->userAgent(),
                 ]);
 
-                // Applicant Location is the saved Residence report value and must not be overwritten
-                // from another report. Co-Maker Location keeps its existing resolver-owned sync.
-                $this->syncCiDate->execute($folder, $activePerson);
                 $this->completion->evaluate($folder, $activePerson?->id);
 
                 return $check->refresh();

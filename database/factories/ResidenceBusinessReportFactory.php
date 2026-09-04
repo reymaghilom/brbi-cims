@@ -5,7 +5,6 @@ namespace Database\Factories;
 use App\Enums\RecordState;
 use App\Models\ClientFolder;
 use App\Models\User;
-use Illuminate\Database\Eloquent\Factories\Factory;
 
 class ResidenceBusinessReportFactory extends Factory
 {

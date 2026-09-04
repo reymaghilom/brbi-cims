@@ -19,6 +19,7 @@ use App\Services\Reports\BusinessBatchPdfExporter;
 use App\Services\Reports\BusinessExcelExporter;
 use App\Services\Reports\CibiExcelExporter;
 use App\Services\Reports\OfficialReportDataBuilder;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
@@ -28,6 +29,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class GeneratedReportController extends Controller
 {
+    public function __construct(private readonly CiTeamDocumentStorage $documents) {}
+
     public function index(ClientFolder $clientFolder): View
     {
         Gate::authorize('view', $clientFolder);
@@ -279,7 +282,9 @@ class GeneratedReportController extends Controller
     private function downloadResponse(ClientFolder $clientFolder, GeneratedReport $generatedReport): StreamedResponse
     {
         abort_unless($generatedReport->status === GenerationStatus::Completed && filled($generatedReport->private_file_reference), 404);
-        $disk = Storage::disk(config('cims.report_disk'));
+        $disk = $this->documents->isLegacyReportPath($generatedReport->private_file_reference)
+            ? Storage::disk(config('cims.report_disk'))
+            : $this->documents->disk();
         abort_unless($disk->exists($generatedReport->private_file_reference), 404);
         AuditLog::create([
             'user_id' => request()->user()->id, 'client_folder_id' => $clientFolder->id, 'action' => 'generated_report.downloaded', 'module' => 'generated_reports',

@@ -311,7 +311,7 @@ class CibiReportTest extends TestCase
 
         $this->assertStringContainsString('NAME OF CLIENT:', $content);
         $this->assertStringNotContainsString('NAME OF COMAKER:', $content);
-        $this->assertStringContainsString('name="personal_snapshot[name]" value="DELA CRUZ, JUAN SANTOS"', $content);
+        $this->assertStringContainsString('name="personal_snapshot[name]" type="text"  value="DELA CRUZ, JUAN SANTOS"', $content);
     }
 
     public function test_co_maker_cibi_shows_name_of_co_maker_label_and_last_first_middle_format_from_structured_fields(): void
@@ -332,7 +332,7 @@ class CibiReportTest extends TestCase
 
         $this->assertStringContainsString('NAME OF COMAKER:', $content);
         $this->assertStringNotContainsString('NAME OF CLIENT:', $content);
-        $this->assertStringContainsString('name="personal_snapshot[name]" value="Dela Cruz, Juan Santos"', $content);
+        $this->assertStringContainsString('name="personal_snapshot[name]" type="text"  value="Dela Cruz, Juan Santos"', $content);
         $this->assertStringNotContainsString('value="JUAN SANTOS DELA CRUZ"', $content);
     }
 
@@ -346,7 +346,95 @@ class CibiReportTest extends TestCase
             ->get(route('client-folders.cibi-report.edit', $folder).'?person=co-maker&co_maker_id='.$coMaker->id)
             ->assertOk()->getContent();
 
-        $this->assertStringContainsString('name="personal_snapshot[name]" value="LEGACY CO MAKER"', $content);
+        $this->assertStringContainsString('name="personal_snapshot[name]" type="text"  value="LEGACY CO MAKER"', $content);
+    }
+
+    public function test_applicant_cibi_name_field_is_not_readonly_or_disabled(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'DELA CRUZ, JUAN']);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+
+        $nameFieldStart = strpos($content, 'id="personal_snapshot-name"');
+        $this->assertNotFalse($nameFieldStart, 'Name of Client field was not found.');
+        $nameFieldTag = substr($content, $nameFieldStart, strpos($content, '>', $nameFieldStart) - $nameFieldStart);
+        $this->assertStringNotContainsString('readonly', $nameFieldTag);
+        $this->assertStringNotContainsString('disabled', $nameFieldTag);
+    }
+
+    public function test_manually_edited_applicant_cibi_name_saves_to_the_report_snapshot_only_and_reopens_with_it(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'DELA CRUZ, JUAN']);
+        $payload = $this->payload();
+        $payload['personal_snapshot']['name'] = 'DELA CRUZ, JUAN P.';
+
+        $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $payload)->assertOk();
+
+        $saved = $folder->cibiReport()->sole();
+        $this->assertSame('DELA CRUZ, JUAN P.', $saved->personal_snapshot['name']);
+        // Editing the CIBI Name must affect only this report's own snapshot — never the Client
+        // Folder's master display_name.
+        $this->assertSame('DELA CRUZ, JUAN', $folder->fresh()->display_name);
+
+        // Reopening the saved CIBI must show its own saved (manually edited) Name, not re-derive it
+        // from the current Client Folder name every time the form loads.
+        $content = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('name="personal_snapshot[name]" type="text"  value="DELA CRUZ, JUAN P."', $content);
+
+        $document = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi);
+        $this->assertSame('DELA CRUZ, JUAN P.', $document['cibi']['personal']['name']);
+    }
+
+    public function test_manually_edited_co_maker_cibi_name_saves_only_to_that_co_makers_report_and_leaves_master_and_others_untouched(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'APPLICANT NAME']);
+        $coMaker = CoMaker::create([
+            'client_folder_id' => $folder->id, 'full_name' => 'MARIA SANTOS',
+            'first_name' => 'Maria', 'last_name' => 'Santos',
+        ]);
+        $otherCoMaker = CoMaker::create([
+            'client_folder_id' => $folder->id, 'full_name' => 'PEDRO REYES',
+            'first_name' => 'Pedro', 'last_name' => 'Reyes',
+        ]);
+
+        $payload = $this->payload();
+        $payload['co_maker_id'] = $coMaker->id;
+        $payload['personal_snapshot']['name'] = 'SANTOS, MARIA L.';
+
+        $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder).'?person=co-maker&co_maker_id='.$coMaker->id, $payload)->assertOk();
+
+        $saved = $folder->cibiReport()->where('co_maker_id', $coMaker->id)->sole();
+        $this->assertSame('SANTOS, MARIA L.', $saved->personal_snapshot['name']);
+        // Co-Maker master/profile record and the Applicant and other Co-Makers are never touched.
+        $this->assertSame('MARIA SANTOS', $coMaker->fresh()->full_name);
+        $this->assertSame('PEDRO REYES', $otherCoMaker->fresh()->full_name);
+        $this->assertSame('APPLICANT NAME', $folder->fresh()->display_name);
+        $this->assertSame(0, $folder->cibiReport()->whereNull('co_maker_id')->count());
+        $this->assertSame(0, $folder->cibiReport()->where('co_maker_id', $otherCoMaker->id)->count());
+    }
+
+    public function test_new_co_maker_cibi_name_field_is_editable_and_prefills_from_the_exact_co_maker(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = CoMaker::create([
+            'client_folder_id' => $folder->id, 'full_name' => 'MARIA SANTOS',
+            'first_name' => 'Maria', 'last_name' => 'Santos',
+        ]);
+
+        $content = $this->actingAs($ci)
+            ->get(route('client-folders.cibi-report.edit', $folder).'?person=co-maker&co_maker_id='.$coMaker->id)
+            ->assertOk()->getContent();
+
+        $nameFieldStart = strpos($content, 'id="personal_snapshot-name"');
+        $this->assertNotFalse($nameFieldStart, 'Name of Co-Maker field was not found.');
+        $nameFieldTag = substr($content, $nameFieldStart, strpos($content, '>', $nameFieldStart) - $nameFieldStart);
+        $this->assertStringNotContainsString('readonly', $nameFieldTag);
+        $this->assertStringNotContainsString('disabled', $nameFieldTag);
+        $this->assertStringContainsString('name="personal_snapshot[name]" type="text"  value="Santos, Maria"', $content);
     }
 
     public function test_new_applicant_cibi_starts_with_three_default_rows_in_every_repeater_without_persisting_anything(): void
@@ -792,6 +880,50 @@ class CibiReportTest extends TestCase
         $this->assertDatabaseHas('cibi_reports', ['client_folder_id' => $folder->id, 'state' => 'complete']);
     }
 
+    public function test_save_response_includes_authoritative_recent_activity_for_client_folder_contents_auto_update(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+
+        $response = $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $this->payload())
+            ->assertOk();
+
+        // The same authoritative save response carries the freshly-rendered Recent Activity
+        // fragment — no second GET needed for the Client Folder Contents page's own panel to
+        // reflect the just-saved entry immediately.
+        $html = $response->json('recent_activity_html');
+        $this->assertIsString($html);
+        $this->assertStringContainsString('CI/BI created', $html);
+        $this->assertStringContainsString($ci->full_name, $html);
+        $this->assertTrue(AuditLog::query()->where('action', 'cibi_report.created')->where('user_id', $ci->id)->exists());
+
+        // Same canonical AuditLog-backed source as the page's own initial render — visiting Client
+        // Folder Contents directly shows the identical entry, proving this isn't a fabricated
+        // client-side or response-only entry.
+        $this->actingAs($ci)->get(route('client-folders.show', $folder))
+            ->assertOk()
+            ->assertSee('CI/BI created');
+    }
+
+    public function test_recent_activity_in_save_response_stays_scoped_to_the_exact_co_maker(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Co-Maker A', 'first_name' => 'Co-Maker', 'last_name' => 'A']);
+        CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Co-Maker B', 'first_name' => 'Co-Maker', 'last_name' => 'B']);
+
+        $payload = $this->payload();
+        $payload['co_maker_id'] = $coMakerA->id;
+
+        $response = $this->actingAs($ci)
+            ->putJson(route('client-folders.cibi-report.update', $folder).'?person=co-maker&co_maker_id='.$coMakerA->id, $payload)
+            ->assertOk();
+
+        $html = $response->json('recent_activity_html');
+        $this->assertStringContainsString('Co-Maker: CO-MAKER A', $html);
+        $this->assertStringNotContainsString('Co-Maker B', $html);
+    }
+
     public function test_completed_report_update_keeps_the_existing_record_and_returns_update_feedback(): void
     {
         $ci = User::factory()->create();
@@ -911,7 +1043,7 @@ class CibiReportTest extends TestCase
         $this->assertNull($folder->cibiReport()->sole()->personal_snapshot['spouse_age']);
     }
 
-    public function test_section_one_validated_fields_save_as_snapshot_while_canonical_name_remains_locked(): void
+    public function test_section_one_validated_fields_including_name_save_as_snapshot_without_touching_master_records(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create([
@@ -960,17 +1092,23 @@ class CibiReportTest extends TestCase
             ->assertJsonPath('report.state', 'complete');
 
         $snapshot = CibiReport::whereBelongsTo($folder)->sole()->personal_snapshot;
-        $this->assertSame('CANONICAL CLIENT NAME', $snapshot['name']);
+        // 'name' is manually editable in the CI/BI form, same as the other Section I fields here —
+        // the submitted edit is what gets saved into this report's own snapshot.
+        $this->assertSame('REPORT SNAPSHOT NAME', $snapshot['name']);
         $this->assertSame('Report-time validated address', $snapshot['present_address']);
         $this->assertSame('REPORT SNAPSHOT SPOUSE', $snapshot['spouse_name']);
         $this->assertSame('Separated', $snapshot['civil_status']);
         $this->assertSame('Ancestral', $snapshot['home_condition']);
         $this->assertTrue($snapshot['living_with_parents']);
+        // The edit affects only this CIBI Report's own snapshot — never the Client Folder's own
+        // display_name or the linked ClientInformation profile.
         $this->assertSame('CANONICAL CLIENT NAME', $folder->fresh()->display_name);
         $this->assertSame('CANONICAL SPOUSE', $information->fresh()->spouse_name);
 
         $reopened = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk();
-        $reopened->assertSee('value="CANONICAL CLIENT NAME"', false)
+        // Reopening a saved CIBI shows its own saved Name — not re-derived from the Client Folder.
+        $reopened->assertSee('value="REPORT SNAPSHOT NAME"', false)
+            ->assertDontSee('value="CANONICAL CLIENT NAME"', false)
             ->assertSee('Report-time validated address')
             ->assertSee('value="Separated" selected', false)
             ->assertSee('value="Ancestral" selected', false)
@@ -1002,9 +1140,9 @@ class CibiReportTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'REYES, MARIA SANTOS']);
 
         $response = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk();
-        $response->assertSee('id="personal-snapshot-name-display"', false)
+        $response->assertSee('id="personal_snapshot-name"', false)
             ->assertSee('readonly', false)
-            ->assertSee('name="personal_snapshot[name]" value="REYES, MARIA SANTOS"', false)
+            ->assertSee('name="personal_snapshot[name]" type="text"  value="REYES, MARIA SANTOS"', false)
             ->assertSee('data-residence-status', false)
             ->assertSee('id="personal-residence-status"', false)
             ->assertSee('name="personal_snapshot[residence_status]"', false)
@@ -1087,7 +1225,7 @@ class CibiReportTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/<input[^>]+id="personal_snapshot-spouse_age"[^>]+required/', $response->getContent());
 
         $javascript = file_get_contents(resource_path('js/app.js'));
-        $this->assertStringContainsString("residenceStatuses.find((option) => option.checked)?.value", $javascript);
+        $this->assertStringContainsString('residenceStatuses.find((option) => option.checked)?.value', $javascript);
         $this->assertStringContainsString("residenceStatuses.forEach((option) => option.addEventListener('change', syncResidenceFields))", $javascript);
         $this->assertStringContainsString("['Mortgaged', 'Rented'].includes(status)", $javascript);
         $this->assertStringContainsString("status === 'Rented'", $javascript);
@@ -1140,7 +1278,7 @@ class CibiReportTest extends TestCase
         $legal = $report->legalFindings()->create(['source_level' => 'barangay', 'result' => 'Clear', 'sort_order' => 1]);
         $payload = $this->payload();
         unset($payload['purpose_other'], $payload['credit_checks'], $payload['legal_findings']);
-        $payload['personal_snapshot']['name'] = 'FORGED NAME';
+        $payload['personal_snapshot']['name'] = 'MANUALLY EDITED NAME';
         $payload['personal_snapshot']['length_of_stay_months'] = '5 years and 6 months';
         $payload['personal_snapshot']['previous_address'] = '';
         $payload['personal_snapshot']['previous_address_length_of_stay_months'] = 'Since 2021';
@@ -1161,7 +1299,10 @@ class CibiReportTest extends TestCase
             ->assertJsonPath('report.loan_records_found', 4);
 
         $saved = $report->fresh();
-        $this->assertSame('CANONICAL CLIENT', $saved->personal_snapshot['name']);
+        // 'name' is manually editable — the submitted value is what persists into this report's
+        // own snapshot, and the Client Folder's own display_name is never touched by it.
+        $this->assertSame('MANUALLY EDITED NAME', $saved->personal_snapshot['name']);
+        $this->assertSame('CANONICAL CLIENT', $folder->fresh()->display_name);
         $this->assertSame('5 years and 6 months', $saved->personal_snapshot['length_of_stay_months']);
         $this->assertNull($saved->personal_snapshot['previous_address']);
         $this->assertSame('Since 2021', $saved->personal_snapshot['previous_address_length_of_stay_months']);

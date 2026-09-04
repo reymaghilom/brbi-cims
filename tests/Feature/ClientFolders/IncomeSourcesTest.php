@@ -4,6 +4,7 @@ namespace Tests\Feature\ClientFolders;
 
 use App\Actions\ClientFolders\CreateIncomeSource;
 use App\Enums\RecordState;
+use App\Enums\UserStatus;
 use App\Models\AuditLog;
 use App\Models\CibiReport;
 use App\Models\ClientFolder;
@@ -11,6 +12,7 @@ use App\Models\CoMaker;
 use App\Models\IncomeSourceTemplate;
 use App\Models\MediaReference;
 use App\Models\User;
+use App\Services\ClientFolders\CiParticipantService;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
@@ -100,8 +102,7 @@ class IncomeSourcesTest extends TestCase
             ->assertOk()
             ->assertSee('Add Business')
             ->assertDontSee('Add Another Business')
-            ->assertSee('No businesses saved yet')
-            ->assertDontSee('Saved Businesses / Income Sources')
+            ->assertSee('No businesses yet')
             ->assertDontSee('Add New Business / Income Source');
     }
 
@@ -139,7 +140,13 @@ class IncomeSourcesTest extends TestCase
         $this->actingAs($ci)
             ->get(route('client-folders.income-sources.edit', [$folder, $second]))
             ->assertOk()
-            ->assertDontSee('Add Business')
+            // Scoped to this page's own local business-switcher "Add Business" element rather than
+            // a bare text search — the Business / Income Sources manage page's own unified list
+            // legitimately renders an "Add Business" button too, and its rendered HTML can be
+            // embedded elsewhere on a successful-save landing page for AUTO-UPDATE purposes (see
+            // layouts/business-encoding.blade.php's data-business-saved-payload), which a plain
+            // substring search would otherwise false-positive against.
+            ->assertDontSee('class="business-add-button"', false)
             ->assertDontSee('Please choose Business Template')
             ->assertDontSee('data-business-template-select', false)
             ->assertDontSee('data-business-selector', false)
@@ -880,7 +887,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame(3, substr_count($savedRows[1], 'data-repeater-row'));
 
         $script = file_get_contents(resource_path('js/app.js'));
-        $this->assertStringContainsString("repeaterRowHasData(row, repeater)", $script);
+        $this->assertStringContainsString('repeaterRowHasData(row, repeater)', $script);
         $this->assertStringContainsString('pendingRepeaterRemoval = { row, repeater }', $script);
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $basePayload + [
@@ -995,7 +1002,7 @@ class IncomeSourcesTest extends TestCase
         }
         $script = file_get_contents(resource_path('js/app.js'));
         $this->assertStringContainsString("repeater.matches('[data-empty-row-remove-without-confirmation]')", $script);
-        $this->assertStringContainsString("repeaterRowHasData(row, repeater)", $script);
+        $this->assertStringContainsString('repeaterRowHasData(row, repeater)', $script);
 
         $blankPayload = $this->businessPayload();
         $blankPayload['intent'] = 'stay';
@@ -1617,7 +1624,7 @@ class IncomeSourcesTest extends TestCase
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $template = IncomeSourceTemplate::where('template_type', 'leasing_truck_equipment')->firstOrFail();
-        $source = $this->app->make(\App\Actions\ClientFolders\CreateIncomeSource::class)->execute($ci, $folder, [
+        $source = $this->app->make(CreateIncomeSource::class)->execute($ci, $folder, [
             'income_source_template_id' => $template->id, 'source_name' => 'Applicant Business', 'business_name' => 'Applicant Business',
         ]);
 
@@ -1647,7 +1654,7 @@ class IncomeSourcesTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER PERSON']);
         $template = IncomeSourceTemplate::where('template_type', 'leasing_truck_equipment')->firstOrFail();
-        $source = $this->app->make(\App\Actions\ClientFolders\CreateIncomeSource::class)->execute($ci, $folder, [
+        $source = $this->app->make(CreateIncomeSource::class)->execute($ci, $folder, [
             'income_source_template_id' => $template->id, 'source_name' => 'Co-Maker Business', 'business_name' => 'Co-Maker Business',
             'co_maker_id' => $coMaker->id,
         ]);
@@ -2569,7 +2576,7 @@ class IncomeSourcesTest extends TestCase
         [$ci, , $source] = $this->createSource('leasing_non_agricultural');
 
         $this->assertSame($ci->id, $source->created_by);
-        $this->assertSame([$ci->id], $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->orderedParticipantIds($source));
+        $this->assertSame([$ci->id], $this->app->make(CiParticipantService::class)->orderedParticipantIds($source));
     }
 
     public function test_ci_in_charge_field_renders_from_business_report_creator_not_folder_assigned_ci(): void
@@ -2609,7 +2616,7 @@ class IncomeSourcesTest extends TestCase
         $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$mark->id, $yong->id]];
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors()->assertRedirect();
 
-        $this->assertSame([$ci->id, $mark->id, $yong->id], $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->orderedParticipantIds($source->refresh()));
+        $this->assertSame([$ci->id, $mark->id, $yong->id], $this->app->make(CiParticipantService::class)->orderedParticipantIds($source->refresh()));
     }
 
     public function test_primary_creator_is_stripped_from_companion_submissions(): void
@@ -2640,7 +2647,7 @@ class IncomeSourcesTest extends TestCase
     {
         [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
         $mark = User::factory()->create(['full_name' => 'MARK S. DELA CRUZ']);
-        $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->syncCompanions($source, [$mark->id]);
+        $this->app->make(CiParticipantService::class)->syncCompanions($source, [$mark->id]);
 
         $page = $this->actingAs($ci)
             ->get(route('client-folders.income-sources.edit', [$folder, $source]))
@@ -2662,7 +2669,7 @@ class IncomeSourcesTest extends TestCase
     {
         [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
         $mark = User::factory()->create();
-        $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->syncCompanions($source, [$mark->id]);
+        $this->app->make(CiParticipantService::class)->syncCompanions($source, [$mark->id]);
 
         $page = $this->actingAs($ci)
             ->get(route('client-folders.income-sources.edit', [$folder, $source]))
@@ -2697,7 +2704,7 @@ class IncomeSourcesTest extends TestCase
     {
         [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
         $eligible = User::factory()->create(['full_name' => 'ELIGIBLE CI']);
-        $inactive = User::factory()->create(['full_name' => 'INACTIVE CI', 'status' => \App\Enums\UserStatus::Disabled]);
+        $inactive = User::factory()->create(['full_name' => 'INACTIVE CI', 'status' => UserStatus::Disabled]);
         $admin = User::factory()->administrator()->create(['full_name' => 'ADMIN USER']);
 
         $this->actingAs($ci)
@@ -2729,7 +2736,7 @@ class IncomeSourcesTest extends TestCase
     {
         [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
         $mark = User::factory()->create(['full_name' => 'MARK S. DELA CRUZ']);
-        $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->syncCompanions($source, [$mark->id]);
+        $this->app->make(CiParticipantService::class)->syncCompanions($source, [$mark->id]);
 
         $page = $this->actingAs($ci)
             ->get(route('client-folders.income-sources.edit', [$folder, $source]))
@@ -2758,7 +2765,7 @@ class IncomeSourcesTest extends TestCase
         [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
         $mark = User::factory()->create();
         $yong = User::factory()->create();
-        $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->syncCompanions($source, [$mark->id, $yong->id]);
+        $this->app->make(CiParticipantService::class)->syncCompanions($source, [$mark->id, $yong->id]);
 
         $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$yong->id]];
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors()->assertRedirect();
@@ -2771,7 +2778,7 @@ class IncomeSourcesTest extends TestCase
         [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
         $mark = User::factory()->create();
         $editor = User::factory()->create();
-        $this->app->make(\App\Services\ClientFolders\CiParticipantService::class)->syncCompanions($source, [$mark->id]);
+        $this->app->make(CiParticipantService::class)->syncCompanions($source, [$mark->id]);
 
         // The editor saves without ever opening the Companion CI picker (no contributor_ids
         // submitted at all) — this must never silently add them as a participant.
@@ -2814,7 +2821,7 @@ class IncomeSourcesTest extends TestCase
     public function test_inactive_or_non_ci_user_is_rejected_as_companion(): void
     {
         [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
-        $disabledCi = User::factory()->create(['status' => \App\Enums\UserStatus::Disabled]);
+        $disabledCi = User::factory()->create(['status' => UserStatus::Disabled]);
         $admin = User::factory()->administrator()->create();
 
         $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$disabledCi->id]];

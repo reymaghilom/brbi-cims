@@ -135,15 +135,48 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertDatabaseHas('folder_number_sequences', ['year' => 2026, 'last_number' => 3]);
     }
 
-    public function test_middle_name_is_required_and_rejects_initials_when_creating_a_folder(): void
+    public function test_middle_name_is_optional_and_accepts_full_name_initial_or_blank(): void
     {
         $investigator = User::factory()->create();
-        $base = ['last_name' => 'Reyes', 'first_name' => 'Maria'];
 
-        $this->actingAs($investigator)->post(route('client-folders.store'), $base)
-            ->assertSessionHasErrors(['middle_name' => 'Middle name is required.']);
-        $this->actingAs($investigator)->post(route('client-folders.store'), $base + ['middle_name' => 'Q.'])
-            ->assertSessionHasErrors(['middle_name' => 'Middle name must be written in full, not as an initial.']);
+        // Blank Middle Name — no fake N/A placeholder, stored/displayed cleanly with no double space.
+        $this->actingAs($investigator)->post(route('client-folders.store'), [
+            'last_name' => 'Reyes', 'first_name' => 'Maria',
+        ])->assertRedirect();
+        $folder = ClientFolder::query()->where('last_name', 'REYES')->sole();
+        $this->assertNull($folder->middle_name);
+        $this->assertSame('REYES, MARIA', $folder->display_name);
+        $this->assertStringNotContainsString('  ', $folder->display_name);
+
+        // Middle initial without a period.
+        $this->actingAs($investigator)->post(route('client-folders.store'), [
+            'last_name' => 'Santos', 'first_name' => 'Juan', 'middle_name' => 'M',
+        ])->assertRedirect();
+        $this->assertSame('M', ClientFolder::query()->where('last_name', 'SANTOS')->sole()->middle_name);
+
+        // Middle initial with a period.
+        $this->actingAs($investigator)->post(route('client-folders.store'), [
+            'last_name' => 'Cruz', 'first_name' => 'Ana', 'middle_name' => 'M.',
+        ])->assertRedirect();
+        $this->assertSame('M.', ClientFolder::query()->where('last_name', 'CRUZ')->sole()->middle_name);
+
+        // Full middle name.
+        $this->actingAs($investigator)->post(route('client-folders.store'), [
+            'last_name' => 'Garcia', 'first_name' => 'Pedro', 'middle_name' => 'Miguel',
+        ])->assertRedirect();
+        $this->assertSame('MIGUEL', ClientFolder::query()->where('last_name', 'GARCIA')->sole()->middle_name);
+
+        $this->assertDatabaseCount('client_folders', 4);
+    }
+
+    public function test_first_and_last_name_remain_required_when_creating_a_folder(): void
+    {
+        $investigator = User::factory()->create();
+
+        $this->actingAs($investigator)->post(route('client-folders.store'), ['first_name' => 'Maria'])
+            ->assertSessionHasErrors(['last_name']);
+        $this->actingAs($investigator)->post(route('client-folders.store'), ['last_name' => 'Reyes'])
+            ->assertSessionHasErrors(['first_name']);
 
         $this->assertDatabaseCount('client_folders', 0);
     }
@@ -164,6 +197,41 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertSame($original, $folder->only(array_keys($original)));
         $this->assertSame($folder->id, $information->fresh()->client_folder_id);
         $this->assertDatabaseHas('audit_logs', ['action' => 'client_folder.renamed', 'client_folder_id' => $folder->id]);
+    }
+
+    public function test_rename_records_the_actual_authenticated_actor_not_the_folder_creator_or_assigned_ci(): void
+    {
+        $creator = User::factory()->create();
+        $assignedCi = User::factory()->create();
+        $actualRenamer = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['created_by' => $creator->id, 'assigned_ci_id' => $assignedCi->id, 'display_name' => 'ORIGINAL NAME']);
+
+        $this->actingAs($actualRenamer)->patch(route('client-folders.update-name', $folder), [
+            'display_name' => 'RENAMED BY ACTUAL ACTOR',
+        ], ['Accept' => 'application/json'])->assertOk();
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'client_folder.renamed',
+            'client_folder_id' => $folder->id,
+            'user_id' => $actualRenamer->id,
+        ]);
+    }
+
+    public function test_dashboard_rename_success_dispatches_the_existing_folder_browser_refresh_auto_update_event(): void
+    {
+        // The rename response only patches the folder's name text in place — the "Renamed"
+        // Folder History entry it just persisted only exists in $folderHistoryByFolder on the
+        // server. Rather than a second history-only endpoint, this must reuse the exact same
+        // folder-browser:refresh AUTO-UPDATE event Create/Delete already dispatch, so the History
+        // dialog re-render picks it up. Source-level check, matching the pattern already used
+        // elsewhere in this test suite for verifying app.js wiring.
+        $javascript = file_get_contents(resource_path('js/app.js'));
+
+        $start = strpos($javascript, "form.matches('[data-folder-rename-form]')) {", strpos($javascript, 'if (!response.ok)'));
+        $end = strpos($javascript, '} else {', $start);
+        $renameSuccessSource = substr($javascript, $start, $end - $start);
+
+        $this->assertStringContainsString("dispatchEvent(new CustomEvent('folder-browser:refresh'))", $renameSuccessSource);
     }
 
     public function test_other_ci_can_open_rename_and_recycle_a_folder_assigned_to_another_ci(): void

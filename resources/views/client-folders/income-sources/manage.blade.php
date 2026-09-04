@@ -5,142 +5,231 @@
 @section('content')
     @php($personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null))
 
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('brbi-business-recent-activity-collapsed') === 'true') {
+                    document.documentElement.setAttribute('data-business-recent-activity-collapsed', '');
+                }
+            } catch (e) {}
+        })();
+    </script>
+
+    <style>
+        html[data-business-recent-activity-collapsed] [data-business-activities-layout] {
+            gap: 0;
+        }
+
+        html[data-business-recent-activity-collapsed] [data-business-history-shell] {
+            display: none;
+        }
+
+        [data-business-activities-layout] {
+            transition: gap 200ms ease-in-out;
+        }
+
+        [data-business-history-shell] {
+            display: grid;
+            min-width: 0;
+            grid-template-rows: minmax(0, 1fr);
+            transition: grid-template-rows 200ms ease-in-out;
+        }
+
+        [data-business-history-panel] {
+            min-height: 0;
+            overflow: hidden;
+            opacity: 1;
+            transform: translateX(0) scale(1);
+            transform-origin: right center;
+            transition: opacity 160ms ease-out, transform 200ms ease-out;
+        }
+
+        [data-business-activities-layout][data-history-state="collapsed"] {
+            gap: 0;
+        }
+
+        [data-business-activities-layout][data-history-state="collapsed"] [data-business-history-shell] {
+            grid-template-rows: minmax(0, 0fr);
+        }
+
+        [data-business-activities-layout][data-history-state="collapsed"] [data-business-history-panel] {
+            pointer-events: none;
+            opacity: 0;
+            transform: translateX(0.375rem) scale(0.99);
+            transition-timing-function: ease-in;
+        }
+
+        @media (min-width: 1280px) {
+            html[data-business-recent-activity-collapsed] [data-business-activities-layout] {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            [data-business-activities-layout] {
+                grid-template-columns: minmax(0, 4fr) minmax(15rem, 1fr);
+                transition: grid-template-columns 200ms ease-in-out, gap 200ms ease-in-out;
+            }
+
+            [data-business-activities-layout][data-history-state="collapsed"] {
+                grid-template-columns: minmax(0, 1fr) minmax(0, 0fr);
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            [data-business-activities-layout],
+            [data-business-history-shell],
+            [data-business-history-panel] {
+                transition-duration: 1ms !important;
+            }
+
+            [data-business-history-panel] {
+                transform: none !important;
+            }
+        }
+    </style>
+
     <x-ui.breadcrumb :items="[
         ['label' => 'Client Folders', 'url' => route('client-folders.index')],
         ['label' => $clientFolder->display_name, 'url' => route('client-folders.show', [$clientFolder] + $personParams)],
         ['label' => 'Business / Income Sources'],
     ]" />
 
-    <div class="mb-7 flex flex-wrap items-center justify-end gap-3">
-        <button type="button" data-modal-open="add-business-template-dialog" class="ui-button-primary"><x-ui.icon name="plus" size="size-4" />{{ $businesses->isEmpty() ? 'Add Business' : 'Add Another Business' }}</button>
-    </div>
-
     @error('income_source')<div class="mb-6 rounded-card border border-danger/30 bg-danger-soft p-4 text-sm font-semibold text-danger" role="alert">{{ $message }}</div>@enderror
 
-    @if($businesses->isNotEmpty())
-        <div data-business-batch-panel>
-            <section class="ui-panel p-4 sm:p-5" aria-labelledby="saved-businesses-title">
-                <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <h2 id="saved-businesses-title" class="ui-section-title">Saved Businesses / Income Sources</h2>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <button type="button" class="ui-button-primary-compact" data-business-print-selected disabled><x-ui.icon name="printer" size="size-3.5" />Print Selected</button>
-                        <x-ui.context-menu label="Download selected business reports">
-                            <x-slot:trigger>
-                                <span class="ui-button-secondary-compact pointer-events-none opacity-55" data-business-download-selected-trigger aria-disabled="true" tabindex="-1"><x-ui.icon name="download" size="size-3.5" />Download Selected<x-ui.icon name="chevron-down" size="size-3.5" /></span>
-                            </x-slot:trigger>
-                            <button type="button" role="menuitem" data-business-batch-pdf-submit class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" class="text-danger" />Download PDF</button>
-                            <button type="button" role="menuitem" data-business-batch-excel-submit class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="spreadsheet" size="size-4" class="text-success" />Download Excel</button>
-                        </x-ui.context-menu>
-                    </div>
-                </div>
+    <div class="grid items-start gap-5 xl:grid-cols-[minmax(0,4fr)_minmax(15rem,1fr)]" data-business-activities-layout data-history-state="expanded">
+        <section class="ui-panel min-w-0 p-4 sm:p-5" aria-labelledby="saved-businesses-title" data-business-panel-body>
+            @include('client-folders.income-sources.partials.saved-businesses-panel-body')
+        </section>
 
-                <div class="mb-3 flex flex-wrap items-center gap-2.5 text-sm">
-                    <label class="flex items-center gap-2 font-semibold text-text-main"><input type="checkbox" class="size-4 rounded border-ui-border-strong text-brand-primary focus:ring-brand-primary" data-business-select-all>Select All</label>
-                    <span class="text-text-muted">&bull;</span>
-                    <span class="font-medium text-text-muted" data-business-selected-count>0 selected</span>
+        <div class="min-w-0" data-business-history-shell>
+            <aside id="business-history-panel" class="ui-panel min-w-0 p-4 sm:p-5" aria-labelledby="business-recent-activity-title" data-business-history-panel>
+                <div data-business-activity-body>
+                    @include('client-folders.income-sources.partials.recent-activity-body')
                 </div>
-
-                <div class="overflow-x-auto rounded-card border border-ui-border">
-                    <table class="w-full min-w-[720px] table-fixed divide-y divide-ui-border text-left text-sm" data-business-sort-table>
-                        <colgroup>
-                            <col class="w-10">
-                            <col class="w-[16%]">
-                            <col class="w-[35%]">
-                            <col class="w-[22%]">
-                            <col class="w-[27%]">
-                        </colgroup>
-                        <thead class="border-b border-ui-border bg-surface-muted text-xs font-semibold uppercase tracking-wide text-text-muted">
-                            <tr>
-                                <th class="px-4 py-3"><span class="sr-only">Select</span></th>
-                                @foreach(['ci_date' => ['label' => 'CI Date', 'type' => 'date'], 'business_name' => ['label' => 'Business Name', 'type' => 'text'], 'year_established' => ['label' => 'Year Established', 'type' => 'number']] as $column => $meta)
-                                    <th class="px-4 py-1.5 tracking-normal" data-sort-th="{{ $column }}" aria-sort="none">
-                                        <span class="inline-flex items-stretch gap-1">
-                                            <button type="button" class="flex cursor-pointer items-center bg-transparent p-0 text-left transition hover:text-brand-primary focus-visible:text-brand-primary focus-visible:outline-none active:text-brand-primary" data-sort-toggle data-sort-key="{{ $column }}" data-sort-type="{{ $meta['type'] }}" aria-label="Sort by {{ $meta['label'] }}">{{ $meta['label'] }}</button>
-                                            <span class="inline-flex flex-col" role="group" aria-label="Sort by {{ $meta['label'] }}">
-                                                <button type="button" class="flex h-7 w-8 shrink-0 items-center justify-center text-text-muted/40 transition hover:text-brand-primary focus-visible:text-brand-primary focus-visible:outline-none sm:h-3.5 sm:w-4" data-sort-btn data-sort-key="{{ $column }}" data-sort-type="{{ $meta['type'] }}" data-sort-dir="asc" aria-label="Sort {{ $meta['label'] }} ascending">
-                                                    <x-ui.icon name="chevron-up" size="size-2.5" class="pointer-events-none" />
-                                                </button>
-                                                <button type="button" class="flex h-7 w-8 shrink-0 items-center justify-center text-text-muted/40 transition hover:text-brand-primary focus-visible:text-brand-primary focus-visible:outline-none sm:h-3.5 sm:w-4" data-sort-btn data-sort-key="{{ $column }}" data-sort-type="{{ $meta['type'] }}" data-sort-dir="desc" aria-label="Sort {{ $meta['label'] }} descending">
-                                                    <x-ui.icon name="chevron-down" size="size-2.5" class="pointer-events-none" />
-                                                </button>
-                                            </span>
-                                        </span>
-                                    </th>
-                                @endforeach
-                                <th class="px-4 py-3">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-ui-border">
-                            @foreach($businesses as $business)
-                                <tr class="transition hover:bg-surface-muted"
-                                    data-sort-ci_date="{{ optional($business->businessReport?->start_date)->format('Y-m-d') ?? '' }}"
-                                    data-sort-business_name="{{ strtolower($business->displayName()) }}"
-                                    data-sort-year_established="{{ $business->businessReport?->year_established ?? '' }}"
-                                >
-                                    <td class="px-4 py-3.5 align-middle">
-                                        <input type="checkbox" class="size-4 rounded border-ui-border-strong text-brand-primary focus:ring-brand-primary" data-business-select value="{{ $business->id }}" data-business-name="{{ $business->displayName() }}" aria-label="Select {{ $business->displayName() }}">
-                                    </td>
-                                    <td class="px-4 py-3.5 align-middle text-sm text-text-muted">{{ optional($business->businessReport?->start_date)->format('M j, Y') ?? '—' }}</td>
-                                    <td class="px-4 py-3.5 align-middle">
-                                        <span class="min-w-0 line-clamp-2 text-sm font-medium leading-snug text-text-main" title="{{ $business->displayName() }}">{{ $business->displayName() }}</span>
-                                    </td>
-                                    <td class="px-4 py-3.5 align-middle text-sm text-text-muted">{{ $business->businessReport?->year_established ?? '—' }}</td>
-                                    <td class="px-4 py-3.5 align-middle">
-                                        <div class="flex flex-wrap items-center gap-1.5">
-                                            @if($business->businessReport)
-                                                <a href="{{ route('client-folders.income-sources.edit', [$clientFolder, $business] + $personParams) }}" data-modal-open="business-report-dialog" data-business-report-url="{{ route('client-folders.income-sources.edit', [$clientFolder, $business] + $personParams) }}" class="ui-action-icon-button ui-action-icon-button-neutral" title="Update Business Report" aria-label="Update Business Report for {{ $business->displayName() }}"><x-ui.icon name="edit" size="size-4" /></a>
-                                                <a href="{{ route('client-folders.generated-reports.preview', [$clientFolder, 'report_type' => 'business_income_source', 'income_source_id' => $business->id] + $personParams) }}" target="_blank" rel="noopener" class="ui-action-icon-button ui-action-icon-button-neutral" title="Print business" aria-label="Print {{ $business->displayName() }}"><x-ui.icon name="printer" size="size-4" /></a>
-                                                <x-ui.context-menu label="Download {{ $business->displayName() }}">
-                                                    <x-slot:trigger><span class="ui-action-icon-button ui-action-icon-button-neutral group-open:border-brand-primary group-open:bg-brand-soft group-open:text-brand-primary" title="Download business report"><x-ui.icon name="download" size="size-4" /></span></x-slot:trigger>
-                                                    <button type="submit" form="business-{{ $business->id }}-export-pdf-form" role="menuitem" data-business-download-submit class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-55"><x-ui.icon name="report" size="size-4" class="text-danger" /><span data-download-label>Download PDF</span></button>
-                                                    <button type="submit" form="business-{{ $business->id }}-export-excel-form" role="menuitem" data-business-download-submit class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-55"><x-ui.icon name="spreadsheet" size="size-4" class="text-success" /><span data-download-label>Download Excel</span></button>
-                                                </x-ui.context-menu>
-                                            @else
-                                                <a href="{{ route('client-folders.income-sources.edit', [$clientFolder, $business] + $personParams) }}" data-modal-open="business-report-dialog" data-business-report-url="{{ route('client-folders.income-sources.edit', [$clientFolder, $business] + $personParams) }}" class="ui-action-icon-button ui-action-icon-button-neutral" title="Recreate Business Report" aria-label="Recreate Business Report for {{ $business->displayName() }}"><x-ui.icon name="plus" size="size-4" /></a>
-                                            @endif
-                                            <button type="button" data-modal-open="delete-business-{{ $business->id }}" class="ui-action-icon-button ui-action-icon-button-danger" title="Delete business" aria-label="Delete {{ $business->displayName() }}"><x-ui.icon name="trash" size="size-4" /></button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            @endforeach
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-
+            </aside>
         </div>
+    </div>
 
-        @foreach($businesses as $business)
-            @if($business->businessReport)
-                <form id="business-{{ $business->id }}-export-pdf-form" method="POST" action="{{ route('client-folders.income-sources.export-pdf', [$clientFolder, $business]) }}" target="_blank" hidden>
-                    @csrf
-                </form>
-                <form id="business-{{ $business->id }}-export-excel-form" method="POST" action="{{ route('client-folders.income-sources.export-excel', [$clientFolder, $business]) }}" hidden>
-                    @csrf
-                </form>
-            @endif
-            <x-ui.confirmation-dialog id="delete-business-{{ $business->id }}" title="Move business to Recycle Bin?" :action="route('client-folders.income-sources.destroy', [$clientFolder, $business])" method="DELETE" confirm-label="Move to Recycle Bin" destructive>
-                <p class="text-sm text-text-muted">Deleting this Business Report will also move its linked Business Check to the Recycle Bin. You can restore both records later.</p>
-            </x-ui.confirmation-dialog>
-        @endforeach
+    <x-ui.recent-activity-modal id="business-recent-activity-dialog" :activities="$recentActivity" />
 
-        <form id="business-batch-print-form" method="POST" action="{{ route('client-folders.income-sources.batch-print', $clientFolder) }}" target="_blank" hidden>
-            @csrf
-            <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
-        </form>
-        <form id="business-batch-export-pdf-form" method="POST" action="{{ route('client-folders.income-sources.batch-export-pdf', $clientFolder) }}" hidden>
-            @csrf
-            <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
-        </form>
-        <form id="business-batch-export-excel-form" method="POST" action="{{ route('client-folders.income-sources.batch-export-excel', $clientFolder) }}" hidden>
-            @csrf
-            <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
-        </form>
-    @endif
+    <script>
+        // Exposed on window (not a plain DOMContentLoaded-only IIFE) because the hide/show button
+        // nodes queried here live inside the two AUTO-UPDATE-swappable regions (Saved Businesses
+        // panel body + Recent Activity body, see app.js's refreshBusinessManagePage()) — a fresh
+        // Add/Update/Delete re-render replaces those nodes, so their listeners must be rewired
+        // after every such swap, not just once at page load. The persisted expand/collapse state
+        // itself lives on `layout`/`shell`/the `<aside>` element, none of which are ever replaced,
+        // so a re-init only needs to resync the new button nodes to that still-current state.
+        window.initBusinessHistoryToggle = function initBusinessHistoryToggle() {
+            const layout = document.querySelector('[data-business-activities-layout]');
+            const shell = document.querySelector('[data-business-history-shell]');
+            const panel = document.querySelector('[data-business-history-panel]');
+            const hideButton = document.querySelector('[data-business-history-hide]');
+            const showButton = document.querySelector('[data-business-history-show]');
+            const desktopColumns = 'xl:grid-cols-[minmax(0,4fr)_minmax(15rem,1fr)]';
+            const storageKey = 'brbi-business-recent-activity-collapsed';
+            const alreadyInitialized = layout instanceof HTMLElement && layout.dataset.historyState !== '' && layout.dataset.businessHistoryReady === 'true';
+            const initiallyCollapsed = ! alreadyInitialized && document.documentElement.hasAttribute('data-business-recent-activity-collapsed');
+            const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            let collapseTimer = null;
+            if (!(layout instanceof HTMLElement)
+                || !(shell instanceof HTMLElement)
+                || !(panel instanceof HTMLElement)
+                || !(hideButton instanceof HTMLButtonElement)
+                || !(showButton instanceof HTMLButtonElement)) return;
 
-    @if($businesses->isEmpty())
-        <x-ui.empty-state title="No businesses saved yet" description="Use the Add Business button above to start encoding a Business / Income Source for this client folder." icon="folder" />
-    @endif
+            const setExpandedState = (expanded) => {
+                hideButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+                showButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            };
+
+            const syncFinalVisibility = (hidden) => {
+                shell.hidden = hidden;
+                panel.hidden = hidden;
+            };
+
+            const syncLayoutClasses = (hidden) => {
+                layout.classList.toggle(desktopColumns, ! hidden);
+                layout.classList.toggle('gap-5', ! hidden);
+            };
+
+            const persistCollapsedState = (collapsed) => {
+                try {
+                    localStorage.setItem(storageKey, String(collapsed));
+                } catch (e) {}
+            };
+
+            const finishCollapse = () => {
+                collapseTimer = null;
+                if (layout.dataset.historyState === 'collapsed') syncFinalVisibility(true);
+            };
+
+            const hideHistoryPanel = () => {
+                if (collapseTimer !== null) window.clearTimeout(collapseTimer);
+                shell.hidden = false;
+                showButton.hidden = false;
+                layout.dataset.historyState = 'collapsed';
+                syncLayoutClasses(true);
+                setExpandedState(false);
+                persistCollapsedState(true);
+
+                if (reducedMotion) {
+                    finishCollapse();
+                    return;
+                }
+
+                collapseTimer = window.setTimeout(finishCollapse, 220);
+            };
+
+            const showHistoryPanel = () => {
+                if (collapseTimer !== null) window.clearTimeout(collapseTimer);
+                syncFinalVisibility(false);
+                showButton.hidden = true;
+                syncLayoutClasses(false);
+                setExpandedState(true);
+                persistCollapsedState(false);
+
+                if (reducedMotion) {
+                    layout.dataset.historyState = 'expanded';
+                    return;
+                }
+
+                layout.dataset.historyState = 'collapsed';
+                void shell.offsetHeight;
+                window.requestAnimationFrame(() => {
+                    layout.dataset.historyState = 'expanded';
+                });
+            };
+
+            if (alreadyInitialized) {
+                // Re-init after an AUTO-UPDATE DOM swap: keep whatever state is already current
+                // (the user may have hidden/shown the panel before this refresh landed) and just
+                // resync the freshly-rendered button nodes to it.
+                const collapsedNow = layout.dataset.historyState === 'collapsed';
+                syncFinalVisibility(collapsedNow);
+                showButton.hidden = ! collapsedNow;
+                setExpandedState(! collapsedNow);
+            } else if (initiallyCollapsed) {
+                layout.dataset.historyState = 'collapsed';
+                syncLayoutClasses(true);
+                syncFinalVisibility(true);
+                showButton.hidden = false;
+                setExpandedState(false);
+            } else {
+                layout.dataset.historyState = 'expanded';
+                syncLayoutClasses(false);
+                syncFinalVisibility(false);
+                showButton.hidden = true;
+                setExpandedState(true);
+            }
+            layout.dataset.businessHistoryReady = 'true';
+            document.documentElement.removeAttribute('data-business-recent-activity-collapsed');
+
+            hideButton.addEventListener('click', hideHistoryPanel);
+            showButton.addEventListener('click', showHistoryPanel);
+        };
+
+        document.addEventListener('DOMContentLoaded', () => window.initBusinessHistoryToggle());
+    </script>
 
     <x-ui.modal id="add-business-template-dialog" title="Add Business" description="Select a business template to continue." size="max-w-lg" data-add-business-dialog>
         <div>

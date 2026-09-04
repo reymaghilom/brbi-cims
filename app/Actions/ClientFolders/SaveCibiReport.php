@@ -9,7 +9,6 @@ use App\Models\AuditLog;
 use App\Models\CibiReport;
 use App\Models\ClientFolder;
 use App\Models\User;
-use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CibiReportCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -36,7 +35,6 @@ class SaveCibiReport
     public function __construct(
         private readonly CibiReportCompletionEvaluator $completion,
         private readonly ClientProgressService $progress,
-        private readonly SyncResidenceCheckCiDate $syncCiDate,
     ) {}
 
     public function execute(User $actor, ClientFolder $folder, array $data): CibiReport
@@ -81,7 +79,7 @@ class SaveCibiReport
                 $childrenChanged = collect($changes)->contains(fn (array $c): bool => $c['created'] > 0 || $c['updated'] > 0 || $c['deleted'] > 0);
 
                 if (! $fieldsChanged && ! $childrenChanged) {
-                    throw new NoChangesDetectedException();
+                    throw new NoChangesDetectedException;
                 }
             }
 
@@ -107,9 +105,9 @@ class SaveCibiReport
             $this->completion->evaluate($report);
             $this->progress->recalculate($folder);
 
-            // Present Address may prefill a new Residence form, but saving CI/BI must never rewrite
-            // an already-saved Residence Location. CI Date keeps its existing scoped sync behavior.
-            $this->syncCiDate->execute($folder, ActivePersonResolver::resolve($folder, $report->co_maker_id));
+            // Present Address / Start Date may prefill a new, not-yet-saved Residence Check, but
+            // saving CI/BI must never rewrite an already-saved Residence Check's own Location or
+            // CI Date — prefill-before-save, independent-after-save, same as the reverse direction.
 
             AuditLog::create([
                 'user_id' => $actor->id,

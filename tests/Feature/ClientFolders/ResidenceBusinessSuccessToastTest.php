@@ -68,11 +68,11 @@ class ResidenceBusinessSuccessToastTest extends TestCase
 
         $this->actingAs($ci)->delete(route('client-folders.business-checks.destroy', [$folder, $check]))
             ->assertRedirect(route('client-folders.residence-business.edit', $folder))
-            ->assertSessionHas('status', 'Business Check and linked Business Report moved to the Recycle Bin.');
+            ->assertSessionHas('status', 'Business Check permanently deleted.');
 
         $content = $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk()->getContent();
 
-        $this->assertVisibleToastAppearsExactlyOnce('Business Check and linked Business Report moved to the Recycle Bin.', $content);
+        $this->assertVisibleToastAppearsExactlyOnce('Business Check permanently deleted.', $content);
         $this->assertStringNotContainsString(self::OLD_BANNER_MARKUP, $content);
     }
 
@@ -148,22 +148,18 @@ class ResidenceBusinessSuccessToastTest extends TestCase
         $expectedRedirect = route('client-folders.residence-business.edit', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]);
         $this->actingAs($ci)->delete(route('client-folders.business-checks.destroy', [$folder, $check, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]))
             ->assertRedirect($expectedRedirect)
-            ->assertSessionHas('status', 'Business Check and linked Business Report moved to the Recycle Bin.');
+            ->assertSessionHas('status', 'Business Check permanently deleted.');
 
-        $this->assertSoftDeleted('business_checks', [
-            'id' => $check->id,
-            'client_folder_id' => $folder->id,
-            'co_maker_id' => $coMaker->id,
-            'income_source_id' => $source->id,
-        ]);
-        $this->assertSoftDeleted('business_reports', [
+        $this->assertDatabaseMissing('business_checks', ['id' => $check->id]);
+        $this->assertDatabaseHas('business_reports', [
             'id' => $report->id,
             'income_source_id' => $source->id,
         ]);
-        $this->assertSoftDeleted('income_sources', [
+        $this->assertDatabaseHas('income_sources', [
             'id' => $source->id,
             'client_folder_id' => $folder->id,
             'co_maker_id' => $coMaker->id,
+            'deleted_at' => null,
         ]);
 
         $this->actingAs($ci)->get($expectedRedirect)->assertOk();
@@ -183,6 +179,9 @@ class ResidenceBusinessSuccessToastTest extends TestCase
         $template = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
         $source = $folder->incomeSources()->create(['co_maker_id' => $coMakerId, 'income_source_template_id' => $template->id, 'template_type' => $template->template_type, 'template_version' => $template->version, 'source_name' => $name, 'business_name' => $name]);
         $source->businessReport()->create(['business_name' => $name, 'main_business_address' => $address, 'report_category' => 'retail_grocery_water_refilling']);
+        // Represents a genuinely, explicitly saved Business Report (revision > 1), not a
+        // Check-first draft shell — see DeleteIncomeSourceIfOrphaned's revision-aware orphan check.
+        $source->forceFill(['revision' => 2])->save();
 
         return $source;
     }

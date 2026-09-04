@@ -19,9 +19,9 @@ class CreateIncomeSource
         private readonly ClientProgressService $progress,
     ) {}
 
-    public function execute(User $actor, ClientFolder $folder, array $data): IncomeSource
+    public function execute(User $actor, ClientFolder $folder, array $data, bool $createBusinessReport = true): IncomeSource
     {
-        return DB::transaction(function () use ($actor, $folder, $data): IncomeSource {
+        return DB::transaction(function () use ($actor, $folder, $data, $createBusinessReport): IncomeSource {
             $template = IncomeSourceTemplate::query()->whereKey($data['income_source_template_id'])->where('is_active', true)->firstOrFail();
             $coMakerId = $data['co_maker_id'] ?? null;
             $cibiReport = $folder->cibiReport()->where('co_maker_id', $coMakerId)->first();
@@ -46,7 +46,7 @@ class CreateIncomeSource
 
             if ($template->is_fallback) {
                 $source->generalReport()->create();
-            } else {
+            } elseif ($createBusinessReport) {
                 $businessName = $data['business_name'] ?? $data['source_name'] ?? '';
                 $source->businessReport()->create([
                     'business_name' => $businessName,

@@ -23,6 +23,11 @@ class ActivityDefinition extends Model
 
     public const NEIGHBOR_CHECK_CODE = 'neighbor_check';
 
+    public const MANDATORY_DEFAULT_CODES = [
+        self::BARANGAY_CHECK_CODE,
+        self::NEIGHBOR_CHECK_CODE,
+    ];
+
     protected $guarded = [];
 
     protected function casts(): array
@@ -66,5 +71,21 @@ class ActivityDefinition extends Model
             ->toString();
 
         return in_array($key, ['residence check', 'business check'], true);
+    }
+
+    public static function isMandatoryDefaultCode(?string $code): bool
+    {
+        return in_array($code, self::MANDATORY_DEFAULT_CODES, true);
+    }
+
+    public static function isMandatoryDefaultName(string $name): bool
+    {
+        $key = Str::of($name)
+            ->lower()
+            ->replaceMatches('/[^\pL\pN]+/u', ' ')
+            ->squish()
+            ->toString();
+
+        return in_array($key, ['barangay check', 'neighbor check'], true);
     }
 }

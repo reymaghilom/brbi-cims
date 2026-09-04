@@ -34,71 +34,100 @@
         data-bank-coop-completed-count="{{ $completedCount }}"
         data-bank-coop-status="{{ $activity->status->value }}"
         data-bank-coop-status-label="{{ $activity->status->label() }}"
+        data-bank-coop-updated-date="{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}"
+        data-bank-coop-updated-detail="{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('g:i A') }}{{ $activity->updater ? ' · '.$activity->updater->full_name : '' }}"
+        data-bank-coop-updated-timestamp="{{ $activity->updated_at->timestamp }}"
     >
+    <template data-bank-coop-schedule-cell>@include('client-folders.activities.partials.schedule-cell', ['activity' => $activity, 'isBankCoopCheck' => true, 'isAssetCheck' => false, 'scheduleSummary' => $scheduleSummary])</template>
+    @if(! empty($newHistoryEntries ?? []))
+        <template data-ci-new-history>{!! implode('', $newHistoryEntries) !!}</template>
+    @endif
     <section class="ui-panel p-4 sm:p-5 lg:p-6" aria-labelledby="bank-targets-title">
-        <div class="flex flex-col gap-3 border-b border-ui-border pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex flex-col gap-3 border-b border-ui-border pb-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
                 <h2 id="bank-targets-title" class="ui-section-title">Banks / Cooperatives</h2>
                 <p class="mt-1 text-sm text-text-muted">Each institution keeps its own status and schedule.</p>
             </div>
-            <div class="w-fit rounded-full bg-brand-soft px-3 py-1.5 text-sm font-bold text-brand-primary">{{ $completedCount }} of {{ $targetCount }} Completed</div>
+            <div class="w-fit shrink-0 rounded-full bg-brand-soft px-3 py-1 text-xs font-bold text-brand-primary">{{ $completedCount }} of {{ $targetCount }} Completed</div>
         </div>
 
-        <div class="mt-4 grid gap-3 lg:grid-cols-2" data-bank-target-list>
+        @if($targetCount > 0)
+            @php $incompleteTargetCount = $targetCount - $completedCount; @endphp
+            <div class="mt-3 flex flex-col gap-2.5 border-b border-ui-border pb-3 sm:flex-row sm:items-center sm:justify-between" data-bank-bulk-panel>
+                <label class="inline-flex items-center gap-2 text-sm font-semibold text-text-main">
+                    <input type="checkbox" class="size-4 rounded border-ui-border-strong text-success focus:ring-success" data-bank-bulk-select-all @disabled($incompleteTargetCount === 0)>
+                    Select All
+                </label>
+                <div class="flex items-center gap-3">
+                    <span class="text-xs font-semibold text-text-muted" data-bank-bulk-counter>0 selected</span>
+                    <button type="button" class="ui-button-primary-compact" data-bank-bulk-open-confirm disabled>Mark Selected as Completed</button>
+                </div>
+            </div>
+            <form method="POST" action="{{ route('client-folders.activities.bank-targets.complete-many', [$clientFolder, $activity]) }}" data-bank-bulk-form>
+                @csrf
+                @method('PATCH')
+                <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
+            </form>
+
+            <dialog id="bank-bulk-complete-confirm" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-bank-bulk-confirm-modal>
+                <div class="border-b border-ui-border px-5 py-4"><h2 class="break-words text-lg font-bold text-brand-sidebar" data-bank-bulk-confirm-title>Mark selected bank checks as Completed?</h2></div>
+                <div class="px-5 py-5 text-sm leading-6 text-text-muted"><p data-bank-bulk-confirm-body>This will mark all selected bank checks as completed.</p></div>
+                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-bank-bulk-confirm-cancel>Cancel</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-bank-bulk-confirm-submit>Mark as Completed</button></div>
+            </dialog>
+        @endif
+
+        <ul class="mt-3 divide-y divide-ui-border overflow-hidden rounded-control border border-ui-border" data-bank-target-list>
             @forelse($activity->bankTargets as $target)
                 @php
                     $localSchedule = $target->scheduled_at?->timezone(config('cims.display_timezone'));
                     $targetCompleted = $target->status === App\Enums\ActivityStatus::Completed;
                     $targetLabel = $target->institution_name.($target->branch_location ? ' – '.$target->branch_location : '');
                 @endphp
-                <article class="rounded-card border border-ui-border bg-surface p-4 shadow-sm" data-bank-target-card="{{ $target->id }}">
-                    <div class="flex items-start gap-3">
-                        <input
-                            type="checkbox"
-                            class="mt-1 size-4 shrink-0 rounded border-ui-border text-success focus:ring-success"
-                            aria-label="{{ $targetCompleted ? $targetLabel.' is completed' : 'Mark '.$targetLabel.' as completed' }}"
-                            data-bank-target-checkbox="{{ $target->id }}"
-                            @checked($targetCompleted)
-                            @disabled($targetCompleted)
-                            @if(! $targetCompleted) data-bank-target-complete data-modal-open="complete-bank-target-{{ $target->id }}" aria-controls="complete-bank-target-{{ $target->id }}" @endif
-                        >
-                        <div class="min-w-0 flex-1">
-                            <div class="flex items-start justify-between gap-3">
-                                <div class="min-w-0">
-                                    <h3 class="break-words text-base font-bold text-brand-sidebar">{{ $target->institution_name }}@if($target->branch_location) <span class="font-normal text-text-muted">&mdash; {{ $target->branch_location }}</span>@endif</h3>
-                                    <span class="mt-1.5 inline-flex rounded-full bg-brand-soft px-2.5 py-1 text-xs font-bold text-brand-primary">{{ $target->inquiryTypeLabel() }}</span>
-                                </div>
-                                <x-ui.status-badge :status="$target->status" />
-                            </div>
+                <li class="flex items-start gap-3 bg-surface px-3 py-2.5 sm:items-center" data-bank-target-card="{{ $target->id }}">
+                    <input
+                        type="checkbox"
+                        class="ci-completion-checkbox mt-0.5 sm:mt-0"
+                        aria-label="{{ $targetCompleted ? $targetLabel.' is completed' : 'Select '.$targetLabel.' for bulk completion' }}"
+                        data-bank-bulk-target="{{ $target->id }}"
+                        @checked($targetCompleted)
+                        @disabled($targetCompleted)
+                    >
+                    <div class="min-w-0 flex-1">
+                        <p class="truncate text-sm font-bold text-brand-sidebar">{{ $target->institution_name }}@if($target->branch_location) <span class="font-normal text-text-muted">&mdash; {{ $target->branch_location }}</span>@endif</p>
+                        <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span class="inline-flex rounded-control bg-surface-muted px-2 py-0.5 text-[11px] font-semibold text-text-muted">{{ $target->inquiryTypeLabel() }}</span>
+                            @if($localSchedule)
+                                <span class="inline-flex items-center gap-1 text-xs text-text-muted"><x-ui.icon name="calendar" size="size-3.5" />{{ $localSchedule->format('M j, Y') }} &middot; {{ $target->scheduled_has_time ? $localSchedule->format('g:i A') : 'No specific time' }}</span>
+                            @elseif($target->status === App\Enums\ActivityStatus::Scheduled)
+                                <span class="text-xs text-text-muted">No schedule set</span>
+                            @elseif($target->status === App\Enums\ActivityStatus::FollowUp)
+                                <span class="text-xs text-text-muted">No follow-up date set</span>
+                            @endif
                         </div>
-                    </div>
-
-                    @if($localSchedule)
-                        <p class="mt-3 flex items-center gap-1.5 text-sm font-semibold text-text-main"><x-ui.icon name="calendar" size="size-4 text-text-muted" />{{ $localSchedule->format('M j, Y') }} <span class="font-normal text-text-muted">· {{ $target->scheduled_has_time ? $localSchedule->format('g:i A') : 'No specific time' }}</span></p>
-                    @elseif($target->status === App\Enums\ActivityStatus::Scheduled)
-                        <p class="mt-3 flex items-center gap-1.5 text-sm text-text-muted"><x-ui.icon name="calendar" size="size-4" />No schedule set</p>
-                    @elseif($target->status === App\Enums\ActivityStatus::FollowUp)
-                        <p class="mt-3 flex items-center gap-1.5 text-sm text-text-muted"><x-ui.icon name="calendar" size="size-4" />No follow-up date set</p>
-                    @endif
-                    @if($target->remarks)
-                        <p class="mt-3 whitespace-pre-line text-sm leading-6 text-text-muted">{{ $target->remarks }}</p>
-                    @endif
-
-                    <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-ui-border pt-3">
-                        @if($target->status === App\Enums\ActivityStatus::FollowUp)
-                            <button type="button" class="ui-button-secondary-compact" data-modal-open="edit-bank-target-{{ $target->id }}" data-bank-target-follow-up="{{ $target->id }}"><x-ui.icon name="calendar" size="size-3.5" />Schedule Follow-up</button>
+                        @if($target->remarks)
+                            <p class="mt-1 truncate text-xs text-text-muted" title="{{ $target->remarks }}">{{ $target->remarks }}</p>
                         @endif
-                        <button type="button" class="ui-button-secondary-compact" data-modal-open="edit-bank-target-{{ $target->id }}"><x-ui.icon name="edit" size="size-3.5" />Edit</button>
-                        <button type="button" class="ui-button-danger-compact" data-modal-open="delete-bank-target-{{ $target->id }}"><x-ui.icon name="trash" size="size-3.5" />Delete</button>
                     </div>
-                </article>
+                    <x-ui.status-badge :status="$target->status" class="shrink-0 !px-2 !py-0.5 !text-[11px]" />
+                    <x-ui.context-menu :label="'Actions for '.$targetLabel" class="shrink-0">
+                        <x-slot:trigger><span class="ui-dots-trigger !size-8"><x-ui.icon name="more-vertical" size="size-4" /></span></x-slot:trigger>
+                        @if($target->status === App\Enums\ActivityStatus::FollowUp)
+                            <button type="button" role="menuitem" class="client-folder-menu-item" data-modal-open="edit-bank-target-{{ $target->id }}" data-bank-target-follow-up="{{ $target->id }}"><x-ui.icon name="calendar" size="size-4" class="text-text-muted" />Schedule Follow-up</button>
+                        @endif
+                        @unless($targetCompleted)
+                            <button type="button" role="menuitem" class="client-folder-menu-item" data-modal-open="complete-bank-target-{{ $target->id }}"><x-ui.icon name="check-circle" size="size-4" class="text-text-muted" />Mark as Completed</button>
+                        @endunless
+                        <button type="button" role="menuitem" class="client-folder-menu-item" data-modal-open="edit-bank-target-{{ $target->id }}"><x-ui.icon name="edit" size="size-4" class="text-text-muted" />Edit</button>
+                        <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-bank-target-{{ $target->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
+                    </x-ui.context-menu>
+                </li>
             @empty
-                <div class="rounded-control border border-dashed border-ui-border-strong bg-surface-subtle p-6 text-center lg:col-span-2">
+                <li class="rounded-control border border-dashed border-ui-border-strong bg-surface-subtle p-6 text-center">
                     <p class="font-semibold text-text-main">No Bank / Coop targets yet.</p>
                     <p class="mt-1 text-sm text-text-muted">Add the first institution under this activity.</p>
-                </div>
+                </li>
             @endforelse
-        </div>
+        </ul>
     </section>
 
     <dialog id="add-bank-target" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45">
@@ -125,7 +154,7 @@
                     <div><label for="add-institution-name" class="ui-label">Bank / Coop Name</label><input id="add-institution-name" name="institution_name" value="{{ old('institution_name') }}" class="ui-control" maxlength="255" required><x-form.validation-message for="institution_name" /></div>
                     <div data-bank-target-detail-branch-field><label for="add-branch-location" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="add-branch-location" name="branch_location" value="{{ old('branch_location') }}" class="ui-control" maxlength="255" data-bank-target-detail-branch><x-form.validation-message for="branch_location" /></div>
                     <div><label for="add-target-status" class="ui-label">Status</label><select id="add-target-status" name="status" class="ui-control" required data-bank-target-detail-status>@foreach($statuses as $status)<option value="{{ $status->value }}" @selected(old('status', 'pending') === $status->value)>{{ $status->label() }}</option>@endforeach</select><x-form.validation-message for="status" /></div>
-                    <div class="grid gap-3 sm:grid-cols-2" data-bank-target-detail-schedule><div><label for="add-target-date" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="add-target-date" name="scheduled_at" type="date" value="{{ old('scheduled_at') }}" class="ui-control" data-bank-target-detail-date><x-form.validation-message for="scheduled_at" /></div><div><label for="add-target-time" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="add-target-time" name="scheduled_time" type="time" value="{{ old('scheduled_time') }}" class="ui-control" data-bank-target-detail-time><x-form.validation-message for="scheduled_time" /></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
+                    <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]" data-bank-target-detail-schedule><div><label for="add-target-date" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="add-target-date" name="scheduled_at" type="date" value="{{ old('scheduled_at') }}" class="ui-control" data-bank-target-detail-date><x-form.validation-message for="scheduled_at" /></div><div><label for="add-target-time" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="add-target-time" name="scheduled_time" type="time" value="{{ old('scheduled_time') }}" class="ui-control" data-bank-target-detail-time><x-form.validation-message for="scheduled_time" /></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
                     <div class="sm:col-span-2"><label for="add-target-remarks" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="add-target-remarks" name="remarks" rows="3" class="ui-control">{{ old('remarks') }}</textarea><x-form.validation-message for="remarks" /></div>
                 </div>
             </div>
@@ -159,11 +188,11 @@
                         <div><label for="institution-name-{{ $target->id }}" class="ui-label">Bank / Coop Name</label><input id="institution-name-{{ $target->id }}" name="institution_name" value="{{ $target->institution_name }}" class="ui-control" maxlength="255" required></div>
                         <div data-bank-target-detail-branch-field @if($target->inquiry_type === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY) hidden @endif><label for="branch-location-{{ $target->id }}" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="branch-location-{{ $target->id }}" name="branch_location" value="{{ $target->branch_location }}" class="ui-control" maxlength="255" data-bank-target-detail-branch @disabled($target->inquiry_type === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY)></div>
                         <div><label for="target-status-{{ $target->id }}" class="ui-label">Status</label><select id="target-status-{{ $target->id }}" name="status" class="ui-control" required data-bank-target-detail-status>@foreach($statuses as $status)<option value="{{ $status->value }}" @selected($target->status === $status)>{{ $status->label() }}</option>@endforeach</select></div>
-                        <div class="grid gap-3 sm:grid-cols-2" data-bank-target-detail-schedule><div><label for="target-date-{{ $target->id }}" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="target-date-{{ $target->id }}" name="scheduled_at" type="date" value="{{ $editSchedule?->format('Y-m-d') }}" class="ui-control" data-bank-target-detail-date></div><div><label for="target-time-{{ $target->id }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="target-time-{{ $target->id }}" name="scheduled_time" type="time" value="{{ $target->scheduled_has_time ? $editSchedule?->format('H:i') : '' }}" class="ui-control" data-bank-target-detail-time></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
+                        <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]" data-bank-target-detail-schedule><div><label for="target-date-{{ $target->id }}" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="target-date-{{ $target->id }}" name="scheduled_at" type="date" value="{{ $editSchedule?->format('Y-m-d') }}" class="ui-control" data-bank-target-detail-date></div><div><label for="target-time-{{ $target->id }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="target-time-{{ $target->id }}" name="scheduled_time" type="time" value="{{ $target->scheduled_has_time ? $editSchedule?->format('H:i') : '' }}" class="ui-control" data-bank-target-detail-time></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
                         <div class="sm:col-span-2"><label for="target-remarks-{{ $target->id }}" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="target-remarks-{{ $target->id }}" name="remarks" rows="3" class="ui-control">{{ $target->remarks }}</textarea></div>
                     </div>
                 </div>
-                <div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-modal-close>Cancel</button><button type="submit" class="ui-button-primary">Save Target</button></div>
+                <div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-modal-close>Cancel</button><button type="submit" class="ui-button-primary">Save</button></div>
             </form>
         </dialog>
 
@@ -241,15 +270,82 @@
                     }
                 });
             });
-            document.querySelectorAll('[data-bank-target-complete]').forEach((checkbox) => {
-                checkbox.addEventListener('click', (event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    checkbox.checked = false;
-                    const dialog = document.getElementById(checkbox.dataset.modalOpen ?? '');
-                    if (dialog instanceof HTMLDialogElement && ! dialog.open) dialog.showModal();
+            const bulkPanel = document.querySelector('[data-bank-bulk-panel]');
+            if (bulkPanel) {
+                const syncBulkPanel = () => {
+                    const selectAll = bulkPanel.querySelector('[data-bank-bulk-select-all]');
+                    const targets = [...document.querySelectorAll('[data-bank-bulk-target]')];
+                    const counter = bulkPanel.querySelector('[data-bank-bulk-counter]');
+                    const openConfirm = bulkPanel.querySelector('[data-bank-bulk-open-confirm]');
+                    if (!(selectAll instanceof HTMLInputElement)) return;
+
+                    const eligible = targets.filter((target) => target instanceof HTMLInputElement && ! target.disabled);
+                    const selected = eligible.filter((target) => target instanceof HTMLInputElement && target.checked);
+
+                    selectAll.checked = eligible.length > 0 && selected.length === eligible.length;
+                    selectAll.indeterminate = selected.length > 0 && selected.length < eligible.length;
+                    if (counter instanceof HTMLElement) counter.textContent = `${selected.length} selected`;
+                    if (openConfirm instanceof HTMLButtonElement) openConfirm.disabled = selected.length === 0;
+                };
+
+                bulkPanel.querySelector('[data-bank-bulk-select-all]')?.addEventListener('change', (event) => {
+                    const selectAll = event.target;
+                    if (!(selectAll instanceof HTMLInputElement)) return;
+                    [...document.querySelectorAll('[data-bank-bulk-target]')]
+                        .filter((target) => target instanceof HTMLInputElement && ! target.disabled)
+                        .forEach((target) => { target.checked = selectAll.checked; });
+                    syncBulkPanel();
                 });
-            });
+
+                document.querySelectorAll('[data-bank-bulk-target]').forEach((target) => {
+                    target.addEventListener('change', syncBulkPanel);
+                });
+
+                const confirmModal = document.getElementById('bank-bulk-complete-confirm');
+                bulkPanel.querySelector('[data-bank-bulk-open-confirm]')?.addEventListener('click', (event) => {
+                    const button = event.currentTarget;
+                    if (!(button instanceof HTMLButtonElement) || button.disabled) return;
+                    const selected = [...document.querySelectorAll('[data-bank-bulk-target]')]
+                        .filter((target) => target instanceof HTMLInputElement && ! target.disabled && target.checked);
+                    const title = confirmModal?.querySelector('[data-bank-bulk-confirm-title]');
+                    const body = confirmModal?.querySelector('[data-bank-bulk-confirm-body]');
+                    if (title instanceof HTMLElement) {
+                        title.textContent = selected.length === 1
+                            ? 'Mark this bank check as Completed?'
+                            : `Mark ${selected.length} bank checks as Completed?`;
+                    }
+                    if (body instanceof HTMLElement) {
+                        body.textContent = selected.length === 1
+                            ? 'This will mark the selected bank check as completed.'
+                            : 'This will mark all selected bank checks as completed.';
+                    }
+                    if (confirmModal instanceof HTMLDialogElement) confirmModal.showModal();
+                });
+
+                confirmModal?.querySelector('[data-bank-bulk-confirm-cancel]')?.addEventListener('click', () => {
+                    if (confirmModal instanceof HTMLDialogElement) confirmModal.close();
+                });
+
+                confirmModal?.querySelector('[data-bank-bulk-confirm-submit]')?.addEventListener('click', () => {
+                    const selected = [...document.querySelectorAll('[data-bank-bulk-target]')]
+                        .filter((target) => target instanceof HTMLInputElement && ! target.disabled && target.checked);
+                    if (selected.length === 0) return;
+                    const form = document.querySelector('[data-bank-bulk-form]');
+                    if (!(form instanceof HTMLFormElement)) return;
+                    form.querySelectorAll('input[name="bank_target_ids[]"]').forEach((input) => input.remove());
+                    selected.forEach((target) => {
+                        const hidden = document.createElement('input');
+                        hidden.type = 'hidden';
+                        hidden.name = 'bank_target_ids[]';
+                        hidden.value = target.dataset.bankBulkTarget ?? '';
+                        form.append(hidden);
+                    });
+                    if (confirmModal instanceof HTMLDialogElement) confirmModal.close();
+                    form.requestSubmit();
+                });
+
+                syncBulkPanel();
+            }
         });
     </script>
 @endsection

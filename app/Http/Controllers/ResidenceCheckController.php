@@ -243,16 +243,11 @@ class ResidenceCheckController extends Controller
         $defaultLocation = $residenceCheck?->location ?? $resolvedAddress;
         $needsLocationInput = ! $residenceCheck && blank($resolvedAddress);
         $resolvedCiDate = PersonCiDateResolver::resolve($clientFolder, $activePerson);
-        $hasScopedCibiReport = $clientFolder->cibiReports()->where('co_maker_id', $activePerson?->id)->exists();
-        // Existing Residence keeps its stored date; new Residence uses CI/BI when available.
-        // Applicant-only may enter the initial date when CI/BI has not been created yet.
+        // Existing Residence keeps its own saved date, authoritative and independently editable;
+        // a new Residence only prefills from CI/BI's current Start Date when available — the CI
+        // may still edit or type it directly before saving, same as Location.
         $defaultCiDate = $residenceCheck?->ci_date ?? $resolvedCiDate;
-        $needsApplicantCiDateInput = ! $residenceCheck && ! $activePerson && ! $hasScopedCibiReport && ! $resolvedCiDate;
-        $missingCiDate = ! $residenceCheck && ! $resolvedCiDate && ($activePerson || $hasScopedCibiReport);
-        // Unlike Location's Co-Maker fallback, CI/BI Report itself is a real, precisely-scoped
-        // page for both roles — the same route with the active person's own query params opens
-        // that exact person's report.
-        $ciDateManagementUrl = route('client-folders.cibi-report.edit', [$clientFolder] + ActivePersonResolver::queryParams($activePerson));
+        $needsCiDateInput = ! $residenceCheck && blank($resolvedCiDate);
 
         $existingPhotos = ($residenceCheck?->photos ?? collect())->map(fn (ResidenceCheckPhoto $photo) => [
             'id' => $photo->id,
@@ -289,9 +284,7 @@ class ResidenceCheckController extends Controller
             'defaultLocation' => $defaultLocation,
             'needsLocationInput' => $needsLocationInput,
             'defaultCiDate' => $defaultCiDate,
-            'needsApplicantCiDateInput' => $needsApplicantCiDateInput,
-            'missingCiDate' => $missingCiDate,
-            'ciDateManagementUrl' => $ciDateManagementUrl,
+            'needsCiDateInput' => $needsCiDateInput,
             'existingPhotos' => $existingPhotos,
             'mapScreenshot' => $mapScreenshot,
             'openInGoogleMapsUrl' => $openInGoogleMapsUrl,

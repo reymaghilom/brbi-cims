@@ -11,6 +11,7 @@ use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
 use App\Services\ClientFolders\CiParticipantService;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
@@ -234,7 +235,7 @@ class BusinessReportMultiCiOutputTest extends TestCase
 
         $report = GeneratedReport::where('report_type', 'business_income_source')->where('format', 'docx')->sole();
         $this->assertSame(GenerationStatus::Completed, $report->status);
-        $this->assertSame('PK', substr(Storage::disk('local')->get($report->private_file_reference), 0, 2));
+        $this->assertSame('PK', substr(app(CiTeamDocumentStorage::class)->disk()->get($report->private_file_reference), 0, 2));
     }
 
     public function test_long_participant_list_renders_fully_without_truncation(): void

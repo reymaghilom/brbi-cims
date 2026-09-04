@@ -4,7 +4,6 @@ namespace Database\Factories;
 
 use App\Enums\RecordState;
 use App\Models\ClientFolder;
-use Illuminate\Database\Eloquent\Factories\Factory;
 
 class ClientInformationFactory extends Factory
 {

@@ -1,6 +1,7 @@
 @extends('layouts.app')
 
 @section('title', 'Dashboard')
+@section('html-class', 'folder-browser-page')
 
 @section('content')
     <section class="mb-4" aria-labelledby="dashboard-summary-title">

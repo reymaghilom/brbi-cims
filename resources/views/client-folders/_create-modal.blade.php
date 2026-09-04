@@ -20,8 +20,8 @@
                     <p id="create-folder-first-name-error" class="mt-2 text-sm font-semibold text-danger" role="alert" data-create-error-for="first_name" hidden></p>
                 </div>
                 <div>
-                    <label for="create-folder-middle-name" class="ui-label">Middle name <span aria-hidden="true" class="text-danger">*</span></label>
-                    <input id="create-folder-middle-name" name="middle_name" class="ui-control" maxlength="100" autocomplete="additional-name" required aria-describedby="create-folder-middle-name-error">
+                    <label for="create-folder-middle-name" class="ui-label">Middle name <span class="font-normal text-text-muted">(optional)</span></label>
+                    <input id="create-folder-middle-name" name="middle_name" class="ui-control" maxlength="100" autocomplete="additional-name" aria-describedby="create-folder-middle-name-error">
                     <p id="create-folder-middle-name-error" class="mt-2 text-sm font-semibold text-danger" role="alert" data-create-error-for="middle_name" hidden></p>
                 </div>
                 <div>

@@ -13,9 +13,11 @@ use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
- * Once CI/BI exists, Residence CI Date follows that exact person's Start Date of CI. Applicant
- * Residence may be created first with a validated CI Date, which later prefills the new Applicant
- * CI/BI form; Co-Maker still requires its own CI/BI date.
+ * PREFILL BEFORE SAVE, INDEPENDENT AFTER SAVE (same rule as Location — see
+ * PersonAddressResolver/PersonCiDateResolver): a new Residence Check's CI Date field prefills
+ * from the exact person's current CI/BI Start Date when one exists, but the field is always a
+ * normal editable input the CI may change before saving. Once saved, the Residence Check's own
+ * ci_date is its own authoritative snapshot — a later CI/BI Report save/update never rewrites it.
  */
 class ResidenceCheckCiDateTest extends TestCase
 {
@@ -34,7 +36,7 @@ class ResidenceCheckCiDateTest extends TestCase
         return array_merge(['photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)]], $overrides);
     }
 
-    public function test_add_residence_check_shows_the_cibi_start_date_with_no_warning(): void
+    public function test_add_residence_check_prefills_the_cibi_start_date_with_no_warning(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -43,11 +45,11 @@ class ResidenceCheckCiDateTest extends TestCase
 
         $response = $this->actingAs($ci)->get(route('client-folders.residence-checks.create', $folder))->assertOk();
 
-        $response->assertSee('January 15, 2026');
+        $response->assertSee('value="2026-01-15"', false);
         $response->assertDontSee('No Start Date of CI available. Please update the CI/BI Report before creating a Residence Check.');
     }
 
-    public function test_ci_date_field_is_rendered_read_only(): void
+    public function test_ci_date_field_is_always_rendered_as_an_editable_input(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -56,13 +58,13 @@ class ResidenceCheckCiDateTest extends TestCase
 
         $response = $this->actingAs($ci)->get(route('client-folders.residence-checks.create', $folder))->assertOk();
 
-        // The old editable version rendered a real form field named ci_date; the read-only
-        // display intentionally carries no name attribute since its value is never submitted or
-        // trusted — the server resolves it fresh regardless of what the client sends.
-        $response->assertDontSee('name="ci_date"', false);
+        // Unlike the old read-only display, the field is always a real, named, submittable input —
+        // the same treatment Location already receives.
+        $response->assertSee('name="ci_date"', false);
+        $response->assertDontSee('readonly', false);
     }
 
-    public function test_saving_a_new_residence_check_ignores_a_forged_ci_date_and_stores_the_authoritative_start_date(): void
+    public function test_saving_a_new_residence_check_uses_the_explicitly_submitted_ci_date_over_cibi(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -70,14 +72,14 @@ class ResidenceCheckCiDateTest extends TestCase
         $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => '2026-02-10']);
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto([
-            'ci_date' => '1999-01-01',
+            'ci_date' => '2026-02-01',
         ]))->assertRedirect();
 
         $check = $folder->residenceChecks()->firstOrFail();
-        $this->assertSame('2026-02-10', $check->ci_date->toDateString());
+        $this->assertSame('2026-02-01', $check->ci_date->toDateString());
     }
 
-    public function test_a_residence_check_can_be_created_with_no_ci_date_input_at_all(): void
+    public function test_a_residence_check_created_with_no_ci_date_input_falls_back_to_the_cibi_start_date(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -90,7 +92,7 @@ class ResidenceCheckCiDateTest extends TestCase
         $this->assertSame('2026-03-05', $check->ci_date->toDateString());
     }
 
-    public function test_residence_check_creation_requires_an_applicant_ci_date_when_no_cibi_start_date_exists(): void
+    public function test_residence_check_creation_requires_a_ci_date_when_no_cibi_start_date_exists_and_none_is_submitted(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -101,21 +103,25 @@ class ResidenceCheckCiDateTest extends TestCase
         $this->assertDatabaseCount('residence_checks', 0);
     }
 
-    public function test_existing_applicant_cibi_without_its_required_start_date_still_blocks_residence_creation(): void
+    public function test_existing_applicant_cibi_without_its_start_date_still_requires_a_ci_date_input(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $folder->addresses()->create(['address_type' => 'present', 'address_line_1' => 'Applicant Address']);
         $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id]);
 
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto())
+            ->assertSessionHasErrors('ci_date');
+        $this->assertDatabaseCount('residence_checks', 0);
+
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto([
             'ci_date' => now()->toDateString(),
-        ]))->assertSessionHasErrors('ci_date');
-
-        $this->assertDatabaseCount('residence_checks', 0);
+        ]))->assertRedirect();
+        $this->assertDatabaseCount('residence_checks', 1);
     }
 
-    public function test_residence_check_creation_is_blocked_when_the_co_maker_has_no_cibi_start_date(): void
+    /** Co-Maker Residence Check may now be created standalone with its own typed CI Date, exactly like Applicant — no CI/BI Report is required first. */
+    public function test_co_maker_residence_check_can_be_created_with_its_own_ci_date_when_no_cibi_exists(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -124,11 +130,18 @@ class ResidenceCheckCiDateTest extends TestCase
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto([
             'co_maker_id' => $coMaker->id,
         ]))->assertSessionHasErrors('ci_date');
-
         $this->assertDatabaseCount('residence_checks', 0);
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto([
+            'co_maker_id' => $coMaker->id,
+            'ci_date' => '2026-04-01',
+        ]))->assertRedirect();
+
+        $check = $folder->residenceChecks()->where('co_maker_id', $coMaker->id)->firstOrFail();
+        $this->assertSame('2026-04-01', $check->ci_date->toDateString());
     }
 
-    public function test_add_applicant_residence_without_cibi_shows_required_ci_date_input_instead_of_blocking_warning(): void
+    public function test_add_applicant_residence_without_cibi_shows_a_helper_hint_instead_of_a_blocking_warning(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -137,11 +150,11 @@ class ResidenceCheckCiDateTest extends TestCase
         $response = $this->actingAs($ci)->get(route('client-folders.residence-checks.create', $folder))->assertOk();
 
         $response->assertSee('name="ci_date"', false);
-        $response->assertSee('No Applicant CI/BI Report exists yet. This date will prefill its Start Date of CI later.');
+        $response->assertSee('No CI/BI Report exists yet for this person. Enter the CI Date directly.');
         $response->assertDontSee('No Start Date of CI available. Please update the CI/BI Report before creating a Residence Check.');
     }
 
-    public function test_add_residence_check_shows_missing_start_date_management_link_scoped_to_the_specific_co_maker(): void
+    public function test_add_co_maker_residence_without_cibi_shows_the_same_helper_hint(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -151,12 +164,15 @@ class ResidenceCheckCiDateTest extends TestCase
             ->get(route('client-folders.residence-checks.create', $folder).'?person=co-maker&co_maker_id='.$coMaker->id)
             ->assertOk();
 
-        $response->assertSee('No Start Date of CI available. Please update the CI/BI Report before creating a Residence Check.');
-        $expectedLink = route('client-folders.cibi-report.edit', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]);
-        $response->assertSee(e($expectedLink), false);
+        $response->assertSee('No CI/BI Report exists yet for this person. Enter the CI Date directly.');
+        $response->assertDontSee('No Start Date of CI available. Please update the CI/BI Report before creating a Residence Check.');
     }
 
-    public function test_updating_applicant_start_date_via_cibi_report_syncs_the_existing_residence_check_without_reopening_it(): void
+    // ==================================================
+    // Independence after save — the core reversal from the old sync behavior
+    // ==================================================
+
+    public function test_updating_the_applicant_start_date_via_cibi_report_does_not_change_the_saved_residence_check(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -168,34 +184,10 @@ class ResidenceCheckCiDateTest extends TestCase
 
         $this->saveCibiStartDate($ci, $folder, $cibi, '2026-04-20');
 
-        // The Residence Check itself was never touched — its CI Date changed purely as a
-        // consequence of the CI/BI Report save.
-        $this->assertSame('2026-04-20', $check->fresh()->ci_date->toDateString());
+        $this->assertSame('2026-01-10', $check->fresh()->ci_date->toDateString());
     }
 
-    public function test_updating_remarks_on_an_existing_residence_check_still_syncs_ci_date_to_the_current_start_date(): void
-    {
-        $ci = User::factory()->create();
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $folder->addresses()->create(['address_type' => 'present', 'address_line_1' => 'Applicant Address']);
-        $cibi = $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-10']);
-        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto())->assertRedirect();
-        $check = $folder->residenceChecks()->firstOrFail();
-
-        // The Start Date changes out from under the Residence Check first...
-        $this->saveCibiStartDate($ci, $folder, $cibi, '2026-05-30');
-
-        // ...then the CI edits only Remarks on the Residence Check itself.
-        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'touch only remarks',
-        ])->assertRedirect();
-
-        $check->refresh();
-        $this->assertSame('touch only remarks', $check->remarks);
-        $this->assertSame('2026-05-30', $check->ci_date->toDateString());
-    }
-
-    public function test_updating_a_co_makers_cibi_start_date_syncs_that_co_makers_existing_residence_check(): void
+    public function test_updating_a_co_makers_cibi_start_date_does_not_change_that_co_makers_saved_residence_check(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -206,51 +198,62 @@ class ResidenceCheckCiDateTest extends TestCase
             'co_maker_id' => $coMaker->id,
         ]))->assertRedirect();
         $check = $folder->residenceChecks()->where('co_maker_id', $coMaker->id)->firstOrFail();
-        $this->assertSame('2026-01-10', $check->ci_date->toDateString());
 
         $this->saveCibiStartDate($ci, $folder, $cibi, '2026-06-18', $coMaker->id);
 
-        $this->assertSame('2026-06-18', $check->fresh()->ci_date->toDateString());
+        $this->assertSame('2026-01-10', $check->fresh()->ci_date->toDateString());
     }
 
-    public function test_updating_one_co_makers_start_date_does_not_change_another_co_makers_residence_check(): void
-    {
-        $ci = User::factory()->create();
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $coMakerA = $folder->coMakers()->create(['full_name' => 'Co Maker A', 'address' => 'Address A']);
-        $coMakerB = $folder->coMakers()->create(['full_name' => 'Co Maker B', 'address' => 'Address B']);
-        $cibiA = $folder->cibiReports()->create(['co_maker_id' => $coMakerA->id, 'ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-10']);
-        $folder->cibiReports()->create(['co_maker_id' => $coMakerB->id, 'ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-11']);
-
-        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto(['co_maker_id' => $coMakerA->id]))->assertRedirect();
-        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto(['co_maker_id' => $coMakerB->id]))->assertRedirect();
-        $checkA = $folder->residenceChecks()->where('co_maker_id', $coMakerA->id)->firstOrFail();
-        $checkB = $folder->residenceChecks()->where('co_maker_id', $coMakerB->id)->firstOrFail();
-
-        $this->saveCibiStartDate($ci, $folder, $cibiA, '2026-07-01', $coMakerA->id);
-
-        $this->assertSame('2026-07-01', $checkA->fresh()->ci_date->toDateString());
-        $this->assertSame('2026-01-11', $checkB->fresh()->ci_date->toDateString());
-    }
-
-    public function test_updating_the_applicant_start_date_does_not_affect_a_co_makers_residence_check(): void
+    public function test_deleting_cibi_after_residence_save_does_not_alter_the_saved_residence_check(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $folder->addresses()->create(['address_type' => 'present', 'address_line_1' => 'Applicant Address']);
-        $applicantCibi = $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-10']);
-        $coMaker = $folder->coMakers()->create(['full_name' => 'Co Maker Person', 'address' => 'Co-Maker Address']);
-        $folder->cibiReports()->create(['co_maker_id' => $coMaker->id, 'ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-11']);
-
+        $cibi = $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-10']);
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto())->assertRedirect();
-        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto(['co_maker_id' => $coMaker->id]))->assertRedirect();
-        $applicantCheck = $folder->residenceChecks()->whereNull('co_maker_id')->firstOrFail();
-        $coMakerCheck = $folder->residenceChecks()->where('co_maker_id', $coMaker->id)->firstOrFail();
+        $check = $folder->residenceChecks()->firstOrFail();
+        $location = $check->location;
 
-        $this->saveCibiStartDate($ci, $folder, $applicantCibi, '2026-08-08');
+        $cibi->delete();
 
-        $this->assertSame('2026-08-08', $applicantCheck->fresh()->ci_date->toDateString());
-        $this->assertSame('2026-01-11', $coMakerCheck->fresh()->ci_date->toDateString());
+        $this->assertSame('2026-01-10', $check->fresh()->ci_date->toDateString());
+        $this->assertSame($location, $check->fresh()->location);
+    }
+
+    public function test_editing_remarks_on_an_existing_residence_check_never_resyncs_ci_date_to_a_changed_start_date(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $folder->addresses()->create(['address_type' => 'present', 'address_line_1' => 'Applicant Address']);
+        $cibi = $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-10']);
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto())->assertRedirect();
+        $check = $folder->residenceChecks()->firstOrFail();
+
+        $this->saveCibiStartDate($ci, $folder, $cibi, '2026-05-30');
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'check_id' => $check->id, 'remarks' => 'touch only remarks', 'location' => $check->location,
+        ])->assertRedirect();
+
+        $check->refresh();
+        $this->assertSame('touch only remarks', $check->remarks);
+        $this->assertSame('2026-01-10', $check->ci_date->toDateString());
+    }
+
+    public function test_ci_explicitly_editing_ci_date_on_an_existing_check_saves_the_new_value_independent_of_cibi(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $folder->addresses()->create(['address_type' => 'present', 'address_line_1' => 'Applicant Address']);
+        $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-10']);
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto())->assertRedirect();
+        $check = $folder->residenceChecks()->firstOrFail();
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'check_id' => $check->id, 'location' => $check->location, 'ci_date' => '2026-07-07',
+        ])->assertRedirect();
+
+        $this->assertSame('2026-07-07', $check->fresh()->ci_date->toDateString());
     }
 
     public function test_co_maker_ci_date_resolution_is_unaffected_by_the_applicant_cibi_lookup(): void
@@ -258,7 +261,7 @@ class ResidenceCheckCiDateTest extends TestCase
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         // An Applicant CI/BI Report with its own Start Date exists on the same folder — it must
-        // never leak into a Co-Maker's resolved CI Date.
+        // never leak into a Co-Maker's resolved CI Date prefill.
         $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-01']);
         $coMaker = $folder->coMakers()->create(['full_name' => 'Co Maker Person', 'address' => 'Co-Maker Own Address']);
         $folder->cibiReports()->create(['co_maker_id' => $coMaker->id, 'ci_in_charge_id' => $ci->id, 'start_date' => '2026-09-09']);
@@ -271,14 +274,13 @@ class ResidenceCheckCiDateTest extends TestCase
         $this->assertSame('2026-09-09', $check->ci_date->toDateString());
     }
 
-    public function test_ci_date_synchronization_does_not_touch_photos_map_screenshot_remarks_or_location(): void
+    public function test_saved_residence_check_survives_unchanged_photos_map_screenshot_remarks_and_location_after_a_cibi_update(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $folder->addresses()->create(['address_type' => 'present', 'address_line_1' => 'Applicant Address']);
         $cibi = $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-10']);
         $photo = UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500);
-        Storage::fake('local');
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'remarks' => 'Keep me', 'photos' => [$photo],
@@ -286,18 +288,19 @@ class ResidenceCheckCiDateTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
         $storedPhotoPath = $check->photos()->firstOrFail()->path;
         $location = $check->location;
+        $ciDate = $check->ci_date->toDateString();
 
         $this->saveCibiStartDate($ci, $folder, $cibi, '2026-10-15');
 
         $check->refresh();
-        $this->assertSame('2026-10-15', $check->ci_date->toDateString());
+        $this->assertSame($ciDate, $check->ci_date->toDateString());
         $this->assertSame('Keep me', $check->remarks);
         $this->assertSame($location, $check->location);
         $this->assertSame(1, $check->photos()->count());
         $this->assertSame($storedPhotoPath, $check->photos()->firstOrFail()->path);
     }
 
-    public function test_residence_business_listing_reflects_the_synchronized_current_ci_date(): void
+    public function test_residence_business_listing_keeps_showing_the_original_saved_ci_date_after_a_cibi_update(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -311,17 +314,16 @@ class ResidenceCheckCiDateTest extends TestCase
         $this->saveCibiStartDate($ci, $folder, $cibi, '2026-11-25');
 
         $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))
-            ->assertOk()->assertSee('Nov 25, 2026')->assertDontSee('Jan 10, 2026');
+            ->assertOk()->assertSee('Jan 10, 2026')->assertDontSee('Nov 25, 2026');
     }
 
-    public function test_completion_status_is_unaffected_by_ci_date_synchronization(): void
+    public function test_completion_status_is_unaffected_by_an_unrelated_cibi_update(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $folder->addresses()->create(['address_type' => 'present', 'address_line_1' => 'Applicant Address']);
         $cibi = $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-10']);
         $photo = UploadedFile::fake()->image('Residence Front.jpg', 900, 700)->size(500);
-        Storage::fake('local');
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'photos' => [$photo],
@@ -335,7 +337,7 @@ class ResidenceCheckCiDateTest extends TestCase
         $this->assertTrue($result->fresh()->is_satisfied);
     }
 
-    public function test_a_second_residence_check_for_the_same_person_is_also_synchronized(): void
+    public function test_a_second_residence_check_for_the_same_person_is_also_unaffected_by_a_cibi_update(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -349,15 +351,14 @@ class ResidenceCheckCiDateTest extends TestCase
         $this->saveCibiStartDate($ci, $folder, $cibi, '2027-02-02');
 
         foreach ($checks as $check) {
-            $this->assertSame('2027-02-02', $check->fresh()->ci_date->toDateString());
+            $this->assertSame('2026-01-10', $check->fresh()->ci_date->toDateString());
         }
     }
 
     /**
-     * Saves a new start_date through the real SaveCibiReport action (never a raw model update,
-     * which would bypass the sync side effect this whole test class is verifying). $cibi must be
-     * freshly created/fetched so its `revision` reflects the DB, since Eloquent doesn't backfill a
-     * column's DB default into an in-memory instance on create().
+     * Saves a new start_date through the real SaveCibiReport action (never a raw model update).
+     * $cibi must be freshly refreshed first so its `revision` reflects the DB, since Eloquent
+     * doesn't backfill a column's DB default into an in-memory instance on create().
      */
     private function saveCibiStartDate(User $ci, ClientFolder $folder, CibiReport $cibi, string $startDate, ?int $coMakerId = null): void
     {

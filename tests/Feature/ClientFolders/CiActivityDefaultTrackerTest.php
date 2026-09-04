@@ -60,9 +60,142 @@ class CiActivityDefaultTrackerTest extends TestCase
                 ->assertSee($default->name)
                 ->assertSee('Schedule / Follow-up Date')
                 ->assertSee('Short Remarks')
-                ->assertSee('Updated By')
+                ->assertDontSee('Updated By')
+                ->assertDontSee('Creator')
+                ->assertDontSee('Last Updated')
                 ->assertSee('Mark '.$default->name.' as completed?');
         }
+    }
+
+    public function test_default_check_tracker_removes_redundant_footer_close_button_and_keeps_header_close(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $barangay = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+        $neighbor = $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE);
+
+        foreach ([$barangay, $neighbor] as $default) {
+            $this->actingAs($ci)->get(route('client-folders.activities.default-check.show', [$folder, $default]))
+                ->assertOk()
+                ->assertDontSee('data-default-check-close', false)
+                ->assertSee('data-default-check-submit', false)
+                ->assertSee('Save Changes')
+                ->assertSee('data-default-check-success', false);
+        }
+
+        $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))
+            ->assertOk()
+            ->assertSee('data-default-check-modal-close', false)
+            ->assertSee('aria-label="Close activity tracker"', false);
+    }
+
+    public function test_default_check_tracker_renders_cancel_button_no_changes_message_and_discard_confirmation(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $barangay = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+        $neighbor = $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE);
+
+        foreach ([$barangay, $neighbor] as $default) {
+            $this->actingAs($ci)->get(route('client-folders.activities.default-check.show', [$folder, $default]))
+                ->assertOk()
+                ->assertSee('data-default-check-cancel', false)
+                ->assertSee('>Cancel<', false)
+                ->assertSee('data-default-check-no-changes', false)
+                ->assertSee('No changes detected. Nothing needs to be updated.')
+                ->assertDontSee('No changes to save.')
+                ->assertSee('data-default-check-discard-confirm', false)
+                ->assertSee('Discard unsaved changes?')
+                ->assertSee('Your changes have not been saved.')
+                ->assertSee('data-default-check-discard-keep', false)
+                ->assertSee('Keep Editing')
+                ->assertSee('data-default-check-discard-confirm-button', false)
+                ->assertSee('Discard Changes')
+                ->assertDontSee('data-default-check-close', false);
+        }
+    }
+
+    public function test_default_check_save_flow_js_skips_the_save_request_when_nothing_changed(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+
+        $page = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
+        $content = $page->getContent();
+        $page->assertOk()
+            ->assertSee('const readValues = () => ({', false)
+            ->assertSee('const isDirty = () => {', false)
+            ->assertSee('currentIsDirty = isDirty;', false)
+            ->assertSee('noChanges.hidden = false;', false)
+            ->assertSee('baseline = readValues();', false);
+
+        $blockStart = strpos($content, 'const bindSource = (source) => {');
+        $blockEnd = strpos($content, 'const loadDetail = async () => {', $blockStart);
+        $this->assertNotFalse($blockStart);
+        $this->assertNotFalse($blockEnd);
+        $block = substr($content, $blockStart, $blockEnd - $blockStart);
+
+        $noChangesGuardPosition = strpos($block, 'if (! isDirty()) {');
+        $fetchSavePosition = strpos($block, 'fetch(form.action, {');
+        $this->assertNotFalse($noChangesGuardPosition);
+        $this->assertNotFalse($fetchSavePosition);
+        $this->assertLessThan(
+            $fetchSavePosition,
+            $noChangesGuardPosition,
+            'The no-changes guard must be checked before the save request is issued.',
+        );
+
+        $baselineResetPosition = strpos($block, 'baseline = readValues();', $noChangesGuardPosition);
+        $synchronizeCallPosition = strpos($block, 'synchronizeTable(freshSource);');
+        $this->assertNotFalse($baselineResetPosition);
+        $this->assertNotFalse($synchronizeCallPosition);
+        $this->assertGreaterThan(
+            $synchronizeCallPosition,
+            $baselineResetPosition,
+            'The baseline must only be reset to the newly saved values after a real save completes.',
+        );
+    }
+
+    public function test_default_check_cancel_and_close_controls_share_the_same_dirty_guard(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+
+        $page = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
+        $page->assertOk()
+            ->assertSee('const requestClose = () => {', false)
+            ->assertSee("data-default-check-cancel]')?.addEventListener('click', () => requestClose());", false)
+            ->assertSee("button.addEventListener('click', () => requestClose())", false)
+            ->assertSee('if (event.target === modal) requestClose();', false)
+            ->assertSee("modal.addEventListener('cancel', (event) => {", false)
+            ->assertSee('discard.showModal();', false)
+            ->assertSee('discard?.close();', false)
+            ->assertSee('modal.close();', false);
+    }
+
+    public function test_default_check_save_flow_uses_a_lightweight_sync_instead_of_reloading_the_whole_modal_body(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+
+        $page = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
+        $page->assertOk()
+            ->assertSee("submit.textContent = 'Saving Changes…';", false)
+            ->assertSee("form.dataset.submitting === 'true'", false)
+            ->assertSee('synchronizeTable(freshSource);', false);
+
+        preg_match(
+            "/form\.addEventListener\('submit', async \(event\) => \{(.*?)\n\s{16}\}\);/s",
+            $page->getContent(),
+            $submitHandler,
+        );
+        $this->assertNotEmpty($submitHandler[1] ?? '', 'Expected to locate the default-check tracker submit handler.');
+        $this->assertStringNotContainsString('body.innerHTML = loadingMarkup', $submitHandler[1]);
+        $this->assertStringNotContainsString('body.replaceChildren(', $submitHandler[1]);
+        $this->assertStringNotContainsString('await loadDetail();', $submitHandler[1]);
     }
 
     public function test_default_tracker_status_and_optional_schedule_rules_use_timezone_and_reject_time_only(): void

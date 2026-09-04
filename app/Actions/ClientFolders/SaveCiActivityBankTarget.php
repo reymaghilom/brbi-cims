@@ -8,6 +8,7 @@ use App\Models\CiActivity;
 use App\Models\CiActivityBankTarget;
 use App\Models\ClientFolder;
 use App\Models\User;
+use App\Notifications\CiActivityScheduledReminder;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Facades\DB;
@@ -26,6 +27,11 @@ class SaveCiActivityBankTarget
             $target = $activity->bankTargets()->create($this->attributes($actor, $data) + [
                 'created_by' => $actor->id,
             ]);
+
+            if ($target->status === ActivityStatus::Scheduled) {
+                $this->notifySchedule($activity, $target, CiActivityScheduledReminder::PURPOSE_SCHEDULE_CREATED);
+            }
+
             $this->synchronizeParentWorkflow($actor, $folder, $activity);
 
             return $target;
@@ -37,7 +43,28 @@ class SaveCiActivityBankTarget
         return DB::transaction(function () use ($actor, $folder, $activity, $target, $data): CiActivityBankTarget {
             $activity = $this->lockExactParent($folder, $activity);
             $lockedTarget = $activity->bankTargets()->lockForUpdate()->findOrFail($target->id);
-            $lockedTarget->update($this->attributes($actor, $data));
+            $previousStatus = $lockedTarget->status;
+            $previousScheduledAt = $lockedTarget->scheduled_at?->copy();
+            $previousScheduledHasTime = $lockedTarget->scheduled_has_time;
+
+            $attributes = $this->attributes($actor, $data);
+            $scheduleChanged = ($previousScheduledAt === null) !== ($attributes['scheduled_at'] === null)
+                || ($previousScheduledAt !== null && $attributes['scheduled_at'] !== null && ! $previousScheduledAt->equalTo($attributes['scheduled_at']))
+                || $previousScheduledHasTime !== $attributes['scheduled_has_time'];
+            $attributes['reminder_sent_at'] = $scheduleChanged || $attributes['status'] !== ActivityStatus::Scheduled
+                ? null
+                : $lockedTarget->reminder_sent_at;
+
+            $lockedTarget->update($attributes);
+
+            $scheduledNow = $lockedTarget->status === ActivityStatus::Scheduled && $previousStatus !== ActivityStatus::Scheduled;
+            $rescheduledNow = $lockedTarget->status === ActivityStatus::Scheduled && $previousStatus === ActivityStatus::Scheduled && $scheduleChanged;
+            if ($scheduledNow) {
+                $this->notifySchedule($activity, $lockedTarget, CiActivityScheduledReminder::PURPOSE_SCHEDULE_CREATED);
+            } elseif ($rescheduledNow) {
+                $this->notifySchedule($activity, $lockedTarget, CiActivityScheduledReminder::PURPOSE_SCHEDULE_CHANGED);
+            }
+
             $this->synchronizeParentWorkflow($actor, $folder, $activity);
 
             return $lockedTarget->refresh();
@@ -67,11 +94,11 @@ class SaveCiActivityBankTarget
                 'status' => ActivityStatus::Completed,
                 'scheduled_at' => null,
                 'scheduled_has_time' => false,
+                'reminder_sent_at' => null,
                 'updated_by' => $actor->id,
             ]);
 
-            $targetLabel = $lockedTarget->institution_name
-                .(filled($lockedTarget->branch_location) ? ' – '.$lockedTarget->branch_location : '');
+            $targetLabel = $lockedTarget->targetLabel();
             AuditLog::create([
                 'user_id' => $actor->id,
                 'client_folder_id' => $folder->id,
@@ -142,6 +169,19 @@ class SaveCiActivityBankTarget
         $this->synchronizeParentStatus($activity, $actor);
         $this->completion->evaluate($folder);
         $this->progress->recalculate($folder);
+    }
+
+    private function notifySchedule(CiActivity $activity, CiActivityBankTarget $target, string $purpose): void
+    {
+        $activity->creator?->notify(new CiActivityScheduledReminder(
+            $activity,
+            $purpose,
+            CiActivityScheduledReminder::TARGET_TYPE_BANK,
+            $target->id,
+            $target->targetLabel(),
+            $target->scheduled_at,
+            $target->scheduled_has_time,
+        ));
     }
 
     private function lockExactParent(ClientFolder $folder, CiActivity $activity): CiActivity

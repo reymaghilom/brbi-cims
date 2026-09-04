@@ -95,7 +95,7 @@ class BusinessCheckController extends Controller
         $personParams = ActivePersonResolver::queryParams($activePerson);
         $delete->execute(request()->user(), $clientFolder, $businessCheck);
 
-        return redirect()->route('client-folders.residence-business.edit', [$clientFolder] + $personParams)->with('status', 'Business Check and linked Business Report moved to the Recycle Bin.');
+        return redirect()->route('client-folders.residence-business.edit', [$clientFolder] + $personParams)->with('status', 'Business Check permanently deleted.');
     }
 
     /** Web delivery for one Business Picture — same Cloudinary-redirect-or-local-stream split as ResidenceCheckController::photo(). */
@@ -161,16 +161,42 @@ class BusinessCheckController extends Controller
             ->get(['id', 'income_source_id'])
             ->keyBy('income_source_id');
 
+        // The "Select Business" dropdown's source of truth is EXPLICITLY SAVED Business Reports
+        // only (revision > 1 AND a BusinessReport row exists — the same authoritative "actually
+        // saved" convention as IncomeSourceController::dedicatedSources()'s requireReport). A
+        // revision-1 draft/Check-first/quick-add shell is not a saved Report and must never appear
+        // here, and neither may a business whose Report row was hard-deleted. A candidate must also
+        // have no Business Check of its own yet (no duplicate candidates — server-side rejection in
+        // SaveBusinessCheck stays in place regardless of this listing rule). Orphaned IncomeSources
+        // (no meaningful Report and no Check — see DeleteIncomeSourceIfOrphaned) are force-deleted at
+        // delete time and so never reach this query at all. The Business Check currently being
+        // edited is the one exception to both rules: its own business must still render (and remain
+        // selected) no matter its Report/Check state, or the edit form itself would have nothing to
+        // select — CREATE mode (no $businessCheck) never grants this exception.
+        //
+        // "+ Add Business" quick-add deliberately does NOT go through this list at all: it creates
+        // its revision-1 IncomeSource via a separate AJAX endpoint and the client-side script
+        // (app.js) appends/selects that business's <option> directly in the already-open form — see
+        // ApplicantBusinessQuickAddTest. That in-session continuation never touches this query, so a
+        // quick-added business can still be used to finish creating the CURRENT Business Check, but
+        // reopening this form fresh afterward will not list it until its Report is explicitly saved.
         $businesses = $clientFolder->incomeSources()
             ->where('co_maker_id', $activePerson?->id)
-            ->with(['businessReport:id,income_source_id,main_business_address,start_date', 'template'])
+            ->with(['businessReport:id,income_source_id,main_business_address,start_date', 'businessDocumentation:id,income_source_id,location', 'template'])
             ->whereHas('template', fn ($query) => $query->where('is_fallback', false)->where('form_handler', 'dedicated-business'))
+            ->where(fn ($query) => $query
+                ->where(fn ($saved) => $saved->whereHas('businessReport')->where('revision', '>', 1))
+                ->orWhereHas('businessDocumentation')
+                ->when($businessCheck, fn ($query) => $query->orWhere('id', $businessCheck->income_source_id)))
+            ->where(fn ($query) => $query
+                ->whereDoesntHave('businessCheck')
+                ->when($businessCheck, fn ($query) => $query->orWhere('id', $businessCheck->income_source_id)))
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get()
             ->map(fn ($source) => [
                 'id' => $source->id, 'name' => $source->displayName(),
-                'location' => $source->businessReport?->main_business_address,
+                'location' => $source->businessReport?->main_business_address ?: $source->businessDocumentation?->location,
                 'ci_date' => $source->businessReport?->start_date?->format('Y-m-d'),
                 'existing_check_id' => $existingChecksByIncomeSource->get($source->id)?->id,
                 // Drives the "Business Report available" / "Business Report not yet created"
@@ -179,18 +205,16 @@ class BusinessCheckController extends Controller
                 'report_complete' => $source->state === RecordState::Complete,
             ]);
 
-        // The one authoritative business address is BusinessReport::main_business_address, and the
-        // one authoritative CI Date is BusinessReport::start_date ("Start Date of CI" on the
-        // Business Report form) — see SaveBusinessIncomeSource::REPORT_FIELDS and the quick-create
-        // flow in IncomeSourceController::quickCreate(). Both are re-derived here on every render
-        // rather than trusting the possibly-stale copy saved on the BusinessCheck row itself, so an
-        // edit from Business Report is reflected the next time this Business Check is opened
-        // instead of silently showing what was true whenever it was last saved. Each falls back to
-        // its own saved copy only for a check whose linked business (or shared value) no longer
-        // resolves — e.g. a legacy record from before this business had a Business Report at all.
-        $currentBusiness = $businessCheck ? $businesses->firstWhere('id', $businessCheck->income_source_id) : null;
-        $currentLocation = $currentBusiness['location'] ?? $businessCheck?->location;
-        $currentCiDate = $currentBusiness['ci_date'] ?? $businessCheck?->ci_date?->format('Y-m-d');
+        // Report → Check is PREFILL ONLY, and only for a Business Check that doesn't exist yet —
+        // an existing, already-saved Business Check always shows its own persisted values here,
+        // never a newer value from the Business Report (see
+        // BusinessReportBusinessCheckIndependenceTest). For a brand-new check, the initially
+        // selected business (old('income_source_id') on a validation-failed reload) still prefills
+        // from that business's current Business Report, exactly like each <option>'s
+        // data-location/data-ci-date attributes drive the same prefill client-side on selection.
+        $selectedNewBusiness = $businessCheck ? null : $businesses->firstWhere('id', (int) old('income_source_id'));
+        $currentLocation = $businessCheck ? $businessCheck->location : ($selectedNewBusiness['location'] ?? null);
+        $currentCiDate = $businessCheck ? $businessCheck->ci_date?->format('Y-m-d') : ($selectedNewBusiness['ci_date'] ?? null);
 
         $mapQuery = $currentLocation;
         $photos = $businessCheck?->photos ?? collect();

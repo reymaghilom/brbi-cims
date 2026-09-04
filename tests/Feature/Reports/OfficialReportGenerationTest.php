@@ -16,6 +16,7 @@ use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
 use App\Services\Reports\Contracts\PdfGenerator;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
@@ -49,14 +50,14 @@ class OfficialReportGenerationTest extends TestCase
         $pdf = $reports->firstWhere('format', ReportFormat::Pdf);
         $docx = $reports->firstWhere('format', ReportFormat::Docx);
         $this->assertSame(GenerationStatus::Completed, $pdf->status);
-        $pdfBytes = Storage::disk('local')->get($pdf->private_file_reference);
+        $pdfBytes = app(CiTeamDocumentStorage::class)->disk()->get($pdf->private_file_reference);
         $this->assertSame('%PDF', substr($pdfBytes, 0, 4));
         $this->assertMatchesRegularExpression('/MediaBox\s*\[\s*0(?:\.0+)?\s+0(?:\.0+)?\s+612(?:\.0+)?\s+936(?:\.0+)?\s*\]/', $pdfBytes);
         $this->assertSame(1, preg_match_all('/\/Type\s*\/Page\b/', $pdfBytes));
-        $this->assertSame('PK', substr(Storage::disk('local')->get($docx->private_file_reference), 0, 2));
+        $this->assertSame('PK', substr(app(CiTeamDocumentStorage::class)->disk()->get($docx->private_file_reference), 0, 2));
 
         $temporary = tempnam(sys_get_temp_dir(), 'docx-test-');
-        file_put_contents($temporary, Storage::disk('local')->get($docx->private_file_reference));
+        file_put_contents($temporary, app(CiTeamDocumentStorage::class)->disk()->get($docx->private_file_reference));
         $zip = new ZipArchive;
         $this->assertTrue($zip->open($temporary) === true);
         $documentXml = $zip->getFromName('word/document.xml');
@@ -219,7 +220,7 @@ class OfficialReportGenerationTest extends TestCase
 
         $report = GeneratedReport::where('report_type', 'cibi')->where('format', ReportFormat::Pdf)->sole();
         $this->assertSame(GenerationStatus::Completed, $report->status);
-        $this->assertSame('%PDF', substr(Storage::disk('local')->get($report->private_file_reference), 0, 4));
+        $this->assertSame('%PDF', substr(app(CiTeamDocumentStorage::class)->disk()->get($report->private_file_reference), 0, 4));
     }
 
     public function test_applicant_cibi_web_output_shows_name_of_client_label(): void

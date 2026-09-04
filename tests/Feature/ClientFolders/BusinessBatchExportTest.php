@@ -124,7 +124,7 @@ class BusinessBatchExportTest extends TestCase
         $this->actingAs($ci)
             ->get(route('client-folders.income-sources.manage', $folder))
             ->assertOk()
-            ->assertSee('No businesses saved yet')
+            ->assertSee('No businesses yet')
             ->assertDontSee('data-business-batch-panel', false)
             ->assertDontSee('Print Summary');
     }

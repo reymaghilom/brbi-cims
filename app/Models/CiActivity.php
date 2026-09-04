@@ -93,10 +93,7 @@ class CiActivity extends Model
             ? $this->definition?->code
             : $this->definition()->value('code');
 
-        return in_array($definitionCode, [
-            ActivityDefinition::BARANGAY_CHECK_CODE,
-            ActivityDefinition::NEIGHBOR_CHECK_CODE,
-        ], true);
+        return ActivityDefinition::isMandatoryDefaultCode($definitionCode);
     }
 
     public function scopeScheduledTodayForCreator(Builder $query, User|int $creator, ?string $timezone = null): Builder

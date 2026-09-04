@@ -50,12 +50,11 @@ class CloudinaryCiActivityProofStorage
         );
 
         $mime = $this->verifiedMimeType($file);
-        $mediaType = str_starts_with($mime, 'image/') ? MediaType::Photo : MediaType::Video;
+        $mediaType = MediaType::Photo;
         $extension = match ($mime) {
             'image/jpeg' => 'jpg',
             'image/png' => 'png',
             'image/webp' => 'webp',
-            'video/mp4' => 'mp4',
             default => throw new \InvalidArgumentException('Unsupported verified proof media type.'),
         };
         $assetName = Str::uuid()->toString();

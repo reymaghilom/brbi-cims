@@ -12,16 +12,26 @@ use App\Http\Requests\ClientFolders\UpdateMediaRequest;
 use App\Models\CiActivity;
 use App\Models\ClientFolder;
 use App\Models\MediaReference;
+use App\Models\ResidenceBusinessDocumentation;
 use App\Services\ClientFolders\ActivePersonResolver;
+use App\Services\ClientFolders\ClientFolderOverview;
+use App\Services\ClientFolders\PersonAddressResolver;
+use App\Services\Media\DocumentationCaptionBuilder;
+use App\Services\Media\DocumentationTelegramSender;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class MediaReferenceController extends Controller
 {
+    public function __construct(
+        private readonly CiTeamDocumentStorage $documents,
+        private readonly ClientFolderOverview $overview,
+    ) {}
+
     public function globalIndex(): View
     {
         Gate::authorize('viewAny', MediaReference::class);
@@ -37,27 +47,75 @@ class MediaReferenceController extends Controller
         ]);
     }
 
-    public function index(ClientFolder $clientFolder): View
+    public function index(ClientFolder $clientFolder, DocumentationCaptionBuilder $captionBuilder, DocumentationTelegramSender $telegramSender): View
     {
         Gate::authorize('view', $clientFolder);
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
-        $query = $clientFolder->mediaReferences()
+
+        $documentations = $clientFolder->residenceBusinessDocumentations()
             ->where('co_maker_id', $activePerson?->id)
+            ->with(['mapScreenshot', 'latestTelegramDelivery'])
+            ->withCount(['pictures', 'videos'])
+            ->latest('updated_at')
+            ->get();
+
+        // Residence and Business are independent, simultaneously visible panels now (no tab
+        // switches which one is "active"), so each resolves its own active set from its own
+        // query string key rather than sharing a single "documentation" id.
+        $residenceDocumentations = $documentations->filter->isResidence()->values();
+        $businessDocumentations = $documentations->reject->isResidence()->values();
+        $legacyBusinessDocumentations = $businessDocumentations->filter->isLegacyBusiness()->values();
+        $requestedResidenceId = request()->integer('residence_documentation') ?: null;
+        $requestedBusinessId = request()->integer('business_documentation') ?: null;
+        $activeResidenceDocumentation = $requestedResidenceId
+            ? $residenceDocumentations->firstWhere('id', $requestedResidenceId)
+            : $residenceDocumentations->first();
+        $requestedBusinessDocumentation = $requestedBusinessId
+            ? $businessDocumentations->firstWhere('id', $requestedBusinessId)
+            : null;
+        $newBusinessDraft = request()->boolean('business_draft');
+        $activeBusinessDocumentation = $newBusinessDraft
+            ? null
+            : ($requestedBusinessDocumentation ?: $businessDocumentations->first());
+        $activeResidenceDocumentation?->load(['pictures', 'videos', 'latestTelegramDelivery']);
+        $activeBusinessDocumentation?->load(['pictures', 'videos', 'latestTelegramDelivery']);
+
+        // Legacy Media: existing CI Activity Supporting Proof and any pre-redesign general
+        // uploads — identified structurally by having no documentation set at all, never
+        // deleted/migrated by this redesign.
+        $legacyQuery = $clientFolder->mediaReferences()
+            ->where('co_maker_id', $activePerson?->id)
+            ->whereNull('residence_business_documentation_id')
             ->with(['uploader:id,full_name', 'activities:id,name', 'incomeSource:id,source_name,business_name'])
             ->latest();
-        $this->applyFilters($query);
+        $this->applyFilters($legacyQuery);
 
         return view('client-folders.media.index', [
             'clientFolder' => $clientFolder,
             'activePerson' => $activePerson,
-            'mediaItems' => $query->paginate(24)->withQueryString(),
+            'residenceDocumentations' => $residenceDocumentations,
+            'businessDocumentations' => $businessDocumentations,
+            'legacyBusinessDocumentations' => $legacyBusinessDocumentations,
+            'activeResidenceDocumentation' => $activeResidenceDocumentation,
+            'activeBusinessDocumentation' => $activeBusinessDocumentation,
+            'residenceCaption' => $activeResidenceDocumentation ? $captionBuilder->build($activeResidenceDocumentation) : null,
+            'businessCaption' => $activeBusinessDocumentation ? $captionBuilder->build($activeBusinessDocumentation) : null,
+            'telegramMessageBodyMaxLength' => $captionBuilder->maxMessageBodyLength(request()->user()),
+            'telegramConfigured' => $telegramSender->configured(),
+            'residenceDocumentationActivity' => $this->overview->documentationActivity($clientFolder, $activePerson, ResidenceBusinessDocumentation::CATEGORY_RESIDENCE),
+            'businessDocumentationActivity' => $this->overview->documentationActivity($clientFolder, $activePerson, ResidenceBusinessDocumentation::CATEGORY_BUSINESS, $activeBusinessDocumentation?->id),
+            // Prefill-before-save, independent-after-save: only offered while starting a brand-new
+            // Residence set — an existing one already has its own authoritative saved location.
+            'residenceCibiPrefill' => $activeResidenceDocumentation ? null : PersonAddressResolver::savedCibiPresentAddress($clientFolder, $activePerson),
+            'businessLocationPrefill' => null,
+            'mediaItems' => $legacyQuery->paginate(24)->withQueryString(),
             'categories' => MediaCategory::cases(),
             'activities' => $clientFolder->activities()->where('co_maker_id', $activePerson?->id)->orderBy('name')->get(['id', 'name']),
             'incomeSources' => $clientFolder->incomeSources()->where('co_maker_id', $activePerson?->id)->orderBy('sort_order')->get(['id', 'source_name', 'business_name']),
             'counts' => [
-                'all' => $clientFolder->mediaReferences()->where('co_maker_id', $activePerson?->id)->count(),
-                'photo' => $clientFolder->mediaReferences()->where('co_maker_id', $activePerson?->id)->where('media_type', MediaType::Photo->value)->count(),
-                'video' => $clientFolder->mediaReferences()->where('co_maker_id', $activePerson?->id)->where('media_type', MediaType::Video->value)->count(),
+                'all' => $clientFolder->mediaReferences()->where('co_maker_id', $activePerson?->id)->whereNull('residence_business_documentation_id')->count(),
+                'photo' => $clientFolder->mediaReferences()->where('co_maker_id', $activePerson?->id)->whereNull('residence_business_documentation_id')->where('media_type', MediaType::Photo->value)->count(),
+                'video' => $clientFolder->mediaReferences()->where('co_maker_id', $activePerson?->id)->whereNull('residence_business_documentation_id')->where('media_type', MediaType::Video->value)->count(),
             ],
         ]);
     }
@@ -122,7 +180,8 @@ class MediaReferenceController extends Controller
 
         $path = $mediaReference->temporary_local_path;
         abort_unless(filled($path), 404);
-        $disk = Storage::disk(config('cims.media_disk'));
+        abort_unless(in_array($mediaReference->storage_provider, [MediaReference::STORAGE_PROVIDER_LOCAL, MediaReference::STORAGE_PROVIDER_CI_TEAM], true), 404);
+        $disk = $this->documents->diskForMedia($mediaReference, $path);
         abort_unless($disk->exists($path), 404);
         $extension = pathinfo($mediaReference->file_name, PATHINFO_EXTENSION);
         $downloadName = Str::slug($mediaReference->label ?: 'media-evidence').'.'.$extension;
@@ -146,11 +205,11 @@ class MediaReferenceController extends Controller
             return redirect()->away($mediaReference->cloudinary_secure_url);
         }
 
-        abort_unless($mediaReference->storage_provider === MediaReference::STORAGE_PROVIDER_LOCAL, 404);
+        abort_unless(in_array($mediaReference->storage_provider, [MediaReference::STORAGE_PROVIDER_LOCAL, MediaReference::STORAGE_PROVIDER_CI_TEAM], true), 404);
         $thumbnail = request()->boolean('thumbnail') && filled($mediaReference->thumbnail_path);
         $path = $thumbnail ? $mediaReference->thumbnail_path : $mediaReference->temporary_local_path;
         abort_unless(filled($path), 404);
-        $disk = Storage::disk(config('cims.media_disk'));
+        $disk = $this->documents->diskForMedia($mediaReference, $path);
         abort_unless($disk->exists($path), 404);
 
         return $disk->response($path, $mediaReference->file_name, [

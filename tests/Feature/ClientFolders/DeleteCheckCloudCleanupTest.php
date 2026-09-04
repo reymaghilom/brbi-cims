@@ -17,8 +17,10 @@ use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
- * Residence Check deletion remains permanent. Business Check deletion is a recoverable paired
- * business deletion, so its database rows and Cloudinary assets remain available for restore.
+ * Both Residence Check and Business Check deletion are permanent — no Recycle Bin, no restore —
+ * so both retire every Cloudinary asset they own after their transaction commits. Business Check
+ * deletion additionally leaves its linked Business Report and IncomeSource untouched (see
+ * BusinessReportBusinessCheckIndependenceTest for the full independence coverage).
  */
 class DeleteCheckCloudCleanupTest extends TestCase
 {
@@ -55,7 +57,7 @@ class DeleteCheckCloudCleanupTest extends TestCase
         $this->assertDatabaseCount('residence_check_photos', 0);
     }
 
-    public function test_business_check_soft_delete_preserves_every_photo_group_competitor_and_map_asset_for_restore(): void
+    public function test_business_check_hard_delete_retires_every_photo_group_competitor_and_map_asset_and_preserves_the_report(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -72,22 +74,21 @@ class DeleteCheckCloudCleanupTest extends TestCase
         $check->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/business/photos/competitor-1') + ['category' => 'competitor']);
 
         $cloud = $this->mock(CloudinaryMediaStorage::class);
-        $cloud->shouldNotReceive('destroy');
+        foreach (['BRBI-CIMS/business/photos/default-1', 'BRBI-CIMS/business/photos/group2-1', 'BRBI-CIMS/business/photos/competitor-1'] as $publicId) {
+            $cloud->shouldReceive('destroy')->once()->with($publicId, 'image', 'authenticated');
+        }
+        $cloud->shouldReceive('destroy')->once()->with('BRBI-CIMS/business/map-screenshots/map-1', 'image', 'authenticated');
 
         app(DeleteBusinessCheck::class)->execute($ci, $folder, $check);
 
-        $this->assertSoftDeleted('income_sources', ['id' => $source->id]);
-        $this->assertSoftDeleted('business_reports', ['income_source_id' => $source->id]);
-        $this->assertSoftDeleted('business_checks', ['id' => $check->id, 'income_source_id' => $source->id]);
-        $this->assertDatabaseCount('business_check_photos', 3);
-        $this->assertDatabaseCount('business_check_photo_groups', 2);
-        foreach (['BRBI-CIMS/business/photos/default-1', 'BRBI-CIMS/business/photos/group2-1', 'BRBI-CIMS/business/photos/competitor-1'] as $publicId) {
-            $this->assertDatabaseHas('business_check_photos', ['business_check_id' => $check->id, 'cloud_public_id' => $publicId]);
-        }
-        $this->assertDatabaseHas('business_checks', ['id' => $check->id, 'map_screenshot_cloud_public_id' => 'BRBI-CIMS/business/map-screenshots/map-1']);
+        $this->assertDatabaseMissing('business_checks', ['id' => $check->id]);
+        $this->assertDatabaseCount('business_check_photos', 0);
+        $this->assertDatabaseCount('business_check_photo_groups', 0);
+        $this->assertDatabaseHas('income_sources', ['id' => $source->id, 'deleted_at' => null]);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $source->id, 'main_business_address' => 'Poblacion, San Miguel, Bulacan']);
     }
 
-    public function test_soft_deleting_one_business_check_preserves_media_and_never_touches_another_business(): void
+    public function test_hard_deleting_one_business_check_never_touches_another_businesss_media_or_records(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -99,17 +100,16 @@ class DeleteCheckCloudCleanupTest extends TestCase
         $photoB = $checkB->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/business/photos/check-b-1') + ['category' => 'business']);
 
         $cloud = $this->mock(CloudinaryMediaStorage::class);
-        $cloud->shouldNotReceive('destroy');
+        $cloud->shouldReceive('destroy')->once()->with('BRBI-CIMS/business/photos/check-a-1', 'image', 'authenticated');
 
         app(DeleteBusinessCheck::class)->execute($ci, $folder, $checkA);
 
-        $this->assertSoftDeleted('income_sources', ['id' => $sourceA->id]);
-        $this->assertSoftDeleted('business_reports', ['income_source_id' => $sourceA->id]);
-        $this->assertSoftDeleted('business_checks', ['id' => $checkA->id, 'income_source_id' => $sourceA->id]);
-        $this->assertDatabaseHas('business_check_photos', ['business_check_id' => $checkA->id, 'cloud_public_id' => 'BRBI-CIMS/business/photos/check-a-1']);
+        $this->assertDatabaseMissing('business_checks', ['id' => $checkA->id]);
+        $this->assertDatabaseHas('income_sources', ['id' => $sourceA->id, 'deleted_at' => null]);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $sourceA->id]);
         $this->assertDatabaseHas('income_sources', ['id' => $sourceB->id, 'deleted_at' => null]);
-        $this->assertDatabaseHas('business_reports', ['income_source_id' => $sourceB->id, 'deleted_at' => null]);
-        $this->assertDatabaseHas('business_checks', ['id' => $checkB->id, 'income_source_id' => $sourceB->id, 'deleted_at' => null]);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $sourceB->id]);
+        $this->assertDatabaseHas('business_checks', ['id' => $checkB->id, 'income_source_id' => $sourceB->id]);
         $this->assertDatabaseHas('business_check_photos', ['id' => $photoB->id, 'cloud_public_id' => 'BRBI-CIMS/business/photos/check-b-1']);
     }
 
@@ -186,6 +186,11 @@ class DeleteCheckCloudCleanupTest extends TestCase
         $template = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
         $source = $folder->incomeSources()->create(['income_source_template_id' => $template->id, 'template_type' => $template->template_type, 'template_version' => $template->version, 'source_name' => $name, 'business_name' => $name]);
         $source->businessReport()->create(['business_name' => $name, 'main_business_address' => $address, 'report_category' => 'retail_grocery_water_refilling']);
+        // Represents a genuinely, explicitly saved Business Report (revision > 1) rather than a
+        // Check-first draft shell — these tests are about Business Check hard-delete leaving the
+        // Report untouched, not about orphan-vs-draft-shell cleanup semantics (see
+        // DeleteIncomeSourceIfOrphaned / BusinessReportBusinessCheckIndependenceTest).
+        $source->forceFill(['revision' => 2])->save();
 
         return $source;
     }

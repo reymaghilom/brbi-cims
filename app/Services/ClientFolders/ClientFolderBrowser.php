@@ -8,6 +8,8 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 class ClientFolderBrowser
 {
+    private const PER_PAGE = 12;
+
     public function browse(User $user, array $filters): LengthAwarePaginator
     {
         $search = $filters['search'] ?? null;
@@ -40,6 +42,18 @@ class ClientFolderBrowser
             default => $query->orderByDesc('updated_at')->orderByDesc('id'),
         };
 
-        return $query->paginate(12)->withQueryString();
+        $paginator = $query->paginate(self::PER_PAGE)->withQueryString();
+
+        // A page beyond the last valid one (a hand-edited ?page=, a stale link, or a page that
+        // stopped existing because folders were removed) would otherwise render as an empty grid
+        // and trip the "No client folders yet" empty state, which is a lie whenever folders do
+        // exist on earlier pages. Clamp to the last real page instead, so the empty state is only
+        // ever reached when the filtered set is genuinely empty. Costs one extra count query only
+        // in that out-of-range case; the normal path is untouched.
+        if ($paginator->total() > 0 && $paginator->currentPage() > $paginator->lastPage()) {
+            $paginator = $query->paginate(self::PER_PAGE, ['*'], 'page', $paginator->lastPage())->withQueryString();
+        }
+
+        return $paginator;
     }
 }

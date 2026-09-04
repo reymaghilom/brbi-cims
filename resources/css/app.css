@@ -86,6 +86,13 @@
     .ui-scrollbar { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, white 25%, transparent) transparent; }
 
     .client-folder-browser-layout { @apply relative grid min-w-0; }
+    /* In-flight AUTO-UPDATE (live search or pagination): the grid dims very slightly and the
+       pagination controls stop accepting clicks until the authoritative response lands. No
+       overlay, no spinner, no blanking — the current page stays readable throughout, and on
+       failure it simply stays. prefers-reduced-motion is handled globally further below. */
+    [data-folder-browser][data-refreshing="true"] [data-folder-results] { opacity: .65; }
+    [data-folder-results] { transition: opacity 180ms ease-in-out; }
+    [data-folder-browser][data-refreshing="true"] [data-folder-pagination] { pointer-events: none; }
     .client-folder-grid { @apply grid gap-2.5; grid-template-columns: repeat(auto-fill, minmax(9.25rem, 1fr)); }
     .client-folder-tile-shell { @apply relative min-w-0; }
     .client-folder-tile { @apply relative flex min-h-36 cursor-default select-none flex-col items-center rounded-card bg-surface-muted/65 px-2.5 pb-2.5 pt-4 text-center transition hover:bg-brand-soft/45 focus-visible:outline-none; }
@@ -108,9 +115,14 @@
     .client-folder-glyph { position: relative; display: block; width: 3.2rem; height: 2.4rem; margin-top: .45rem; border: 1px solid color-mix(in srgb, var(--color-progress) 45%, transparent); border-radius: .35rem .5rem .5rem .5rem; background: linear-gradient(145deg, #ffd766 0%, var(--color-folder) 52%, #efae20 100%); box-shadow: 0 5px 10px rgb(148 96 0 / .12); }
     .client-folder-glyph::before { content: ""; position: absolute; left: -.05rem; top: -.44rem; width: 1.65rem; height: .62rem; border: 1px solid color-mix(in srgb, var(--color-progress) 45%, transparent); border-bottom: 0; border-radius: .42rem .42rem 0 0; background: #f7bd2f; }
     .client-folder-glyph::after { content: ""; position: absolute; inset: .3rem .35rem auto; height: 1px; background: rgb(255 255 255 / .5); }
-    .client-folder-preview-panel { @apply fixed inset-y-0 right-0 z-50 w-[min(28rem,calc(100%-1rem))] translate-x-full overflow-y-auto border-l border-ui-border bg-surface shadow-float transition-transform; }
+    .client-folder-preview-panel { @apply fixed inset-y-0 right-0 z-50 w-[min(28rem,calc(100%-1rem))] translate-x-full overflow-y-auto border-l border-ui-border bg-surface shadow-float transition-transform duration-200; }
     .client-folder-preview-panel[data-open="true"] { @apply translate-x-0; }
-    .client-folder-preview-backdrop { @apply fixed inset-0 z-40 bg-brand-sidebar/45 backdrop-blur-[1px]; }
+    /* Fades with the panel's own slide (same 200ms) instead of the previous instant hidden-attribute
+       toggle — opacity + pointer-events keeps it out of the way while closed without an abrupt cut,
+       and never needs to fight [hidden]'s `display: none !important`. prefers-reduced-motion is
+       handled globally further below via *, ::before, ::after. */
+    .client-folder-preview-backdrop { @apply fixed inset-0 z-40 bg-brand-sidebar/45 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 pointer-events-none; }
+    .client-folder-preview-backdrop[data-open="true"] { @apply pointer-events-auto opacity-100; }
     .folder-contents-nav { max-height: none; overflow: visible; }
     .folder-content-link { @apply flex min-h-12 items-center gap-2.5 px-4 py-1.5 transition hover:bg-brand-soft focus-visible:bg-brand-soft focus-visible:outline-none; }
     .folder-content-icon { @apply grid size-8 shrink-0 place-items-center rounded-control; }
@@ -133,6 +145,47 @@
     .cibi-entry-table td { @apply min-w-32 border-b border-r border-ui-border p-2 align-top last:border-r-0; }
     .cibi-entry-table tbody tr:last-child td { @apply border-b-0; }
     .cibi-entry-table .ui-control { @apply min-h-9 px-2 py-1.5 text-xs; }
+    .ci-completion-checkbox {
+        appearance: none;
+        -webkit-appearance: none;
+        position: relative;
+        width: 1.3125rem;
+        height: 1.3125rem;
+        margin: 0;
+        flex: 0 0 auto;
+        border-radius: 6px;
+        border: 1.5px solid var(--color-ui-border-strong);
+        background-color: var(--color-surface);
+        background-repeat: no-repeat;
+        background-position: center;
+        background-size: 65%;
+        cursor: pointer;
+        transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .ci-completion-checkbox:hover:not(:disabled) {
+        border-color: var(--color-success);
+        background-color: var(--color-success-soft);
+    }
+    .ci-completion-checkbox:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px rgb(18 130 76 / 0.28);
+    }
+    .ci-completion-checkbox:checked {
+        border-color: var(--color-success);
+        background-color: var(--color-success);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3.5 8.5L6.5 11.5L12.5 4.5' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    }
+    .ci-completion-checkbox:disabled {
+        cursor: default;
+        opacity: 1;
+    }
+    .ci-completion-checkbox:checked:disabled {
+        border-color: var(--color-success);
+        background-color: var(--color-success);
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .ci-completion-checkbox { transition-duration: 1ms; }
+    }
     .cibi-standalone-main { min-height: 100vh; }
     [data-cibi-standalone-layout] { background: #f2f0e9; }
     .cibi-report-dialog { opacity: 0; transform: scale(.985); transition: opacity 160ms ease, transform 160ms ease, overlay 160ms ease allow-discrete, display 160ms ease allow-discrete; }
@@ -734,12 +787,37 @@
 }
 
 @media (min-width: 1280px) {
-    .client-folder-browser-layout { height: clamp(34rem, calc(100vh - 10.5rem), 46rem); align-items: stretch; grid-template-columns: minmax(0, 1fr) minmax(17.5rem, 24%); }
-    .client-folder-results { min-height: 0; height: 100%; max-height: none; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--color-ui-border-strong) transparent; }
-    .client-folder-results::-webkit-scrollbar { width: .45rem; }
-    .client-folder-results::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--color-ui-border-strong); }
-    .client-folder-preview-panel { @apply static z-auto h-full min-h-0 w-auto translate-x-0 overflow-visible border-l border-ui-border bg-surface-muted/45 shadow-none; }
-    .client-folder-preview-content { min-height: 100%; }
+    /* The root document is the actual page scroller. Both pages that host the shared folder
+       browser reserve the same desktop gutter, keeping the application header and toolbar at the
+       same x-position when a short final page gains/loses page scrolling. */
+    html.folder-browser-page { scrollbar-gutter: stable; }
+}
+
+@media (min-width: 1280px) {
+    /* ONE scrolling region only: the page itself. This grid deliberately has NO viewport-derived
+       height — no height/max-height/100dvh clamp — so neither column can ever become its own
+       independently scrolling area. Both simply take their natural content height, the page grows
+       with them, and the document scrollbar appears only when the content genuinely needs it.
+
+       That also removes the previous failure mode at its source: a grid pinned to a slice of the
+       viewport had to give its overflow *somewhere*, so it produced either a clipped panel or a
+       second scrollbar next to the browser's own. `align-items: start` keeps the shorter column
+       shorter instead of stretching it to the taller one (a stretched column is exactly what then
+       needed internal scrolling); the two cards are independent, so unequal heights are correct. */
+    .client-folder-browser-layout { align-items: start; grid-template-columns: minmax(0, 1fr) minmax(17.5rem, 24%); gap: 1rem; }
+    /* Keep the card-row topology stable while the sibling panel track animates. The base
+       auto-fill grid remains for smaller viewports; desktop uses a viewport breakpoint count so
+       showing/hiding the panel changes card width without repeatedly moving 10–12 cards between
+       rows as the parent crosses auto-fill thresholds. */
+    .client-folder-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    /* Its own independent card on desktop — same surface/radius/shadow as the main content card
+       beside it, never a shared border-divided half of one merged panel. `overflow: hidden` is
+       safe on an auto-height box (it grows to fit, so nothing is ever clipped vertically) and is
+       what lets the rounded corners cut the injected preview header's tinted background. */
+    .client-folder-preview-panel { @apply static z-auto h-auto min-h-0 w-auto translate-x-0 overflow-hidden rounded-panel border-0 bg-surface shadow-card; }
+    /* The outer track may shrink, but its clipped inner content keeps a stable layout width. This
+       prevents the fading panel from wrapping progressively taller and changing document height. */
+    .client-folder-preview-content { min-width: 17.5rem; }
     .client-folder-preview-backdrop { display: none !important; }
     /* Smooth, subtle collapse for the Dashboard/Client Folders preview panel: both tracks stay
        present (grid-template-columns keeps the same track *count* in the expanded and collapsed
@@ -747,16 +825,27 @@
        second track's size animates to 0, so the browser can genuinely transition it instead of
        snapping. `min-width: 0` on the collapsing element is required for it to shrink past its
        own content's intrinsic width in a grid track (grid items default to min-width: auto,
-       which otherwise blocks this) — deliberately not `overflow: hidden`, since that would clip
-       its own open dropdown menus (Switch Person, Download). Content fades via opacity instead
-       of an instant `display: none`, so it never cuts the animation short — pointer-events: none
-       keeps it non-interactive while collapsed/fading regardless. Duration/easing intentionally
-       short and restrained (professional banking UI, not flashy); prefers-reduced-motion is
-       already handled globally above via *, ::before, ::after. */
-    .client-folder-browser-layout { transition: grid-template-columns 200ms ease-in-out; }
+       which otherwise blocks this). The column gap animates alongside the tracks so the space
+       between the two cards closes with them and the main card ends up genuinely full width —
+       no leftover blank gutter where the preview card used to be. Content fades via opacity
+       instead of an instant `display: none`, so it never cuts the animation short —
+       pointer-events: none keeps it non-interactive while collapsed/fading regardless.
+       Duration/easing intentionally short and restrained (professional banking UI, not flashy);
+       prefers-reduced-motion is already handled globally above via *, ::before, ::after. */
+    .client-folder-browser-layout { transition: grid-template-columns 200ms ease-in-out, gap 200ms ease-in-out; }
     .client-folder-preview-panel { min-width: 0; opacity: 1; transition: opacity 180ms ease-in-out; }
-    .client-folder-browser-layout[data-panel-collapsed="true"] { grid-template-columns: minmax(0, 1fr) 0px; }
+    .client-folder-browser-layout[data-panel-collapsed="true"] { grid-template-columns: minmax(0, 1fr) 0px; gap: 0; }
     .client-folder-browser-layout[data-panel-collapsed="true"] .client-folder-preview-panel { opacity: 0; pointer-events: none; }
+    /* Zeroing the column is not enough on its own: the panel stays a grid item, and a grid row is
+       as tall as its tallest item, so a panel squeezed into a 0px track just wraps its content
+       into a very tall invisible box that keeps the whole page that tall — the large blank area
+       under the folder cards while "hidden". app.js sets this attribute only once the closing
+       transition has finished (so the animation still plays), and clears it before re-opening. */
+    .client-folder-preview-panel[data-panel-hidden="true"] { display: none; }
+}
+
+@media (min-width: 1536px) {
+    .client-folder-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 
 @media (max-width: 639px) {
@@ -837,3 +926,205 @@
 }
 #sidebar-tooltip[data-visible] { opacity: 1; visibility: visible; }
 
+
+/* --------------------------------------------------------------------------
+   Photos & Videos — Residence / Business documentation workspace.
+   Presentation-only helpers for client-folders/media/index.blade.php. Plain CSS
+   on the existing theme tokens so no new palette is introduced. Padding/margin
+   stay on Tailwind utilities in the Blade so they keep working here.
+   -------------------------------------------------------------------------- */
+.media-card {
+    border: 1px solid var(--color-ui-border);
+    border-radius: var(--radius-card);
+    background: var(--color-surface);
+    box-shadow: 0 1px 2px rgb(15 45 80 / .04);
+}
+
+.media-info-cell { display: flex; align-items: flex-start; gap: .6rem; padding: .85rem 1rem; }
+.media-info-icon {
+    display: grid; place-items: center; flex: none; width: 2rem; height: 2rem;
+    border-radius: .55rem; background: var(--color-brand-soft); color: var(--color-brand-primary);
+}
+.media-info-label {
+    display: block; font-size: .65rem; font-weight: 700; letter-spacing: .06em;
+    line-height: 1.2; text-transform: uppercase; color: var(--color-text-subtle);
+}
+
+.media-header-icon {
+    display: grid; place-items: center; flex: none; width: 1.9rem; height: 1.9rem;
+    border-radius: .5rem; background: var(--color-brand-soft); color: var(--color-brand-primary);
+}
+
+.media-caption {
+    border: 1px solid color-mix(in srgb, var(--color-brand-primary) 22%, transparent);
+    border-left-width: 3px;
+    border-radius: .6rem;
+    background: color-mix(in srgb, var(--color-brand-soft) 55%, var(--color-surface));
+    padding: .7rem .85rem;
+}
+
+.media-field-label {
+    display: flex; align-items: center; gap: .35rem; margin-bottom: .35rem;
+    font-size: .68rem; font-weight: 700; letter-spacing: .05em; line-height: 1.2;
+    text-transform: uppercase; color: var(--color-text-subtle);
+}
+.media-help { margin-top: .35rem; font-size: .7rem; line-height: 1.35; color: var(--color-text-subtle); }
+
+.media-step { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--color-ui-border); }
+.media-step-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.media-step-title { display: flex; align-items: center; gap: .5rem; font-size: .875rem; font-weight: 700; color: var(--color-text-main); }
+.media-step-badge {
+    display: grid; place-items: center; flex: none; width: 1.35rem; height: 1.35rem;
+    border-radius: .4rem; background: var(--color-brand-primary);
+    font-size: .68rem; font-weight: 700; color: #fff;
+}
+.media-count-badge {
+    display: inline-flex; align-items: center; justify-content: center; min-width: 1.5rem;
+    padding: .1rem .4rem; border-radius: 999px;
+    background: var(--color-brand-soft); color: var(--color-brand-primary);
+    font-size: .68rem; font-weight: 700;
+}
+.media-count-badge.is-empty { background: var(--color-surface-muted); color: var(--color-text-subtle); }
+
+.media-dropzone {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .5rem;
+    padding: 1rem; text-align: center; cursor: pointer;
+    border: 2px dashed color-mix(in srgb, var(--color-brand-primary) 35%, transparent);
+    border-radius: .7rem;
+    background: color-mix(in srgb, var(--color-brand-soft) 40%, var(--color-surface));
+    transition: border-color .18s ease, background-color .18s ease;
+}
+.media-dropzone:hover { border-color: var(--color-brand-primary); background: var(--color-brand-soft); }
+
+.media-preview-frame {
+    position: relative; overflow: hidden;
+    border: 1px solid var(--color-ui-border); border-radius: .7rem;
+    background: var(--color-surface-muted);
+}
+
+.media-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; }
+@media (min-width: 640px) { .media-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .media-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 1536px) { .media-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .media-grid-secondary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.media-tile {
+    position: relative; overflow: hidden; aspect-ratio: 4 / 3;
+    border: 1px solid var(--color-ui-border); border-radius: .6rem;
+    background: var(--color-surface-muted);
+    transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.media-tile:hover { border-color: var(--color-brand-primary); box-shadow: 0 6px 16px rgb(15 45 80 / .12); transform: translateY(-1px); }
+.media-tile img { display: block; height: 100%; width: 100%; object-fit: cover; }
+.media-tile-scrim {
+    position: absolute; inset: 0; opacity: 0; pointer-events: none;
+    background: linear-gradient(to top, rgb(10 25 45 / .35), transparent 55%);
+    transition: opacity .18s ease;
+}
+.media-tile:hover .media-tile-scrim { opacity: 1; }
+.media-tile-action { position: absolute; top: .35rem; right: .35rem; opacity: 0; transition: opacity .18s ease; }
+.media-tile:hover .media-tile-action, .media-tile:focus-within .media-tile-action { opacity: 1; }
+.media-tile-video { background: linear-gradient(145deg, #1f2f4d, #0f1c30); border-color: #1b2b47; }
+.saved-video-preview { display: block; height: 100%; width: 100%; object-fit: cover; background: #0f1c30; }
+.media-play-badge { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; pointer-events: none; }
+.media-play-badge > svg {
+    box-sizing: content-box; padding: .35rem; border-radius: 999px;
+    background: rgb(255 255 255 / .16); box-shadow: 0 0 0 1px rgb(255 255 255 / .25);
+}
+
+.media-add-tile {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .35rem;
+    aspect-ratio: 4 / 3; text-align: center; cursor: pointer;
+    border: 2px dashed color-mix(in srgb, var(--color-brand-primary) 35%, transparent);
+    border-radius: .6rem;
+    background: color-mix(in srgb, var(--color-brand-soft) 40%, var(--color-surface));
+    transition: border-color .18s ease, background-color .18s ease;
+}
+.media-add-tile:hover { border-color: var(--color-brand-primary); background: var(--color-brand-soft); }
+
+.media-side-title {
+    display: flex; align-items: center; gap: .4rem;
+    font-size: .68rem; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--color-text-muted);
+}
+
+.media-status-dot {
+    flex: none; margin-top: .3rem; width: .5rem; height: .5rem; border-radius: 999px;
+    background: var(--color-ui-border-strong);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-ui-border-strong) 25%, transparent);
+}
+.media-status-dot.is-on {
+    background: var(--color-success);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 18%, transparent);
+}
+
+.media-order-row {
+    display: flex; align-items: center; gap: .5rem;
+    padding: .5rem .6rem; border: 1px solid var(--color-ui-border);
+    border-radius: .55rem; background: var(--color-surface-muted);
+    font-size: .8125rem; font-weight: 600; color: var(--color-text-main);
+}
+.media-order-arrow { display: flex; justify-content: center; padding: .15rem 0; color: var(--color-text-subtle); }
+
+.media-button-ghost {
+    display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+    min-height: 2.25rem; padding: .35rem .75rem; border-radius: var(--radius-control);
+    font-size: .75rem; font-weight: 600; color: var(--color-text-muted);
+    background: var(--color-surface-muted); cursor: not-allowed; opacity: .8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .media-tile, .media-tile-scrim, .media-tile-action,
+    .media-dropzone, .media-add-tile { transition: none; }
+    .media-tile:hover { transform: none; }
+}
+
+.media-button-tertiary {
+    display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+    width: 100%; min-height: 2.5rem; padding: .45rem 1rem;
+    border: 1px dashed color-mix(in srgb, var(--color-success) 45%, transparent);
+    border-radius: var(--radius-control);
+    background: transparent; color: var(--color-success); cursor: pointer;
+    font-size: .8125rem; font-weight: 600;
+    transition: background-color .18s ease, border-color .18s ease;
+}
+.media-button-tertiary:hover {
+    border-style: solid; border-color: var(--color-success);
+    background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+.media-button-tertiary:disabled { cursor: not-allowed; opacity: .55; }
+
+[data-doc-tab]:not(:disabled),
+[data-media-support-show]:not(:disabled),
+[data-media-support-hide]:not(:disabled),
+[data-documentation-save-submit]:not(:disabled),
+[data-telegram-send-submit]:not(:disabled),
+[data-modal-open^="telegram-send-"]:not(:disabled) { cursor: pointer; }
+
+/* Legacy Media disclosure — panel slides in when opened. <details> cannot animate its own
+   height cross-browser, so only the revealed panel is animated. */
+.media-disclosure[open] > div { animation: media-disclosure-in .2s ease; }
+@keyframes media-disclosure-in {
+    from { opacity: 0; transform: translateY(-.25rem); }
+    to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .media-button-tertiary { transition: none; }
+    .media-disclosure[open] > div { animation: none; }
+}
+
+/* Basic Information block at the head of a documentation set. */
+.media-basic {
+    border: 1px solid var(--color-ui-border);
+    border-radius: .7rem;
+    background: var(--color-surface-muted);
+    padding: 1rem;
+}
+
+.media-optional-badge {
+    display: inline-flex; align-items: center;
+    padding: .1rem .4rem; border-radius: 999px;
+    background: var(--color-surface-muted); color: var(--color-text-subtle);
+    font-size: .62rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+}

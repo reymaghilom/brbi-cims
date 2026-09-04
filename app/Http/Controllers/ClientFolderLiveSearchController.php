@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\ClientFolderStatus;
 use App\Models\ClientFolder;
 use App\Services\ClientFolders\ClientFolderBrowser;
 use App\Services\ClientFolders\ClientFolderCreationOptions;
@@ -21,11 +22,15 @@ class ClientFolderLiveSearchController extends Controller
 
         $validated = $request->validate([
             'search' => ['nullable', 'string', 'max:150'],
+            'status' => ['nullable', Rule::enum(ClientFolderStatus::class)],
+            'sort' => ['nullable', Rule::in(['updated', 'created', 'client_name'])],
+            'page' => ['nullable', 'integer', 'min:1'],
             'context' => ['required', Rule::in(['dashboard', 'client_folders'])],
         ]);
         $filters = [
             'search' => filled($validated['search'] ?? null) ? trim($validated['search']) : null,
-            'sort' => 'updated',
+            'status' => $validated['status'] ?? null,
+            'sort' => $validated['sort'] ?? 'updated',
         ];
         $action = $validated['context'] === 'dashboard' ? route('home') : route('client-folders.index');
         $clientFolders = $browser->browse($request->user(), $filters);

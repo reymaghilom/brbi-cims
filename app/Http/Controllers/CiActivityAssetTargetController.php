@@ -11,6 +11,8 @@ use App\Models\CiActivity;
 use App\Models\CiActivityAssetTarget;
 use App\Models\ClientFolder;
 use App\Services\ClientFolders\ActivePersonResolver;
+use App\Services\ClientFolders\CiActivityHistoryFeed;
+use App\Services\ClientFolders\CiActivityScheduleSummary;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -26,8 +28,16 @@ class CiActivityAssetTargetController extends Controller
         $this->assertExactAssetActivity($clientFolder, $ciActivity, $activePerson?->id);
         $ciActivity->load([
             'definition:id,name,code',
+            'updater:id,full_name',
             'assetTargets' => fn ($query) => $query->with(['creator:id,full_name', 'updater:id,full_name'])->oldest('id'),
         ]);
+        $newHistoryWatermark = session()->pull('ci_history_watermark');
+        $newHistoryEntries = is_int($newHistoryWatermark)
+            ? CiActivityHistoryFeed::renderHtml(CiActivityHistoryFeed::since($clientFolder, $newHistoryWatermark, $activePerson?->id))
+            : [];
+        $scheduleSummary = CiActivityScheduleSummary::fromCurrentTargets(
+            $ciActivity->assetTargets->filter(fn (CiActivityAssetTarget $target): bool => $target->status === ActivityStatus::Scheduled && $target->scheduled_at !== null),
+        );
 
         return view('client-folders.activities.asset-check-show', [
             'clientFolder' => $clientFolder,
@@ -35,37 +45,43 @@ class CiActivityAssetTargetController extends Controller
             'activePerson' => $activePerson,
             'statuses' => ActivityStatus::cases(),
             'assessorTypes' => CiActivityAssetTarget::ASSESSOR_TYPES,
+            'newHistoryEntries' => $newHistoryEntries,
+            'scheduleSummary' => $scheduleSummary,
         ]);
     }
 
     public function store(StoreCiActivityAssetTargetRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, SaveCiActivityAssetTarget $save): RedirectResponse
     {
+        $watermark = CiActivityHistoryFeed::watermark();
         $save->create($request->user(), $clientFolder, $ciActivity, $request->validated());
 
-        return $this->redirectToDetail($clientFolder, $ciActivity, 'Assessor target added successfully.');
+        return $this->redirectToDetail($clientFolder, $ciActivity, 'Assessor target added successfully.', $watermark);
     }
 
     public function update(UpdateCiActivityAssetTargetRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, CiActivityAssetTarget $assetTarget, SaveCiActivityAssetTarget $save): RedirectResponse
     {
+        $watermark = CiActivityHistoryFeed::watermark();
         $save->update($request->user(), $clientFolder, $ciActivity, $assetTarget, $request->validated());
 
-        return $this->redirectToDetail($clientFolder, $ciActivity, 'Assessor target updated successfully.');
+        return $this->redirectToDetail($clientFolder, $ciActivity, 'Assessor target updated successfully.', $watermark);
     }
 
     public function destroy(Request $request, ClientFolder $clientFolder, CiActivity $ciActivity, CiActivityAssetTarget $assetTarget, SaveCiActivityAssetTarget $save): RedirectResponse
     {
         $this->authorizeMutation($request, $clientFolder, $ciActivity, $assetTarget);
+        $watermark = CiActivityHistoryFeed::watermark();
         $save->delete($request->user(), $clientFolder, $ciActivity, $assetTarget);
 
-        return $this->redirectToDetail($clientFolder, $ciActivity, 'Assessor target deleted successfully.');
+        return $this->redirectToDetail($clientFolder, $ciActivity, 'Assessor target deleted successfully.', $watermark);
     }
 
     public function complete(Request $request, ClientFolder $clientFolder, CiActivity $ciActivity, CiActivityAssetTarget $assetTarget, SaveCiActivityAssetTarget $save): RedirectResponse
     {
         $this->authorizeMutation($request, $clientFolder, $ciActivity, $assetTarget);
+        $watermark = CiActivityHistoryFeed::watermark();
         $save->complete($request->user(), $clientFolder, $ciActivity, $assetTarget);
 
-        return $this->redirectToDetail($clientFolder, $ciActivity, 'Assessor target marked as completed.');
+        return $this->redirectToDetail($clientFolder, $ciActivity, 'Assessor target marked as completed.', $watermark);
     }
 
     private function authorizeMutation(Request $request, ClientFolder $folder, CiActivity $activity, CiActivityAssetTarget $target): void
@@ -85,13 +101,13 @@ class CiActivityAssetTargetController extends Controller
         abort_unless($activity->definition()->where('code', ActivityDefinition::ASSET_CHECK_CODE)->exists(), 404);
     }
 
-    private function redirectToDetail(ClientFolder $folder, CiActivity $activity, string $message): RedirectResponse
+    private function redirectToDetail(ClientFolder $folder, CiActivity $activity, string $message, int $historyWatermark): RedirectResponse
     {
         $activePerson = ActivePersonResolver::resolve($folder, $activity->co_maker_id);
 
         return redirect()->route(
             'client-folders.activities.asset-check.show',
             [$folder, $activity] + ActivePersonResolver::queryParams($activePerson),
-        )->with('status', $message);
+        )->with('status', $message)->with('ci_history_watermark', $historyWatermark);
     }
 }

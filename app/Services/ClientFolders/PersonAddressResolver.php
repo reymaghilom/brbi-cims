@@ -3,6 +3,7 @@
 namespace App\Services\ClientFolders;
 
 use App\Enums\AddressType;
+use App\Models\CibiReport;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 
@@ -51,14 +52,30 @@ class PersonAddressResolver
         return filled($formatted) ? $formatted : null;
     }
 
+    /** The exact person's SAVED CI/BI Report present_address only — no profile-address or client_addresses fallback. Used where a feature must prefill strictly from a saved CIBI snapshot and nothing else. */
+    public static function savedCibiPresentAddress(ClientFolder $folder, ?CoMaker $activePerson): ?string
+    {
+        return self::cibiPresentAddress($folder, $activePerson);
+    }
+
     /**
      * The exact person's own CI/BI Report, scoped through this folder and the same "co_maker_id is
-     * null means Applicant" convention used everywhere else. Only its present_address is used,
-     * normalized the same way CibiReportFormData::for() treats a literal "N/A" as blank.
+     * null means Applicant" convention used everywhere else. Applicant reads only the report with
+     * co_maker_id = NULL; a Co-Maker reads only the report with its own exact id — never another
+     * person's.
+     */
+    private static function savedCibiReport(ClientFolder $folder, ?CoMaker $activePerson): ?CibiReport
+    {
+        return $folder->cibiReports()->where('co_maker_id', $activePerson?->id)->first();
+    }
+
+    /**
+     * Only the saved report's present_address, normalized the same way CibiReportFormData::for()
+     * treats a literal "N/A" as blank.
      */
     private static function cibiPresentAddress(ClientFolder $folder, ?CoMaker $activePerson): ?string
     {
-        $snapshot = $folder->cibiReports()->where('co_maker_id', $activePerson?->id)->first()?->personal_snapshot ?? [];
+        $snapshot = self::savedCibiReport($folder, $activePerson)?->personal_snapshot ?? [];
         $value = $snapshot['present_address'] ?? null;
         if (! is_string($value)) {
             return null;

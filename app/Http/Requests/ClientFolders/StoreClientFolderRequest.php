@@ -30,23 +30,10 @@ class StoreClientFolderRequest extends FormRequest
         return [
             'last_name' => ['required', 'string', 'max:100'],
             'first_name' => ['required', 'string', 'max:100'],
-            'middle_name' => [
-                'bail', 'required', 'string', 'max:100',
-                function (string $attribute, mixed $value, \Closure $fail): void {
-                    $letters = preg_replace('/[^\pL]/u', '', trim((string) $value));
-                    if (mb_strlen($letters) < 2) {
-                        $fail('Middle name must be written in full, not as an initial.');
-                    }
-                },
-            ],
+            'middle_name' => ['nullable', 'string', 'max:100'],
             'suffix' => ['nullable', 'string', 'max:30'],
             'assigned_ci_id' => $assignmentRules,
         ];
-    }
-
-    public function messages(): array
-    {
-        return ['middle_name.required' => 'Middle name is required.'];
     }
 
     protected function prepareForValidation(): void

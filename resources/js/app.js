@@ -139,15 +139,17 @@ function selectClientFolder(tile, { openPreview = true } = {}) {
         const panel = browser.querySelector('[data-folder-preview-panel]');
         const backdrop = browser.querySelector('[data-folder-preview-backdrop]');
         panel?.setAttribute('data-open', 'true');
-        if (backdrop) backdrop.hidden = false;
+        backdrop?.setAttribute('data-open', 'true');
         document.body.classList.add('overflow-hidden');
     }
 }
 
 function closeFolderPreview(browser) {
+    // Both the panel's slide and the backdrop's fade are CSS transitions keyed off this same
+    // data-open attribute (see .client-folder-preview-panel / .client-folder-preview-backdrop) —
+    // removing it lets each finish its own animation instead of an instant display:none cut.
     browser?.querySelector('[data-folder-preview-panel]')?.removeAttribute('data-open');
-    const backdrop = browser?.querySelector('[data-folder-preview-backdrop]');
-    if (backdrop) backdrop.hidden = true;
+    browser?.querySelector('[data-folder-preview-backdrop]')?.removeAttribute('data-open');
     document.body.classList.remove('overflow-hidden');
 }
 
@@ -178,28 +180,125 @@ function showToast(message, type = 'success', duration = 4500) {
     window.setTimeout(() => toast.remove(), duration);
 }
 
+const FOLDER_PREVIEW_COLLAPSED_STORAGE_KEY = 'brbi-folder-preview-collapsed';
+
+// Same technique as the Photos & Videos support panel's initMediaSupportToggle(): the collapsed
+// state lives on [data-folder-browser-layout] itself (read by the CSS in _folder-browser.blade.php
+// that actually animates grid-template-columns), and on two separate Show/Hide buttons toggled via
+// the plain [hidden] attribute — never by rewriting one button's icon/label, so the browser's own
+// pre-paint CSS and this function agree on how "collapsed" is represented with no extra JS-only
+// state to keep in sync.
+const folderPreviewCollapseTimers = new WeakMap();
+
+/**
+ * Marks the panel as fully out of the layout. Zeroing its grid column is NOT enough on its own:
+ * the panel stays a grid item, and a grid row is as tall as its tallest item, so a panel squeezed
+ * to a 0px column simply wraps its content into a very tall invisible box that keeps the whole
+ * lower layout — and the document — that tall. This attribute is what the desktop CSS turns into
+ * display:none, so the hidden panel stops contributing any height at all. It is deliberately a
+ * dedicated attribute rather than the global [hidden]: below 1280px this same element is the
+ * fixed slide-in drawer, and the rule that consumes this attribute is scoped to the desktop
+ * media query so the drawer keeps working.
+ */
+function setFolderPreviewPanelInLayout(browser, inLayout) {
+    const panel = browser?.querySelector('[data-folder-preview-panel]');
+    if (!panel) return;
+    if (inLayout) panel.removeAttribute('data-panel-hidden');
+    else panel.setAttribute('data-panel-hidden', 'true');
+}
+
+// Same technique as the Photos & Videos support panel's initMediaSupportToggle(): the collapsed
+// state lives on [data-folder-browser-layout] itself (read by the CSS in _folder-browser.blade.php
+// that actually animates grid-template-columns), and on two separate Show/Hide buttons toggled via
+// the plain [hidden] attribute — never by rewriting one button's icon/label, so the browser's own
+// pre-paint CSS and this function agree on how "collapsed" is represented with no extra JS-only
+// state to keep in sync.
+//
+// `animate: false` is for restoring a persisted choice (first paint, or after the live-search
+// fragment swap), where there is no transition to protect and the panel must be in its final
+// layout state immediately.
+function applyFolderPreviewCollapsedState(browser, collapsed, { animate = false } = {}) {
+    const layout = browser?.querySelector('[data-folder-browser-layout]');
+    const showButton = browser?.querySelector('[data-folder-preview-show]');
+    const hideButton = browser?.querySelector('[data-folder-preview-hide]');
+    if (!layout) return;
+
+    const pendingCollapse = folderPreviewCollapseTimers.get(layout);
+    if (pendingCollapse) {
+        window.clearTimeout(pendingCollapse);
+        folderPreviewCollapseTimers.delete(layout);
+    }
+
+    if (collapsed) {
+        // Collapsing: keep the panel in the layout for the duration of the transition so it can
+        // actually be seen fading/closing, then drop it out of the layout once that finishes.
+        // Removing it up front would make the animation vanish instantly.
+        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        layout.setAttribute('data-panel-collapsed', 'true');
+        if (animate && !reducedMotion) {
+            folderPreviewCollapseTimers.set(layout, window.setTimeout(() => {
+                folderPreviewCollapseTimers.delete(layout);
+                if (layout.getAttribute('data-panel-collapsed') === 'true') setFolderPreviewPanelInLayout(browser, false);
+            }, 220));
+        } else {
+            setFolderPreviewPanelInLayout(browser, false);
+        }
+    } else {
+        // Expanding: put the panel back into the layout first, let the browser commit a collapsed
+        // starting frame, and only then flip to the open state.
+        setFolderPreviewPanelInLayout(browser, true);
+        if (animate) {
+            // Two frames commit the collapsed starting state without synchronously forcing layout
+            // across every rendered folder card in the click handler.
+            window.requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => layout.setAttribute('data-panel-collapsed', 'false'));
+            });
+        } else {
+            layout.setAttribute('data-panel-collapsed', 'false');
+        }
+    }
+
+    if (showButton) {
+        if (collapsed) showButton.removeAttribute('hidden'); else showButton.setAttribute('hidden', '');
+        showButton.setAttribute('aria-expanded', String(!collapsed));
+    }
+    if (hideButton) {
+        if (collapsed) hideButton.setAttribute('hidden', ''); else hideButton.removeAttribute('hidden');
+        hideButton.setAttribute('aria-expanded', String(!collapsed));
+    }
+}
+
 function toggleFolderPreviewPanel(browser) {
     const layout = browser?.querySelector('[data-folder-browser-layout]');
-    const toggle = browser?.querySelector('[data-folder-preview-toggle]');
-    const label = toggle?.querySelector('[data-folder-preview-toggle-label]');
-    if (!layout || !toggle) return;
+    if (!layout) return;
 
     const collapsed = layout.getAttribute('data-panel-collapsed') === 'true';
-    const panelWillBeVisible = collapsed;
-    layout.setAttribute('data-panel-collapsed', String(!collapsed));
-    toggle.setAttribute('aria-expanded', String(collapsed));
-    if (label) label.textContent = panelWillBeVisible ? 'Hide Preview Panel' : 'Show Preview Panel';
-    // "visible" icon (eye-off) shows while the panel IS visible — i.e. what clicking the button
-    // would currently hide; "hidden" icon (eye) shows once it's collapsed instead. Uses
-    // setAttribute/removeAttribute rather than the .hidden IDL property: that property doesn't
-    // reliably reflect onto <svg> elements in every browser, so setting it silently no-ops and
-    // the icon never actually swaps even though the label text updates correctly.
-    const visibleIcon = toggle.querySelector('[data-folder-preview-toggle-icon="visible"]');
-    const hiddenIcon = toggle.querySelector('[data-folder-preview-toggle-icon="hidden"]');
-    const setIconHidden = (icon, hide) => { if (!icon) return; if (hide) icon.setAttribute('hidden', ''); else icon.removeAttribute('hidden'); };
-    setIconHidden(visibleIcon, !panelWillBeVisible);
-    setIconHidden(hiddenIcon, panelWillBeVisible);
+    const nextCollapsed = !collapsed;
+    applyFolderPreviewCollapsedState(browser, nextCollapsed, { animate: true });
+    try {
+        localStorage.setItem(FOLDER_PREVIEW_COLLAPSED_STORAGE_KEY, String(nextCollapsed));
+    } catch (e) {
+        // Persistence is best-effort — the toggle itself must still work without it.
+    }
 }
+
+// Restores the persisted collapsed/expanded choice on first load (the pre-paint <script>/<style>
+// pair in _folder-browser.blade.php already suppressed the wrong initial paint; this brings the
+// live DOM state and the two Show/Hide buttons in sync with it) and clears the pre-paint flag now
+// that app.js is in control.
+function initFolderPreviewToggle(browser) {
+    let collapsed = false;
+    try {
+        collapsed = localStorage.getItem(FOLDER_PREVIEW_COLLAPSED_STORAGE_KEY) === 'true';
+    } catch (e) {
+        // Fall back to expanded (the server-rendered default) when storage is unavailable.
+    }
+    applyFolderPreviewCollapsedState(browser, collapsed);
+    document.documentElement.removeAttribute('data-folder-preview-collapsed');
+}
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('[data-folder-browser]').forEach(initFolderPreviewToggle);
+});
 
 function resetFolderPreview(browser) {
     const content = browser?.querySelector('[data-folder-preview-content]');
@@ -223,7 +322,13 @@ function initializeClientSearch(search) {
 
     const updateClearVisibility = () => { clear.hidden = input.value.length === 0; };
 
-    const refreshFolderGrid = (delay = 275) => {
+    // `page` drives pagination through this exact same authoritative request path as live search:
+    // same endpoint, same backend paginator, same abort/stale-response protection, same failure
+    // handling. Omitting it (any search keystroke) deliberately falls back to page 1, so a changed
+    // query can never land on a stale page number. `history` is 'replace' for search-as-you-type,
+    // 'push' for a pagination click (so Back/Forward step through pages), and 'none' when we are
+    // already responding to a popstate.
+    const refreshFolderGrid = (delay = 275, { page = 1, history = 'replace' } = {}) => {
         clearTimeout(liveDebounceTimer);
         liveRequest?.abort();
         liveDebounceTimer = window.setTimeout(async () => {
@@ -232,11 +337,22 @@ function initializeClientSearch(search) {
             const request = new AbortController();
             liveRequest = request;
             input.setAttribute('aria-busy', 'true');
+            // Subtle in-flight state only — the grid dims slightly and pagination stops accepting
+            // clicks. Never a blanking overlay or a spinner the rest of this Dashboard doesn't use.
+            browser.setAttribute('data-refreshing', 'true');
             try {
                 const url = new URL(liveEndpoint, window.location.origin);
                 const query = input.value.trim();
+                const currentParams = new URL(window.location.href).searchParams;
                 if (query) url.searchParams.set('search', query);
+                // Client Folders accepts these filters even though its current UI only exposes
+                // Search. Keep valid URL-driven state intact through pagination/search/history;
+                // the fragment endpoint remains authoritative for applying and validating it.
+                ['status', 'sort'].forEach((name) => {
+                    if (currentParams.has(name)) url.searchParams.set(name, currentParams.get(name));
+                });
                 url.searchParams.set('context', browserContext);
+                if (page > 1) url.searchParams.set('page', String(page));
                 const response = await fetch(url, {
                     headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' },
                     signal: request.signal,
@@ -247,17 +363,40 @@ function initializeClientSearch(search) {
                 const nextLayout = holder.content.querySelector('[data-folder-browser-layout]');
                 const nextArtifacts = holder.content.querySelector('[data-folder-browser-artifacts]');
                 if (!nextLayout || !nextArtifacts) throw new Error('Folder search response was incomplete.');
+                // The server always renders this fragment expanded (it has no knowledge of the
+                // client's persisted choice) — carry the current collapsed/expanded state over to
+                // the freshly rendered layout so live search never silently re-expands a Preview
+                // Panel the user just hid. The toolbar itself (and its Show/Hide buttons) is never
+                // touched by this replace — it lives outside [data-folder-browser-layout].
+                const wasCollapsed = browser.querySelector('[data-folder-browser-layout]')?.getAttribute('data-panel-collapsed') === 'true';
                 browser.querySelector('[data-folder-browser-layout]')?.replaceWith(nextLayout);
+                // Re-apply through the shared helper rather than just stamping the attribute, so
+                // the freshly rendered panel is also taken back out of the layout — otherwise a
+                // live search while collapsed would reintroduce the tall invisible panel.
+                if (wasCollapsed) applyFolderPreviewCollapsedState(browser, true);
                 browser.querySelector('[data-folder-browser-artifacts]')?.replaceWith(nextArtifacts);
                 document.body.classList.remove('overflow-hidden');
 
                 const historyUrl = new URL(form.action, window.location.origin);
                 if (query) historyUrl.searchParams.set('search', query);
-                window.history.replaceState({}, '', historyUrl);
+                ['status', 'sort'].forEach((name) => {
+                    if (currentParams.has(name)) historyUrl.searchParams.set(name, currentParams.get(name));
+                });
+                if (page > 1) historyUrl.searchParams.set('page', String(page));
+                // pushState for a pagination click so Back/Forward walk the pages; replaceState
+                // for search-as-you-type so every keystroke doesn't become a history entry; and
+                // nothing at all when this refresh is itself the response to a popstate.
+                if (history === 'push') window.history.pushState({ folderBrowserPage: page }, '', historyUrl);
+                else if (history === 'replace') window.history.replaceState({ folderBrowserPage: page }, '', historyUrl);
             } catch (error) {
+                // The existing folder list is deliberately left untouched on failure — the user
+                // keeps the authoritative page they already had, plus the standard error toast.
                 if (error.name !== 'AbortError') showToast('Client folders could not be refreshed. Please retry.', 'error');
             } finally {
-                if (liveRequest === request) input.removeAttribute('aria-busy');
+                if (liveRequest === request) {
+                    input.removeAttribute('aria-busy');
+                    browser.removeAttribute('data-refreshing');
+                }
             }
         }, delay);
     };
@@ -277,8 +416,45 @@ function initializeClientSearch(search) {
         event.preventDefault();
         refreshFolderGrid(0);
     });
-    search.closest('[data-folder-browser]')?.addEventListener('folder-browser:refresh', () => refreshFolderGrid(0));
+    // Pagination clicks (and the create/rename/delete AUTO-UPDATEs) all arrive through this one
+    // event, so they share the same request, abort and error handling as live search.
+    search.closest('[data-folder-browser]')?.addEventListener('folder-browser:refresh', (event) => {
+        refreshFolderGrid(0, event.detail ?? {});
+    });
+
+    // Back/Forward: re-read the authoritative state from the URL the browser just restored (both
+    // the page and the search term, so the input can't drift out of sync with what is rendered)
+    // and AUTO-UPDATE to match — no hard reload, and no new history entry for a history move.
+    window.addEventListener('popstate', () => {
+        if (!search.closest('[data-folder-browser]')) return;
+        const params = new URL(window.location.href).searchParams;
+        input.value = params.get('search') ?? '';
+        updateClearVisibility();
+        refreshFolderGrid(0, { page: Number(params.get('page')) || 1, history: 'none' });
+    });
 }
+
+// Dashboard/Client Folders pagination: an ordinary left-click AUTO-UPDATEs just the folder-browser
+// fragment instead of navigating the whole page (which visibly blinked the header, sidebar, summary
+// cards and toolbar for a change confined to the grid). Delegated, so pagination rendered by a
+// previous AUTO-UPDATE keeps working with no rebinding.
+//
+// Every modified click is left completely alone — Ctrl/Cmd (open in new tab), Shift (new window),
+// Alt (download), and any non-primary button — so the links behave like real links. Disabled
+// arrows are rendered as <span aria-disabled="true">, not <a>, so they cannot match here and can
+// never fire a request.
+document.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.target.closest('[data-folder-pagination] a[href]');
+    const browser = link?.closest('[data-folder-browser]');
+    if (!link || !browser) return;
+
+    const page = Number(new URL(link.href, window.location.origin).searchParams.get('page')) || 1;
+    event.preventDefault();
+    // A menu belonging to a card that is about to be replaced must not be left floating.
+    closeFolderMenus();
+    browser.dispatchEvent(new CustomEvent('folder-browser:refresh', { detail: { page, history: 'push' } }));
+});
 
 document.querySelectorAll('[data-client-search]').forEach(initializeClientSearch);
 
@@ -368,6 +544,13 @@ document.addEventListener('submit', async (event) => {
             if (tile) tile.setAttribute('aria-label', tile.getAttribute('aria-label').replace(/^.*?(?=, (?:On Progress|Completed),)/, newName));
             form.querySelector('[name="display_name"]').value = newName;
             showToast(payload.message);
+            // AUTO-UPDATE Folder History: the name patches above are an instant visual echo, but
+            // the authoritative "Renamed" entry the rename action just persisted to AuditLog only
+            // exists in $folderHistoryByFolder on the server. Reuse the exact same
+            // folder-browser:refresh re-fetch that Create/Delete already dispatch (see below) so
+            // the reopened Folder History dialog for this folder shows it immediately — no second
+            // history-only endpoint, no client-fabricated entry.
+            form.closest('[data-folder-browser]')?.dispatchEvent(new CustomEvent('folder-browser:refresh'));
         } else {
             const folderId = form.dataset.folderId;
             const browser = form.closest('[data-folder-browser]');
@@ -533,7 +716,7 @@ document.addEventListener('click', (event) => {
         return;
     }
 
-    const previewToggle = event.target.closest('[data-folder-preview-toggle]');
+    const previewToggle = event.target.closest('[data-folder-preview-show], [data-folder-preview-hide]');
     if (previewToggle) {
         toggleFolderPreviewPanel(previewToggle.closest('[data-folder-browser]'));
         return;
@@ -701,33 +884,13 @@ document.addEventListener('dblclick', (event) => {
     window.location.assign(tile.dataset.folderOpenUrl);
 });
 
-const refreshSavedCibiFolder = (returnUrl, folder = {}) => {
-    const currentUrl = new URL(window.location.href);
-    if (currentUrl.pathname !== returnUrl.pathname || currentUrl.search !== returnUrl.search) {
-        window.location.assign(returnUrl.href);
-        return;
-    }
-
-    const status = document.querySelector('#open-cibi-report [data-module-status]');
-    if (status) {
-        status.replaceChildren('Completed');
-        status.classList.remove('bg-progress-soft', 'text-progress', 'bg-surface-muted', 'text-text-muted');
-        status.classList.add('bg-success-soft', 'text-success');
-    }
-
-    const percentage = Number(folder.progress_percentage);
-    if (Number.isFinite(percentage)) {
-        const formatted = `${Math.round(percentage)}%`;
-        document.querySelector('[data-folder-progress-label]')?.replaceChildren(formatted);
-        document.querySelector('[data-folder-progress-bar] .tabular-nums')?.replaceChildren(formatted);
-        const progressbar = document.querySelector('[data-folder-progress-bar] [role="progressbar"]');
-        progressbar?.setAttribute('aria-valuenow', String(percentage));
-        if (progressbar?.firstElementChild instanceof HTMLElement) progressbar.firstElementChild.style.width = `${percentage}%`;
-    }
-
-    window.location.reload();
-};
-
+// AUTO-UPDATE for a CI/BI Report save: the encoding form (inside the iframe) already saves via
+// AJAX and posts this message the moment its own authoritative JSON response comes back — see the
+// [data-cibi-form] submit handler below, which is the only sender. That means reaching here already
+// proves the backend persisted the report, so the folder status pill / progress bar can be applied
+// live, the canonical toast (same helper/duration as everywhere else) can be shown on the PARENT
+// page — where it will actually still be visible once the dialog is gone — and the dialog can
+// auto-close immediately after, with no reload and no follow-up GET of any kind.
 window.addEventListener('message', (event) => {
     if (event.origin !== window.location.origin || event.data?.type !== 'brbi:cibi-saved') return;
 
@@ -736,8 +899,139 @@ window.addEventListener('message', (event) => {
 
     const dialog = document.querySelector('[data-cibi-report-dialog][open]');
     if (!dialog) return;
+
+    // Only a save made for a different person/folder context (returnUrl doesn't match the page
+    // currently behind this dialog) still needs a navigation — read by this dialog's own 'close'
+    // handler further down, same pattern as the Business Report dialog above.
     dialog.dataset.cibiSavedReturnUrl = returnUrl.href;
-    dialog.dataset.cibiSavedFolder = JSON.stringify(event.data.folder || {});
+
+    const currentUrl = new URL(window.location.href);
+    if (currentUrl.pathname === returnUrl.pathname && currentUrl.search === returnUrl.search) {
+        const folder = event.data.folder || {};
+
+        // The CI/BI module card (status pill, description, Open/Add label, Preview/Download/
+        // Reassign footer) is swapped whole from the same authoritative response — it already
+        // encodes every state-derived decision (report presence, completion, export/reassign
+        // eligibility) server-side, so there is nothing left to infer or hardcode here.
+        if (typeof event.data.cibiModuleHtml === 'string') {
+            const cibiModuleCard = document.getElementById('open-cibi-report');
+            if (cibiModuleCard) cibiModuleCard.outerHTML = event.data.cibiModuleHtml;
+        }
+
+        const percentage = Number(folder.progress_percentage);
+        if (Number.isFinite(percentage)) {
+            const formatted = `${Math.round(percentage)}%`;
+            document.querySelector('[data-folder-progress-label]')?.replaceChildren(formatted);
+            document.querySelector('[data-folder-progress-bar] .tabular-nums')?.replaceChildren(formatted);
+            const progressbar = document.querySelector('[data-folder-progress-bar] [role="progressbar"]');
+            progressbar?.setAttribute('aria-valuenow', String(percentage));
+            if (progressbar?.firstElementChild instanceof HTMLElement) progressbar.firstElementChild.style.width = `${percentage}%`;
+        }
+
+        // Recent Activity AUTO-UPDATEs from this exact same authoritative response — the
+        // server-rendered fragment already reflects the just-saved CI/BI entry (same
+        // AuditLog-backed source, same Applicant/exact-Co-Maker scoping as the initial page
+        // render), so this is a straight swap, never a second GET and never a fabricated entry.
+        if (typeof event.data.recentActivityHtml === 'string') {
+            const recentActivityBody = document.querySelector('[data-recent-activity-body]');
+            if (recentActivityBody) recentActivityBody.innerHTML = event.data.recentActivityHtml;
+        }
+    }
+
+    if (event.data.message) showToast(event.data.message, event.data.statusType || 'success');
+
+    dialog.close();
+});
+
+// AUTO-UPDATE for the Business / Income Sources page: applies an authoritative refresh payload
+// (the exact { panel, activity, modal } JSON shape IncomeSourceController's refreshPayload()
+// renders — Report Pending rows now live inside `panel` itself, alongside Saved rows, as one
+// unified table) to the live DOM — no full page reload, no second network request to go fetch it.
+// Every mutation path hands this function the payload it already has on hand from its own
+// response: the Business Report modal's save notification below reads it straight off the
+// 'brbi:business-saved' message (flashed onto the session by the save action itself and embedded
+// in the iframe's own next page load — see business-encoding.blade.php), and the single/bulk
+// delete AJAX submits further down read it from their own fetch response. Re-runs every
+// page-scoped initializer whose DOM nodes just got replaced (search, sortable table, batch
+// selection incl. Delete Selected, and the Recent Activity hide/show toggle) so none of them are
+// left bound to now-detached elements.
+function applyBusinessManageRefresh(payload) {
+    const panelBody = document.querySelector('[data-business-panel-body]');
+    const activityBody = document.querySelector('[data-business-activity-body]');
+    const modal = document.getElementById('business-recent-activity-dialog');
+    if (!panelBody || !activityBody) return;
+
+    const searchTerm = document.querySelector('[data-business-search]')?.value ?? '';
+
+    if (typeof payload.panel === 'string') panelBody.innerHTML = payload.panel;
+    if (typeof payload.activity === 'string') activityBody.innerHTML = payload.activity;
+    if (modal && typeof payload.modal === 'string') modal.outerHTML = payload.modal;
+
+    const searchInput = document.querySelector('[data-business-search]');
+    if (searchInput && searchTerm) searchInput.value = searchTerm;
+
+    document.querySelectorAll('[data-business-sort-table]').forEach(initSortableTable);
+    window.initBusinessSearch?.();
+    window.initBusinessBatchPanel?.();
+    window.initBusinessHistoryToggle?.();
+}
+
+// Single delete (per-row confirmation dialog, data-business-delete-form) and Delete Selected
+// (data-business-delete-selected-form) both submit here via fetch instead of a native form POST —
+// the response is the same authoritative refresh payload the modal save path uses (plus a
+// `deleted` count), so a successful delete AUTO-UPDATEs the table/activity in place with no
+// redirect, no reload, and no separate confirmation of "did it work" beyond the DOM actually
+// changing. A failed delete never touches the DOM: the dialog stays open, the row(s) stay put, and
+// the error is surfaced inline (bulk dialog) or as a toast (single-row dialog, which has no inline
+// error slot of its own).
+document.addEventListener('submit', (event) => {
+    const form = event.target;
+    // The single-row confirmation dialog carries data-business-delete-form on its <x-ui.modal>
+    // root (that's where {{ $attributes }} lands in x-ui.confirmation-dialog), not on its own
+    // <form> — so that one is matched via the closest dialog ancestor. The bulk dialog's form
+    // carries its own marker attribute directly, since it isn't built from that shared component.
+    if (!(form instanceof HTMLFormElement) || !(form.matches('[data-business-delete-selected-form]') || form.closest('[data-business-delete-form]'))) return;
+    event.preventDefault();
+
+    const dialog = form.closest('dialog');
+    const isBulk = form.matches('[data-business-delete-selected-form]');
+    const submitButton = form.querySelector('button[type="submit"]');
+    const errorBox = dialog?.querySelector('[data-business-delete-selected-error]');
+    const originalLabel = submitButton?.textContent ?? '';
+    if (submitButton) { submitButton.disabled = true; submitButton.textContent = 'Deleting…'; }
+    if (errorBox) { errorBox.hidden = true; errorBox.textContent = ''; }
+
+    fetch(form.action, {
+        method: 'POST',
+        body: new FormData(form),
+        headers: { Accept: 'application/json' },
+        credentials: 'same-origin',
+    })
+        .then(async (response) => {
+            if (!response.ok) {
+                const body = await response.json().catch(() => null);
+                throw new Error(body?.message || 'The selected Business Report(s) could not be deleted. Please try again.');
+            }
+
+            return response.json();
+        })
+        .then((payload) => {
+            applyBusinessManageRefresh(payload);
+            dialog?.close();
+            const count = payload.deleted ?? 1;
+            showToast(count === 1 ? '1 Business Report permanently deleted.' : `${count} Business Reports permanently deleted.`, 'success');
+        })
+        .catch((error) => {
+            if (isBulk && errorBox) {
+                errorBox.textContent = error.message;
+                errorBox.hidden = false;
+            } else {
+                showToast(error.message, 'error');
+            }
+        })
+        .finally(() => {
+            if (submitButton) { submitButton.disabled = false; submitButton.textContent = originalLabel; }
+        });
 });
 
 window.addEventListener('message', (event) => {
@@ -749,13 +1043,51 @@ window.addEventListener('message', (event) => {
     const dialog = document.querySelector('[data-business-report-dialog][open]');
     if (!dialog) return;
     dialog.dataset.businessSavedReturnUrl = returnUrl.href;
+
+    // AUTO-UPDATE the moment the save actually succeeds — the Businesses / Income Sources table
+    // and Recent Activity apply the authoritative payload the message already carries (see
+    // business-encoding.blade.php's data-business-saved-payload, sourced from the save action's
+    // own session flash) with no follow-up request of any kind. Only applies if this parent page
+    // is the exact one that save belongs to (same path + query string as returnUrl); a save made
+    // while viewing a different person/folder context has nothing on this page to update.
+    const currentUrl = new URL(window.location.href);
+    if (currentUrl.pathname === returnUrl.pathname && currentUrl.search === returnUrl.search && event.data.payload) {
+        applyBusinessManageRefresh(event.data.payload);
+    }
+
+    // The canonical success toast (same backend wording already used everywhere else — "Business
+    // Report saved successfully.", etc. — see IncomeSourceController's afterSave()/store()) lives
+    // on the PARENT page's own toast region, not inside the iframe: that page's own toast would be
+    // destroyed the instant the dialog closes below, before anyone could ever see it. Shown here,
+    // right before the auto-close, so it's already visible in the persistent parent DOM by the time
+    // the dialog disappears, and uses the app's one existing toast helper/duration — no second
+    // toast system.
+    if (event.data.message) showToast(event.data.message, event.data.statusType || 'success');
+
+    // AUTO-CLOSE only now, after the table/activity update above has already run synchronously —
+    // this message only ever fires from the save action's own session-flash-backed notify element
+    // (see business-encoding.blade.php), never from an iframe load, a form submit, or the Save
+    // button being clicked alone, so reaching this point already proves the save persisted. The
+    // dialog's own 'close' handler below reads businessSavedReturnUrl set above to either stay put
+    // (same page, already current) or navigate to a different person/folder context — unchanged.
+    dialog.close();
 });
 
 const businessSavedNotify = document.querySelector('[data-business-saved-notify]');
 if (businessSavedNotify && window.parent !== window) {
+    let businessSavedPayload = null;
+    try {
+        businessSavedPayload = JSON.parse(businessSavedNotify.dataset.businessSavedPayload || 'null');
+    } catch (e) {
+        // Malformed/missing payload just means no live AUTO-UPDATE happens on the parent side —
+        // the notify element itself only ever renders after a real save, so this is not expected.
+    }
     window.parent.postMessage({
         type: 'brbi:business-saved',
         returnUrl: businessSavedNotify.dataset.businessSavedReturnUrl,
+        payload: businessSavedPayload,
+        message: businessSavedNotify.dataset.businessSavedMessage,
+        statusType: businessSavedNotify.dataset.businessSavedStatusType,
     }, window.location.origin);
 }
 
@@ -902,9 +1234,11 @@ document.querySelectorAll('dialog').forEach((dialog) => {
             const returnUrl = new URL(dialog.dataset.businessSavedReturnUrl, window.location.href);
             delete dialog.dataset.businessSavedReturnUrl;
             const currentUrl = new URL(window.location.href);
-            if (currentUrl.pathname === returnUrl.pathname && currentUrl.search === returnUrl.search) {
-                window.location.reload();
-            } else {
+            // Same-page saves already AUTO-UPDATED live the moment they succeeded (see the
+            // 'brbi:business-saved' message handler above) — closing the dialog now needs no
+            // reload, the Saved Businesses table and Recent Activity are already current. Only a
+            // save made for a different person/folder context still navigates there.
+            if (currentUrl.pathname !== returnUrl.pathname || currentUrl.search !== returnUrl.search) {
                 window.location.assign(returnUrl.href);
             }
             return;
@@ -925,10 +1259,14 @@ document.querySelectorAll('dialog').forEach((dialog) => {
         if (!dialog.matches('[data-cibi-report-dialog]') || !dialog.dataset.cibiSavedReturnUrl) return;
 
         const returnUrl = new URL(dialog.dataset.cibiSavedReturnUrl, window.location.href);
-        const folder = JSON.parse(dialog.dataset.cibiSavedFolder || '{}');
         delete dialog.dataset.cibiSavedReturnUrl;
-        delete dialog.dataset.cibiSavedFolder;
-        refreshSavedCibiFolder(returnUrl, folder);
+        // Same-page saves already AUTO-UPDATED live the moment they succeeded (see the
+        // 'brbi:cibi-saved' message handler above) — closing the dialog now needs no reload. Only a
+        // save made for a different person/folder context still navigates there.
+        const currentUrl = new URL(window.location.href);
+        if (currentUrl.pathname !== returnUrl.pathname || currentUrl.search !== returnUrl.search) {
+            window.location.assign(returnUrl.href);
+        }
     });
 });
 
@@ -1779,13 +2117,24 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
             }
 
             updateOverview(payload);
-            showToast(payload.message);
+            // Inside the CI/BI dialog's iframe (the only way this form is ever loaded), the local
+            // toast below would be destroyed the instant the parent closes the dialog before anyone
+            // could read it — so the success message travels to the parent's own persistent toast
+            // region instead, alongside the dialog auto-close, via the existing 'brbi:cibi-saved'
+            // message handler. A standalone load (window.parent === window) has no parent to hand
+            // it to and shows it locally, same as before.
             if (window.parent !== window) {
                 window.parent.postMessage({
                     type: 'brbi:cibi-saved',
                     returnUrl: payload.return_url,
                     folder: payload.folder,
+                    message: payload.message,
+                    statusType: 'success',
+                    cibiModuleHtml: payload.cibi_module_html,
+                    recentActivityHtml: payload.recent_activity_html,
                 }, window.location.origin);
+            } else {
+                showToast(payload.message);
             }
         } catch {
             showErrors({}, 'The report could not be saved. Check your connection and try again.');
@@ -1850,7 +2199,13 @@ document.addEventListener('submit', async (event) => {
     submit?.setAttribute('disabled', 'disabled');
 
     try {
-        const response = await fetch(form.action, {
+        // The current page's own ?person=co-maker&co_maker_id=... travels with the request so the
+        // backend renders the person-switch tabs / Recent Activity from the exact same active
+        // context the CI is looking at — the co-maker being added/edited here isn't necessarily
+        // that same person.
+        const submitUrl = new URL(form.action, window.location.href);
+        submitUrl.search = window.location.search;
+        const response = await fetch(submitUrl, {
             method: 'POST',
             body: new FormData(form),
             headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -1883,13 +2238,15 @@ document.addEventListener('submit', async (event) => {
             return;
         }
 
-        showToast(payload.message, 'success', 3000);
+        // AUTO-UPDATE from this exact same authoritative response — the person-switch tabs (new/
+        // renamed Co-Maker) and Recent Activity (fresh co_maker.added/updated entry) are both
+        // server-rendered fragments, never a second GET and never a reload.
+        const personSwitchRegion = document.querySelector('[data-person-switch-region]');
+        if (personSwitchRegion && typeof payload.person_switch_html === 'string') personSwitchRegion.innerHTML = payload.person_switch_html;
+        const recentActivityBody = document.querySelector('[data-recent-activity-body]');
+        if (recentActivityBody && typeof payload.recent_activity_html === 'string') recentActivityBody.innerHTML = payload.recent_activity_html;
 
-        // A reload after either add or edit is what keeps Recent Activity showing the fresh
-        // co_maker.added/updated entry immediately — an in-place DOM patch (the previous approach
-        // for edits) only ever touched the tab/header display fields and left the Recent Activity
-        // panel showing stale, pre-edit data until a manual refresh.
-        window.setTimeout(() => window.location.reload(), 900);
+        showToast(payload.message, 'success', 3000);
     } catch (error) {
         showToast(error.message || 'Co-Maker could not be saved. Please retry.', 'error', 3000);
     } finally {
@@ -1928,8 +2285,17 @@ document.addEventListener('submit', async (event) => {
     const submit = document.querySelector('[data-co-maker-remove-submit]');
     submit?.setAttribute('disabled', 'disabled');
 
+    // Removing the currently active co-maker leaves nothing valid for the URL's ?co_maker_id to
+    // point at — checked before the request fires so it still reflects the page the CI was
+    // actually viewing, not anything the response could change.
+    const removedId = form.dataset.coMakerRemoveId ?? '';
+    const activeId = new URLSearchParams(window.location.search).get('co_maker_id');
+    const removingActivePerson = Boolean(removedId) && removedId === activeId;
+
     try {
-        const response = await fetch(form.action, {
+        const submitUrl = new URL(form.action, window.location.href);
+        submitUrl.search = window.location.search;
+        const response = await fetch(submitUrl, {
             method: 'POST',
             body: new FormData(form),
             headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -1940,16 +2306,21 @@ document.addEventListener('submit', async (event) => {
         form.closest('dialog')?.close();
         showToast(payload.message, 'success', 3000);
 
-        // Removing the currently active co-maker leaves nothing valid for the URL's
-        // ?co_maker_id to point at, so drop back to the plain Applicant view; otherwise
-        // keep the current view and just refresh the tab/header data behind it.
-        const removedId = form.dataset.coMakerRemoveId ?? '';
-        const activeId = new URLSearchParams(window.location.search).get('co_maker_id');
-        window.setTimeout(() => {
-            window.location.href = removedId && removedId === activeId
-                ? window.location.pathname
-                : window.location.href;
-        }, 900);
+        if (removingActivePerson) {
+            // The active person's own context is gone — no fragment can meaningfully represent
+            // it, so this is a genuine navigation (not a disguised refresh) back to the canonical
+            // Applicant view, exactly as before.
+            window.location.assign(window.location.pathname);
+            return;
+        }
+
+        // AUTO-UPDATE from this exact same authoritative response — removing a co-maker other
+        // than the one currently being viewed only ever changes the tabs strip and Recent
+        // Activity, both server-rendered fragments here, never a second GET and never a reload.
+        const personSwitchRegion = document.querySelector('[data-person-switch-region]');
+        if (personSwitchRegion && typeof payload.person_switch_html === 'string') personSwitchRegion.innerHTML = payload.person_switch_html;
+        const recentActivityBody = document.querySelector('[data-recent-activity-body]');
+        if (recentActivityBody && typeof payload.recent_activity_html === 'string') recentActivityBody.innerHTML = payload.recent_activity_html;
     } catch (error) {
         showToast(error.message || 'Co-Maker could not be removed. Please retry.', 'error', 3000);
     } finally {
@@ -2046,11 +2417,15 @@ document.addEventListener('keydown', (event) => {
 window.addEventListener('scroll', () => closeCoMakerActionMenu(), true);
 window.addEventListener('resize', () => closeCoMakerActionMenu());
 
-// Batch Print / Batch Download on the Business / Income Sources list. Purely additive: every
-// existing per-row Edit/Print/Download/Delete action is untouched and keeps working exactly as
-// before — this only reads which row checkboxes are checked and mirrors that into three hidden
-// batch forms (already carrying the folder's current co_maker_id) before submitting them.
-(() => {
+// Batch Print / Batch Download / Delete Selected on the Business / Income Sources list. Purely
+// additive: every existing per-row Edit/Print/Download/Delete action is untouched and keeps
+// working exactly as before — this only reads which row checkboxes are checked and mirrors that
+// into hidden batch forms (already carrying the folder's current co_maker_id) before submitting
+// them. Wrapped in a named, re-invocable function (not a load-once IIFE) because the whole panel
+// this queries is one of the two regions AUTO-UPDATE replaces after a successful Add/Update/Delete
+// (see refreshBusinessManagePage() below) — a fresh render needs this rewired against its new DOM
+// nodes, not left pointing at ones that no longer exist.
+window.initBusinessBatchPanel = function initBusinessBatchPanel() {
     const panel = document.querySelector('[data-business-batch-panel]');
     if (!panel) return;
 
@@ -2058,6 +2433,7 @@ window.addEventListener('resize', () => closeCoMakerActionMenu());
     const countLabel = panel.querySelector('[data-business-selected-count]');
     const printButton = panel.querySelector('[data-business-print-selected]');
     const downloadTrigger = panel.querySelector('[data-business-download-selected-trigger]');
+    const deleteSelectedButton = panel.querySelector('[data-business-delete-selected]');
     const summaryCount = panel.querySelector('[data-business-selected-summary-count]');
     const summaryEmpty = panel.querySelector('[data-business-selected-empty]');
     const summaryList = panel.querySelector('[data-business-selected-list]');
@@ -2100,6 +2476,7 @@ window.addEventListener('resize', () => closeCoMakerActionMenu());
             selectAll.indeterminate = selected.length > 0 && selected.length < total;
         }
         if (printButton) printButton.toggleAttribute('disabled', selected.length === 0);
+        if (deleteSelectedButton) deleteSelectedButton.toggleAttribute('disabled', selected.length === 0);
         setDownloadEnabled(selected.length > 0);
 
         if (summaryEmpty) summaryEmpty.hidden = selected.length > 0;
@@ -2161,8 +2538,26 @@ window.addEventListener('resize', () => closeCoMakerActionMenu());
         excelForm?.submit();
     }));
 
+    const deleteDialog = document.getElementById('delete-selected-businesses-dialog');
+    const deleteDialogBody = deleteDialog?.querySelector('[data-business-delete-selected-body]');
+    const deleteDialogError = deleteDialog?.querySelector('[data-business-delete-selected-error]');
+    const deleteForm = deleteDialog?.querySelector('[data-business-delete-selected-form]');
+    const deleteSubmitButton = deleteDialog?.querySelector('[data-business-delete-selected-submit]');
+
+    deleteSelectedButton?.addEventListener('click', () => {
+        const selected = selectedCheckboxes();
+        if (selected.length === 0 || !(deleteDialog instanceof HTMLDialogElement)) return;
+        syncBatchForm(deleteForm);
+        if (deleteDialogBody) deleteDialogBody.textContent = `You are about to permanently delete ${selected.length} selected Business Report${selected.length === 1 ? '' : 's'}. This action cannot be undone. Existing Business Checks will remain unchanged.`;
+        if (deleteSubmitButton) deleteSubmitButton.textContent = `Delete ${selected.length} Report${selected.length === 1 ? '' : 's'}`;
+        if (deleteDialogError) { deleteDialogError.hidden = true; deleteDialogError.textContent = ''; }
+        deleteDialog.showModal();
+    });
+
     refresh();
-})();
+};
+
+document.addEventListener('DOMContentLoaded', () => window.initBusinessBatchPanel());
 
 // Instant client-side table sorting, shared by the Saved Businesses table and the Residence &
 // Business page's Business Checks table: clicking a column's label or its ↑/↓ control reorders
@@ -2241,6 +2636,44 @@ function initSortableTable(table) {
 }
 
 document.querySelectorAll('[data-business-sort-table], [data-check-sort-table]').forEach(initSortableTable);
+
+// Business / Income Sources: instant client-side search over the Saved Businesses table — matches
+// business name or address, reusing the same data-sort-business_name/data-sort-address values
+// already rendered on each row for sorting above, so no new data source or backend query is
+// introduced. Hides non-matching rows in place (same DOM nodes, so checkbox selection and sort
+// order are both preserved) and shows a dedicated "no matches" row rather than an empty table when
+// nothing matches. Named and re-invocable (see initBusinessBatchPanel() above) for the same
+// AUTO-UPDATE reason: the table this binds to is replaced whenever the Saved Businesses panel body
+// is refreshed after a mutation.
+window.initBusinessSearch = function initBusinessSearch() {
+    const input = document.querySelector('[data-business-search]');
+    const table = document.querySelector('[data-business-sort-table]');
+    if (!input || !table) return;
+
+    const rows = [...table.querySelectorAll('[data-business-row]')];
+    const emptyRow = table.querySelector('[data-business-empty-search]');
+    const term = input.value.trim().toLowerCase();
+
+    const applyFilter = () => {
+        const term = input.value.trim().toLowerCase();
+        let visible = 0;
+        rows.forEach((row) => {
+            const matches = !term
+                || (row.dataset.sortBusiness_name || '').includes(term)
+                || (row.dataset.sortAddress || '').includes(term);
+            row.hidden = !matches;
+            if (matches) visible++;
+        });
+        if (emptyRow) emptyRow.hidden = !(term && visible === 0);
+    };
+
+    input.addEventListener('input', applyFilter);
+    // A refresh preserves whatever search term was already typed (re-applying it against the
+    // freshly rendered rows) rather than silently clearing it out from under the user.
+    if (term) applyFilter();
+};
+
+document.addEventListener('DOMContentLoaded', () => window.initBusinessSearch());
 
 // Combined Print Selected / Download Selected on the Residence & Business Report page — same
 // hidden-forms + syncBatchForm pattern as the Business/Income Sources batch panel above, but
@@ -2534,6 +2967,16 @@ const initializePhotoUploadField = (field) => {
         if (count) count.textContent = String(grid.querySelectorAll('[data-photo-upload-existing-tile], [data-photo-upload-new-tile]').length);
     };
 
+    field.clearStagedPhotoFiles = () => {
+        grid.querySelectorAll('[data-photo-upload-new-tile]').forEach((tile) => {
+            if (tile.dataset.photoUploadObjectUrl) URL.revokeObjectURL(tile.dataset.photoUploadObjectUrl);
+            tile.remove();
+        });
+        files = [];
+        input.value = '';
+        updateCount();
+    };
+
     const addFiles = (fileList) => {
         const trailingTile = grid.querySelector('[data-photo-upload-count-tile], [data-photo-upload-add-more-tile]');
         Array.from(fileList ?? []).forEach((file) => {
@@ -2605,6 +3048,81 @@ const initializePhotoUploadField = (field) => {
 
 document.querySelectorAll('[data-photo-upload-field]').forEach(initializePhotoUploadField);
 
+// Direct multi-file video upload widget (Residence/Business Documentation videos): same staged
+// files array + rebuilt DataTransfer mechanics as initializePhotoUploadField above, but tiles show
+// a static video icon instead of a decoded frame (cheaper, and this app has no video thumbnailing).
+const initializeVideoUploadField = (field) => {
+    if (field.dataset.videoUploadReady) return;
+    field.dataset.videoUploadReady = 'true';
+    const input = field.querySelector('[data-video-upload-input]');
+    const triggers = field.querySelectorAll('[data-video-upload-trigger]');
+    const grid = field.querySelector('[data-video-upload-grid]');
+    const template = field.querySelector('[data-video-upload-tile-template]');
+    const dropzone = field.querySelector('[data-video-upload-dropzone]');
+    if (!(input instanceof HTMLInputElement) || triggers.length === 0 || !grid || !(template instanceof HTMLTemplateElement)) return;
+
+    let files = [];
+    let nextFileId = 0;
+    field.getStagedVideoFiles = () => files.map(({ file }) => file);
+
+    field.clearStagedVideoFiles = () => {
+        grid.querySelectorAll('[data-video-upload-new-tile]').forEach((tile) => tile.remove());
+        files = [];
+        input.value = '';
+    };
+
+    const rebuildInputFiles = () => {
+        const transfer = new DataTransfer();
+        files.forEach(({ file }) => transfer.items.add(file));
+        input.files = transfer.files;
+    };
+
+    const addFiles = (fileList) => {
+        const trailingTile = grid.querySelector('[data-video-upload-add-more-tile]');
+        Array.from(fileList ?? []).forEach((file) => {
+            if (!file.type.startsWith('video/')) return;
+            const fileId = String(nextFileId++);
+            files.push({ id: fileId, file });
+            const tile = template.content.firstElementChild.cloneNode(true);
+            tile.dataset.videoUploadFileId = fileId;
+            if (trailingTile) grid.insertBefore(tile, trailingTile); else grid.appendChild(tile);
+        });
+        rebuildInputFiles();
+    };
+
+    triggers.forEach((trigger) => trigger.addEventListener('click', () => input.click()));
+    input.addEventListener('change', () => addFiles(input.files));
+
+    if (dropzone) {
+        ['dragover', 'dragenter'].forEach((eventName) => dropzone.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            dropzone.classList.add('border-brand-primary', 'bg-brand-soft/40');
+        }));
+        ['dragleave', 'dragend'].forEach((eventName) => dropzone.addEventListener(eventName, () => {
+            dropzone.classList.remove('border-brand-primary', 'bg-brand-soft/40');
+        }));
+        dropzone.addEventListener('drop', (event) => {
+            event.preventDefault();
+            dropzone.classList.remove('border-brand-primary', 'bg-brand-soft/40');
+            addFiles(event.dataTransfer?.files);
+        });
+    }
+
+    grid.addEventListener('click', (event) => {
+        const removeNew = event.target.closest('[data-video-upload-remove-new]');
+        if (removeNew) {
+            const tile = removeNew.closest('[data-video-upload-new-tile]');
+            const fileId = tile?.dataset.videoUploadFileId;
+            const index = files.findIndex((entry) => entry.id === fileId);
+            if (index !== -1) files.splice(index, 1);
+            tile?.remove();
+            rebuildInputFiles();
+        }
+    });
+};
+
+document.querySelectorAll('[data-video-upload-field]').forEach(initializeVideoUploadField);
+
 // Business Photos "Photo Groups" repeater: each card is its own caption + multi-file
 // photo-upload-field (initializePhotoUploadField above); this only ever handles adding/removing
 // whole GROUP cards. Removal follows the exact same id/_delete convention as every other repeater
@@ -2672,6 +3190,20 @@ document.querySelectorAll('[data-map-screenshot-field]').forEach((field) => {
     if (!(input instanceof HTMLInputElement)) return;
 
     let objectUrl = null;
+    const hadSavedPreview = previewWrap ? !previewWrap.hidden : false;
+    const savedPreviewSource = previewImg?.getAttribute('src') ?? '';
+
+    field.clearStagedMapScreenshot = () => {
+        input.value = '';
+        if (objectUrl) {
+            URL.revokeObjectURL(objectUrl);
+            objectUrl = null;
+        }
+        if (previewImg && savedPreviewSource) previewImg.src = savedPreviewSource;
+        if (previewWrap) previewWrap.hidden = !hadSavedPreview;
+        if (dropzone) dropzone.hidden = hadSavedPreview;
+        if (removeFlag) removeFlag.value = '0';
+    };
 
     const setFile = (file) => {
         if (!file || !file.type.startsWith('image/')) return;
@@ -2715,8 +3247,102 @@ document.querySelectorAll('[data-map-screenshot-field]').forEach((field) => {
     }
 });
 
-// Residence Check Save/Update: still submitted via XMLHttpRequest rather than a plain form POST —
-// that's what lets the JSON response drive the working parent success toast (see the brbi:check-saved
+// Residence/Business Documentation Save Locally keeps staged browser uploads intact after
+// validation/network failure. Only an
+// authoritative success clears those file inputs and temporary previews, then reloads the URL
+// returned by the backend so the persisted thumbnails remain visible and authoritative.
+const applyDocumentationRecentActivity = (payload) => {
+    if (typeof payload?.recent_activity_category !== 'string') return;
+    const category = payload.recent_activity_category;
+    if (typeof payload.recent_activity_html === 'string') {
+        const target = document.querySelector(`[data-documentation-recent-activity="${CSS.escape(category)}"]`);
+        if (target) target.innerHTML = payload.recent_activity_html;
+    }
+    // Keeps the "View All" modal's underlying content authoritative even while it is closed, so
+    // the next time it opens it already reflects this mutation — never a second fetch just to
+    // populate it.
+    if (typeof payload.recent_activity_modal_html === 'string') {
+        const modalBody = document.querySelector(`[data-documentation-activity-modal-body="${CSS.escape(category)}"]`);
+        if (modalBody) modalBody.innerHTML = payload.recent_activity_modal_html;
+    }
+};
+
+document.querySelectorAll('[data-documentation-save-form]').forEach((form) => {
+    if (form.dataset.documentationSaveReady) return;
+    form.dataset.documentationSaveReady = 'true';
+
+    const submitButton = document.querySelector(`[data-documentation-save-submit][form="${CSS.escape(form.id)}"]`);
+    if (!(submitButton instanceof HTMLButtonElement)) return;
+    const submitLabel = submitButton.querySelector('[data-documentation-save-label]');
+    const defaultSubmitLabel = submitLabel?.textContent ?? 'Save Locally';
+    const panel = document.getElementById(form.id.replace(/-form$/, '-panel'));
+
+    const resetBusyState = () => {
+        delete form.dataset.submitting;
+        submitButton.disabled = false;
+        submitButton.removeAttribute('aria-busy');
+        if (submitLabel) submitLabel.textContent = defaultSubmitLabel;
+    };
+
+    const clearStagedUploads = () => {
+        panel?.querySelectorAll('[data-photo-upload-field]').forEach((field) => field.clearStagedPhotoFiles?.());
+        panel?.querySelectorAll('[data-video-upload-field]').forEach((field) => field.clearStagedVideoFiles?.());
+        panel?.querySelectorAll('[data-map-screenshot-field]').forEach((field) => field.clearStagedMapScreenshot?.());
+    };
+
+    form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        if (form.dataset.submitting === 'true' || submitButton.disabled) return;
+        form.dataset.submitting = 'true';
+        submitButton.disabled = true;
+        submitButton.setAttribute('aria-busy', 'true');
+        if (submitLabel) submitLabel.textContent = 'Saving...';
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', form.action);
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+
+        xhr.addEventListener('load', () => {
+            let payload = null;
+            try {
+                payload = JSON.parse(xhr.responseText);
+            } catch {
+                payload = null;
+            }
+
+            if (xhr.status === 200 && payload?.result === 'success' && payload?.return_url) {
+                applyDocumentationRecentActivity(payload);
+                clearStagedUploads();
+                form.dispatchEvent(new Event('unsaved-form-reset'));
+                window.location.assign(payload.return_url);
+                return;
+            }
+
+            resetBusyState();
+            if (xhr.status === 422 && payload?.errors) {
+                const firstMessage = Object.values(payload.errors).flat()[0];
+                showToast(firstMessage || 'Please correct the highlighted fields. No changes were saved.', 'error');
+                return;
+            }
+            if (payload?.message) {
+                showToast(payload.message, 'error');
+                return;
+            }
+            showToast('Documentation could not be saved because the server returned an unexpected response. Please try again.', 'error');
+        });
+
+        xhr.addEventListener('error', () => {
+            resetBusyState();
+            showToast('Documentation could not be saved. Please check your connection and try again.', 'error');
+        });
+
+        xhr.send(new FormData(form));
+    });
+});
+
+// Residence Check Save/Update: still submitted via XMLHttpRequest rather than a plain form POST.
+// That's what lets the JSON response drive the working parent success toast (see the brbi:check-saved
 // postMessage below) instead of a redirect the closing modal would race. There is deliberately no
 // upload percentage or progress bar here: only a disabled button + spinner + a status line below it
 // (same [data-*-save-status] pattern as Business Check's own form), chosen from the exact same DOM
@@ -2912,6 +3538,71 @@ document.querySelectorAll('[data-editing-presence]').forEach((node) => {
         navigator.sendBeacon?.('/editing-presence/release', new Blob([JSON.stringify({ type, id, _token: token })], { type: 'application/json' }));
     }, { once: true });
 });
+
+// Header "Scheduled Today" bell: auto-update, not auto-refresh. Polls a small authenticated
+// feed endpoint roughly every 30 seconds so a newly created scheduled/due notification (parent,
+// Bank target, or Asset target — the server's ScheduledTodayNotificationFeed already resolves
+// all three identically) appears without the user pressing refresh. The page itself never
+// reloads; only the bell badge and its dropdown panel are swapped, and only from this one
+// authoritative response — no matching/counting logic is duplicated here.
+(() => {
+    const bell = document.querySelector('[data-scheduled-today-bell]');
+    const feedUrl = bell instanceof HTMLElement ? bell.dataset.scheduledTodayFeedUrl : undefined;
+    const menu = bell instanceof HTMLElement ? bell.closest('[data-context-menu]') : null;
+    if (!(bell instanceof HTMLElement) || !feedUrl || !(menu instanceof HTMLElement)) return;
+
+    let requestInFlight = false;
+
+    const applyBadge = (unreadCount) => {
+        let badge = bell.querySelector('[data-scheduled-today-count]');
+        if (unreadCount > 0) {
+            if (!(badge instanceof HTMLElement)) {
+                badge = document.createElement('span');
+                badge.className = 'absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-danger px-1 text-[0.625rem] font-bold leading-none text-white ring-2 ring-surface';
+                badge.setAttribute('data-scheduled-today-count', '');
+                bell.append(badge);
+            }
+            badge.textContent = unreadCount > 9 ? '9+' : String(unreadCount);
+        } else if (badge instanceof HTMLElement) {
+            badge.remove();
+        }
+    };
+
+    const applyPanel = (html) => {
+        if (typeof html !== 'string' || html === '') return;
+        const current = menu.querySelector('[data-scheduled-today-panel]');
+        if (!(current instanceof HTMLElement)) return;
+        const fresh = new DOMParser().parseFromString(html, 'text/html').querySelector('[data-scheduled-today-panel]');
+        // Swapping only this element (never the <details>/<summary> around it) leaves the
+        // dropdown's own open/closed state completely untouched either way.
+        if (fresh instanceof HTMLElement) current.replaceWith(fresh);
+    };
+
+    const checkForUpdates = async () => {
+        if (requestInFlight || document.hidden) return;
+        requestInFlight = true;
+        try {
+            const response = await fetch(feedUrl, {
+                credentials: 'same-origin',
+                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            if (!response.ok) return;
+            const payload = await response.json();
+            applyBadge(Number(payload.unread_count) || 0);
+            applyPanel(payload.html);
+        } catch {
+            // A temporary network hiccup must stay silent — keep whatever badge/panel is already
+            // showing and let the next interval retry.
+        } finally {
+            requestInFlight = false;
+        }
+    };
+
+    window.setInterval(checkForUpdates, 30000);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) checkForUpdates();
+    });
+})();
 
 // A required field failing server validation (e.g. Business Check's Location/CI Date) is only
 // actually visible if the accordion section containing it happens to already be open — generic

@@ -16,7 +16,16 @@
             @if(session('status'))<x-ui.toast type="success" :message="session('status')" />@endif
         </div>
         @if(session('status') && isset($clientFolder))
-            <span hidden data-business-saved-notify data-business-saved-return-url="{{ route('client-folders.income-sources.manage', [$clientFolder] + \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null)) }}"></span>
+            {{--
+                data-business-saved-payload carries the same authoritative Saved Businesses /
+                Recent Activity / candidates / View-All-modal fragments IncomeSourceController's
+                refreshPayload() renders for the dedicated delete endpoints — flashed onto the
+                session by afterSave()/store() so this landing page (the "stay" redirect target,
+                loaded inside the parent's existing modal/iframe) can hand it straight to the
+                parent via postMessage. This is what lets a save AUTO-UPDATE the parent page
+                without the parent ever issuing its own follow-up GET request.
+            --}}
+            <span hidden data-business-saved-notify data-business-saved-return-url="{{ route('client-folders.income-sources.manage', [$clientFolder] + \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null)) }}" data-business-saved-payload="{{ json_encode(session('business_manage_refresh')) }}" data-business-saved-message="{{ session('status') }}" data-business-saved-status-type="{{ session('statusType', 'success') }}"></span>
         @endif
 
         @yield('content')

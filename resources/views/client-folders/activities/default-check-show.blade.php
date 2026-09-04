@@ -43,7 +43,6 @@
                     <h2 id="default-check-title" class="break-words text-lg font-bold text-brand-sidebar">{{ $activity->name }}</h2>
                     <p class="mt-1 break-words text-sm text-text-muted">{{ $contextLabel }}</p>
                 </div>
-                <x-ui.status-badge :status="$activity->status" />
             </div>
 
             <form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}" class="p-5 sm:p-6" data-default-check-form data-current-status="{{ $activity->status->value }}">
@@ -56,7 +55,7 @@
                 <div class="mb-4 rounded-control border border-danger/25 bg-danger-soft px-3.5 py-3 text-sm text-danger" data-default-check-errors hidden></div>
 
                 <div class="grid gap-4 sm:grid-cols-2">
-                    <div>
+                    <div class="sm:col-span-2">
                         <label for="default-check-status-{{ $activity->id }}" class="ui-label">Status</label>
                         <select id="default-check-status-{{ $activity->id }}" name="status" class="ui-control" required data-default-check-status-control>
                             @foreach($statuses as $status)
@@ -64,7 +63,7 @@
                             @endforeach
                         </select>
                     </div>
-                    <div class="grid gap-3 sm:grid-cols-2">
+                    <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,0.55fr)]">
                         <div><label for="default-check-date-{{ $activity->id }}" class="ui-label">Schedule / Follow-up Date <span class="font-normal text-text-muted">(optional)</span></label><input id="default-check-date-{{ $activity->id }}" name="scheduled_at" type="date" value="{{ $supportsSchedule ? $localSchedule?->format('Y-m-d') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-default-check-date @disabled(! $supportsSchedule)></div>
                         <div><label for="default-check-time-{{ $activity->id }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="default-check-time-{{ $activity->id }}" name="scheduled_time" type="time" value="{{ $supportsSchedule && $activity->scheduled_has_time ? $localSchedule?->format('H:i') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-default-check-time @disabled(! $supportsSchedule || ! $localSchedule)></div>
                         <p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p>
@@ -72,24 +71,27 @@
                     <div class="sm:col-span-2"><label for="default-check-remarks-{{ $activity->id }}" class="ui-label">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="default-check-remarks-{{ $activity->id }}" name="remarks" rows="4" class="ui-control" data-default-check-remarks>{{ $activity->remarks }}</textarea></div>
                 </div>
 
-                <dl class="mt-5 grid gap-3 rounded-control bg-surface-subtle p-4 text-sm sm:grid-cols-2">
-                    <div><dt class="text-xs font-bold uppercase tracking-wide text-text-muted">Creator</dt><dd class="mt-1 break-words font-semibold text-text-main">{{ $activity->creator?->full_name ?? 'System-created' }}</dd></div>
-                    <div><dt class="text-xs font-bold uppercase tracking-wide text-text-muted">Updated By</dt><dd class="mt-1 break-words font-semibold text-text-main">{{ $activity->updater?->full_name ?? 'Not updated yet' }}</dd></div>
-                    <div><dt class="text-xs font-bold uppercase tracking-wide text-text-muted">Last Updated</dt><dd class="mt-1 text-text-main">{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y · g:i A') }}</dd></div>
-                    <div><dt class="text-xs font-bold uppercase tracking-wide text-text-muted">Completed</dt><dd class="mt-1 text-text-main">{{ $activity->completed_at?->timezone(config('cims.display_timezone'))->format('M j, Y · g:i A') ?? 'Not completed' }}</dd></div>
-                </dl>
-
-                <div class="mt-5 flex flex-col-reverse gap-2.5 border-t border-ui-border pt-4 sm:flex-row sm:justify-end">
-                    <button type="button" class="ui-button-secondary w-full sm:w-auto" data-default-check-close>Close</button>
-                    <button type="submit" class="ui-button-primary w-full sm:w-auto" data-default-check-submit>Save Changes</button>
+                <div class="mt-5 flex flex-col-reverse items-stretch gap-2.5 border-t border-ui-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+                    <p class="text-sm font-semibold text-success" data-default-check-success role="status" aria-live="polite" hidden>✓ Changes saved successfully.</p>
+                    <p class="flex items-start gap-1.5 rounded-control border border-progress/30 bg-progress-soft px-3 py-2 text-sm font-semibold text-progress" data-default-check-no-changes role="status" aria-live="polite" hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected. Nothing needs to be updated.</p>
+                    <div class="flex flex-col-reverse gap-2.5 sm:ml-auto sm:flex-row">
+                        <button type="button" class="ui-button-secondary w-full sm:w-auto" data-default-check-cancel>Cancel</button>
+                        <button type="submit" class="ui-button-primary w-full sm:w-auto" data-default-check-submit>Save Changes</button>
+                    </div>
                 </div>
             </form>
         </section>
 
         <dialog class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-default-check-completion aria-labelledby="default-check-completion-title-{{ $activity->id }}">
             <div class="border-b border-ui-border px-5 py-4"><h2 id="default-check-completion-title-{{ $activity->id }}" class="text-lg font-bold text-brand-sidebar">Mark {{ $activity->name }} as completed?</h2></div>
-            <div class="px-5 py-5 text-sm leading-6 text-text-muted">The schedule and time will be cleared. Completion will be recorded in Activity History under the actual user confirming this action.</div>
+            <div class="px-5 py-5 text-sm leading-6 text-text-muted">The schedule and time will be cleared. Completion will be recorded in Recent Activity under the actual user confirming this action.</div>
             <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-default-check-completion-cancel>Cancel</button><button type="button" class="ui-button-primary" data-default-check-completion-confirm>Mark Completed</button></div>
+        </dialog>
+
+        <dialog class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-default-check-discard-confirm aria-labelledby="default-check-discard-title-{{ $activity->id }}">
+            <div class="border-b border-ui-border px-5 py-4"><h2 id="default-check-discard-title-{{ $activity->id }}" class="text-lg font-bold text-brand-sidebar">Discard unsaved changes?</h2></div>
+            <div class="px-5 py-5 text-sm leading-6 text-text-muted">Your changes have not been saved.</div>
+            <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-default-check-discard-keep>Keep Editing</button><button type="button" class="ui-button-danger" data-default-check-discard-confirm-button>Discard Changes</button></div>
         </dialog>
     </div>
 
@@ -101,14 +103,51 @@
             const status = form.querySelector('[data-default-check-status-control]');
             const date = form.querySelector('[data-default-check-date]');
             const time = form.querySelector('[data-default-check-time]');
+            const remarks = form.querySelector('[data-default-check-remarks]');
             const completion = source.querySelector('[data-default-check-completion]');
+            const discard = source.querySelector('[data-default-check-discard-confirm]');
             if (!(status instanceof HTMLSelectElement) || !(date instanceof HTMLInputElement) || !(time instanceof HTMLInputElement)) return;
             const sync = () => { const enabled = ['scheduled', 'follow_up'].includes(status.value); if (! enabled) { date.value = ''; time.value = ''; } date.disabled = ! enabled; if (! enabled || date.value === '') time.value = ''; time.disabled = ! enabled || date.value === ''; };
             status.addEventListener('change', sync); date.addEventListener('input', sync); sync();
-            form.addEventListener('submit', (event) => { if (status.value === 'completed' && form.dataset.currentStatus !== 'completed' && form.dataset.completionConfirmed !== 'true' && completion instanceof HTMLDialogElement) { event.preventDefault(); completion.showModal(); } });
+
+            const readValues = () => ({
+                status: status.value,
+                scheduledAt: date.disabled ? '' : (date.value ?? ''),
+                scheduledTime: time.disabled ? '' : (time.value ?? ''),
+                remarks: (remarks instanceof HTMLTextAreaElement ? remarks.value : '').trim(),
+            });
+            const baseline = readValues();
+            const isDirty = () => { const current = readValues(); return Object.keys(baseline).some((key) => baseline[key] !== current[key]); };
+
+            const hideNoChangesMessage = () => {
+                const noChanges = form.querySelector('[data-default-check-no-changes]');
+                if (noChanges instanceof HTMLElement) noChanges.hidden = true;
+            };
+            form.addEventListener('input', hideNoChangesMessage);
+            form.addEventListener('change', hideNoChangesMessage);
+
+            form.addEventListener('submit', (event) => {
+                if (! isDirty()) {
+                    event.preventDefault();
+                    const noChanges = form.querySelector('[data-default-check-no-changes]');
+                    if (noChanges instanceof HTMLElement) noChanges.hidden = false;
+                    return;
+                }
+                if (status.value === 'completed' && form.dataset.currentStatus !== 'completed' && form.dataset.completionConfirmed !== 'true' && completion instanceof HTMLDialogElement) {
+                    event.preventDefault();
+                    completion.showModal();
+                }
+            });
             source.querySelector('[data-default-check-completion-cancel]')?.addEventListener('click', () => completion?.close());
             source.querySelector('[data-default-check-completion-confirm]')?.addEventListener('click', () => { if (completion instanceof HTMLDialogElement) completion.close(); form.dataset.completionConfirmed = 'true'; form.requestSubmit(); });
-            source.querySelector('[data-default-check-close]')?.addEventListener('click', () => window.location.assign(@js(route('client-folders.activities.index', [$clientFolder] + $personParams))));
+
+            const goToIndex = () => window.location.assign(@js(route('client-folders.activities.index', [$clientFolder] + $personParams)));
+            source.querySelector('[data-default-check-cancel]')?.addEventListener('click', () => {
+                if (isDirty() && discard instanceof HTMLDialogElement) { discard.showModal(); return; }
+                goToIndex();
+            });
+            source.querySelector('[data-default-check-discard-keep]')?.addEventListener('click', () => discard?.close());
+            source.querySelector('[data-default-check-discard-confirm-button]')?.addEventListener('click', () => { discard?.close(); goToIndex(); });
         });
     </script>
 @endsection

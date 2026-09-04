@@ -8,6 +8,7 @@ use App\Models\CiActivity;
 use App\Models\CiActivityAssetTarget;
 use App\Models\ClientFolder;
 use App\Models\User;
+use App\Notifications\CiActivityScheduledReminder;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Facades\DB;
@@ -25,6 +26,11 @@ class SaveCiActivityAssetTarget
             $activity = $this->lockExactParent($folder, $activity);
             $target = $activity->assetTargets()->create($this->attributes($actor, $data) + ['created_by' => $actor->id]);
             $this->audit($actor, $folder, $activity, $target, 'ci_activity.asset_target_created', 'added');
+
+            if ($target->status === ActivityStatus::Scheduled) {
+                $this->notifySchedule($activity, $target, CiActivityScheduledReminder::PURPOSE_SCHEDULE_CREATED);
+            }
+
             $this->synchronizeParentWorkflow($actor, $folder, $activity);
 
             return $target;
@@ -36,8 +42,29 @@ class SaveCiActivityAssetTarget
         return DB::transaction(function () use ($actor, $folder, $activity, $target, $data): CiActivityAssetTarget {
             $activity = $this->lockExactParent($folder, $activity);
             $lockedTarget = $activity->assetTargets()->lockForUpdate()->findOrFail($target->id);
-            $lockedTarget->update($this->attributes($actor, $data));
+            $previousStatus = $lockedTarget->status;
+            $previousScheduledAt = $lockedTarget->scheduled_at?->copy();
+            $previousScheduledHasTime = $lockedTarget->scheduled_has_time;
+
+            $attributes = $this->attributes($actor, $data);
+            $scheduleChanged = ($previousScheduledAt === null) !== ($attributes['scheduled_at'] === null)
+                || ($previousScheduledAt !== null && $attributes['scheduled_at'] !== null && ! $previousScheduledAt->equalTo($attributes['scheduled_at']))
+                || $previousScheduledHasTime !== $attributes['scheduled_has_time'];
+            $attributes['reminder_sent_at'] = $scheduleChanged || $attributes['status'] !== ActivityStatus::Scheduled
+                ? null
+                : $lockedTarget->reminder_sent_at;
+
+            $lockedTarget->update($attributes);
             $this->audit($actor, $folder, $activity, $lockedTarget, 'ci_activity.asset_target_updated', 'updated');
+
+            $scheduledNow = $lockedTarget->status === ActivityStatus::Scheduled && $previousStatus !== ActivityStatus::Scheduled;
+            $rescheduledNow = $lockedTarget->status === ActivityStatus::Scheduled && $previousStatus === ActivityStatus::Scheduled && $scheduleChanged;
+            if ($scheduledNow) {
+                $this->notifySchedule($activity, $lockedTarget, CiActivityScheduledReminder::PURPOSE_SCHEDULE_CREATED);
+            } elseif ($rescheduledNow) {
+                $this->notifySchedule($activity, $lockedTarget, CiActivityScheduledReminder::PURPOSE_SCHEDULE_CHANGED);
+            }
+
             $this->synchronizeParentWorkflow($actor, $folder, $activity);
 
             return $lockedTarget->refresh();
@@ -69,6 +96,7 @@ class SaveCiActivityAssetTarget
                 'status' => ActivityStatus::Completed,
                 'scheduled_at' => null,
                 'scheduled_has_time' => false,
+                'reminder_sent_at' => null,
                 'updated_by' => $actor->id,
             ]);
             $this->audit($actor, $folder, $activity, $lockedTarget, 'ci_activity.asset_target_completed', 'completed');
@@ -119,6 +147,19 @@ class SaveCiActivityAssetTarget
         $this->synchronizeParentStatus($activity, $actor);
         $this->completion->evaluate($folder);
         $this->progress->recalculate($folder);
+    }
+
+    private function notifySchedule(CiActivity $activity, CiActivityAssetTarget $target, string $purpose): void
+    {
+        $activity->creator?->notify(new CiActivityScheduledReminder(
+            $activity,
+            $purpose,
+            CiActivityScheduledReminder::TARGET_TYPE_ASSET,
+            $target->id,
+            $target->targetLabel(),
+            $target->scheduled_at,
+            $target->scheduled_has_time,
+        ));
     }
 
     private function lockExactParent(ClientFolder $folder, CiActivity $activity): CiActivity

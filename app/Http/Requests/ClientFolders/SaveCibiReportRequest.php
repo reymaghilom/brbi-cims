@@ -179,8 +179,11 @@ class SaveCibiReportRequest extends FormRequest
         // party_type reflects who this report belongs to, not a user choice — always derived
         // from the active-person context so URL/form tampering can never reclassify ownership.
         $normalized['party_type'] = $activePerson ? PartyType::CoMaker->value : PartyType::Borrower->value;
+        // 'name' is manually editable in the CI/BI encoding form (Name of Client / Co-Maker) — it
+        // must NOT be force-derived from the current Applicant/Co-Maker master record here, or a
+        // CI's manual edit would be silently discarded on every save. It still just falls through
+        // the same normalize() pass as every other submitted string field below.
         $personal = (array) $this->input('personal_snapshot', []);
-        $personal['name'] = $activePerson?->full_name ?? $folder->display_name;
         foreach ($personal as $key => $value) {
             $personal[$key] = $key === 'living_with_parents' ? filter_var($value, FILTER_VALIDATE_BOOL) : (is_string($value) ? $this->normalize($value) : $value);
         }

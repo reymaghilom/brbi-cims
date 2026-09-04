@@ -153,6 +153,22 @@ class ClientFolder extends Model
         return $this->hasMany(MediaReference::class);
     }
 
+    public function residenceBusinessDocumentations(): HasMany
+    {
+        return $this->hasMany(ResidenceBusinessDocumentation::class);
+    }
+
+    public function documentationTelegramDeliveries(): HasMany
+    {
+        return $this->hasMany(DocumentationTelegramDelivery::class);
+    }
+
+    /** Alias matching Laravel's pluralized lookup for the {documentation} route parameter — required for Route::scopeBindings() to auto-scope that nested parameter to this folder. */
+    public function documentations(): HasMany
+    {
+        return $this->residenceBusinessDocumentations();
+    }
+
     public function generatedReports(): HasMany
     {
         return $this->hasMany(GeneratedReport::class);

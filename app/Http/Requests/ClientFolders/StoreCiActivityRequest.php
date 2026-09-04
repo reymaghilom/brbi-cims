@@ -9,19 +9,11 @@ use App\Models\CiActivityBankTarget;
 use App\Services\ClientFolders\ActivePersonResolver;
 use Closure;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
 class StoreCiActivityRequest extends FormRequest
 {
-    private const MIME_EXTENSIONS = [
-        'image/jpeg' => ['jpg', 'jpeg'],
-        'image/png' => ['png'],
-        'image/webp' => ['webp'],
-        'video/mp4' => ['mp4'],
-    ];
-
     public function authorize(): bool
     {
         return $this->user()->can('update', $this->route('clientFolder'));
@@ -33,9 +25,6 @@ class StoreCiActivityRequest extends FormRequest
         $assetCheck = $this->isAssetCheck();
         $multiTargetCheck = $bankCoopCheck || $assetCheck;
         $excludeParentFields = $this->boolean('create_new_activity_type') || $multiTargetCheck;
-        $effectiveStatus = $bankCoopCheck
-            ? $this->derivedBankCoopStatus()->value
-            : ($assetCheck ? $this->derivedAssetStatus()->value : $this->input('status'));
 
         return [
             'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
@@ -44,6 +33,16 @@ class StoreCiActivityRequest extends FormRequest
                 Rule::requiredIf(! $this->boolean('create_new_activity_type')),
                 'integer',
                 Rule::exists('activity_definitions', 'id')->where('is_active', true),
+                function (string $attribute, mixed $value, Closure $fail): void {
+                    if ($this->boolean('create_new_activity_type') || ! ctype_digit((string) $value)) {
+                        return;
+                    }
+
+                    $code = ActivityDefinition::query()->whereKey((int) $value)->value('code');
+                    if (ActivityDefinition::isMandatoryDefaultCode($code)) {
+                        $fail('Barangay Check and Neighbor Check are added automatically and cannot be added manually.');
+                    }
+                },
             ],
             'create_new_activity_type' => ['required', 'boolean'],
             'new_activity_type' => [
@@ -58,6 +57,12 @@ class StoreCiActivityRequest extends FormRequest
 
                     if (ActivityDefinition::isDedicatedModuleName($value)) {
                         $fail('Residence Check and Business Check use their dedicated Client Folder modules.');
+
+                        return;
+                    }
+
+                    if (ActivityDefinition::isMandatoryDefaultName($value)) {
+                        $fail('Barangay Check and Neighbor Check are added automatically and cannot be added manually.');
 
                         return;
                     }
@@ -106,22 +111,12 @@ class StoreCiActivityRequest extends FormRequest
             'asset_targets.*.scheduled_at' => ['nullable', 'date'],
             'asset_targets.*.scheduled_time' => ['nullable', 'date_format:H:i'],
             'asset_targets.*.remarks' => ['nullable', 'string', 'max:20000'],
-            'attachment' => [
-                Rule::prohibitedIf($this->boolean('create_new_activity_type') || $effectiveStatus !== ActivityStatus::Completed->value),
-                'nullable',
-                'file',
-                'mimes:jpg,jpeg,png,webp,mp4',
-                'max:'.config('cims.media.video_max_kilobytes'),
-            ],
         ];
     }
 
     public function messages(): array
     {
         return [
-            'attachment.prohibited' => 'Proof may only be uploaded when the activity status is Completed.',
-            'attachment.mimes' => 'Only JPG, JPEG, PNG, WEBP, and MP4 files are supported.',
-            'attachment.max' => 'The selected proof exceeds the 50 MB video limit.',
             'bank_targets.required' => 'Add at least one Bank / Coop target.',
             'bank_targets.*.institution_name.required' => 'Enter the Bank / Coop name.',
             'bank_targets.*.inquiry_type.required' => 'Select an inquiry type.',
@@ -135,19 +130,6 @@ class StoreCiActivityRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator): void {
-            $file = $this->file('attachment');
-            if ($file instanceof UploadedFile && $file->isValid()) {
-                $mime = $this->verifiedMimeType($file);
-                $extension = strtolower($file->getClientOriginalExtension());
-                if (! isset(self::MIME_EXTENSIONS[$mime]) || ! in_array($extension, self::MIME_EXTENSIONS[$mime], true)) {
-                    $validator->errors()->add('attachment', 'The file extension does not match its verified media type.');
-                }
-
-                if (str_starts_with($mime, 'image/') && $file->getSize() > config('cims.media.image_max_kilobytes') * 1024) {
-                    $validator->errors()->add('attachment', 'Photos must not exceed 10 MB.');
-                }
-            }
-
             foreach (['bank_targets', 'asset_targets'] as $collection) {
                 if (! is_array($this->input($collection))) {
                     continue;
@@ -246,19 +228,6 @@ class StoreCiActivityRequest extends FormRequest
             ->exists();
     }
 
-    private function derivedBankCoopStatus(): ActivityStatus
-    {
-        $targets = $this->input('bank_targets');
-        if (! is_array($targets)) {
-            return ActivityStatus::Pending;
-        }
-
-        return CiActivityBankTarget::deriveParentStatus(array_map(
-            fn (mixed $target): mixed => is_array($target) ? ($target['status'] ?? null) : null,
-            $targets,
-        ));
-    }
-
     private function isAssetCheck(): bool
     {
         if ($this->boolean('create_new_activity_type') || ! ctype_digit((string) $this->input('activity_definition_id'))) {
@@ -270,19 +239,6 @@ class StoreCiActivityRequest extends FormRequest
             ->where('is_active', true)
             ->where('code', ActivityDefinition::ASSET_CHECK_CODE)
             ->exists();
-    }
-
-    private function derivedAssetStatus(): ActivityStatus
-    {
-        $targets = $this->input('asset_targets');
-        if (! is_array($targets)) {
-            return ActivityStatus::Pending;
-        }
-
-        return CiActivityAssetTarget::deriveParentStatus(array_map(
-            fn (mixed $target): mixed => is_array($target) ? ($target['status'] ?? null) : null,
-            $targets,
-        ));
     }
 
     private function normalizeNested(mixed $value): ?string
@@ -306,13 +262,5 @@ class StoreCiActivityRequest extends FormRequest
         $value = trim((string) $value);
 
         return $value === '' ? null : $value;
-    }
-
-    private function verifiedMimeType(UploadedFile $file): string
-    {
-        $detector = new \finfo(FILEINFO_MIME_TYPE);
-        $mime = $detector->file($file->getRealPath());
-
-        return strtolower(is_string($mime) ? $mime : 'application/octet-stream');
     }
 }

@@ -45,6 +45,7 @@
         @case('building') <rect x="5" y="3.5" width="14" height="17" rx="1"/><path d="M8.5 7h1.5M14 7h1.5M8.5 11h1.5M14 11h1.5M8.5 15h1.5M14 15h1.5"/><path d="M10 20.5V17h4v3.5"/> @break
         @case('pin') <path d="M12 21s7-7.58 7-12A7 7 0 0 0 5 9c0 4.42 7 12 7 12Z"/><circle cx="12" cy="9" r="2.5"/> @break
         @case('upload') <path d="M12 20V9m0 0-3.5 3.5M12 9l3.5 3.5"/><path d="M4.5 16v2.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V16"/> @break
+        @case('cloud') <path d="M7 18a4 4 0 0 1 0-8 5.5 5.5 0 0 1 10.6-1.9A4 4 0 0 1 18 18H7Z"/> @break
         @case('locate') <circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/> @break
         @default <circle cx="12" cy="12" r="8"/> @break
     @endswitch

@@ -117,17 +117,19 @@
                                         <td class="px-4 py-3.5 align-middle"><span class="line-clamp-2 text-sm text-text-main" title="{{ $check->location }}">{{ $check->location ?: '—' }}</span></td>
                                         <td class="px-4 py-3.5 align-middle text-sm text-text-muted">{{ $check->investigator?->full_name ?? '—' }}</td>
                                         <td class="px-2 py-3.5 align-middle text-center">
-                                            <x-ui.context-menu label="Residence Check actions">
-                                                <x-slot:trigger>
-                                                    <span class="ui-action-icon-button ui-action-icon-button-neutral group-open:border-brand-primary group-open:bg-brand-soft group-open:text-brand-primary" title="Actions"><x-ui.icon name="more-vertical" size="size-4" /></span>
-                                                </x-slot:trigger>
-                                                <a href="{{ route('client-folders.residence-checks.edit', [$clientFolder, $check] + $personParams) }}" role="menuitem" data-modal-open="check-report-dialog" data-check-report-url="{{ route('client-folders.residence-checks.edit', [$clientFolder, $check] + $personParams) }}" data-check-report-title="Residence Check" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="edit" size="size-4" class="text-text-muted" />Edit</a>
-                                                <button type="button" role="menuitem" data-check-row-print data-check-kind="residence" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="printer" size="size-4" class="text-text-muted" />Print</button>
-                                                <button type="button" role="menuitem" data-check-row-pdf-submit data-check-kind="residence" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" class="text-danger" />Download PDF</button>
-                                                <button type="button" role="menuitem" data-check-row-docx-submit data-check-kind="residence" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" class="text-brand-primary" />Download Word</button>
-                                                <div class="my-1 border-t border-ui-border"></div>
-                                                <button type="button" role="menuitem" data-modal-open="delete-residence-check-{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold text-danger hover:bg-danger-soft"><x-ui.icon name="trash" size="size-4" />Delete</button>
-                                            </x-ui.context-menu>
+                                            <div class="flex items-center justify-center gap-1">
+                                                <a href="{{ route('client-folders.residence-checks.edit', [$clientFolder, $check] + $personParams) }}" data-modal-open="check-report-dialog" data-check-report-url="{{ route('client-folders.residence-checks.edit', [$clientFolder, $check] + $personParams) }}" data-check-report-title="Residence Check" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Edit Residence Check" title="Edit"><x-ui.icon name="edit" size="size-4" /></a>
+                                                <x-ui.context-menu label="Residence Check actions">
+                                                    <x-slot:trigger>
+                                                        <span class="ui-dots-trigger" title="Actions"><x-ui.icon name="more-vertical" size="size-4" /></span>
+                                                    </x-slot:trigger>
+                                                    <button type="button" role="menuitem" data-check-row-print data-check-kind="residence" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="printer" size="size-4" class="text-text-muted" />Preview Report</button>
+                                                    <button type="button" role="menuitem" data-check-row-pdf-submit data-check-kind="residence" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" class="text-danger" />Download PDF</button>
+                                                    <button type="button" role="menuitem" data-check-row-docx-submit data-check-kind="residence" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" class="text-brand-primary" />Download Word</button>
+                                                    <div class="my-1 border-t border-ui-border"></div>
+                                                    <button type="button" role="menuitem" data-modal-open="delete-residence-check-{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold text-danger hover:bg-danger-soft"><x-ui.icon name="trash" size="size-4" />Delete</button>
+                                                </x-ui.context-menu>
+                                            </div>
                                         </td>
                                     </tr>
                                 @endforeach
@@ -195,21 +197,23 @@
                                     >
                                         <td class="px-4 py-3.5 align-middle"><input type="checkbox" class="size-4 rounded border-ui-border-strong text-brand-primary focus:ring-brand-primary" data-business-check-select value="{{ $check->id }}" aria-label="Select this Business Check"></td>
                                         <td class="px-4 py-3.5 align-middle text-sm text-text-muted">{{ $check->ci_date?->format('M j, Y') ?? '—' }}</td>
-                                        <td class="px-4 py-3.5 align-middle"><span class="inline-flex items-center rounded-full bg-success-soft px-2.5 py-1 text-xs font-semibold text-success">{{ $check->incomeSource?->displayName() ?? '—' }}</span></td>
+                                        <td class="px-4 py-3.5 align-middle"><span class="inline-flex items-center rounded-full bg-success-soft px-2.5 py-1 text-xs font-semibold text-success">{{ $check->business_name ?: ($check->incomeSource?->displayName() ?? '—') }}</span></td>
                                         <td class="px-4 py-3.5 align-middle"><span class="line-clamp-2 text-sm text-text-main" title="{{ $check->location }}">{{ $check->location ?: '—' }}</span></td>
                                         <td class="px-4 py-3.5 align-middle text-sm text-text-muted">{{ $check->investigator?->full_name ?? '—' }}</td>
                                         <td class="px-2 py-3.5 align-middle text-center">
-                                            <x-ui.context-menu label="Business Check actions">
-                                                <x-slot:trigger>
-                                                    <span class="ui-action-icon-button ui-action-icon-button-neutral group-open:border-brand-primary group-open:bg-brand-soft group-open:text-brand-primary" title="Actions"><x-ui.icon name="more-vertical" size="size-4" /></span>
-                                                </x-slot:trigger>
-                                                <a href="{{ route('client-folders.business-checks.edit', [$clientFolder, $check] + $personParams) }}" role="menuitem" data-modal-open="check-report-dialog" data-check-report-url="{{ route('client-folders.business-checks.edit', [$clientFolder, $check] + $personParams) }}" data-check-report-title="Business Checks" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="edit" size="size-4" class="text-text-muted" />Edit</a>
-                                                <button type="button" role="menuitem" data-check-row-print data-check-kind="business" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="printer" size="size-4" class="text-text-muted" />Print</button>
-                                                <button type="button" role="menuitem" data-check-row-pdf-submit data-check-kind="business" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" class="text-danger" />Download PDF</button>
-                                                <button type="button" role="menuitem" data-check-row-docx-submit data-check-kind="business" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" class="text-brand-primary" />Download Word</button>
-                                                <div class="my-1 border-t border-ui-border"></div>
-                                                <button type="button" role="menuitem" data-modal-open="delete-business-check-{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold text-danger hover:bg-danger-soft"><x-ui.icon name="trash" size="size-4" />Delete</button>
-                                            </x-ui.context-menu>
+                                            <div class="flex items-center justify-center gap-1">
+                                                <a href="{{ route('client-folders.business-checks.edit', [$clientFolder, $check] + $personParams) }}" data-modal-open="check-report-dialog" data-check-report-url="{{ route('client-folders.business-checks.edit', [$clientFolder, $check] + $personParams) }}" data-check-report-title="Business Checks" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Edit Business Check" title="Edit"><x-ui.icon name="edit" size="size-4" /></a>
+                                                <x-ui.context-menu label="Business Check actions">
+                                                    <x-slot:trigger>
+                                                        <span class="ui-dots-trigger" title="Actions"><x-ui.icon name="more-vertical" size="size-4" /></span>
+                                                    </x-slot:trigger>
+                                                    <button type="button" role="menuitem" data-check-row-print data-check-kind="business" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="printer" size="size-4" class="text-text-muted" />Print</button>
+                                                    <button type="button" role="menuitem" data-check-row-pdf-submit data-check-kind="business" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" class="text-danger" />Download PDF</button>
+                                                    <button type="button" role="menuitem" data-check-row-docx-submit data-check-kind="business" data-check-id="{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" class="text-brand-primary" />Download Word</button>
+                                                    <div class="my-1 border-t border-ui-border"></div>
+                                                    <button type="button" role="menuitem" data-modal-open="delete-business-check-{{ $check->id }}" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold text-danger hover:bg-danger-soft"><x-ui.icon name="trash" size="size-4" />Delete</button>
+                                                </x-ui.context-menu>
+                                            </div>
                                         </td>
                                     </tr>
                                 @endforeach
@@ -256,8 +260,8 @@
              person/co_maker_id in the request at all, ActivePersonResolver::resolveFromQuery()
              would resolve null, and assertOwnedBy() would 404 a check that genuinely belongs to
              this exact Co-Maker (see ActivePersonResolver::assertOwnedBy()). --}}
-        <x-ui.confirmation-dialog id="delete-business-check-{{ $check->id }}" title="Move business to Recycle Bin?" :action="route('client-folders.business-checks.destroy', [$clientFolder, $check] + $personParams)" method="DELETE" confirm-label="Move to Recycle Bin" destructive>
-            <p class="text-sm text-text-muted">Deleting this Business Check will also move its linked Business Report to the Recycle Bin. You can restore both records later.</p>
+        <x-ui.confirmation-dialog id="delete-business-check-{{ $check->id }}" title="Permanently Delete Business Check?" :action="route('client-folders.business-checks.destroy', [$clientFolder, $check] + $personParams)" method="DELETE" confirm-label="Delete Permanently" destructive>
+            <p class="text-sm text-text-muted">This will permanently delete this Business Check and cannot be undone. The related Business Report, if any, will remain unchanged.</p>
         </x-ui.confirmation-dialog>
     @endforeach
 

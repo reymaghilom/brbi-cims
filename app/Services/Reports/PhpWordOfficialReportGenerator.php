@@ -7,7 +7,7 @@ use App\Services\Reports\Concerns\BuildsOfficialReportDocx;
 use App\Services\Reports\Contracts\DocxGenerator;
 use App\Services\Reports\Data\GeneratedReportArtifact;
 use App\Services\Reports\Data\ReportRenderOptions;
-use Illuminate\Support\Facades\Storage;
+use App\Services\Storage\CiTeamDocumentStorage;
 use PhpOffice\PhpWord\IOFactory;
 use PhpOffice\PhpWord\PhpWord;
 use PhpOffice\PhpWord\Shared\Converter;
@@ -16,7 +16,10 @@ class PhpWordOfficialReportGenerator implements DocxGenerator
 {
     use BuildsOfficialReportDocx;
 
-    public function __construct(private readonly ReportMediaResolver $mediaResolver) {}
+    public function __construct(
+        private readonly ReportMediaResolver $mediaResolver,
+        private readonly CiTeamDocumentStorage $documents,
+    ) {}
 
     public function generate(string $template, array $data, ReportRenderOptions $options): GeneratedReportArtifact
     {
@@ -57,7 +60,7 @@ class PhpWordOfficialReportGenerator implements DocxGenerator
         try {
             IOFactory::createWriter($phpWord, 'Word2007')->save($temporary);
             $bytes = file_get_contents($temporary);
-            if ($bytes === false || ! Storage::disk(config('cims.report_disk'))->put($data['_artifact_path'], $bytes)) {
+            if ($bytes === false || ! $this->documents->disk()->put($data['_artifact_path'], $bytes)) {
                 throw new \RuntimeException('The DOCX artifact could not be stored.');
             }
         } finally {

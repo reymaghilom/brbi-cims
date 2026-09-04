@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\ActivityStatus;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -27,6 +28,7 @@ class CiActivityAssetTarget extends Model
             'status' => ActivityStatus::class,
             'scheduled_at' => 'datetime',
             'scheduled_has_time' => 'boolean',
+            'reminder_sent_at' => 'datetime',
         ];
     }
 
@@ -48,6 +50,25 @@ class CiActivityAssetTarget extends Model
     public function assessorLabel(): string
     {
         return self::ASSESSOR_TYPES[$this->assessor_type] ?? $this->assessor_type;
+    }
+
+    public function targetLabel(): string
+    {
+        return $this->assessorLabel().' — '.$this->office_location;
+    }
+
+    public function scopeScheduledTodayForCreator(Builder $query, User|int $creator, ?string $timezone = null): Builder
+    {
+        $timezone ??= config('cims.display_timezone');
+        $today = now($timezone);
+
+        return $query
+            ->whereHas('activity', fn (Builder $activities) => $activities->where('creator_id', $creator instanceof User ? $creator->id : $creator))
+            ->where('status', ActivityStatus::Scheduled)
+            ->whereBetween('scheduled_at', [
+                $today->copy()->startOfDay()->utc(),
+                $today->copy()->endOfDay()->utc(),
+            ]);
     }
 
     /** @return array{0: Carbon|null, 1: bool} */

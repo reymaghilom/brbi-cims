@@ -40,4 +40,9 @@ return [
         'map_id' => env('GOOGLE_MAPS_MAP_ID', 'DEMO_MAP_ID'),
     ],
 
+    'telegram' => [
+        'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+        'chat_id' => env('TELEGRAM_CHAT_ID'),
+    ],
+
 ];

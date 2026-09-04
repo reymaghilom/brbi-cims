@@ -6,7 +6,6 @@ use App\Enums\MediaCategory;
 use App\Enums\MediaType;
 use App\Models\ClientFolder;
 use App\Models\User;
-use Illuminate\Database\Eloquent\Factories\Factory;
 
 class MediaReferenceFactory extends Factory
 {

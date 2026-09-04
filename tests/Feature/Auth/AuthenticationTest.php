@@ -158,4 +158,67 @@ class AuthenticationTest extends TestCase
         $this->assertNotSame(self::PASSWORD, $user->getRawOriginal('password'));
         $this->assertTrue(Hash::check(self::PASSWORD, $user->getRawOriginal('password')));
     }
+
+    // ==================================================
+    // Permanent invariant: LOGIN MUST NEVER CREATE USERS.
+    // ==================================================
+    // Login authenticates existing users only (Auth::attempt() against Laravel's stock Eloquent
+    // user provider — a read-only lookup + Hash::check(), with zero creation logic anywhere in
+    // the chain). These three cases lock that guarantee in as a permanent regression test rather
+    // than an implicit assumption, per the authentication audit's "Audit decision: A — SAFE"
+    // conclusion. No new runtime guard is added — a User-creating login would be an actual
+    // regression in AuthenticatedSessionController/LoginRequest, which these tests would then
+    // catch directly.
+
+    public function test_login_with_a_completely_nonexistent_username_creates_zero_users(): void
+    {
+        $userCount = User::count();
+
+        $this->post('/login', [
+            'username' => 'this-username-does-not-exist',
+            'password' => 'whatever-arbitrary-password',
+        ])->assertSessionHasErrors([
+            'authentication' => 'Invalid username or password. Please check your credentials and try again.',
+        ]);
+
+        $this->assertGuest();
+        $this->assertSame($userCount, User::count(), 'An unknown username must never cause a new User row to be created.');
+    }
+
+    public function test_login_with_wrong_password_creates_zero_users_and_leaves_the_existing_user_intact(): void
+    {
+        $user = User::factory()->create(['username' => 'invariant.wrongpass', 'password' => self::PASSWORD]);
+        $userCount = User::count();
+
+        $this->post('/login', [
+            'username' => $user->username,
+            'password' => 'definitely the wrong password',
+        ])->assertSessionHasErrors([
+            'authentication' => 'Invalid username or password. Please check your credentials and try again.',
+        ]);
+
+        $this->assertGuest();
+        $this->assertSame($userCount, User::count(), 'A wrong password must never create a replacement/default/fake User.');
+        $this->assertDatabaseHas('users', ['id' => $user->id, 'username' => $user->username]);
+    }
+
+    public function test_login_with_an_inactive_user_creates_zero_users(): void
+    {
+        $user = User::factory()->create([
+            'username' => 'invariant.disabled',
+            'password' => self::PASSWORD,
+            'status' => UserStatus::Disabled,
+        ]);
+        $userCount = User::count();
+
+        $this->post('/login', [
+            'username' => $user->username,
+            'password' => self::PASSWORD,
+        ])->assertSessionHasErrors([
+            'authentication' => 'Invalid username or password. Please check your credentials and try again.',
+        ]);
+
+        $this->assertGuest();
+        $this->assertSame($userCount, User::count(), 'An inactive/disabled account being denied login must never create a new User.');
+    }
 }

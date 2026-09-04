@@ -17,6 +17,8 @@ class MediaReference extends Model
 
     public const STORAGE_PROVIDER_LOCAL = 'local';
 
+    public const STORAGE_PROVIDER_CI_TEAM = 'ci_team_local';
+
     public const STORAGE_PROVIDER_CLOUDINARY = 'cloudinary';
 
     protected $guarded = [];
@@ -36,6 +38,11 @@ class MediaReference extends Model
     public function incomeSource(): BelongsTo
     {
         return $this->belongsTo(IncomeSource::class);
+    }
+
+    public function documentation(): BelongsTo
+    {
+        return $this->belongsTo(ResidenceBusinessDocumentation::class, 'residence_business_documentation_id');
     }
 
     public function uploader(): BelongsTo

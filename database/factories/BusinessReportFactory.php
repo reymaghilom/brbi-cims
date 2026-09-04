@@ -3,7 +3,6 @@
 namespace Database\Factories;
 
 use App\Models\IncomeSource;
-use Illuminate\Database\Eloquent\Factories\Factory;
 
 class BusinessReportFactory extends Factory
 {

@@ -3,6 +3,7 @@
 namespace Tests\Feature\ClientFolders;
 
 use App\Actions\ClientFolders\CreateIncomeSource;
+use App\Actions\ClientFolders\SaveBusinessIncomeSource;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\IncomeSource;
@@ -47,8 +48,8 @@ class SavedBusinessReportMissingStateTest extends TestCase
             $this->businessPayload($source, null, 'Applicant Updated Business'),
         )->assertRedirect()->assertSessionHasNoErrors();
 
-        $this->assertDatabaseHas('business_reports', ['id' => $reportId, 'income_source_id' => $source->id, 'business_name' => 'Applicant Updated Business', 'deleted_at' => null]);
-        $this->assertSame(1, $source->businessReport()->withTrashed()->count());
+        $this->assertDatabaseHas('business_reports', ['id' => $reportId, 'income_source_id' => $source->id, 'business_name' => 'Applicant Updated Business']);
+        $this->assertSame(1, $source->businessReport()->count());
     }
 
     public function test_applicant_saved_business_without_report_recreates_it_on_the_same_income_source(): void
@@ -58,11 +59,13 @@ class SavedBusinessReportMissingStateTest extends TestCase
         $source = $this->business($ci, $folder, null, 'Applicant Missing Business');
         $source->businessReport()->firstOrFail()->forceDelete();
 
+        // A Report-less business is not a saved Business Report — it must not appear on the Saved
+        // Businesses page at all (no ghost/leftover row, no "Recreate" action there either).
         $editUrl = route('client-folders.income-sources.edit', [$folder, $source]);
         $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))
             ->assertOk()
-            ->assertSee('Recreate Business Report for Applicant Missing Business')
-            ->assertSee($editUrl, false)
+            ->assertDontSee('data-business-name="Applicant Missing Business"', false)
+            ->assertDontSee('Recreate Business Report', false)
             ->assertDontSee('Update Business Report for Applicant Missing Business');
 
         $this->actingAs($ci)->get($editUrl)
@@ -77,7 +80,7 @@ class SavedBusinessReportMissingStateTest extends TestCase
 
         $this->assertSame(1, IncomeSource::withTrashed()->whereKey($source->id)->count());
         $this->assertDatabaseHas('income_sources', ['id' => $source->id, 'client_folder_id' => $folder->id, 'co_maker_id' => null, 'deleted_at' => null]);
-        $this->assertDatabaseHas('business_reports', ['income_source_id' => $source->id, 'business_name' => 'Applicant Recreated Business', 'deleted_at' => null]);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $source->id, 'business_name' => 'Applicant Recreated Business']);
     }
 
     public function test_co_maker_active_and_missing_report_states_keep_exact_person_and_business_scope(): void
@@ -96,7 +99,8 @@ class SavedBusinessReportMissingStateTest extends TestCase
         $managePage = $this->actingAs($ci)->get(route('client-folders.income-sources.manage', [$folder] + $personParams))
             ->assertOk()
             ->assertSee('Update Business Report for Co-Maker A Active Business')
-            ->assertSee('Recreate Business Report for Co-Maker A Missing Business')
+            ->assertDontSee('data-business-name="Co-Maker A Missing Business"', false)
+            ->assertDontSee('Recreate Business Report', false)
             ->assertDontSee('Co-Maker B Business');
 
         $activeEditUrl = $this->businessReportModalUrl($managePage->getContent(), 'Co-Maker A Active Business');
@@ -131,44 +135,43 @@ class SavedBusinessReportMissingStateTest extends TestCase
             $this->businessPayload($missingSource, $coMakerA),
         )->assertRedirect()->assertSessionHasNoErrors();
 
-        $this->assertDatabaseHas('business_reports', ['income_source_id' => $missingSource->id, 'business_name' => 'Co-Maker Recreated Business', 'deleted_at' => null]);
-        $this->assertDatabaseHas('business_reports', ['id' => $activeReportId, 'income_source_id' => $activeSource->id, 'business_name' => 'Co-Maker A Updated Business', 'deleted_at' => null]);
-        $this->assertDatabaseHas('business_reports', ['income_source_id' => $otherSource->id, 'deleted_at' => null]);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $missingSource->id, 'business_name' => 'Co-Maker Recreated Business']);
+        $this->assertDatabaseHas('business_reports', ['id' => $activeReportId, 'income_source_id' => $activeSource->id, 'business_name' => 'Co-Maker A Updated Business']);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $otherSource->id]);
         $this->assertDatabaseHas('income_sources', ['id' => $missingSource->id, 'client_folder_id' => $folder->id, 'co_maker_id' => $coMakerA->id, 'deleted_at' => null]);
     }
 
-    public function test_soft_deleted_report_is_not_silently_loaded_as_active(): void
+    public function test_hard_deleted_report_content_never_leaks_and_a_fresh_save_recreates_it_cleanly(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $source = $this->business($ci, $folder, null, 'Recycled Report Business');
         $report = $source->businessReport()->firstOrFail();
-        $report->update(['report_remarks' => 'RECYCLED REPORT PRIVATE CONTENT']);
+        $report->update(['report_remarks' => 'DELETED REPORT PRIVATE CONTENT']);
         $report->delete();
 
         $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))
             ->assertOk()
-            ->assertSee('Recreate Business Report for Recycled Report Business')
+            ->assertDontSee('data-business-name="Recycled Report Business"', false)
+            ->assertDontSee('Recreate Business Report', false)
             ->assertDontSee('Update Business Report for Recycled Report Business');
 
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
             ->assertOk()
-            ->assertSee('No active Business Report')
-            ->assertDontSee('RECYCLED REPORT PRIVATE CONTENT');
+            ->assertDontSee('DELETED REPORT PRIVATE CONTENT');
+
+        $this->assertDatabaseMissing('business_reports', ['id' => $report->id]);
 
         $this->actingAs($ci)->put(
             route('client-folders.income-sources.business.update', [$folder, $source]),
-            $this->businessPayload($source, null, 'Must Not Replace Recycled Report'),
-        )->assertRedirect()->assertSessionHasErrors([
-            'business_report' => 'This Business Report is currently in the Recycle Bin. Restore it before editing.',
-        ]);
+            $this->businessPayload($source, null, 'Freshly Recreated Report'),
+        )->assertRedirect()->assertSessionHasNoErrors();
 
-        $this->assertSoftDeleted('business_reports', ['id' => $report->id, 'income_source_id' => $source->id]);
-        $this->assertSame(1, $source->businessReport()->withTrashed()->count());
-        $this->assertNull($source->fresh()->businessReport);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $source->id, 'business_name' => 'Freshly Recreated Report']);
+        $this->assertSame(1, $source->businessReport()->count());
     }
 
-    public function test_co_maker_soft_deleted_report_cannot_be_duplicated_or_restored_by_save(): void
+    public function test_hard_deleting_a_co_makers_report_never_touches_the_applicants_report(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -181,32 +184,48 @@ class SavedBusinessReportMissingStateTest extends TestCase
 
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source] + $personParams))
             ->assertOk()
-            ->assertSee('No active Business Report')
             ->assertDontSee('Unaffected Applicant Business');
 
         $this->actingAs($ci)->put(
             route('client-folders.income-sources.business.update', [$folder, $source]),
-            $this->businessPayload($source, $coMaker, 'Must Not Replace Co-Maker Recycled Report'),
-        )->assertRedirect()->assertSessionHasErrors([
-            'business_report' => 'This Business Report is currently in the Recycle Bin. Restore it before editing.',
-        ]);
+            $this->businessPayload($source, $coMaker, 'Co-Maker Report Recreated'),
+        )->assertRedirect()->assertSessionHasNoErrors();
 
-        $this->assertSoftDeleted('business_reports', ['id' => $report->id, 'income_source_id' => $source->id]);
-        $this->assertSame(1, $source->businessReport()->withTrashed()->count());
-        $this->assertDatabaseHas('business_reports', ['income_source_id' => $applicantSource->id, 'deleted_at' => null]);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $source->id, 'business_name' => 'Co-Maker Report Recreated']);
+        $this->assertSame(1, $source->businessReport()->count());
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $applicantSource->id]);
         $this->assertDatabaseHas('income_sources', ['id' => $source->id, 'client_folder_id' => $folder->id, 'co_maker_id' => $coMaker->id, 'deleted_at' => null]);
     }
 
+    /**
+     * A genuinely saved/active business — CreateIncomeSource alone only leaves a revision-1 shell
+     * (see IncomeSourceController::dedicatedSources()'s $requireReport), which no longer counts as
+     * an actual saved Business Report; this helper also runs SaveBusinessIncomeSource so callers
+     * get the real "active report" state their assertions expect.
+     */
     private function business(User $ci, ClientFolder $folder, ?CoMaker $coMaker, string $name): IncomeSource
     {
         $template = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
 
-        return app(CreateIncomeSource::class)->execute($ci, $folder, [
+        $source = app(CreateIncomeSource::class)->execute($ci, $folder, [
             'income_source_template_id' => $template->id,
             'source_name' => $name,
             'business_name' => $name,
             'co_maker_id' => $coMaker?->id,
-        ])->fresh();
+        ]);
+
+        app(SaveBusinessIncomeSource::class)->execute($ci, $folder, $source, [
+            'intent' => 'stay',
+            'co_maker_id' => $coMaker?->id,
+            'expected_revision' => $source->revision,
+            'source_name' => $name,
+            'business_name' => $name,
+            'report_category' => 'Retail',
+            'properties' => [],
+            'tenants' => [],
+        ]);
+
+        return $source->fresh();
     }
 
     private function businessReportModalUrl(string $html, string $businessName): string

@@ -5,13 +5,17 @@ namespace App\Http\Controllers;
 use App\Actions\ClientFolders\CreateCiActivity;
 use App\Actions\ClientFolders\DeactivateActivityDefinition;
 use App\Actions\ClientFolders\DeleteCiActivity;
+use App\Actions\ClientFolders\SubmitCiActivities;
 use App\Actions\ClientFolders\SubmitCiActivity;
 use App\Actions\ClientFolders\UpdateCiActivity;
+use App\Actions\Media\AddCiActivityProofPhotos;
 use App\Actions\Media\RemoveCiActivityProof;
 use App\Actions\Media\ReplaceCiActivityProof;
 use App\Enums\ActivityStatus;
 use App\Http\Requests\ClientFolders\ReplaceCiActivityProofRequest;
+use App\Http\Requests\ClientFolders\StoreCiActivityProofRequest;
 use App\Http\Requests\ClientFolders\StoreCiActivityRequest;
+use App\Http\Requests\ClientFolders\SubmitCiActivitiesRequest;
 use App\Http\Requests\ClientFolders\SubmitCiActivityRequest;
 use App\Http\Requests\ClientFolders\UpdateCiActivityRequest;
 use App\Models\ActivityDefinition;
@@ -21,11 +25,13 @@ use App\Models\ClientFolder;
 use App\Models\MediaReference;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\BankInstitutionPrefill;
+use App\Services\ClientFolders\CiActivityHistoryFeed;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
 use Illuminate\View\View;
 
 class CiActivityController extends Controller
@@ -50,6 +56,17 @@ class CiActivityController extends Controller
                     ->where('media_references.client_folder_id', $clientFolder->id)
                     ->where('media_references.co_maker_id', $activePerson?->id)
                     ->oldest('activity_media.created_at'),
+                // Presentation-only: the main table's Schedule column for Bank/Asset checks is
+                // derived from these live, currently-Scheduled targets — never from the parent's
+                // own scheduled_at, which intentionally stays NULL for these two activity types.
+                'bankTargets' => fn ($query) => $query
+                    ->where('status', ActivityStatus::Scheduled->value)
+                    ->whereNotNull('scheduled_at')
+                    ->select(['id', 'ci_activity_id', 'institution_name', 'branch_location', 'status', 'scheduled_at', 'scheduled_has_time']),
+                'assetTargets' => fn ($query) => $query
+                    ->where('status', ActivityStatus::Scheduled->value)
+                    ->whereNotNull('scheduled_at')
+                    ->select(['id', 'ci_activity_id', 'assessor_type', 'office_location', 'status', 'scheduled_at', 'scheduled_has_time']),
             ])
             ->withCount([
                 'notes',
@@ -109,44 +126,7 @@ class CiActivityController extends Controller
                 return array_key_exists('co_maker_id', $metadata)
                     && $metadata['co_maker_id'] === $activePerson?->id;
             })
-            ->map(function (AuditLog $event) use ($proofNames): object {
-                $metadata = (array) $event->metadata;
-
-                return (object) [
-                    'label' => match ($event->action) {
-                        'ci_activity.created' => data_get($metadata, 'activity_title').' created',
-                        'ci_activity.scheduled' => data_get($metadata, 'activity_title').' scheduled',
-                        'ci_activity.rescheduled' => data_get($metadata, 'activity_title').' rescheduled',
-                        'ci_activity.completed' => data_get($metadata, 'activity_title').' completed',
-                        'ci_activity.bank_target_completed' => data_get($metadata, 'bank_target_label', 'Bank / Coop target').' completed',
-                        'ci_activity.asset_target_completed' => data_get($metadata, 'asset_target_label', 'Asset target').' completed',
-                        'ci_activity.asset_target_created' => data_get($metadata, 'asset_target_label', 'Asset target').' added',
-                        'ci_activity.asset_target_updated' => data_get($metadata, 'asset_target_label', 'Asset target').' updated',
-                        'ci_activity.asset_target_deleted' => data_get($metadata, 'asset_target_label', 'Asset target').' deleted',
-                        'ci_activity.submitted' => data_get($metadata, 'activity_title').' submitted to Credit Analyst',
-                        'ci_activity.reopened' => data_get($metadata, 'activity_title').' reopened',
-                        'ci_activity.deleted' => data_get($metadata, 'activity_title').' deleted',
-                        'ci_activity.assignment_changed' => data_get($metadata, 'activity_title', 'CI Activity').' assignment updated',
-                        'media.uploaded' => 'Proof uploaded',
-                        default => data_get($metadata, 'activity_title', 'CI Activity').' updated',
-                    },
-                    'detail' => match ($event->action) {
-                        'media.uploaded' => $proofNames[(int) data_get($metadata, 'media_reference_id')] ?? null,
-                        'ci_activity.submitted' => collect([
-                            filled(data_get($metadata, 'submitted_to')) ? 'Submitted to: '.data_get($metadata, 'submitted_to') : null,
-                            data_get($metadata, 'submission_note'),
-                        ])->filter()->join(' — ') ?: null,
-                        default => null,
-                    },
-                    'tone' => match ($event->action) {
-                        'ci_activity.completed', 'ci_activity.bank_target_completed', 'ci_activity.asset_target_completed', 'ci_activity.submitted', 'media.uploaded' => 'success',
-                        'ci_activity.scheduled', 'ci_activity.rescheduled', 'ci_activity.reopened' => 'progress',
-                        default => 'neutral',
-                    },
-                    'user' => $event->user,
-                    'created_at' => $event->created_at,
-                ];
-            })
+            ->map(fn (AuditLog $event): object => CiActivityHistoryFeed::mapUsingProofNames($event, $proofNames))
             ->values();
         $history = $historyEvents->take(5)->values();
 
@@ -162,6 +142,7 @@ class CiActivityController extends Controller
                 ->select(['id', 'name', 'code'])
                 ->withCount('activities')
                 ->where('is_active', true)
+                ->whereNotIn('code', ActivityDefinition::MANDATORY_DEFAULT_CODES)
                 ->orderBy('sort_order')
                 ->get(),
             'counts' => $counts,
@@ -299,10 +280,7 @@ class CiActivityController extends Controller
             'updater:id,full_name',
             'creator:id,full_name',
         ]);
-        abort_unless(in_array($ciActivity->definition->code, [
-            ActivityDefinition::BARANGAY_CHECK_CODE,
-            ActivityDefinition::NEIGHBOR_CHECK_CODE,
-        ], true), 404);
+        abort_unless(ActivityDefinition::isMandatoryDefaultCode($ciActivity->definition->code), 404);
 
         return view('client-folders.activities.default-check-show', [
             'clientFolder' => $clientFolder,
@@ -314,12 +292,15 @@ class CiActivityController extends Controller
 
     public function update(UpdateCiActivityRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, UpdateCiActivity $update): JsonResponse|RedirectResponse
     {
+        $watermark = CiActivityHistoryFeed::watermark();
         $update->execute($request->user(), $clientFolder, $ciActivity, $request->validated());
         $activePerson = ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id'));
         $personParams = ActivePersonResolver::queryParams($activePerson);
 
         if ($request->expectsJson()) {
-            return response()->json(['updated' => true]);
+            $history = CiActivityHistoryFeed::since($clientFolder, $watermark, $activePerson?->id);
+
+            return response()->json(['updated' => true, 'history' => CiActivityHistoryFeed::renderHtml($history)]);
         }
 
         $destination = $request->string('intent')->toString() === 'return'
@@ -335,8 +316,16 @@ class CiActivityController extends Controller
         CiActivity $ciActivity,
         MediaReference $mediaReference,
         ReplaceCiActivityProof $replace,
-    ): RedirectResponse {
+    ): RedirectResponse|JsonResponse {
+        $watermark = CiActivityHistoryFeed::watermark();
         $replace->execute($request->user(), $clientFolder, $ciActivity, $mediaReference, $request->file('attachment'));
+
+        if ($request->expectsJson()) {
+            $history = CiActivityHistoryFeed::since($clientFolder, $watermark, $ciActivity->co_maker_id);
+
+            return response()->json(['replaced' => true, 'history' => CiActivityHistoryFeed::renderHtml($history)]);
+        }
+
         $activePerson = ActivePersonResolver::resolve($clientFolder, $ciActivity->co_maker_id);
 
         return redirect()->route(
@@ -345,12 +334,37 @@ class CiActivityController extends Controller
         )->with('status', 'Proof attachment replaced successfully.');
     }
 
+    public function storeProof(
+        StoreCiActivityProofRequest $request,
+        ClientFolder $clientFolder,
+        CiActivity $ciActivity,
+        AddCiActivityProofPhotos $addPhotos,
+    ): RedirectResponse|JsonResponse {
+        $watermark = CiActivityHistoryFeed::watermark();
+        $photos = $request->file('photos', []);
+        $addPhotos->execute($request->user(), $clientFolder, $ciActivity, is_array($photos) ? $photos : []);
+
+        if ($request->expectsJson()) {
+            $history = CiActivityHistoryFeed::since($clientFolder, $watermark, $ciActivity->co_maker_id);
+
+            return response()->json(['added' => true, 'history' => CiActivityHistoryFeed::renderHtml($history)]);
+        }
+
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $ciActivity->co_maker_id);
+
+        return redirect()->route(
+            'client-folders.activities.edit',
+            [$clientFolder, $ciActivity] + ActivePersonResolver::queryParams($activePerson),
+        )->with('status', 'Supporting proof added successfully.');
+    }
+
     public function removeProof(
+        Request $request,
         ClientFolder $clientFolder,
         CiActivity $ciActivity,
         MediaReference $mediaReference,
         RemoveCiActivityProof $remove,
-    ): RedirectResponse {
+    ): RedirectResponse|JsonResponse {
         Gate::authorize('update', $clientFolder);
         Gate::authorize('update', $ciActivity);
         abort_unless($ciActivity->client_folder_id === $clientFolder->id, 404);
@@ -358,7 +372,15 @@ class CiActivityController extends Controller
         abort_unless($mediaReference->co_maker_id === $ciActivity->co_maker_id, 404);
         abort_unless($ciActivity->mediaReferences()->whereKey($mediaReference->id)->exists(), 404);
 
-        $remove->execute(request()->user(), $clientFolder, $ciActivity, $mediaReference);
+        $watermark = CiActivityHistoryFeed::watermark();
+        $remove->execute($request->user(), $clientFolder, $ciActivity, $mediaReference);
+
+        if ($request->expectsJson()) {
+            $history = CiActivityHistoryFeed::since($clientFolder, $watermark, $ciActivity->co_maker_id);
+
+            return response()->json(['removed' => true, 'history' => CiActivityHistoryFeed::renderHtml($history)]);
+        }
+
         $activePerson = ActivePersonResolver::resolve($clientFolder, $ciActivity->co_maker_id);
 
         return redirect()->route(
@@ -384,8 +406,12 @@ class CiActivityController extends Controller
         return redirect($destination)->with('status', $successMessage);
     }
 
-    public function submit(SubmitCiActivityRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, SubmitCiActivity $submit): RedirectResponse
-    {
+    public function submit(
+        SubmitCiActivityRequest $request,
+        ClientFolder $clientFolder,
+        CiActivity $ciActivity,
+        SubmitCiActivity $submit,
+    ): RedirectResponse|JsonResponse {
         $validated = $request->validated();
         $activePerson = ActivePersonResolver::resolve($clientFolder, $validated['co_maker_id'] ?? null);
         ActivePersonResolver::assertOwnedBy($ciActivity, $activePerson);
@@ -394,9 +420,61 @@ class CiActivityController extends Controller
             [$clientFolder] + ActivePersonResolver::queryParams($activePerson) + ['status' => 'completed'],
         );
 
+        $watermark = CiActivityHistoryFeed::watermark();
         $submit->execute($request->user(), $clientFolder, $ciActivity, $validated);
 
+        if ($request->expectsJson()) {
+            $ciActivity->refresh()->load([
+                'mediaReferences' => fn ($query) => $query
+                    ->where('media_references.client_folder_id', $clientFolder->id)
+                    ->where('media_references.co_maker_id', $ciActivity->co_maker_id)
+                    ->oldest('activity_media.created_at'),
+            ]);
+            $attachmentCount = $ciActivity->mediaReferences->count();
+            $singleAttachment = $attachmentCount === 1 ? $ciActivity->mediaReferences->first() : null;
+            $singleAttachmentIsPreviewable = $singleAttachment
+                && (Str::startsWith($singleAttachment->mime_type, 'image/') || Str::startsWith($singleAttachment->mime_type, 'video/'));
+            $history = CiActivityHistoryFeed::since($clientFolder, $watermark, $activePerson?->id);
+
+            return response()->json([
+                'submitted' => true,
+                'cell' => view('client-folders.activities.partials.submission-cell', [
+                    'activity' => $ciActivity,
+                    'clientFolder' => $clientFolder,
+                    'attachmentCount' => $attachmentCount,
+                    'singleAttachment' => $singleAttachment,
+                    'singleAttachmentIsPreviewable' => $singleAttachmentIsPreviewable,
+                ])->render(),
+                'history' => CiActivityHistoryFeed::renderHtml($history),
+            ]);
+        }
+
         return redirect($destination)->with('status', $ciActivity->name.' submission recorded.');
+    }
+
+    public function submitBatch(SubmitCiActivitiesRequest $request, ClientFolder $clientFolder, SubmitCiActivities $submitBatch): RedirectResponse
+    {
+        $validated = $request->validated();
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $validated['co_maker_id'] ?? null);
+        $activities = $clientFolder->activities()->whereKey($validated['activity_ids'])->get();
+        $proofs = $request->file('proofs', []);
+
+        $submitBatch->execute(
+            $request->user(),
+            $clientFolder,
+            $activePerson,
+            $activities,
+            is_array($proofs) ? $proofs : [],
+            $validated['submitted_to'] ?? null,
+            $validated['submission_note'] ?? null,
+        );
+
+        $destination = route(
+            'client-folders.activities.index',
+            [$clientFolder] + ActivePersonResolver::queryParams($activePerson) + ['status' => 'completed'],
+        );
+
+        return redirect($destination)->with('status', 'Selected CI activities submitted to the Credit Analyst.');
     }
 
     public function bulkDestroy(Request $request, ClientFolder $clientFolder, DeleteCiActivity $delete): RedirectResponse

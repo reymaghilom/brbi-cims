@@ -483,7 +483,12 @@ class OfficialReportDataBuilder
             'heading' => 'Business Check',
             'location' => $check->location,
             'ci_date' => $this->date($check->ci_date),
-            'business_name' => $check->incomeSource?->displayName() ?? $check->incomeSource?->business_name,
+            // The Business Check's own saved snapshot is authoritative — never the current
+            // IncomeSource/BusinessReport name, which may have been renamed since this Check was
+            // saved (see CLAUDE.md's Business Report ↔ Business Check independence rules). The
+            // displayName() fallback exists only for a historical row saved before business_checks
+            // gained its own business_name column.
+            'business_name' => $check->business_name ?: $check->incomeSource?->displayName(),
             'income_source' => $check->incomeSource?->source_name,
             // The Business Check form's own "Google Maps Link" input was removed — historical
             // records saved before that removal may still carry a custom link, which stays

@@ -12,6 +12,9 @@
                 @if($activity->personContext)
                     <p class="mt-1 break-words text-xs leading-5 text-text-muted">{{ $activity->personContext }}</p>
                 @endif
+                @if($activity->changedFieldsLabel ?? null)
+                    <p class="mt-1 break-words text-xs leading-5 text-text-muted">Updated: {{ $activity->changedFieldsLabel }}</p>
+                @endif
                 <p class="mt-1 text-xs leading-5 text-text-muted">{{ $activity->actorLabel }} {{ $activity->user?->full_name ?? '—' }} &middot; {{ $activity->created_at->timezone($displayTimezone)->format('M j, Y · g:i A') }}</p>
             </div>
         @empty

@@ -77,30 +77,24 @@ class SaveBusinessCheck
 
                 $check->fill(Arr::only($data, self::FIELDS));
                 $fieldsChanged = $check->isDirty(self::FIELDS);
+                $incomeSourceChanged = $created || $check->isDirty('income_source_id');
                 if ($created) {
                     $check->ci_user_id = $actor->id;
                 }
                 $check->updated_by = $actor->id;
-                $check->save();
 
-                // Business Address and CI Date are shared with this check's linked Business Report
-                // (see BusinessCheckController::form()'s $currentLocation/$currentCiDate, which read
-                // these same two BusinessReport columns back for display) — saving a Business Check
-                // with either value changed keeps that shared source of truth current, the same way
-                // Business Report's own save already writes straight to these two columns.
-                $businessReport = $check->incomeSource?->businessReport;
-                if ($businessReport) {
-                    $sharedUpdates = [];
-                    if (filled($check->location) && $check->location !== $businessReport->main_business_address) {
-                        $sharedUpdates['main_business_address'] = $check->location;
-                    }
-                    if ($check->ci_date && ($businessReport->start_date === null || ! $check->ci_date->equalTo($businessReport->start_date))) {
-                        $sharedUpdates['start_date'] = $check->ci_date;
-                    }
-                    if ($sharedUpdates !== []) {
-                        $businessReport->update($sharedUpdates);
-                    }
+                // Business Name has no editable input of its own on this form — the business is
+                // chosen via income_source_id — so its snapshot is (re)captured here, once, the
+                // moment the check starts pointing at this business. This is PREFILL, not live
+                // synchronization: once captured it never changes on its own again, even if the
+                // Business Report's own name is renamed or deleted afterwards (see
+                // BusinessReportBusinessCheckIndependenceTest for the independence coverage).
+                if ($incomeSourceChanged) {
+                    $source = $folder->incomeSources()->with('businessReport', 'template')->find((int) $data['income_source_id']);
+                    $check->business_name = $source?->businessReport?->business_name ?: $source?->displayName();
                 }
+
+                $check->save();
 
                 $photosRemoved = 0;
                 foreach ($data['removed_photo_ids'] ?? [] as $photoId) {

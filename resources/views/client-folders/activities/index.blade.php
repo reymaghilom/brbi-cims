@@ -24,7 +24,6 @@
             ? App\Models\CiActivityBankTarget::deriveParentStatus(array_column($bankTargetRows, 'status'))->value
             : ($addingAssetCheck ? App\Models\CiActivityAssetTarget::deriveParentStatus(array_column($assetTargetRows, 'status'))->value : old('status', App\Enums\ActivityStatus::Pending->value));
         $addScheduleEnabled = ! $addingBankCoopCheck && ! $addingAssetCheck && in_array($addActivityStatus, [App\Enums\ActivityStatus::Scheduled->value, App\Enums\ActivityStatus::FollowUp->value], true);
-        $addActivityProofEnabled = ! $addingNewActivityType && $addActivityStatus === App\Enums\ActivityStatus::Completed->value;
         $builtInActivityDefinitions = $definitions->reject->isCustom();
         $customActivityDefinitions = $definitions->filter->isCustom();
         $activityModalStatus = session('status');
@@ -160,6 +159,7 @@
                 transform: none !important;
             }
         }
+
     </style>
 
     <x-ui.breadcrumb :items="[
@@ -173,7 +173,7 @@
             <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div class="flex min-w-0 items-start gap-3"><span class="mt-0.5 text-brand-primary"><x-ui.icon name="activity" size="size-6" /></span><div><h2 id="ci-activities-title" class="text-xl font-bold tracking-tight text-brand-sidebar sm:text-2xl">CI Activities</h2><p class="mt-1 max-w-3xl text-sm leading-6 text-text-muted">Track pending, scheduled, follow-up, and completed investigation activities with proof of submission.</p></div></div>
                 <div class="flex shrink-0 items-center justify-end gap-2">
-                    <button type="button" class="ui-icon-button" title="Show panel" aria-label="Show Activity History panel" aria-controls="activity-history-panel" aria-expanded="false" data-ci-history-show hidden><x-ui.icon name="eye" size="size-4" /></button>
+                    <button type="button" class="ui-button-secondary-compact shrink-0" title="Show Panel" aria-label="Show Panel" aria-controls="activity-history-panel" aria-expanded="false" data-ci-history-show hidden><x-ui.icon name="eye" size="size-3.5" />Show Panel</button>
                     <button type="button" class="ui-button-primary shrink-0" data-ci-activity-dialog-open><x-ui.icon name="plus" size="size-4" />Add Activity</button>
                 </div>
             </div>
@@ -196,7 +196,9 @@
                 </div>
             </div>
 
-            <div class="mt-4 overflow-x-auto overflow-y-hidden rounded-card border border-ui-border">
+            <p class="mt-3 flex items-start gap-1.5 text-xs leading-5 text-text-muted" data-ci-completion-guide><x-ui.icon name="info" size="size-3.5" class="mt-0.5 shrink-0" aria-hidden="true" /><span><span class="font-semibold text-text-main">Completion Guide:</span> Click the checkbox to mark Barangay or Neighbor checks as completed. Bank / Coop and Asset checks are completed through their tracker items.</span></p>
+
+            <div class="mt-3 overflow-x-auto overflow-y-hidden rounded-card border border-ui-border">
                 <table class="w-full min-w-[64rem] text-left text-sm">
                     <thead class="bg-surface-subtle text-xs font-bold text-text-muted">
                         <tr>
@@ -213,7 +215,17 @@
                     <tbody class="divide-y divide-ui-border bg-surface" data-ci-activities-body>
                         @foreach($activities as $activity)
                             @php
-                                $activitySchedule = $activity->scheduled_at ?? $activity->visit_date;
+                                $isBankCoopCheck = $activity->definition?->code === App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE;
+                                $isAssetCheck = $activity->definition?->code === App\Models\ActivityDefinition::ASSET_CHECK_CODE;
+                                $scheduleSummary = match (true) {
+                                    $isBankCoopCheck => App\Services\ClientFolders\CiActivityScheduleSummary::fromCurrentTargets($activity->bankTargets),
+                                    $isAssetCheck => App\Services\ClientFolders\CiActivityScheduleSummary::fromCurrentTargets($activity->assetTargets),
+                                    default => null,
+                                };
+                                $activitySchedule = match (true) {
+                                    $isBankCoopCheck, $isAssetCheck => $scheduleSummary?->scheduled_at,
+                                    default => $activity->scheduled_at ?? $activity->visit_date,
+                                };
                                 $scheduledToday = $activity->status === App\Enums\ActivityStatus::Scheduled
                                     && $activity->scheduled_at?->timezone(config('cims.display_timezone'))->isToday();
                                 $activityProof = $activity->mediaReferences;
@@ -221,8 +233,6 @@
                                 $singleAttachment = $attachmentCount === 1 ? $activityProof->first() : null;
                                 $singleAttachmentIsPreviewable = $singleAttachment
                                     && (Str::startsWith($singleAttachment->mime_type, 'image/') || Str::startsWith($singleAttachment->mime_type, 'video/'));
-                                $isBankCoopCheck = $activity->definition?->code === App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE;
-                                $isAssetCheck = $activity->definition?->code === App\Models\ActivityDefinition::ASSET_CHECK_CODE;
                                 $isMandatoryDefault = $activity->isMandatoryDefault();
                                 $isDefaultCheck = $isMandatoryDefault;
                                 $hasQuickCompletion = $isDefaultCheck || $isBankCoopCheck || $isAssetCheck;
@@ -236,15 +246,18 @@
                                     $isAssetCheck => 'asset',
                                     default => 'default',
                                 };
+                                $completionScheduleText = $activity->scheduled_at
+                                    ? $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y').' · '.($activity->scheduled_has_time ? $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time')
+                                    : ($activity->visit_date ? $activity->visit_date->format('M j, Y').' · Completed visit' : null);
                             @endphp
-                            <tr class="align-middle transition hover:bg-surface-subtle/70" data-ci-activity-row data-ci-activity-id="{{ $activity->id }}" data-status="{{ $activity->status->value }}" data-scheduled-today="{{ $scheduledToday ? 'true' : 'false' }}" data-sort-activity="{{ Str::lower($activity->name) }}" data-sort-status="{{ Str::lower($activity->status->label()) }}" data-sort-schedule="{{ $activitySchedule?->timestamp ?? 0 }}" data-sort-creator="{{ Str::lower($activity->creator?->full_name ?? 'System-created') }}" data-sort-updated="{{ $activity->updated_at->timestamp }}" @if(! $visibleActivityIds->contains($activity->id)) hidden @endif>
+                            <tr id="activity-{{ $activity->id }}" class="align-middle transition hover:bg-surface-subtle/70" data-ci-activity-row data-ci-activity-id="{{ $activity->id }}" data-status="{{ $activity->status->value }}" data-scheduled-today="{{ $scheduledToday ? 'true' : 'false' }}" data-sort-activity="{{ Str::lower($activity->name) }}" data-sort-status="{{ Str::lower($activity->status->label()) }}" data-sort-schedule="{{ $activitySchedule?->timestamp ?? 0 }}" data-sort-creator="{{ Str::lower($activity->creator?->full_name ?? 'System-created') }}" data-sort-updated="{{ $activity->updated_at->timestamp }}" @if(! $visibleActivityIds->contains($activity->id)) hidden @endif>
                                 <td class="px-4 py-3">
                                     <div class="flex min-w-0 items-start gap-2.5">
                                         @if($hasQuickCompletion)
-                                            <label class="mt-0.5 inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-control border border-success/25 bg-success-soft/60 transition hover:border-success/45 hover:bg-success-soft focus-within:ring-2 focus-within:ring-success/30 has-[:disabled]:cursor-default" title="{{ $completionIsChecked ? $activity->name.' completed' : ($completionKind === 'default' ? 'Mark '.$activity->name.' as completed' : 'Open '.$activity->name.' tracker to complete remaining targets') }}">
+                                            <label class="mt-0.5 inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-control has-[:disabled]:cursor-default" title="{{ $completionIsChecked ? $activity->name.' completed' : ($completionKind === 'default' ? 'Mark '.$activity->name.' as completed' : 'Open '.$activity->name.' tracker to complete remaining targets') }}">
                                                 <input
                                                     type="checkbox"
-                                                    class="size-5 rounded-md border-2 border-success/50 text-success focus:ring-success"
+                                                    class="ci-completion-checkbox"
                                                     aria-label="{{ $completionIsChecked ? $activity->name.' completed' : ($completionKind === 'default' ? 'Mark '.$activity->name.' as completed' : 'Open '.$activity->name.' tracker to complete remaining targets') }}"
                                                     data-ci-activity-completion="{{ $activity->id }}"
                                                     data-completion-kind="{{ $completionKind }}"
@@ -254,6 +267,9 @@
                                                         data-completion-tracker-url="{{ route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}"
                                                         data-completion-expected-updated-at="{{ $activity->updated_at->toISOString() }}"
                                                         data-completion-co-maker-id="{{ $activePerson?->id }}"
+                                                        data-completion-status-label="{{ $activity->status->label() }}"
+                                                        data-completion-schedule-text="{{ $completionScheduleText }}"
+                                                        data-completion-remarks="{{ $activity->remarks }}"
                                                     @endif
                                                     @checked($completionIsChecked)
                                                     @disabled($completionIsChecked)
@@ -275,61 +291,48 @@
                                     </div>
                                 </td>
                                 <td class="px-3 py-3"><span data-bank-coop-status="{{ $isBankCoopCheck ? $activity->id : '' }}" data-ci-activity-status-badge="{{ $activity->id }}" @class(['inline-flex rounded-full px-2.5 py-1 text-xs font-bold', 'bg-progress-soft text-progress' => $activity->status === App\Enums\ActivityStatus::Pending, 'bg-brand-soft text-brand-primary' => $activity->status === App\Enums\ActivityStatus::Scheduled, 'bg-[#fff0e7] text-[#c85b12]' => $activity->status === App\Enums\ActivityStatus::FollowUp, 'bg-success-soft text-success' => $activity->status === App\Enums\ActivityStatus::Completed])>{{ $activity->status->label() }}</span></td>
-                                <td class="px-3 py-3 text-xs leading-5 text-text-muted" data-ci-activity-schedule-cell="{{ $activity->id }}">@if($activity->scheduled_at)<span class="block font-semibold text-text-main">{{ $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->scheduled_has_time ? $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time' }}@elseif($activity->visit_date)<span class="block font-semibold text-text-main">{{ $activity->visit_date->format('M j, Y') }}</span>Completed visit @else — @endif</td>
+                                <td class="px-3 py-3 text-xs leading-5 text-text-muted" data-ci-activity-schedule-cell="{{ $activity->id }}">@include('client-folders.activities.partials.schedule-cell', ['activity' => $activity, 'isBankCoopCheck' => $isBankCoopCheck, 'isAssetCheck' => $isAssetCheck, 'scheduleSummary' => $scheduleSummary])</td>
                                 <td class="px-3 py-3" data-submission-cell="{{ $activity->id }}">
-                                    <div class="min-w-36 space-y-2 text-xs">
-                                        @if($attachmentCount === 1 && $singleAttachmentIsPreviewable)
-                                            <button type="button" class="inline-flex min-h-7 items-center gap-1.5 rounded-control px-1.5 py-1 font-semibold text-brand-primary transition hover:bg-brand-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30" data-modal-open="ci-proof-preview-{{ $activity->id }}-{{ $singleAttachment->id }}" aria-label="View {{ $singleAttachment->file_name }}"><x-ui.icon name="attachment" size="size-4" />1 Attachment</button>
-                                        @elseif($attachmentCount === 1)
-                                            <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $singleAttachment]) }}" target="_blank" rel="noopener" class="inline-flex min-h-7 items-center gap-1.5 rounded-control px-1.5 py-1 font-semibold text-brand-primary transition hover:bg-brand-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30" aria-label="View {{ $singleAttachment->file_name }}"><x-ui.icon name="attachment" size="size-4" />1 Attachment</a>
-                                        @elseif($attachmentCount > 1)
-                                            <button type="button" class="inline-flex min-h-7 items-center gap-1.5 rounded-control px-1.5 py-1 font-semibold text-brand-primary transition hover:bg-brand-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30" data-modal-open="ci-proof-list-{{ $activity->id }}" aria-label="View {{ $attachmentCount }} attachments for {{ $activity->name }}"><x-ui.icon name="attachment" size="size-4" />{{ $attachmentCount }} Attachments</button>
-                                        @else
-                                            <span class="flex items-center gap-1.5 font-semibold text-text-muted"><x-ui.icon name="attachment" size="size-4" />No Attachment</span>
-                                        @endif
-                                        @if($activity->submitted_at)
-                                            <div class="space-y-1 leading-4">
-                                                <span class="inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 font-bold text-success"><x-ui.icon name="check-circle" size="size-3.5" />Submitted</span>
-                                                <span class="block text-text-muted">{{ $activity->submitted_at->timezone(config('cims.display_timezone'))->format('M j, Y · g:i A') }}</span>
-                                                @if($activity->submitted_to)<span class="block max-w-44 truncate text-text-muted" title="{{ $activity->submitted_to }}">To: {{ $activity->submitted_to }}</span>@endif
-                                            </div>
-                                            @if($activity->status === App\Enums\ActivityStatus::Completed)
-                                                <button type="button" class="ui-button-secondary-compact !min-h-7 !px-2 !py-1 !text-[0.6875rem]" data-modal-open="submit-activity-{{ $activity->id }}" data-submission-action="update">View / Update</button>
-                                            @endif
-                                        @else
-                                            <span class="inline-flex items-center rounded-full border border-ui-border bg-surface-subtle px-2 py-0.5 font-bold text-text-muted">Not Submitted</span>
-                                            @if($activity->status === App\Enums\ActivityStatus::Completed)
-                                                <button type="button" class="ui-button-secondary-compact" data-modal-open="submit-activity-{{ $activity->id }}" data-submission-action="create">Mark as Submitted</button>
-                                            @endif
-                                        @endif
-                                    </div>
+                                    @include('client-folders.activities.partials.submission-cell', ['activity' => $activity, 'clientFolder' => $clientFolder, 'attachmentCount' => $attachmentCount, 'singleAttachment' => $singleAttachment, 'singleAttachmentIsPreviewable' => $singleAttachmentIsPreviewable])
                                 </td>
                                 <td class="px-3 py-3 text-xs leading-5"><span class="block max-w-36 truncate font-semibold text-text-main">{{ $activity->creator?->full_name ?? 'System-created' }}</span><span class="text-text-muted">Locked creator</span></td>
                                 <td class="px-3 py-3 text-xs leading-5 text-text-muted" data-ci-activity-updated-cell="{{ $activity->id }}"><span class="block font-semibold text-text-main">{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('g:i A') }}@if($activity->updater) · {{ $activity->updater->full_name }}@endif</td>
                                 <td class="px-3 py-3">
                                     <div class="flex items-center justify-center gap-1">
-                                        @if($isDefaultCheck)
-                                            <button type="button" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Edit {{ $activity->name }}" title="Edit" data-default-check-open="{{ $activity->id }}" data-default-check-url="{{ route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="edit" size="size-4" /></button>
-                                        @elseif($isBankCoopCheck)
-                                            <button type="button" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Edit {{ $activity->name }}" title="Edit" data-bank-coop-open="{{ $activity->id }}" data-bank-coop-url="{{ route('client-folders.activities.bank-coop.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="edit" size="size-4" /></button>
-                                        @elseif($isAssetCheck)
-                                            <button type="button" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Edit {{ $activity->name }}" title="Edit" data-asset-check-open="{{ $activity->id }}" data-asset-check-url="{{ route('client-folders.activities.asset-check.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="edit" size="size-4" /></button>
-                                        @else
+                                        @if(! $isDefaultCheck && ! $isBankCoopCheck && ! $isAssetCheck)
                                             <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Update {{ $activity->name }}" title="Update"><x-ui.icon name="edit" size="size-4" /></a>
                                             <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#schedule" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Schedule or reschedule {{ $activity->name }}" title="Schedule / Reschedule"><x-ui.icon name="calendar" size="size-4" /></a>
                                             @if($activity->status !== App\Enums\ActivityStatus::Completed)<form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}">@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at->toISOString() }}"><input type="hidden" name="status" value="completed"><input type="hidden" name="intent" value="return"><button type="submit" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Complete {{ $activity->name }}" title="Complete"><x-ui.icon name="check-circle" size="size-4" /></button></form>@endif
                                         @endif
-                                        <x-ui.context-menu :label="$activity->name.' more actions'">
-                                            <x-slot:trigger><span class="ui-dots-trigger !size-8"><x-ui.icon name="more-vertical" size="size-4" /></span></x-slot:trigger>
-                                            <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#notes-title" role="menuitem" class="client-folder-menu-item">View notes</a>
-                                            <a href="{{ route('client-folders.media.index', [$clientFolder] + $personParams) }}" role="menuitem" class="client-folder-menu-item">Manage proof</a>
-                                            @if($activity->status === App\Enums\ActivityStatus::Completed)
-                                                <button type="button" role="menuitem" class="client-folder-menu-item" data-modal-open="reopen-activity-{{ $activity->id }}">Reopen Activity</button>
-                                            @endif
-                                            @unless($isMandatoryDefault)
-                                                <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}">Delete Activity</button>
-                                            @endunless
-                                        </x-ui.context-menu>
+                                        @if($isDefaultCheck)
+                                            {{-- Barangay / Neighbor Check has exactly one row action (Edit) — a 3-dot menu
+                                                 just to hold a single item would be an extra click for no reason, so it's
+                                                 shown directly instead. --}}
+                                            <button type="button" class="ui-button-secondary-compact" data-default-check-open="{{ $activity->id }}" data-default-check-url="{{ route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}" aria-label="Edit {{ $activity->name }}"><x-ui.icon name="edit" size="size-3.5" />Edit</button>
+                                        @else
+                                            <x-ui.context-menu :label="'Actions for '.$activity->name">
+                                                <x-slot:trigger><span class="ui-dots-trigger !size-8"><x-ui.icon name="more-vertical" size="size-4" /></span></x-slot:trigger>
+                                                @if($isBankCoopCheck)
+                                                    <button type="button" role="menuitem" class="client-folder-menu-item" data-bank-coop-open="{{ $activity->id }}" data-bank-coop-url="{{ route('client-folders.activities.bank-coop.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="folder" size="size-4" class="text-text-muted" />Open</button>
+                                                    <div class="my-1 border-t border-ui-border"></div>
+                                                    <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
+                                                @elseif($isAssetCheck)
+                                                    <button type="button" role="menuitem" class="client-folder-menu-item" data-asset-check-open="{{ $activity->id }}" data-asset-check-url="{{ route('client-folders.activities.asset-check.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="folder" size="size-4" class="text-text-muted" />Open</button>
+                                                    <div class="my-1 border-t border-ui-border"></div>
+                                                    <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
+                                                @else
+                                                    <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#notes-title" role="menuitem" class="client-folder-menu-item">View notes</a>
+                                                    <a href="{{ route('client-folders.media.index', [$clientFolder] + $personParams) }}" role="menuitem" class="client-folder-menu-item">Manage proof</a>
+                                                    @if($activity->status === App\Enums\ActivityStatus::Completed)
+                                                        <button type="button" role="menuitem" class="client-folder-menu-item" data-modal-open="reopen-activity-{{ $activity->id }}">Reopen Activity</button>
+                                                    @endif
+                                                    @unless($isMandatoryDefault)
+                                                        <div class="my-1 border-t border-ui-border"></div>
+                                                        <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}">Delete Activity</button>
+                                                    @endunless
+                                                @endif
+                                            </x-ui.context-menu>
+                                        @endif
                                     </div>
                                 </td>
                             </tr>
@@ -348,7 +351,6 @@
                     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-subtle/40 p-3 sm:p-4" data-bank-coop-modal-body>
                         <div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading Bank / Coop targets…</div>
                     </div>
-                    <div class="flex shrink-0 justify-end border-t border-ui-border px-5 py-3.5 sm:px-6"><button type="button" class="ui-button-secondary-compact" data-bank-coop-modal-close>Close</button></div>
                 </div>
             </dialog>
 
@@ -359,7 +361,6 @@
                         <div class="flex flex-wrap items-center gap-2 pr-10 sm:pr-0"><button type="button" class="ui-button-primary !min-h-9 !px-3 !py-1.5 !text-xs" data-asset-check-modal-add disabled><x-ui.icon name="plus" size="size-3.5" />Add Assessor</button><button type="button" class="ui-icon-button absolute right-3 top-3 sm:static" data-asset-check-modal-close aria-label="Close Asset Check"><x-ui.icon name="close" size="size-5" /></button></div>
                     </div>
                     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-subtle/40 p-3 sm:p-4" data-asset-check-modal-body><div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading assessor targets…</div></div>
-                    <div class="flex shrink-0 justify-end border-t border-ui-border px-5 py-3.5 sm:px-6"><button type="button" class="ui-button-secondary-compact" data-asset-check-modal-close>Close</button></div>
                 </div>
             </dialog>
 
@@ -367,17 +368,36 @@
                 <div class="flex max-h-[calc(100dvh-2rem)] flex-col">
                     <div class="relative flex shrink-0 items-start justify-between gap-3 border-b border-ui-border px-5 py-4 sm:px-6"><div class="min-w-0 pr-10"><h2 id="default-check-tracker-title" class="break-words text-lg font-bold text-brand-sidebar">Activity Tracker</h2><p class="mt-1 break-words text-sm text-text-muted" data-default-check-modal-context>Loading exact activity context…</p></div><button type="button" class="ui-icon-button absolute right-3 top-3" data-default-check-modal-close aria-label="Close activity tracker"><x-ui.icon name="close" size="size-5" /></button></div>
                     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-subtle/40 p-3 sm:p-4" data-default-check-modal-body><div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading activity tracker…</div></div>
-                    <div class="flex shrink-0 justify-end border-t border-ui-border px-5 py-3.5 sm:px-6"><button type="button" class="ui-button-secondary-compact" data-default-check-modal-close>Close</button></div>
                 </div>
             </dialog>
 
             <dialog id="quick-complete-activity-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-quick-complete-modal aria-labelledby="quick-complete-activity-title">
-                <div class="border-b border-ui-border px-5 py-4"><h2 id="quick-complete-activity-title" class="break-words text-lg font-bold text-brand-sidebar" data-quick-complete-title>Mark activity as completed?</h2></div>
+                <div class="border-b border-ui-border px-5 py-4">
+                    <h2 id="quick-complete-activity-title" class="break-words text-lg font-bold text-brand-sidebar" data-quick-complete-title></h2>
+                    <p class="mt-0.5 text-sm text-text-muted">Complete this activity?</p>
+                </div>
                 <div class="space-y-3 px-5 py-5 text-sm leading-6 text-text-muted">
-                    <p>The schedule and time will be cleared. Completion will be recorded in Activity History under the actual user confirming this action.</p>
+                    <div data-quick-complete-schedule-block hidden>
+                        <p class="text-xs font-bold uppercase tracking-wide text-text-muted">Schedule</p>
+                        <p class="mt-0.5 font-semibold text-text-main" data-quick-complete-schedule></p>
+                    </div>
+                    <div data-quick-complete-remarks-block hidden>
+                        <p class="text-xs font-bold uppercase tracking-wide text-text-muted">Remarks</p>
+                        <p class="mt-0.5 break-words text-text-main" data-quick-complete-remarks></p>
+                    </div>
+                    <p class="text-xs text-text-muted">The schedule and time will be cleared. Completion will be recorded in Recent Activity under the actual user confirming this action.</p>
                     <p class="rounded-control border border-danger/25 bg-danger-soft px-3 py-2 font-semibold text-danger" role="alert" data-quick-complete-error hidden></p>
                 </div>
-                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-cancel>Cancel</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-quick-complete-confirm>Mark Completed</button></div>
+                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-cancel>Cancel</button><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-edit>Edit</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-quick-complete-confirm>Mark as Completed</button></div>
+            </dialog>
+
+            <dialog id="remove-submission-proof-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-remove-submission-proof-modal aria-labelledby="remove-submission-proof-title">
+                <div class="border-b border-ui-border px-5 py-4"><h2 id="remove-submission-proof-title" class="break-words text-lg font-bold text-brand-sidebar">Remove Supporting Proof?</h2></div>
+                <div class="space-y-3 px-5 py-5 text-sm leading-6 text-text-muted">
+                    <p>This will permanently remove the attached proof from this activity. The activity and its submission record will remain unchanged.</p>
+                    <p class="rounded-control border border-danger/25 bg-danger-soft px-3 py-2 font-semibold text-danger" role="alert" data-remove-submission-proof-error hidden></p>
+                </div>
+                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-remove-submission-proof-cancel>Cancel</button><button type="button" class="ui-button-danger w-full sm:w-auto" data-remove-submission-proof-confirm>Remove Proof</button></div>
             </dialog>
 
             @foreach($activities as $activity)
@@ -421,9 +441,8 @@
                     @endif
                 @endforeach
 
-                @if($activity->status === App\Enums\ActivityStatus::Completed)
                     <dialog id="submit-activity-{{ $activity->id }}" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" aria-labelledby="submission-dialog-title-{{ $activity->id }}" @if($errors->submission->any() && (int) old('submission_activity_id') === $activity->id) open @endif>
-                        <form method="POST" action="{{ route('client-folders.activities.submit', [$clientFolder, $activity]) }}" class="flex max-h-[calc(100dvh-2rem)] flex-col">
+                        <form method="POST" action="{{ route('client-folders.activities.submit', [$clientFolder, $activity]) }}" enctype="multipart/form-data" class="flex max-h-[calc(100dvh-2rem)] flex-col" data-ci-submission-form="{{ $activity->id }}">
                             @csrf @method('PATCH')
                             <input type="hidden" name="submission_activity_id" value="{{ $activity->id }}">
                             <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
@@ -439,24 +458,49 @@
                                 <button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close submission dialog"><x-ui.icon name="close" size="size-5" /></button>
                             </div>
                             <div class="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
-                                @if($activity->submitted_at)
-                                    <dl class="grid gap-x-4 gap-y-3 rounded-control border border-ui-border bg-surface-subtle/70 px-4 py-3 sm:grid-cols-2" data-submission-summary>
-                                        <div class="min-w-0"><dt class="text-[0.6875rem] font-bold uppercase tracking-wide text-text-muted">Submitted By</dt><dd class="mt-1 break-words text-sm font-semibold leading-5 text-text-main">{{ $activity->submitter?->full_name ?? 'Unknown user' }}</dd></div>
-                                        <div class="min-w-0"><dt class="text-[0.6875rem] font-bold uppercase tracking-wide text-text-muted">Submitted At</dt><dd class="mt-1 break-words text-sm font-semibold leading-5 text-text-main">{{ $activity->submitted_at->timezone(config('cims.display_timezone'))->format('M j, Y · g:i A') }}</dd></div>
-                                        <div class="min-w-0"><dt class="text-[0.6875rem] font-bold uppercase tracking-wide text-text-muted">Submitted To</dt><dd class="mt-1 break-words text-sm font-semibold leading-5 text-text-main">{{ $activity->submitted_to ?: 'Not specified' }}</dd></div>
-                                        <div class="min-w-0"><dt class="text-[0.6875rem] font-bold uppercase tracking-wide text-text-muted">Proof</dt><dd class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold leading-5 text-text-main">@if($activity->media_references_count > 0)<span>{{ $activity->media_references_count }} {{ Str::plural('Attachment', $activity->media_references_count) }}</span><a href="{{ route('client-folders.media.index', [$clientFolder] + $personParams) }}" class="text-xs font-bold text-brand-primary hover:underline">View Proof</a>@else<span class="text-text-muted">No Attachment</span>@endif</dd></div>
-                                    </dl>
-                                @endif
                                 <div><label for="submitted-to-{{ $activity->id }}" class="ui-label">Submitted To <span class="font-normal text-text-muted">(optional)</span></label><input id="submitted-to-{{ $activity->id }}" name="submitted_to" value="{{ (int) old('submission_activity_id') === $activity->id ? old('submitted_to') : $activity->submitted_to }}" class="ui-control" maxlength="255" autocomplete="off" placeholder="Enter the Credit Analyst's name">@if($errors->submission->has('submitted_to'))<p class="mt-2 flex items-start gap-1.5 text-sm font-medium text-danger" role="alert"><x-ui.icon name="warning" size="mt-0.5 size-4" />{{ $errors->submission->first('submitted_to') }}</p>@endif</div>
                                 <div><label for="submission-note-{{ $activity->id }}" class="ui-label">Submission Note <span class="font-normal text-text-muted">(optional)</span></label><textarea id="submission-note-{{ $activity->id }}" name="submission_note" rows="3" class="ui-control" placeholder="Add a concise handoff or submission note.">{{ (int) old('submission_activity_id') === $activity->id ? old('submission_note') : $activity->submission_note }}</textarea>@if($errors->submission->has('submission_note'))<p class="mt-2 flex items-start gap-1.5 text-sm font-medium text-danger" role="alert"><x-ui.icon name="warning" size="mt-0.5 size-4" />{{ $errors->submission->first('submission_note') }}</p>@endif</div>
+                                @php $submissionProofCount = $activity->mediaReferences->count(); @endphp
+                                <div data-ci-submission-proof-block="{{ $activity->id }}">
+                                    <div class="flex items-center justify-between gap-2">
+                                        <label class="ui-label !mb-0">Supporting Proof <span class="font-normal text-text-muted">(optional)</span></label>
+                                        <span class="text-xs font-bold text-text-muted">{{ $submissionProofCount }} / 5 attachments</span>
+                                    </div>
+                                    @if($submissionProofCount > 0)
+                                        <ul class="mt-2 divide-y divide-ui-border overflow-hidden rounded-card border border-ui-border">
+                                            @foreach($activity->mediaReferences as $media)
+                                                <li class="p-2.5 text-xs">
+                                                    <p class="break-words font-semibold text-text-main">{{ $media->file_name }}</p>
+                                                    <div class="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                                                        <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $media]) }}" target="_blank" rel="noopener" class="font-semibold text-brand-primary hover:underline">View</a>
+                                                        <span aria-hidden="true">&middot;</span>
+                                                        <label class="cursor-pointer font-semibold text-brand-primary hover:underline">Replace<input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" data-ci-submission-replace-proof="{{ $activity->id }}" data-ci-submission-replace-proof-url="{{ route('client-folders.activities.proof.replace', [$clientFolder, $activity, $media]) }}"></label>
+                                                        <span aria-hidden="true">&middot;</span>
+                                                        <button type="button" class="font-semibold text-danger hover:underline" data-ci-submission-remove-proof="{{ $activity->id }}" data-ci-submission-remove-proof-url="{{ route('client-folders.activities.proof.destroy', [$clientFolder, $activity, $media]) }}">Remove</button>
+                                                    </div>
+                                                </li>
+                                            @endforeach
+                                        </ul>
+                                    @endif
+                                    @if($submissionProofCount < 5)
+                                        <label class="ui-button-secondary-compact mt-3 w-fit cursor-pointer" for="submission-proof-add-{{ $activity->id }}"><x-ui.icon name="upload" size="size-3.5" />Add Photos</label>
+                                        <input id="submission-proof-add-{{ $activity->id }}" type="file" accept="image/jpeg,image/png,image/webp" multiple class="sr-only" data-ci-submission-add-proof="{{ $activity->id }}" data-ci-submission-add-proof-url="{{ route('client-folders.activities.proof.store', [$clientFolder, $activity]) }}">
+                                    @else
+                                        <p class="mt-3 text-xs font-semibold text-text-muted">5 / 5 attachments — Maximum reached</p>
+                                    @endif
+                                    <p class="mt-2 flex items-center gap-1.5 text-xs font-semibold text-text-main"><x-ui.icon name="cloud" size="size-3.5" class="text-brand-primary" />Cloud Storage</p>
+                                    <p class="mt-0.5 text-xs leading-4 text-text-muted">Photos will be securely uploaded to cloud storage. Maximum 5 photos per activity.</p>
+                                    <p class="ui-help">JPG, PNG, or WEBP · Optional</p>
+                                    <p class="mt-2 flex items-center gap-2 text-xs font-semibold text-brand-primary" role="status" aria-live="polite" data-ci-submission-proof-status="{{ $activity->id }}" hidden><span class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-brand-primary/25 border-t-brand-primary motion-reduce:animate-none" aria-hidden="true"></span><span data-ci-submission-proof-status-text></span></p>
+                                    <p class="mt-2 flex items-start gap-1.5 text-sm font-medium text-danger" role="alert" data-ci-submission-proof-error="{{ $activity->id }}" hidden></p>
+                                </div>
                                 @if($errors->submission->has('submission_activity_id'))<p class="flex items-start gap-1.5 text-sm font-medium text-danger" role="alert"><x-ui.icon name="warning" size="mt-0.5 size-4" />{{ $errors->submission->first('submission_activity_id') }}</p>@endif
-                                <div class="flex items-start gap-2 rounded-control border border-brand-primary/15 bg-brand-soft/40 px-3 py-2.5 text-xs leading-5 text-text-muted"><x-ui.icon name="info" size="mt-0.5 size-4 shrink-0 text-brand-primary" /><p><span class="font-semibold text-text-main">Submitted By</span> records the authenticated user completing this handoff. The original activity Creator remains unchanged, and proof remains optional.</p></div>
                             </div>
                             <div class="flex shrink-0 flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-3.5 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary-compact !min-h-9 w-full sm:w-auto" data-modal-close>{{ $activity->submitted_at ? 'Close' : 'Cancel' }}</button><button type="submit" class="ui-button-primary !min-h-9 !px-3 !py-1.5 !text-xs w-full sm:w-auto"><x-ui.icon name="check-circle" size="size-3.5" />{{ $activity->submitted_at ? 'Update Submission' : 'Mark as Submitted' }}</button></div>
                         </form>
                     </dialog>
                     <x-ui.confirmation-dialog id="reopen-activity-{{ $activity->id }}" title="Reopen Activity?" :action="route('client-folders.activities.update', [$clientFolder, $activity])" method="PUT" confirm-label="Reopen Activity">
-                        <p>This activity will be returned to Pending. The previous completion will remain visible in Activity History.</p>
+                        <p>This activity will be returned to Pending. The previous completion will remain visible in Recent Activity.</p>
                         <x-slot:formFields>
                             <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
                             <input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at->toISOString() }}">
@@ -464,7 +508,6 @@
                             <input type="hidden" name="intent" value="return">
                         </x-slot:formFields>
                     </x-ui.confirmation-dialog>
-                @endif
                 @unless($activity->isMandatoryDefault())
                     <x-ui.confirmation-dialog id="delete-activity-{{ $activity->id }}" :title="'Permanently delete '.$activity->name.'?'" :action="route('client-folders.activities.destroy', [$clientFolder, $activity])" method="DELETE" confirm-label="Permanently Delete" destructive>
                         <p>This action cannot be undone.</p>
@@ -479,12 +522,14 @@
         <div class="min-w-0" data-ci-history-shell>
             <aside id="activity-history-panel" class="ui-panel min-w-0 p-5" aria-labelledby="activity-history-title" data-ci-history-panel>
                 <div class="flex items-center justify-between gap-3">
-                    <div class="flex min-w-0 items-center gap-2 text-brand-primary"><x-ui.icon name="clock" size="size-5" /><h2 id="activity-history-title" class="truncate text-base font-bold text-brand-sidebar">Activity History</h2></div>
-                    <button type="button" class="ui-icon-button -mr-2 -mt-2 shrink-0" title="Hide panel" aria-label="Hide Activity History panel" aria-controls="activity-history-panel" aria-expanded="true" data-ci-history-hide><x-ui.icon name="close" size="size-4" /></button>
+                    <div class="flex min-w-0 items-center gap-2 text-brand-primary"><x-ui.icon name="clock" size="size-5" /><h2 id="activity-history-title" class="truncate text-base font-bold text-brand-sidebar">Recent Activity</h2></div>
+                    <button type="button" class="ui-icon-button -mr-2 -mt-2 shrink-0" title="Hide Panel" aria-label="Hide Panel" aria-controls="activity-history-panel" aria-expanded="true" data-ci-history-hide><x-ui.icon name="close" size="size-4" /></button>
                 </div>
+                <div data-ci-activity-history>
                 @if($history->isEmpty())<div class="mt-6 rounded-control bg-surface-subtle p-4 text-sm leading-6 text-text-muted">No activity history has been recorded for this person yet.</div>@else
-                    <ol class="relative mt-6 space-y-0">@foreach($history as $event)<li class="relative grid grid-cols-[1rem_1fr] gap-3 pb-6 last:pb-0">@unless($loop->last)<span class="absolute bottom-0 left-[0.4375rem] top-4 border-l border-dashed border-ui-border-strong" aria-hidden="true"></span>@endunless<span @class(['relative z-10 mt-1 size-3.5 rounded-full border-2 border-white shadow-sm', 'bg-success' => $event->tone === 'success', 'bg-brand-primary' => $event->tone === 'progress', 'bg-text-muted' => $event->tone === 'neutral'])></span><div class="min-w-0"><p class="text-sm font-bold leading-5 text-text-main">{{ $event->label }}</p>@if($event->detail)<p class="mt-1 break-words text-xs leading-5 text-text-muted">{{ $event->detail }}</p>@endif<p class="mt-1 text-xs leading-5 text-text-muted">by {{ $event->user?->full_name ?? 'System' }}<br>{{ $event->created_at->timezone(config('cims.display_timezone'))->format('M j, Y · g:i A') }}</p></div></li>@endforeach</ol>
+                    <ol class="relative mt-6 space-y-0">@foreach($history as $event)@include('client-folders.activities.partials.history-entry', ['event' => $event, 'showConnector' => ! $loop->last])@endforeach</ol>
                 @endif
+                </div>
                 <div class="mt-5 border-t border-ui-border pt-4">
                     <button type="button" class="w-full text-center text-sm font-bold text-brand-primary hover:underline" data-modal-open="all-activity-history">View All</button>
                 </div>
@@ -495,8 +540,8 @@
     <dialog id="all-activity-history" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-2xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45">
         <div class="flex max-h-[calc(100dvh-2rem)] flex-col">
             <div class="flex shrink-0 items-center justify-between gap-4 border-b border-ui-border px-5 py-4 sm:px-6">
-                <div class="flex items-center gap-2 text-brand-primary"><x-ui.icon name="clock" size="size-5" /><h2 class="text-lg font-bold text-brand-sidebar">Activity History</h2></div>
-                <button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close Activity History"><x-ui.icon name="close" size="size-5" /></button>
+                <div class="flex items-center gap-2 text-brand-primary"><x-ui.icon name="clock" size="size-5" /><h2 class="text-lg font-bold text-brand-sidebar">Recent Activity</h2></div>
+                <button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close Recent Activity"><x-ui.icon name="close" size="size-5" /></button>
             </div>
             <div class="min-h-0 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6" data-ci-history-modal-body>
                 @forelse($allHistory as $event)
@@ -598,7 +643,7 @@
                                     <div><label for="bank-target-name-{{ $index }}" class="ui-label">Bank / Coop Name</label><input id="bank-target-name-{{ $index }}" name="bank_targets[{{ $index }}][institution_name]" value="{{ $target['institution_name'] ?? '' }}" class="ui-control" maxlength="255" required data-bank-target-control @disabled(! $addingBankCoopCheck)>@error('bank_targets.'.$index.'.institution_name')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror<p class="mt-1.5 text-sm font-semibold text-danger" data-bank-target-name-error hidden>Enter the Bank / Coop name.</p></div>
                                     <div data-bank-target-branch-field @if($targetInquiryType === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY) hidden @endif><label for="bank-target-branch-{{ $index }}" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-branch-{{ $index }}" name="bank_targets[{{ $index }}][branch_location]" value="{{ $targetInquiryType === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY ? '' : ($target['branch_location'] ?? '') }}" class="ui-control" maxlength="255" data-bank-target-branch data-bank-target-control @disabled(! $addingBankCoopCheck || $targetInquiryType === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY)>@error('bank_targets.'.$index.'.branch_location')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
                                     <div><label for="bank-target-status-{{ $index }}" class="ui-label">Status</label><select id="bank-target-status-{{ $index }}" name="bank_targets[{{ $index }}][status]" class="ui-control" required data-bank-target-status data-bank-target-control @disabled(! $addingBankCoopCheck)><option value="pending" @selected($targetStatus === 'pending')>Pending</option><option value="scheduled" @selected($targetStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($targetStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($targetStatus === 'completed')>Completed</option></select>@error('bank_targets.'.$index.'.status')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
-                                    <div class="grid gap-3 sm:grid-cols-2"><div><label for="bank-target-date-{{ $index }}" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-date-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_at]" type="date" value="{{ $targetSupportsSchedule ? ($target['scheduled_at'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-bank-target-control @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule)>@error('bank_targets.'.$index.'.scheduled_at')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><div><label for="bank-target-time-{{ $index }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_time]" type="time" value="{{ $targetSupportsSchedule ? ($target['scheduled_time'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule || blank($target['scheduled_at'] ?? null))>@error('bank_targets.'.$index.'.scheduled_time')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
+                                    <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label for="bank-target-date-{{ $index }}" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-date-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_at]" type="date" value="{{ $targetSupportsSchedule ? ($target['scheduled_at'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-bank-target-control @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule)>@error('bank_targets.'.$index.'.scheduled_at')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><div><label for="bank-target-time-{{ $index }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_time]" type="time" value="{{ $targetSupportsSchedule ? ($target['scheduled_time'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule || blank($target['scheduled_at'] ?? null))>@error('bank_targets.'.$index.'.scheduled_time')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
                                     <div class="sm:col-span-2"><label for="bank-target-remarks-{{ $index }}" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="bank-target-remarks-{{ $index }}" name="bank_targets[{{ $index }}][remarks]" rows="2" class="ui-control" data-bank-target-control @disabled(! $addingBankCoopCheck)>{{ $target['remarks'] ?? '' }}</textarea>@error('bank_targets.'.$index.'.remarks')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
                                 </div>
                             </article>
@@ -614,7 +659,7 @@
                                 <div><label for="bank-target-name-__INDEX__" class="ui-label">Bank / Coop Name</label><input id="bank-target-name-__INDEX__" name="bank_targets[__INDEX__][institution_name]" class="ui-control" maxlength="255" required data-bank-target-control><p class="mt-1.5 text-sm font-semibold text-danger" data-bank-target-name-error hidden>Enter the Bank / Coop name.</p></div>
                                 <div data-bank-target-branch-field><label for="bank-target-branch-__INDEX__" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-branch-__INDEX__" name="bank_targets[__INDEX__][branch_location]" class="ui-control" maxlength="255" data-bank-target-branch data-bank-target-control></div>
                                 <div><label for="bank-target-status-__INDEX__" class="ui-label">Status</label><select id="bank-target-status-__INDEX__" name="bank_targets[__INDEX__][status]" class="ui-control" required data-bank-target-status data-bank-target-control><option value="pending">Pending</option><option value="scheduled">Scheduled</option><option value="follow_up">For Follow-up</option><option value="completed">Completed</option></select></div>
-                                <div class="grid gap-3 sm:grid-cols-2"><div><label for="bank-target-date-__INDEX__" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-date-__INDEX__" name="bank_targets[__INDEX__][scheduled_at]" type="date" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-bank-target-control disabled></div><div><label for="bank-target-time-__INDEX__" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-__INDEX__" name="bank_targets[__INDEX__][scheduled_time]" type="time" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control disabled></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
+                                <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label for="bank-target-date-__INDEX__" class="ui-label">Schedule Date <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-date-__INDEX__" name="bank_targets[__INDEX__][scheduled_at]" type="date" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-bank-target-control disabled></div><div><label for="bank-target-time-__INDEX__" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-__INDEX__" name="bank_targets[__INDEX__][scheduled_time]" type="time" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control disabled></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p></div>
                                 <div class="sm:col-span-2"><label for="bank-target-remarks-__INDEX__" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="bank-target-remarks-__INDEX__" name="bank_targets[__INDEX__][remarks]" rows="2" class="ui-control" data-bank-target-control></textarea></div>
                             </div>
                         </article>
@@ -634,7 +679,7 @@
                                     <div><label class="ui-label" for="asset-target-type-{{ $index }}">Assessor Office / Type</label><select id="asset-target-type-{{ $index }}" name="asset_targets[{{ $index }}][assessor_type]" class="ui-control" required data-asset-target-control @disabled(! $addingAssetCheck)><option value="">Select assessor office</option>@foreach(App\Models\CiActivityAssetTarget::ASSESSOR_TYPES as $value => $label)<option value="{{ $value }}" @selected(($target['assessor_type'] ?? '') === $value)>{{ $label }}</option>@endforeach</select>@error('asset_targets.'.$index.'.assessor_type')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
                                     <div><label class="ui-label" for="asset-target-location-{{ $index }}">Office / Municipality / City / Location</label><input id="asset-target-location-{{ $index }}" name="asset_targets[{{ $index }}][office_location]" value="{{ $target['office_location'] ?? '' }}" class="ui-control" maxlength="255" required data-asset-target-location data-asset-target-control @disabled(! $addingAssetCheck)>@error('asset_targets.'.$index.'.office_location')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
                                     <div><label class="ui-label" for="asset-target-status-{{ $index }}">Status</label><select id="asset-target-status-{{ $index }}" name="asset_targets[{{ $index }}][status]" class="ui-control" required data-asset-target-status data-asset-target-control @disabled(! $addingAssetCheck)><option value="pending" @selected($assetStatus === 'pending')>Pending</option><option value="scheduled" @selected($assetStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($assetStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($assetStatus === 'completed')>Completed</option></select></div>
-                                    <div class="grid gap-3 sm:grid-cols-2"><div><label class="ui-label" for="asset-target-date-{{ $index }}">Schedule / Follow-up Date <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-date-{{ $index }}" name="asset_targets[{{ $index }}][scheduled_at]" type="date" value="{{ $assetSupportsSchedule ? ($target['scheduled_at'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-date data-asset-target-control @disabled(! $addingAssetCheck || ! $assetSupportsSchedule)></div><div><label class="ui-label" for="asset-target-time-{{ $index }}">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-time-{{ $index }}" name="asset_targets[{{ $index }}][scheduled_time]" type="time" value="{{ $assetSupportsSchedule ? ($target['scheduled_time'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-time data-asset-target-control @disabled(! $addingAssetCheck || ! $assetSupportsSchedule || blank($target['scheduled_at'] ?? null))></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Select a date to enable a specific time.</p></div>
+                                    <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label class="ui-label" for="asset-target-date-{{ $index }}">Schedule / Follow-up Date <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-date-{{ $index }}" name="asset_targets[{{ $index }}][scheduled_at]" type="date" value="{{ $assetSupportsSchedule ? ($target['scheduled_at'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-date data-asset-target-control @disabled(! $addingAssetCheck || ! $assetSupportsSchedule)></div><div><label class="ui-label" for="asset-target-time-{{ $index }}">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-time-{{ $index }}" name="asset_targets[{{ $index }}][scheduled_time]" type="time" value="{{ $assetSupportsSchedule ? ($target['scheduled_time'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-time data-asset-target-control @disabled(! $addingAssetCheck || ! $assetSupportsSchedule || blank($target['scheduled_at'] ?? null))></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Select a date to enable a specific time.</p></div>
                                     <div class="sm:col-span-2"><label class="ui-label" for="asset-target-remarks-{{ $index }}">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="asset-target-remarks-{{ $index }}" name="asset_targets[{{ $index }}][remarks]" rows="2" class="ui-control" data-asset-target-control @disabled(! $addingAssetCheck)>{{ $target['remarks'] ?? '' }}</textarea></div>
                                 </div>
                             </article>
@@ -649,28 +694,12 @@
                                 <div><label class="ui-label" for="asset-target-type-__INDEX__">Assessor Office / Type</label><select id="asset-target-type-__INDEX__" name="asset_targets[__INDEX__][assessor_type]" class="ui-control" required data-asset-target-control><option value="">Select assessor office</option>@foreach(App\Models\CiActivityAssetTarget::ASSESSOR_TYPES as $value => $label)<option value="{{ $value }}">{{ $label }}</option>@endforeach</select></div>
                                 <div><label class="ui-label" for="asset-target-location-__INDEX__">Office / Municipality / City / Location</label><input id="asset-target-location-__INDEX__" name="asset_targets[__INDEX__][office_location]" class="ui-control" maxlength="255" required data-asset-target-location data-asset-target-control></div>
                                 <div><label class="ui-label" for="asset-target-status-__INDEX__">Status</label><select id="asset-target-status-__INDEX__" name="asset_targets[__INDEX__][status]" class="ui-control" required data-asset-target-status data-asset-target-control><option value="pending">Pending</option><option value="scheduled">Scheduled</option><option value="follow_up">For Follow-up</option><option value="completed">Completed</option></select></div>
-                                <div class="grid gap-3 sm:grid-cols-2"><div><label class="ui-label" for="asset-target-date-__INDEX__">Schedule / Follow-up Date <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-date-__INDEX__" name="asset_targets[__INDEX__][scheduled_at]" type="date" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-date data-asset-target-control disabled></div><div><label class="ui-label" for="asset-target-time-__INDEX__">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-time-__INDEX__" name="asset_targets[__INDEX__][scheduled_time]" type="time" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-time data-asset-target-control disabled></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Select a date to enable a specific time.</p></div>
+                                <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label class="ui-label" for="asset-target-date-__INDEX__">Schedule / Follow-up Date <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-date-__INDEX__" name="asset_targets[__INDEX__][scheduled_at]" type="date" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-date data-asset-target-control disabled></div><div><label class="ui-label" for="asset-target-time-__INDEX__">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-time-__INDEX__" name="asset_targets[__INDEX__][scheduled_time]" type="time" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-time data-asset-target-control disabled></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Select a date to enable a specific time.</p></div>
                                 <div class="sm:col-span-2"><label class="ui-label" for="asset-target-remarks-__INDEX__">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="asset-target-remarks-__INDEX__" name="asset_targets[__INDEX__][remarks]" rows="2" class="ui-control" data-asset-target-control></textarea></div>
                             </div>
                         </article>
                     </template>
                 </section>
-                <div class="min-w-0 sm:col-span-2" data-activity-create-only @if(! $addActivityProofEnabled) hidden @endif>
-                    <label for="activity-attachment" class="ui-label">Proof / Attachment <span class="font-normal text-text-muted">(optional)</span></label>
-                    <div class="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-                        <input id="activity-attachment" type="file" name="attachment" class="sr-only" data-ci-activity-attachment @disabled(! $addActivityProofEnabled)>
-                        <button type="button" class="ui-button-secondary-compact w-fit shrink-0" data-ci-activity-attachment-open><x-ui.icon name="attachment" size="size-4" />Upload Attachment</button>
-                        <div class="flex min-w-0 items-center gap-2 text-xs text-text-muted">
-                            <span class="min-w-0 truncate" title="No file selected" data-ci-activity-attachment-name>No file selected</span>
-                            <button type="button" class="shrink-0 font-semibold text-danger hover:underline" data-ci-activity-attachment-remove hidden>Remove</button>
-                        </div>
-                    </div>
-                    <p class="ui-help">Attach supporting evidence now or add it later.</p>
-                    <x-form.validation-message for="attachment" />
-                </div>
-                @if(! $addActivityProofEnabled && $errors->has('attachment'))
-                    <div class="sm:col-span-2"><x-form.validation-message for="attachment" /></div>
-                @endif
                 <div class="sm:col-span-2 rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted" data-custom-activity-info @if(! $addingNewActivityType) hidden @endif>
                     Saving this reusable Activity Type will not create a CI Activity or assign a Creator.
                 </div>
@@ -678,6 +707,18 @@
             </div>
             <div class="flex shrink-0 flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-ci-activity-dialog-close>Cancel</button><button type="submit" class="ui-button-primary" data-ci-activity-submit><x-ui.icon name="plus" size="size-4" /><span data-ci-activity-submit-label>{{ $addingNewActivityType ? 'Add Activity Type' : 'Add Activity' }}</span></button></div>
         </form>
+    </dialog>
+
+    <dialog id="bank-target-remove-dialog" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-bank-target-remove-dialog aria-labelledby="bank-target-remove-title">
+        <div class="border-b border-ui-border px-5 py-4"><h2 id="bank-target-remove-title" class="text-lg font-bold text-brand-sidebar">Remove this Bank / Coop entry?</h2></div>
+        <div class="px-5 py-5 text-sm leading-6 text-text-muted">This row already contains information. Removing it will discard the data entered in this row.</div>
+        <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-bank-target-remove-cancel>Cancel</button><button type="button" class="ui-button-danger" data-bank-target-remove-confirm>Remove Entry</button></div>
+    </dialog>
+
+    <dialog id="asset-target-remove-dialog" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-asset-target-remove-dialog aria-labelledby="asset-target-remove-title">
+        <div class="border-b border-ui-border px-5 py-4"><h2 id="asset-target-remove-title" class="text-lg font-bold text-brand-sidebar">Remove this Assessor entry?</h2></div>
+        <div class="px-5 py-5 text-sm leading-6 text-text-muted">This row already contains information. Removing it will discard the data entered in this row.</div>
+        <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-asset-target-remove-cancel>Cancel</button><button type="button" class="ui-button-danger" data-asset-target-remove-confirm>Remove Entry</button></div>
     </dialog>
 
     @foreach($customActivityDefinitions as $definition)
@@ -703,6 +744,41 @@
     @endforeach
 
     <script>
+        // Inserts already-persisted, server-rendered history entries (newest first) at the
+        // top of the Activity History list. This never issues a request of its own — callers
+        // pass the `history` HTML that already came back on the SAME mutation response, so
+        // there is no second history fetch and no client-fabricated entry.
+        function insertCiActivityHistoryEntries(entryHtmlList) {
+            if (! Array.isArray(entryHtmlList) || entryHtmlList.length === 0) return;
+            const container = document.querySelector('[data-ci-activity-history]');
+            if (!(container instanceof HTMLElement)) return;
+
+            let list = container.querySelector('ol');
+            if (!(list instanceof HTMLOListElement)) {
+                list = document.createElement('ol');
+                list.className = 'relative mt-6 space-y-0';
+                container.replaceChildren(list);
+            }
+
+            const template = document.createElement('template');
+            // Newest-first payload: insert in order so the very first entry ends up on top.
+            entryHtmlList.forEach((html) => {
+                template.innerHTML = html;
+                const entry = template.content.firstElementChild;
+                if (entry instanceof HTMLLIElement) {
+                    if (list.firstChild) list.insertBefore(entry, list.firstChild);
+                    else list.append(entry);
+                }
+            });
+
+            const maxEntries = 5;
+            while (list.children.length > maxEntries) list.lastElementChild?.remove();
+
+            // Keep the connector line honest: only the actual last visible entry should lack one.
+            const last = list.lastElementChild;
+            if (last instanceof HTMLLIElement && last.children.length > 2) last.firstElementChild?.remove();
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             const dialog = document.querySelector('[data-ci-activity-dialog]');
             const dialogBody = document.querySelector('[data-ci-activity-dialog-body]');
@@ -918,11 +994,6 @@
             const scheduleTime = document.querySelector('[data-ci-activity-schedule-time]');
             const scheduleHelp = document.querySelector('[data-ci-schedule-help]');
             const remarks = document.querySelector('[data-ci-activity-remarks]');
-            const attachmentSection = document.querySelector('[data-activity-create-only]');
-            const attachment = document.querySelector('[data-ci-activity-attachment]');
-            const attachmentOpen = document.querySelector('[data-ci-activity-attachment-open]');
-            const attachmentName = document.querySelector('[data-ci-activity-attachment-name]');
-            const attachmentRemove = document.querySelector('[data-ci-activity-attachment-remove]');
             const dialogBody = document.querySelector('[data-ci-activity-dialog-body]');
             const customInfo = document.querySelector('[data-custom-activity-info]');
             const form = document.querySelector('[data-ci-activity-create-form]');
@@ -951,11 +1022,6 @@
                 || !(schedule instanceof HTMLInputElement)
                 || !(scheduleTime instanceof HTMLInputElement)
                 || !(remarks instanceof HTMLTextAreaElement)
-                || !(attachmentSection instanceof HTMLElement)
-                || !(attachment instanceof HTMLInputElement)
-                || !(attachmentOpen instanceof HTMLButtonElement)
-                || !(attachmentName instanceof HTMLElement)
-                || !(attachmentRemove instanceof HTMLButtonElement)
                 || !(dialogBody instanceof HTMLElement)
                 || !(customInfo instanceof HTMLElement)
                 || !(form instanceof HTMLFormElement)
@@ -982,6 +1048,19 @@
                 .map((row) => Number.parseInt(row.dataset.assetTargetIndex ?? '-1', 10))) + 1;
             const currentAssetTargetRows = () => [...assetTargetRows.querySelectorAll('[data-asset-target-row]')];
 
+            const assetTargetRemoveDialog = document.querySelector('[data-asset-target-remove-dialog]');
+            let pendingAssetTargetRemoval = null;
+            assetTargetRemoveDialog?.querySelector('[data-asset-target-remove-confirm]')?.addEventListener('click', () => {
+                if (!pendingAssetTargetRemoval) return;
+                const row = pendingAssetTargetRemoval;
+                pendingAssetTargetRemoval = null;
+                assetTargetRemoveDialog.close();
+                row.remove();
+                syncAssetTargetRows();
+            });
+            assetTargetRemoveDialog?.querySelector('[data-asset-target-remove-cancel]')?.addEventListener('click', () => assetTargetRemoveDialog.close());
+            assetTargetRemoveDialog?.addEventListener('close', () => { pendingAssetTargetRemoval = null; });
+
             const derivedAssetParentStatus = () => {
                 const statuses = currentAssetTargetRows().map((row) => row.querySelector('[data-asset-target-status]')?.value).filter(Boolean);
                 if (statuses.length > 0 && statuses.every((targetStatus) => targetStatus === 'completed')) return 'completed';
@@ -1004,7 +1083,6 @@
                 date.disabled = ! active || ! supportsSchedule;
                 if (! active || ! supportsSchedule || date.value === '') time.value = '';
                 time.disabled = ! active || ! supportsSchedule || date.value === '';
-                syncAttachmentAvailability();
             };
 
             const syncAssetTargetRows = () => {
@@ -1017,6 +1095,19 @@
                 assetTargetAdd.disabled = assetTargetSection.hidden;
             };
 
+            // Same dirty-check convention as bankTargetRowHasData: meaningful fields only, Status
+            // counted only when it has moved off its default 'pending'.
+            const assetTargetRowHasData = (row) => {
+                const type = row.querySelector('[name$="[assessor_type]"]');
+                const location = row.querySelector('[data-asset-target-location]');
+                const statusControl = row.querySelector('[data-asset-target-status]');
+                const date = row.querySelector('[data-asset-target-date]');
+                const time = row.querySelector('[data-asset-target-time]');
+                const remarks = row.querySelector('[name$="[remarks]"]');
+                if (statusControl instanceof HTMLSelectElement && statusControl.value !== 'pending') return true;
+                return [type, location, date, time, remarks].some((control) => (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement) && control.value.trim() !== '');
+            };
+
             const bindAssetTargetRow = (row) => {
                 if (row.dataset.assetTargetBound === 'true') return;
                 row.dataset.assetTargetBound = 'true';
@@ -1024,6 +1115,11 @@
                 row.querySelector('[data-asset-target-date]')?.addEventListener('input', () => syncAssetTargetRow(row));
                 row.querySelector('[data-asset-target-remove]')?.addEventListener('click', () => {
                     if (currentAssetTargetRows().length === 1) return;
+                    if (assetTargetRemoveDialog instanceof HTMLDialogElement && assetTargetRowHasData(row)) {
+                        pendingAssetTargetRemoval = row;
+                        assetTargetRemoveDialog.showModal();
+                        return;
+                    }
                     row.remove();
                     syncAssetTargetRows();
                 });
@@ -1041,6 +1137,19 @@
                 if (! assetTargetSection.hidden && currentAssetTargetRows().length === 0) addAssetTargetRow();
                 syncAssetTargetRows();
             };
+
+            const bankTargetRemoveDialog = document.querySelector('[data-bank-target-remove-dialog]');
+            let pendingBankTargetRemoval = null;
+            bankTargetRemoveDialog?.querySelector('[data-bank-target-remove-confirm]')?.addEventListener('click', () => {
+                if (!pendingBankTargetRemoval) return;
+                const row = pendingBankTargetRemoval;
+                pendingBankTargetRemoval = null;
+                bankTargetRemoveDialog.close();
+                row.remove();
+                syncBankTargetRows();
+            });
+            bankTargetRemoveDialog?.querySelector('[data-bank-target-remove-cancel]')?.addEventListener('click', () => bankTargetRemoveDialog.close());
+            bankTargetRemoveDialog?.addEventListener('close', () => { pendingBankTargetRemoval = null; });
 
             const derivedBankParentStatus = () => {
                 const statuses = currentBankTargetRows()
@@ -1085,7 +1194,6 @@
                 const timeEnabled = active && supportsSchedule && dateControl.value !== '';
                 if (! timeEnabled) timeControl.value = '';
                 timeControl.disabled = ! timeEnabled;
-                syncAttachmentAvailability();
             };
 
             const syncBankTargetRows = () => {
@@ -1096,6 +1204,21 @@
                     syncBankTargetRow(row);
                 });
                 bankTargetAdd.disabled = bankTargetSection.hidden;
+            };
+
+            // A row counts as containing data using the same field set trusted elsewhere in this
+            // form (see bankTargetCollectionIsPristine above) plus Status, since selecting a
+            // non-default Status is itself a meaningful, discardable choice.
+            const bankTargetRowHasData = (row) => {
+                const name = row.querySelector('[name$="[institution_name]"]');
+                const inquiryType = row.querySelector('[data-bank-target-inquiry-type]');
+                const location = row.querySelector('[name$="[branch_location]"]');
+                const statusControl = row.querySelector('[data-bank-target-status]');
+                const date = row.querySelector('[name$="[scheduled_at]"]');
+                const time = row.querySelector('[name$="[scheduled_time]"]');
+                const remarks = row.querySelector('[name$="[remarks]"]');
+                if (statusControl instanceof HTMLSelectElement && statusControl.value !== 'pending') return true;
+                return [inquiryType, name, location, date, time, remarks].some((control) => (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement) && control.value.trim() !== '');
             };
 
             const bindBankTargetRow = (row) => {
@@ -1110,6 +1233,11 @@
                 dateControl?.addEventListener('input', () => syncBankTargetRow(row));
                 remove?.addEventListener('click', () => {
                     if (currentBankTargetRows().length === 1) return;
+                    if (bankTargetRemoveDialog instanceof HTMLDialogElement && bankTargetRowHasData(row)) {
+                        pendingBankTargetRemoval = row;
+                        bankTargetRemoveDialog.showModal();
+                        return;
+                    }
                     row.remove();
                     syncBankTargetRows();
                 });
@@ -1209,13 +1337,6 @@
                 syncBankTargetRows();
             };
 
-            const syncAttachmentName = () => {
-                const fileName = attachment.files?.[0]?.name ?? '';
-                attachmentName.textContent = fileName || 'No file selected';
-                attachmentName.title = fileName || 'No file selected';
-                attachmentRemove.hidden = fileName === '';
-            };
-
             const enabledOptions = () => options.filter((option) => option instanceof HTMLButtonElement && option.isConnected && ! option.disabled);
 
             const closeActivityTypeOptions = (restoreFocus = false) => {
@@ -1268,17 +1389,6 @@
                     : 'Available when the status is Scheduled or For Follow-up.';
             };
 
-            const syncAttachmentAvailability = () => {
-                const effectiveStatus = addingBankCoopCheck() ? derivedBankParentStatus() : (addingAssetCheck() ? derivedAssetParentStatus() : status.value);
-                const enabled = ! addingNewActivityType() && effectiveStatus === 'completed';
-                attachmentSection.hidden = ! enabled;
-                attachment.disabled = ! enabled;
-                if (! enabled && attachment.value !== '') {
-                    attachment.value = '';
-                    syncAttachmentName();
-                }
-            };
-
             const syncNewActivityType = () => {
                 const addingNewType = addingNewActivityType();
                 const bankCoopCheck = ! addingNewType && addingBankCoopCheck();
@@ -1300,12 +1410,9 @@
                     schedule.value = '';
                     scheduleTime.value = '';
                     remarks.value = '';
-                    attachment.value = '';
-                    syncAttachmentName();
                 }
 
                 syncScheduleAvailability();
-                syncAttachmentAvailability();
                 syncBankTargetSection();
                 syncAssetTargetSection();
                 window.requestAnimationFrame(() => { dialogBody.scrollTop = 0; });
@@ -1314,13 +1421,6 @@
             select.addEventListener('change', syncNewActivityType);
             bankTargetAdd.addEventListener('click', addBankTargetRow);
             assetTargetAdd.addEventListener('click', addAssetTargetRow);
-            attachmentOpen.addEventListener('click', () => attachment.click());
-            attachment.addEventListener('change', syncAttachmentName);
-            attachmentRemove.addEventListener('click', () => {
-                attachment.value = '';
-                syncAttachmentName();
-                attachmentOpen.focus();
-            });
             trigger.addEventListener('click', () => {
                 if (optionsPanel.hidden) openActivityTypeOptions();
                 else closeActivityTypeOptions();
@@ -1410,7 +1510,6 @@
             selector.closest('dialog')?.addEventListener('close', () => closeActivityTypeOptions());
             status.addEventListener('change', () => {
                 syncScheduleAvailability();
-                syncAttachmentAvailability();
             });
             syncNewActivityType();
         });
@@ -1658,13 +1757,23 @@
             const completionCheckboxes = [...document.querySelectorAll('[data-ci-activity-completion]')];
             const modal = document.querySelector('[data-quick-complete-modal]');
             const title = modal?.querySelector('[data-quick-complete-title]');
+            const scheduleBlock = modal?.querySelector('[data-quick-complete-schedule-block]');
+            const scheduleText = modal?.querySelector('[data-quick-complete-schedule]');
+            const remarksBlock = modal?.querySelector('[data-quick-complete-remarks-block]');
+            const remarksText = modal?.querySelector('[data-quick-complete-remarks]');
             const error = modal?.querySelector('[data-quick-complete-error]');
             const cancel = modal?.querySelector('[data-quick-complete-cancel]');
+            const editButton = modal?.querySelector('[data-quick-complete-edit]');
             const confirm = modal?.querySelector('[data-quick-complete-confirm]');
             if (!(modal instanceof HTMLDialogElement)
                 || !(title instanceof HTMLElement)
+                || !(scheduleBlock instanceof HTMLElement)
+                || !(scheduleText instanceof HTMLElement)
+                || !(remarksBlock instanceof HTMLElement)
+                || !(remarksText instanceof HTMLElement)
                 || !(error instanceof HTMLElement)
                 || !(cancel instanceof HTMLButtonElement)
+                || !(editButton instanceof HTMLButtonElement)
                 || !(confirm instanceof HTMLButtonElement)) return;
 
             let pendingCheckbox = null;
@@ -1673,7 +1782,7 @@
                 error.hidden = true;
                 error.textContent = '';
                 confirm.disabled = false;
-                confirm.textContent = 'Mark Completed';
+                confirm.textContent = 'Mark as Completed';
             };
 
             completionCheckboxes.forEach((checkbox) => checkbox.addEventListener('change', () => {
@@ -1690,11 +1799,23 @@
 
                 pendingCheckbox = checkbox;
                 resetDialog();
-                title.textContent = `Mark ${checkbox.dataset.completionName ?? 'activity'} as completed?`;
+                title.textContent = checkbox.dataset.completionName ?? 'Activity';
+                const schedule = checkbox.dataset.completionScheduleText ?? '';
+                scheduleBlock.hidden = schedule === '';
+                scheduleText.textContent = schedule;
+                const remarks = (checkbox.dataset.completionRemarks ?? '').trim();
+                remarksBlock.hidden = remarks === '';
+                remarksText.textContent = remarks;
                 modal.showModal();
             }));
 
             cancel.addEventListener('click', () => modal.close());
+            editButton.addEventListener('click', () => {
+                const activityId = pendingCheckbox?.dataset.ciActivityCompletion ?? '';
+                modal.close();
+                const opener = document.querySelector(`[data-default-check-open="${activityId}"]`);
+                if (opener instanceof HTMLElement) opener.click();
+            });
             modal.addEventListener('close', () => {
                 if (pendingCheckbox instanceof HTMLInputElement && ! pendingCheckbox.disabled) pendingCheckbox.checked = false;
                 pendingCheckbox = null;
@@ -1726,8 +1847,8 @@
                         credentials: 'same-origin',
                         headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                     });
+                    const payload = await response.json().catch(() => ({}));
                     if (! response.ok) {
-                        const payload = await response.json().catch(() => ({}));
                         throw new Error(Object.values(payload.errors ?? {}).flat().join(' ') || 'Unable to complete this activity.');
                     }
 
@@ -1735,6 +1856,7 @@
                     document.dispatchEvent(new CustomEvent('ci-default-check-refresh-request', {
                         detail: { activityId: checkbox.dataset.ciActivityCompletion ?? '', url: trackerUrl },
                     }));
+                    insertCiActivityHistoryEntries(payload.history);
                     modal.close();
                 } catch (requestError) {
                     checkbox.checked = false;
@@ -1744,6 +1866,251 @@
                     confirm.disabled = false;
                     confirm.textContent = 'Mark Completed';
                 }
+            });
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const csrfToken = () => document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+
+            const showProofError = (activityId, message) => {
+                const error = document.querySelector(`[data-ci-submission-proof-error="${activityId}"]`);
+                if (!(error instanceof HTMLElement)) return;
+                error.textContent = message;
+                error.hidden = false;
+            };
+
+            const setProofSaving = (activityId, message) => {
+                const status = document.querySelector(`[data-ci-submission-proof-status="${activityId}"]`);
+                const text = status?.querySelector('[data-ci-submission-proof-status-text]');
+                const error = document.querySelector(`[data-ci-submission-proof-error="${activityId}"]`);
+                if (!(status instanceof HTMLElement) || !(text instanceof HTMLElement)) return;
+                if (message) {
+                    text.textContent = message;
+                    status.hidden = false;
+                    status.setAttribute('aria-busy', 'true');
+                    if (error instanceof HTMLElement) error.hidden = true;
+                } else {
+                    status.hidden = true;
+                    status.setAttribute('aria-busy', 'false');
+                }
+            };
+
+            const setProofControlsDisabled = (activityId, disabled) => {
+                document.querySelectorAll(`[data-ci-submission-add-proof="${activityId}"], [data-ci-submission-replace-proof="${activityId}"]`).forEach((input) => {
+                    if (input instanceof HTMLInputElement) input.disabled = disabled;
+                });
+                document.querySelectorAll(`[data-ci-submission-remove-proof="${activityId}"]`).forEach((button) => {
+                    if (button instanceof HTMLButtonElement) button.disabled = disabled;
+                });
+            };
+
+            const refreshSubmissionProofBlock = async (activityId) => {
+                const response = await fetch(window.location.href, {
+                    credentials: 'same-origin',
+                    headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' },
+                });
+                if (! response.ok) return;
+                const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+                const fresh = page.querySelector(`[data-ci-submission-proof-block="${activityId}"]`);
+                const current = document.querySelector(`[data-ci-submission-proof-block="${activityId}"]`);
+                if (fresh instanceof HTMLElement && current instanceof HTMLElement) {
+                    current.replaceChildren(...[...fresh.childNodes].map((node) => document.importNode(node, true)));
+                }
+            };
+
+            document.addEventListener('change', async (event) => {
+                const addInput = event.target.closest('[data-ci-submission-add-proof]');
+                const replaceInput = event.target.closest('[data-ci-submission-replace-proof]');
+
+                if (addInput instanceof HTMLInputElement && addInput.files?.length) {
+                    const activityId = addInput.dataset.ciSubmissionAddProof ?? '';
+                    const url = addInput.dataset.ciSubmissionAddProofUrl ?? '';
+                    if (! url) return;
+                    const fileCount = addInput.files.length;
+                    const formData = new FormData();
+                    formData.set('_token', csrfToken());
+                    [...addInput.files].forEach((file) => formData.append('photos[]', file));
+
+                    setProofControlsDisabled(activityId, true);
+                    setProofSaving(activityId, fileCount === 1 ? 'Saving photo to Cloud Storage… Please wait.' : `Saving ${fileCount} photos to Cloud Storage… Please wait.`);
+
+                    try {
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            body: formData,
+                            credentials: 'same-origin',
+                            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                        });
+                        const payload = await response.json().catch(() => ({}));
+                        if (! response.ok) {
+                            throw new Error(Object.values(payload.errors ?? {}).flat().join(' ') || payload.message || 'Unable to add these photos.');
+                        }
+                        await refreshSubmissionProofBlock(activityId);
+                        insertCiActivityHistoryEntries(payload.history);
+                    } catch (requestError) {
+                        setProofSaving(activityId, '');
+                        setProofControlsDisabled(activityId, false);
+                        showProofError(activityId, requestError instanceof Error ? requestError.message : 'Unable to save one or more photos to Cloud Storage. Please try again.');
+                    }
+                    return;
+                }
+
+                if (replaceInput instanceof HTMLInputElement && replaceInput.files?.length) {
+                    const activityId = replaceInput.dataset.ciSubmissionReplaceProof ?? '';
+                    const url = replaceInput.dataset.ciSubmissionReplaceProofUrl ?? '';
+                    if (! url) return;
+                    const formData = new FormData();
+                    formData.set('_token', csrfToken());
+                    formData.set('_method', 'PUT');
+                    formData.set('attachment', replaceInput.files[0]);
+
+                    setProofControlsDisabled(activityId, true);
+                    setProofSaving(activityId, 'Saving replacement to Cloud Storage… Please wait.');
+
+                    try {
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            body: formData,
+                            credentials: 'same-origin',
+                            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                        });
+                        const payload = await response.json().catch(() => ({}));
+                        if (! response.ok) {
+                            throw new Error(Object.values(payload.errors ?? {}).flat().join(' ') || payload.message || 'Unable to replace this photo.');
+                        }
+                        await refreshSubmissionProofBlock(activityId);
+                        insertCiActivityHistoryEntries(payload.history);
+                    } catch (requestError) {
+                        setProofSaving(activityId, '');
+                        setProofControlsDisabled(activityId, false);
+                        showProofError(activityId, requestError instanceof Error ? requestError.message : 'Unable to save the replacement photo to Cloud Storage. Please try again.');
+                    }
+                }
+            });
+
+            const modal = document.querySelector('[data-remove-submission-proof-modal]');
+            const error = modal?.querySelector('[data-remove-submission-proof-error]');
+            const cancel = modal?.querySelector('[data-remove-submission-proof-cancel]');
+            const confirm = modal?.querySelector('[data-remove-submission-proof-confirm]');
+            if (!(modal instanceof HTMLDialogElement)
+                || !(error instanceof HTMLElement)
+                || !(cancel instanceof HTMLButtonElement)
+                || !(confirm instanceof HTMLButtonElement)) return;
+
+            let pendingActivityId = '';
+            let pendingUrl = '';
+
+            const resetDialog = () => {
+                error.hidden = true;
+                error.textContent = '';
+                confirm.disabled = false;
+                confirm.textContent = 'Remove Proof';
+            };
+
+            document.addEventListener('click', (event) => {
+                const trigger = event.target.closest('[data-ci-submission-remove-proof]');
+                if (!(trigger instanceof HTMLElement)) return;
+                const url = trigger.dataset.ciSubmissionRemoveProofUrl ?? '';
+                if (! url) return;
+
+                pendingActivityId = trigger.dataset.ciSubmissionRemoveProof ?? '';
+                pendingUrl = url;
+                resetDialog();
+                modal.showModal();
+            });
+
+            cancel.addEventListener('click', () => modal.close());
+            modal.addEventListener('close', () => {
+                pendingActivityId = '';
+                pendingUrl = '';
+                resetDialog();
+            });
+
+            confirm.addEventListener('click', async () => {
+                if (! pendingUrl) return;
+                confirm.disabled = true;
+                confirm.textContent = 'Removing…';
+                error.hidden = true;
+
+                try {
+                    const response = await fetch(pendingUrl, {
+                        method: 'DELETE',
+                        credentials: 'same-origin',
+                        headers: {
+                            Accept: 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'X-CSRF-TOKEN': csrfToken(),
+                        },
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (! response.ok) {
+                        throw new Error(payload.message || 'Unable to remove this proof attachment.');
+                    }
+
+                    await refreshSubmissionProofBlock(pendingActivityId);
+                    insertCiActivityHistoryEntries(payload.history);
+                    modal.close();
+                } catch (requestError) {
+                    error.textContent = requestError instanceof Error ? requestError.message : 'Unable to remove this proof attachment.';
+                    error.hidden = false;
+                    confirm.disabled = false;
+                    confirm.textContent = 'Remove Proof';
+                }
+            });
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('[data-ci-submission-form]').forEach((form) => {
+                if (!(form instanceof HTMLFormElement)) return;
+                const activityId = form.dataset.ciSubmissionForm ?? '';
+                const submitButton = form.querySelector('button[type="submit"]');
+                const dialog = form.closest('dialog');
+
+                form.addEventListener('submit', async (event) => {
+                    if (form.dataset.submitting === 'true') return;
+                    event.preventDefault();
+                    form.dataset.submitting = 'true';
+                    if (submitButton instanceof HTMLButtonElement) {
+                        submitButton.disabled = true;
+                        submitButton.setAttribute('aria-busy', 'true');
+                    }
+
+                    try {
+                        const response = await fetch(form.action, {
+                            method: 'POST',
+                            body: new FormData(form),
+                            credentials: 'same-origin',
+                            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                        });
+                        if (! response.ok) throw new Error('validation failed');
+
+                        // The mutation already succeeded server-side at this point, so a parse
+                        // failure here must never fall through to the native-resubmit fallback
+                        // below — that would submit the same success a second time.
+                        const payload = await response.json().catch(() => null);
+                        const cell = document.querySelector(`[data-submission-cell="${activityId}"]`);
+                        if (payload && cell instanceof HTMLElement && typeof payload.cell === 'string') {
+                            cell.innerHTML = payload.cell;
+                        }
+                        if (payload) insertCiActivityHistoryEntries(payload.history);
+                        form.dataset.submitting = 'false';
+                        if (submitButton instanceof HTMLButtonElement) {
+                            submitButton.disabled = false;
+                            submitButton.removeAttribute('aria-busy');
+                        }
+                        if (dialog instanceof HTMLDialogElement) dialog.close();
+                    } catch (requestError) {
+                        // A real validation/server error, or the fetch itself failing: fall back to
+                        // the existing full-page submission so the established $errors-driven UI
+                        // still renders correctly. The activity state is not touched either way.
+                        form.dataset.submitting = 'false';
+                        if (submitButton instanceof HTMLButtonElement) {
+                            submitButton.disabled = false;
+                            submitButton.removeAttribute('aria-busy');
+                        }
+                        HTMLFormElement.prototype.submit.call(form);
+                    }
+                });
             });
         });
 
@@ -1835,6 +2202,7 @@
                 const progress = document.querySelector(`[data-bank-coop-progress="${activityId}"]`);
                 const statusBadge = document.querySelector(`[data-bank-coop-status="${activityId}"]`);
                 const completionCheckbox = document.querySelector(`[data-ci-activity-completion="${activityId}"]`);
+                const updatedCell = document.querySelector(`[data-ci-activity-updated-cell="${activityId}"]`);
                 const row = progress?.closest('[data-ci-activity-row]');
 
                 if (progress instanceof HTMLElement) {
@@ -1850,14 +2218,45 @@
                     completionCheckbox.checked = completed;
                     completionCheckbox.disabled = completed;
                 }
+                if (updatedCell instanceof HTMLElement) {
+                    updatedCell.replaceChildren();
+                    const date = document.createElement('span');
+                    date.className = 'block font-semibold text-text-main';
+                    date.textContent = source.dataset.bankCoopUpdatedDate ?? '';
+                    updatedCell.append(date, document.createTextNode(source.dataset.bankCoopUpdatedDetail ?? ''));
+                }
+                const scheduleCell = document.querySelector(`[data-ci-activity-schedule-cell="${activityId}"]`);
+                const scheduleTemplate = source.querySelector('[data-bank-coop-schedule-cell]');
+                if (scheduleCell instanceof HTMLElement && scheduleTemplate instanceof HTMLTemplateElement) {
+                    scheduleCell.replaceChildren(...[...scheduleTemplate.content.childNodes].map((node) => document.importNode(node, true)));
+                }
+                const bankMarkLink = document.querySelector(`[data-ci-submission-mark="${activityId}"]`);
+                if (bankMarkLink instanceof HTMLElement) bankMarkLink.hidden = !(targetCount > 0 && targetCount === completedCount);
                 if (row instanceof HTMLTableRowElement) {
                     row.dataset.status = status;
                     row.dataset.sortStatus = statusLabel.toLocaleLowerCase();
+                    row.dataset.sortUpdated = source.dataset.bankCoopUpdatedTimestamp ?? row.dataset.sortUpdated;
                 }
 
                 document.dispatchEvent(new CustomEvent('ci-bank-coop-updated', {
                     detail: { activityId },
                 }));
+            };
+
+            const syncBulkPanel = () => {
+                const selectAll = modalBody.querySelector('[data-bank-bulk-select-all]');
+                const targets = [...modalBody.querySelectorAll('[data-bank-bulk-target]')];
+                const counter = modalBody.querySelector('[data-bank-bulk-counter]');
+                const openConfirm = modalBody.querySelector('[data-bank-bulk-open-confirm]');
+                if (!(selectAll instanceof HTMLInputElement)) return;
+
+                const eligible = targets.filter((target) => target instanceof HTMLInputElement && ! target.disabled);
+                const selected = eligible.filter((target) => target instanceof HTMLInputElement && target.checked);
+
+                selectAll.checked = eligible.length > 0 && selected.length === eligible.length;
+                selectAll.indeterminate = selected.length > 0 && selected.length < eligible.length;
+                if (counter instanceof HTMLElement) counter.textContent = `${selected.length} selected`;
+                if (openConfirm instanceof HTMLButtonElement) openConfirm.disabled = selected.length === 0;
             };
 
             const renderDetail = (html) => {
@@ -1867,6 +2266,8 @@
                     throw new Error('The exact Bank / Coop activity could not be loaded.');
                 }
 
+                const newHistoryTemplate = page.querySelector('[data-ci-new-history]');
+
                 modalBody.replaceChildren(...[...source.childNodes].map((node) => document.importNode(node, true)));
                 modalContext.textContent = source.dataset.bankCoopContext ?? 'Bank / Coop activity';
                 addButton.disabled = false;
@@ -1874,6 +2275,13 @@
                     if (form instanceof HTMLFormElement) syncScheduleForm(form);
                 });
                 synchronizeTable(source);
+                syncBulkPanel();
+
+                // Present only when this render followed a successful mutation redirect —
+                // the same response already carries the exact new, persisted history entries.
+                if (newHistoryTemplate instanceof HTMLTemplateElement) {
+                    insertCiActivityHistoryEntries([...newHistoryTemplate.content.children].map((entry) => entry.outerHTML));
+                }
             };
 
             const loadDetail = async () => {
@@ -1951,6 +2359,55 @@
                     institution.focus();
                     return;
                 }
+
+                const bulkOpenConfirm = event.target.closest('[data-bank-bulk-open-confirm]');
+                if (bulkOpenConfirm instanceof HTMLButtonElement) {
+                    if (bulkOpenConfirm.disabled) return;
+                    const selected = [...modalBody.querySelectorAll('[data-bank-bulk-target]')]
+                        .filter((target) => target instanceof HTMLInputElement && ! target.disabled && target.checked);
+                    const confirmModal = modalBody.querySelector('[data-bank-bulk-confirm-modal]');
+                    const title = confirmModal?.querySelector('[data-bank-bulk-confirm-title]');
+                    const body = confirmModal?.querySelector('[data-bank-bulk-confirm-body]');
+                    if (title instanceof HTMLElement) {
+                        title.textContent = selected.length === 1
+                            ? 'Mark this bank check as Completed?'
+                            : `Mark ${selected.length} bank checks as Completed?`;
+                    }
+                    if (body instanceof HTMLElement) {
+                        body.textContent = selected.length === 1
+                            ? 'This will mark the selected bank check as completed.'
+                            : 'This will mark all selected bank checks as completed.';
+                    }
+                    if (confirmModal instanceof HTMLDialogElement) confirmModal.showModal();
+                    return;
+                }
+
+                const bulkCancel = event.target.closest('[data-bank-bulk-confirm-cancel]');
+                if (bulkCancel instanceof HTMLElement) {
+                    bulkCancel.closest('dialog')?.close();
+                    return;
+                }
+
+                const bulkSubmit = event.target.closest('[data-bank-bulk-confirm-submit]');
+                if (bulkSubmit instanceof HTMLButtonElement) {
+                    const selected = [...modalBody.querySelectorAll('[data-bank-bulk-target]')]
+                        .filter((target) => target instanceof HTMLInputElement && ! target.disabled && target.checked);
+                    if (selected.length === 0) return;
+                    const form = modalBody.querySelector('[data-bank-bulk-form]');
+                    if (!(form instanceof HTMLFormElement)) return;
+                    form.querySelectorAll('input[name="bank_target_ids[]"]').forEach((input) => input.remove());
+                    selected.forEach((target) => {
+                        const hidden = document.createElement('input');
+                        hidden.type = 'hidden';
+                        hidden.name = 'bank_target_ids[]';
+                        hidden.value = target.dataset.bankBulkTarget ?? '';
+                        form.append(hidden);
+                    });
+                    bulkSubmit.closest('dialog')?.close();
+                    form.requestSubmit();
+                    return;
+                }
+
                 if (! trigger) return;
 
                 event.preventDefault();
@@ -1966,6 +2423,21 @@
                     }
                 }
                 openChildDialog(dialog);
+            });
+
+            modalBody.addEventListener('change', (event) => {
+                const selectAll = event.target.closest('[data-bank-bulk-select-all]');
+                if (selectAll instanceof HTMLInputElement) {
+                    const eligible = [...modalBody.querySelectorAll('[data-bank-bulk-target]')]
+                        .filter((target) => target instanceof HTMLInputElement && ! target.disabled);
+                    const shouldSelect = selectAll.checked;
+                    eligible.forEach((target) => { target.checked = shouldSelect; });
+                    syncBulkPanel();
+                    return;
+                }
+
+                const bulkTarget = event.target.closest('[data-bank-bulk-target]');
+                if (bulkTarget instanceof HTMLInputElement) syncBulkPanel();
             });
 
             modalBody.addEventListener('submit', async (event) => {
@@ -2065,6 +2537,24 @@
                 updateSortIndicators();
             };
 
+            const updateTabCounts = () => {
+                tabs.forEach((tab) => {
+                    const filter = tab.dataset.filter ?? 'all';
+                    const count = filter === 'all' ? rows.length : rows.filter((row) => matchesFilter(row, filter)).length;
+                    let badge = tab.querySelector('span');
+                    if (count > 0) {
+                        if (!(badge instanceof HTMLElement)) {
+                            badge = document.createElement('span');
+                            badge.className = 'rounded-full bg-surface px-2 py-0.5 text-xs font-bold shadow-sm';
+                            tab.append(badge);
+                        }
+                        badge.textContent = String(count);
+                    } else if (badge instanceof HTMLElement) {
+                        badge.remove();
+                    }
+                });
+            };
+
             const applyFilter = (filter, updateUrl = true) => {
                 activeFilter = filter;
                 const visibleRows = rows.filter((row) => {
@@ -2137,6 +2627,7 @@
                 if (emptyFilter instanceof HTMLElement) emptyFilter.hidden = rows.length === 0 || searchQuery !== '';
                 emptySearch.hidden = rows.length === 0 || searchQuery === '' || visibleRows.length > 0;
                 sortRows();
+                updateTabCounts();
             });
             applyFilter(activeFilter, false);
         });
@@ -2172,21 +2663,47 @@
                 const targetCount = Number.parseInt(source.dataset.assetTargetCount ?? '0', 10);
                 const completedCount = Number.parseInt(source.dataset.assetCompletedCount ?? '0', 10);
                 if (progress) progress.textContent = `${source.dataset.assetTargetCount ?? '0'} assessor${source.dataset.assetTargetCount === '1' ? '' : 's'} · ${source.dataset.assetCompletedCount ?? '0'} completed`;
-                const row = currentOpener?.closest('tr');
-                const badge = row?.querySelector('td:nth-child(3) span');
-                if (row) row.dataset.status = source.dataset.assetStatus ?? row.dataset.status;
-                if (badge) {
+                const badge = document.querySelector(`[data-ci-activity-status-badge="${activityId}"]`);
+                const row = badge?.closest('[data-ci-activity-row]');
+                const updatedCell = document.querySelector(`[data-ci-activity-updated-cell="${activityId}"]`);
+                if (row instanceof HTMLTableRowElement) {
+                    row.dataset.status = source.dataset.assetStatus ?? row.dataset.status;
+                    row.dataset.sortUpdated = source.dataset.assetUpdatedTimestamp ?? row.dataset.sortUpdated;
+                }
+                if (badge instanceof HTMLElement) {
                     badge.textContent = source.dataset.assetStatusLabel ?? badge.textContent;
                     badge.className = `inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${source.dataset.assetStatus === 'completed' ? 'bg-success-soft text-success' : (source.dataset.assetStatus === 'follow_up' ? 'bg-[#fff0e7] text-[#c85b12]' : (source.dataset.assetStatus === 'scheduled' ? 'bg-brand-soft text-brand-primary' : 'bg-progress-soft text-progress'))}`;
+                    if (row instanceof HTMLTableRowElement) row.dataset.sortStatus = badge.textContent.toLocaleLowerCase();
+                }
+                if (updatedCell instanceof HTMLElement) {
+                    updatedCell.replaceChildren();
+                    const date = document.createElement('span');
+                    date.className = 'block font-semibold text-text-main';
+                    date.textContent = source.dataset.assetUpdatedDate ?? '';
+                    updatedCell.append(date, document.createTextNode(source.dataset.assetUpdatedDetail ?? ''));
+                }
+                const scheduleCell = document.querySelector(`[data-ci-activity-schedule-cell="${activityId}"]`);
+                const scheduleTemplate = source.querySelector('[data-asset-schedule-cell]');
+                if (scheduleCell instanceof HTMLElement && scheduleTemplate instanceof HTMLTemplateElement) {
+                    scheduleCell.replaceChildren(...[...scheduleTemplate.content.childNodes].map((node) => document.importNode(node, true)));
                 }
                 if (completionCheckbox instanceof HTMLInputElement) {
                     const completed = targetCount > 0 && targetCount === completedCount;
                     completionCheckbox.checked = completed;
                     completionCheckbox.disabled = completed;
                 }
+                const assetMarkLink = document.querySelector(`[data-ci-submission-mark="${activityId}"]`);
+                if (assetMarkLink instanceof HTMLElement) assetMarkLink.hidden = !(targetCount > 0 && targetCount === completedCount);
                 body.querySelectorAll('[data-asset-target-form]').forEach((form) => bindSchedule(form));
                 document.dispatchEvent(new CustomEvent('ci-asset-check-updated', { detail: { activityId } }));
                 document.dispatchEvent(new CustomEvent('ci-bank-coop-updated', { detail: { activityId } }));
+
+                // Present only when this render followed a successful mutation redirect —
+                // the same response already carries the exact new, persisted history entries.
+                const newHistoryTemplate = page.querySelector('[data-ci-new-history]');
+                if (newHistoryTemplate instanceof HTMLTemplateElement) {
+                    insertCiActivityHistoryEntries([...newHistoryTemplate.content.children].map((entry) => entry.outerHTML));
+                }
             };
 
             const load = async (url) => {
@@ -2233,6 +2750,7 @@
 
             let currentUrl = '';
             let currentOpener = null;
+            let currentIsDirty = () => false;
             const loadingMarkup = '<div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading activity tracker…</div>';
             const statusClasses = {
                 pending: ['bg-progress-soft', 'text-progress'],
@@ -2281,7 +2799,15 @@
                     completionCheckbox.checked = completed;
                     completionCheckbox.disabled = completed;
                     completionCheckbox.dataset.completionExpectedUpdatedAt = source.dataset.defaultCheckUpdatedIso ?? completionCheckbox.dataset.completionExpectedUpdatedAt;
+                    completionCheckbox.dataset.completionStatusLabel = source.dataset.defaultCheckStatusLabel ?? completionCheckbox.dataset.completionStatusLabel;
+                    completionCheckbox.dataset.completionRemarks = source.dataset.defaultCheckRemarks ?? '';
+                    const freshSchedule = source.dataset.defaultCheckSchedule ?? '—';
+                    completionCheckbox.dataset.completionScheduleText = freshSchedule === '—'
+                        ? ''
+                        : `${freshSchedule} · ${source.dataset.defaultCheckScheduleTime ?? ''}`.trim();
                 }
+                const defaultMarkLink = document.querySelector(`[data-ci-submission-mark="${activityId}"]`);
+                if (defaultMarkLink instanceof HTMLElement) defaultMarkLink.hidden = status !== 'completed';
                 if (row instanceof HTMLTableRowElement) {
                     row.dataset.status = status;
                     row.dataset.sortStatus = (source.dataset.defaultCheckStatusLabel ?? status).toLocaleLowerCase();
@@ -2302,13 +2828,24 @@
                 if (source instanceof HTMLElement && source.dataset.defaultCheckActivityId === activityId) synchronizeTable(source);
             });
 
+            const requestClose = () => {
+                const discard = body.querySelector('[data-default-check-discard-confirm]');
+                if (currentIsDirty() && discard instanceof HTMLDialogElement) {
+                    discard.showModal();
+                    return;
+                }
+                modal.close();
+            };
+
             const bindSource = (source) => {
                 const form = body.querySelector('[data-default-check-form]');
                 if (!(form instanceof HTMLFormElement)) return;
                 const status = form.querySelector('[data-default-check-status-control]');
                 const date = form.querySelector('[data-default-check-date]');
                 const time = form.querySelector('[data-default-check-time]');
+                const remarks = form.querySelector('[data-default-check-remarks]');
                 const completion = body.querySelector('[data-default-check-completion]');
+                const discard = body.querySelector('[data-default-check-discard-confirm]');
                 if (!(status instanceof HTMLSelectElement) || !(date instanceof HTMLInputElement) || !(time instanceof HTMLInputElement)) return;
 
                 const syncSchedule = () => {
@@ -2322,33 +2859,118 @@
                 date.addEventListener('input', syncSchedule);
                 syncSchedule();
 
+                const readValues = () => ({
+                    status: status.value,
+                    scheduledAt: date.disabled ? '' : (date.value ?? ''),
+                    scheduledTime: time.disabled ? '' : (time.value ?? ''),
+                    remarks: (remarks instanceof HTMLTextAreaElement ? remarks.value : '').trim(),
+                });
+                let baseline = readValues();
+                const isDirty = () => {
+                    const current = readValues();
+                    return Object.keys(baseline).some((key) => baseline[key] !== current[key]);
+                };
+                currentIsDirty = isDirty;
+
+                let successTimeoutId = null;
+                let noChangesTimeoutId = null;
+
+                const hideNoChangesMessage = () => {
+                    const noChanges = form.querySelector('[data-default-check-no-changes]');
+                    if (noChanges instanceof HTMLElement) noChanges.hidden = true;
+                    window.clearTimeout(noChangesTimeoutId);
+                };
+                form.addEventListener('input', hideNoChangesMessage);
+                form.addEventListener('change', hideNoChangesMessage);
+
                 form.addEventListener('submit', async (event) => {
                     event.preventDefault();
+                    if (form.dataset.submitting === 'true') return;
+
+                    const submit = form.querySelector('[data-default-check-submit]');
+                    const errors = form.querySelector('[data-default-check-errors]');
+                    const success = form.querySelector('[data-default-check-success]');
+                    const noChanges = form.querySelector('[data-default-check-no-changes]');
+
+                    if (! isDirty()) {
+                        if (errors instanceof HTMLElement) { errors.hidden = true; errors.replaceChildren(); }
+                        if (success instanceof HTMLElement) { success.hidden = true; window.clearTimeout(successTimeoutId); }
+                        if (noChanges instanceof HTMLElement) {
+                            noChanges.hidden = false;
+                            window.clearTimeout(noChangesTimeoutId);
+                            noChangesTimeoutId = window.setTimeout(() => { noChanges.hidden = true; }, 4000);
+                        }
+                        return;
+                    }
+
                     if (status.value === 'completed' && form.dataset.currentStatus !== 'completed' && form.dataset.completionConfirmed !== 'true' && completion instanceof HTMLDialogElement) {
                         completion.showModal();
                         return;
                     }
 
-                    const submit = form.querySelector('[data-default-check-submit]');
-                    const errors = form.querySelector('[data-default-check-errors]');
-                    if (submit instanceof HTMLButtonElement) submit.disabled = true;
+                    form.dataset.submitting = 'true';
+                    if (noChanges instanceof HTMLElement) { noChanges.hidden = true; window.clearTimeout(noChangesTimeoutId); }
+                    if (submit instanceof HTMLButtonElement) {
+                        submit.disabled = true;
+                        submit.setAttribute('aria-busy', 'true');
+                        submit.dataset.originalLabel = submit.dataset.originalLabel ?? submit.textContent;
+                        submit.textContent = 'Saving Changes…';
+                    }
                     if (errors instanceof HTMLElement) { errors.hidden = true; errors.replaceChildren(); }
-                    const response = await fetch(form.action, {
-                        method: form.method,
-                        body: new FormData(form),
-                        credentials: 'same-origin',
-                        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-                    });
-                    if (! response.ok) {
+                    if (success instanceof HTMLElement) { success.hidden = true; window.clearTimeout(successTimeoutId); }
+
+                    try {
+                        const response = await fetch(form.action, {
+                            method: form.method,
+                            body: new FormData(form),
+                            credentials: 'same-origin',
+                            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                        });
                         const payload = await response.json().catch(() => ({}));
+                        if (! response.ok) {
+                            if (errors instanceof HTMLElement) {
+                                errors.textContent = Object.values(payload.errors ?? {}).flat().join(' ') || 'Unable to save changes. Please try again.';
+                                errors.hidden = false;
+                            }
+                            return;
+                        }
+
+                        // Row/status sync still needs the exact rendered tracker markup, which this
+                        // JSON response does not carry — that lookup already existed before this
+                        // change and is unrelated to history, so it is left as-is. History itself
+                        // comes from `payload` above, the SAME response already fetched for this save.
+                        const refreshed = await fetch(currentUrl, { credentials: 'same-origin', headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } });
+                        if (refreshed.ok) {
+                            const page = new DOMParser().parseFromString(await refreshed.text(), 'text/html');
+                            const freshSource = page.querySelector('[data-default-check-modal-source]');
+                            if (freshSource instanceof HTMLElement) {
+                                synchronizeTable(freshSource);
+                                form.dataset.currentStatus = freshSource.dataset.defaultCheckStatus ?? form.dataset.currentStatus;
+                                const expected = form.querySelector('[name="expected_updated_at"]');
+                                if (expected instanceof HTMLInputElement) expected.value = freshSource.dataset.defaultCheckUpdatedIso ?? expected.value;
+                            }
+                        }
+                        form.dataset.completionConfirmed = 'false';
+                        baseline = readValues();
+                        insertCiActivityHistoryEntries(payload.history);
+
+                        // The table/history are already authoritative at this point, so the
+                        // tracker has nothing left to show — close it instead of lingering.
+                        modal.close();
+                        return;
+                    } catch (requestError) {
                         if (errors instanceof HTMLElement) {
-                            errors.textContent = Object.values(payload.errors ?? {}).flat().join(' ') || 'Unable to save this activity.';
+                            errors.textContent = 'Unable to save changes. Please try again.';
                             errors.hidden = false;
                         }
-                        if (submit instanceof HTMLButtonElement) submit.disabled = false;
-                        return;
+                    } finally {
+                        form.dataset.submitting = 'false';
+                        if (submit instanceof HTMLButtonElement) {
+                            submit.disabled = false;
+                            submit.removeAttribute('aria-busy');
+                            submit.textContent = submit.dataset.originalLabel ?? 'Save Changes';
+                        }
                     }
-                    await loadDetail();
                 });
 
                 body.querySelector('[data-default-check-completion-cancel]')?.addEventListener('click', () => completion?.close());
@@ -2357,7 +2979,12 @@
                     form.dataset.completionConfirmed = 'true';
                     form.requestSubmit();
                 });
-                body.querySelector('[data-default-check-close]')?.addEventListener('click', () => modal.close());
+                body.querySelector('[data-default-check-cancel]')?.addEventListener('click', () => requestClose());
+                body.querySelector('[data-default-check-discard-keep]')?.addEventListener('click', () => discard?.close());
+                body.querySelector('[data-default-check-discard-confirm-button]')?.addEventListener('click', () => {
+                    discard?.close();
+                    modal.close();
+                });
                 synchronizeTable(source);
             };
 
@@ -2381,9 +3008,17 @@
                 if (! modal.open) modal.showModal();
                 try { await loadDetail(); } catch (error) { body.innerHTML = `<div class="rounded-card border border-danger/25 bg-danger-soft p-5 text-sm font-semibold text-danger">${error instanceof Error ? error.message : 'Unable to load this activity tracker.'}</div>`; }
             }));
-            modal.querySelectorAll('[data-default-check-modal-close]').forEach((button) => button.addEventListener('click', () => modal.close()));
-            modal.addEventListener('click', (event) => { if (event.target === modal) modal.close(); });
-            modal.addEventListener('close', () => { body.innerHTML = loadingMarkup; currentOpener?.focus(); });
+            modal.querySelectorAll('[data-default-check-modal-close]').forEach((button) => button.addEventListener('click', () => requestClose()));
+            modal.addEventListener('click', (event) => { if (event.target === modal) requestClose(); });
+            modal.addEventListener('cancel', (event) => {
+                if (! currentIsDirty()) return;
+                const discard = body.querySelector('[data-default-check-discard-confirm]');
+                if (discard instanceof HTMLDialogElement) {
+                    event.preventDefault();
+                    discard.showModal();
+                }
+            });
+            modal.addEventListener('close', () => { body.innerHTML = loadingMarkup; currentIsDirty = () => false; currentOpener?.focus(); });
         });
     </script>
 @endsection

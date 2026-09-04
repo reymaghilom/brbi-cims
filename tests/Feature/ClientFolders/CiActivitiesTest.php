@@ -145,7 +145,7 @@ class CiActivitiesTest extends TestCase
             ->assertOk()
             ->assertSee('Reopen Activity')
             ->assertSee('Reopen Activity?')
-            ->assertSee('This activity will be returned to Pending. The previous completion will remain visible in Activity History.')
+            ->assertSee('This activity will be returned to Pending. The previous completion will remain visible in Recent Activity.')
             ->assertSee('data-modal-close', false);
 
         // Opening or cancelling the confirmation performs no request and leaves completion intact.
@@ -230,7 +230,7 @@ class CiActivitiesTest extends TestCase
         $this->actingAs($deletingCi)
             ->get(route('client-folders.activities.index', [$folder, 'status' => 'all']))
             ->assertOk()
-            ->assertSee('Delete Activity')
+            ->assertSee('data-modal-open="delete-activity-'.$activity->id.'"', false)
             ->assertSee('Permanently delete '.$activity->name.'?')
             ->assertSee('This action cannot be undone.')
             ->assertSee('Permanently Delete')
@@ -422,14 +422,20 @@ class CiActivitiesTest extends TestCase
             'first_name' => 'Manual',
             'last_name' => 'Maker',
         ]);
-        $neighbor = ActivityDefinition::query()->where('name', 'Neighbor Check')->sole();
         $bank = ActivityDefinition::query()->where('name', 'Bank / Coop Check')->sole();
+
+        $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
+            'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
+            'create_new_activity_type' => true,
+            'new_activity_type' => 'Employer Verification',
+        ])->assertRedirect();
+        $custom = ActivityDefinition::query()->where('name', 'Employer Verification')->sole();
         $definitionCount = ActivityDefinition::query()->count();
 
         $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
-            'activity_definition_id' => $neighbor->id,
+            'activity_definition_id' => $custom->id,
             'status' => 'pending',
-            'remarks' => 'ONE NEIGHBOR SUBMISSION',
+            'remarks' => 'ONE MANUAL SUBMISSION',
         ])->assertRedirect();
         $this->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $coMaker->id,
@@ -438,10 +444,10 @@ class CiActivitiesTest extends TestCase
             'remarks' => 'ONE BANK SUBMISSION',
         ])->assertRedirect();
 
-        $this->assertSame(1, $folder->activities()->whereNull('co_maker_id')->where('activity_definition_id', $neighbor->id)->count());
+        $this->assertSame(1, $folder->activities()->whereNull('co_maker_id')->where('activity_definition_id', $custom->id)->count());
         $this->assertSame(1, $folder->activities()->where('co_maker_id', $coMaker->id)->where('activity_definition_id', $bank->id)->count());
         $this->assertSame(2, $folder->activities()->count());
-        $this->assertSame(1, AuditLog::query()->where('action', 'ci_activity.created')->where('metadata->activity_definition_id', $neighbor->id)->count());
+        $this->assertSame(1, AuditLog::query()->where('action', 'ci_activity.created')->where('metadata->activity_definition_id', $custom->id)->count());
         $this->assertSame(1, AuditLog::query()->where('action', 'ci_activity.created')->where('metadata->activity_definition_id', $bank->id)->count());
         $this->assertSame($definitionCount, ActivityDefinition::query()->count());
 
@@ -460,12 +466,17 @@ class CiActivitiesTest extends TestCase
         $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'ALPHA MAKER', 'first_name' => 'Alpha', 'last_name' => 'Maker']);
         $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'BETA MAKER', 'first_name' => 'Beta', 'last_name' => 'Maker']);
-        $neighbor = ActivityDefinition::query()->where('name', 'Neighbor Check')->sole();
+        $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
+            'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
+            'create_new_activity_type' => true,
+            'new_activity_type' => 'Compliance Screening',
+        ])->assertRedirect();
+        $custom = ActivityDefinition::query()->where('name', 'Compliance Screening')->sole();
         $asset = ActivityDefinition::query()->where('name', 'Asset Check')->sole();
-        $applicantNeighbor = CiActivity::create([
+        $applicantCustom = CiActivity::create([
             'client_folder_id' => $folder->id,
-            'activity_definition_id' => $neighbor->id,
-            'name' => $neighbor->name,
+            'activity_definition_id' => $custom->id,
+            'name' => $custom->name,
             'status' => ActivityStatus::Completed,
             'completed_at' => now(),
             'creator_id' => $ci->id,
@@ -479,9 +490,9 @@ class CiActivitiesTest extends TestCase
         $this->actingAs($ci);
 
         $applicantPage = $this->get(route('client-folders.activities.index', [$folder, 'status' => 'all']))->assertOk();
-        $this->assertTrue($applicantPage->viewData('existingDefinitionIds')->contains($neighbor->id));
+        $this->assertTrue($applicantPage->viewData('existingDefinitionIds')->contains($custom->id));
         $this->assertMatchesRegularExpression(
-            '/<button[^>]*data-value="'.preg_quote((string) $neighbor->id, '/').'"[^>]*disabled[^>]*>Neighbor Check.*Already Added.*<\/button>/s',
+            '/<button[^>]*data-value="'.preg_quote((string) $custom->id, '/').'"[^>]*disabled[^>]*>.*Compliance Screening.*Already Added.*<\/button>/s',
             $applicantPage->getContent(),
         );
 
@@ -491,9 +502,9 @@ class CiActivitiesTest extends TestCase
             'co_maker_id' => $coMakerA->id,
             'status' => 'all',
         ]))->assertOk();
-        $this->assertFalse($coMakerPage->viewData('existingDefinitionIds')->contains($neighbor->id));
+        $this->assertFalse($coMakerPage->viewData('existingDefinitionIds')->contains($custom->id));
         $matchedCoMakerOption = preg_match(
-            '/<button([^>]*)data-value="'.preg_quote((string) $neighbor->id, '/').'"([^>]*)>Neighbor Check<\/button>/',
+            '/<button([^>]*)data-value="'.preg_quote((string) $custom->id, '/').'"([^>]*)>.*?Compliance Screening.*?<\/button>/s',
             $coMakerPage->getContent(),
             $coMakerOption,
         );
@@ -503,31 +514,31 @@ class CiActivitiesTest extends TestCase
         $activityCount = CiActivity::query()->count();
         $creationAuditCount = AuditLog::query()->where('action', 'ci_activity.created')->count();
         $this->post(route('client-folders.activities.store', $folder), [
-            'activity_definition_id' => $neighbor->id,
+            'activity_definition_id' => $custom->id,
             'status' => 'pending',
         ])->assertSessionHasErrors([
             'activity_definition_id' => 'This activity already exists for the current Applicant.',
         ]);
         $this->assertSame($activityCount, CiActivity::query()->count());
         $this->assertSame($creationAuditCount, AuditLog::query()->where('action', 'ci_activity.created')->count());
-        $this->assertSame(ActivityStatus::Completed, $applicantNeighbor->fresh()->status);
+        $this->assertSame(ActivityStatus::Completed, $applicantCustom->fresh()->status);
 
         $this->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $coMakerA->id,
-            'activity_definition_id' => $neighbor->id,
+            'activity_definition_id' => $custom->id,
             'status' => 'pending',
         ])->assertRedirect();
         $this->assertDatabaseHas('ci_activities', [
             'client_folder_id' => $folder->id,
             'co_maker_id' => $coMakerA->id,
-            'activity_definition_id' => $neighbor->id,
+            'activity_definition_id' => $custom->id,
         ]);
 
         $activityCount = CiActivity::query()->count();
         $creationAuditCount = AuditLog::query()->where('action', 'ci_activity.created')->count();
         $this->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $coMakerA->id,
-            'activity_definition_id' => $neighbor->id,
+            'activity_definition_id' => $custom->id,
             'status' => 'follow_up',
         ])->assertSessionHasErrors([
             'activity_definition_id' => 'This activity already exists for this Co-Maker.',
@@ -541,13 +552,13 @@ class CiActivitiesTest extends TestCase
         ] as [$targetFolder, $coMakerId]) {
             $this->post(route('client-folders.activities.store', $targetFolder), [
                 'co_maker_id' => $coMakerId,
-                'activity_definition_id' => $neighbor->id,
+                'activity_definition_id' => $custom->id,
                 'status' => 'scheduled',
                 'scheduled_at' => now()->addDay()->format('Y-m-d H:i:s'),
             ])->assertRedirect();
         }
-        $this->assertDatabaseHas('ci_activities', ['client_folder_id' => $folder->id, 'co_maker_id' => $coMakerB->id, 'activity_definition_id' => $neighbor->id]);
-        $this->assertDatabaseHas('ci_activities', ['client_folder_id' => $otherFolder->id, 'co_maker_id' => null, 'activity_definition_id' => $neighbor->id]);
+        $this->assertDatabaseHas('ci_activities', ['client_folder_id' => $folder->id, 'co_maker_id' => $coMakerB->id, 'activity_definition_id' => $custom->id]);
+        $this->assertDatabaseHas('ci_activities', ['client_folder_id' => $otherFolder->id, 'co_maker_id' => null, 'activity_definition_id' => $custom->id]);
 
         $activityCount = CiActivity::query()->count();
         $definitionCount = ActivityDefinition::query()->count();
@@ -974,7 +985,7 @@ class CiActivitiesTest extends TestCase
             ->assertSee('fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-2xl overflow-hidden', false)
             ->assertSee('flex max-h-[calc(100dvh-2rem)] flex-col', false)
             ->assertSee('min-h-0 overflow-y-auto overscroll-contain', false)
-            ->assertSee('Close Activity History')
+            ->assertSee('Close Recent Activity')
             ->assertSee('Applicant Event 10 updated')
             ->assertSee('Applicant Event 01 deleted')
             ->assertDontSee('Co-Maker Scoped Event')
@@ -1000,9 +1011,9 @@ class CiActivitiesTest extends TestCase
         );
         $compactHistoryResponse
             ->assertSee('data-ci-history-hide', false)
-            ->assertSee('Hide Activity History panel')
+            ->assertSee('Hide Panel')
             ->assertSee('data-ci-history-show', false)
-            ->assertSee('Show Activity History panel');
+            ->assertSee('Show Panel');
         $assertNormalPageScroll($compactHistoryResponse->getContent(), 'data-ci-activities-panel');
         $assertNormalPageScroll($compactHistoryResponse->getContent(), 'data-ci-history-panel');
 
@@ -1343,12 +1354,13 @@ class CiActivitiesTest extends TestCase
             ->assertSee('Barangay Certification Follow-up activity type is ready to use.')
             ->assertSee('data-ci-activity-dialog-body', false)
             ->assertSee('dialogBody.scrollTop = 0;', false)
-            ->assertSee('Proof / Attachment')
             ->assertDontSee('You will become the Creator of this activity.');
         $this->assertMatchesRegularExpression(
             '/<dialog[^>]*data-ci-activity-dialog[^>]*open[^>]*>/',
             $reopenedModal->getContent(),
         );
+        preg_match('/<form[^>]*data-ci-activity-create-form[^>]*>(.*?)<\/form>/s', $reopenedModal->getContent(), $createForm);
+        $this->assertStringNotContainsString('Supporting Proof', $createForm[1] ?? '');
         $this->assertMatchesRegularExpression(
             '/<input[^>]*id="activity-definition"[^>]*value="'.preg_quote((string) $definition->id, '/').'"[^>]*>/',
             $reopenedModal->getContent(),
@@ -1435,8 +1447,6 @@ class CiActivitiesTest extends TestCase
             ->assertSee('flex max-h-[calc(100dvh-2rem)] flex-col', false)
             ->assertSee('min-h-0 overflow-y-auto overscroll-contain', false)
             ->assertSee('dialogBody.scrollTop = 0;', false)
-            ->assertSee('Proof / Attachment')
-            ->assertSee('Upload Attachment')
             ->assertDontSee('You will become the Creator of this activity.');
         $this->assertMatchesRegularExpression(
             '/<dialog[^>]*data-ci-activity-dialog[^>]*open[^>]*data-ci-activity-initial-open[^>]*>/',
@@ -1454,6 +1464,7 @@ class CiActivitiesTest extends TestCase
         $this->assertSame(2, substr_count($page->getContent(), ' data-ci-activity-dialog-close'));
         preg_match('/<form[^>]*data-ci-activity-create-form[^>]*>(.*?)<\/form>/s', $page->getContent(), $activityForm);
         $this->assertStringNotContainsString('Creator:</span>', $activityForm[1] ?? '');
+        $this->assertStringNotContainsString('Supporting Proof', $activityForm[1] ?? '');
         $this->assertSame($ci->id, $folder->activities()->where('activity_definition_id', $definition->id)->sole()->creator_id);
     }
 
@@ -1762,7 +1773,7 @@ class CiActivitiesTest extends TestCase
             ->assertSee(route('client-folders.index'), false)
             ->assertSee(route('client-folders.show', $folder), false)
             ->assertDontSee('Current View:')->assertDontSee('Switch Person')
-            ->assertSee('xl:grid-cols-[minmax(0,4fr)_minmax(15rem,1fr)]', false)->assertSee('Activity History')->assertSee('No Attachment')->assertSee('Not Submitted')
+            ->assertSee('xl:grid-cols-[minmax(0,4fr)_minmax(15rem,1fr)]', false)->assertSee('Recent Activity')->assertSee('No Attachment')->assertSee('Not Submitted')
             ->assertSee('data-ci-activities-layout', false)
             ->assertSee('data-ci-history-hide', false)
             ->assertSee('data-ci-history-show', false)
@@ -1787,7 +1798,8 @@ class CiActivitiesTest extends TestCase
             ->assertSee('data-ci-activity-dialog-body', false)
             ->assertSee('backdrop:bg-brand-sidebar/45', false)
             ->assertDontSee('Residence Check')->assertDontSee('Business Check')
-            ->assertSeeInOrder(['Barangay Check', 'Neighbor Check', 'Asset Check', 'Bank / Coop Check']);
+            ->assertDontSee('Barangay Check')->assertDontSee('Neighbor Check')
+            ->assertSeeInOrder(['Asset Check', 'Bank / Coop Check']);
         $this->assertSame('all', $indexResponse->viewData('filter'));
         $this->assertSame($folder->activities()->count(), $indexResponse->viewData('counts')['all']);
         preg_match('/<nav[^>]*aria-label="Activity status filters"[^>]*>(.*?)<\/nav>/s', $indexResponse->getContent(), $tabNavigation);

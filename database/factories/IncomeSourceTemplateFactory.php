@@ -2,8 +2,6 @@
 
 namespace Database\Factories;
 
-use Illuminate\Database\Eloquent\Factories\Factory;
-
 class IncomeSourceTemplateFactory extends Factory
 {
     public function definition(): array

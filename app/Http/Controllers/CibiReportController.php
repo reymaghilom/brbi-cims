@@ -9,6 +9,7 @@ use App\Http\Requests\ClientFolders\SaveCibiReportRequest;
 use App\Models\ClientFolder;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CibiReportFormData;
+use App\Services\ClientFolders\ClientFolderOverview;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
@@ -27,7 +28,7 @@ class CibiReportController extends Controller
         ] + $formData->for($clientFolder, $activePerson));
     }
 
-    public function update(SaveCibiReportRequest $request, ClientFolder $clientFolder, SaveCibiReport $save): RedirectResponse|JsonResponse
+    public function update(SaveCibiReportRequest $request, ClientFolder $clientFolder, SaveCibiReport $save, ClientFolderOverview $overview): RedirectResponse|JsonResponse
     {
         $activePerson = ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id'));
         $personParams = ActivePersonResolver::queryParams($activePerson);
@@ -78,6 +79,26 @@ class CibiReportController extends Controller
                     'status' => $clientFolder->status->value,
                     'progress_percentage' => (float) $clientFolder->progress_percent,
                 ],
+                // Client Folder Contents' own CI/BI module card AUTO-UPDATEs from this exact same
+                // authoritative response — canonical state derivation (report presence/completion,
+                // export/reassign eligibility), never guessed client-side. $report is already scoped
+                // to the exact Applicant/Co-Maker that owns this save.
+                'cibi_module_html' => view('client-folders.partials.cibi-module-card', [
+                    'clientFolder' => $clientFolder,
+                    'cibiReport' => $report,
+                    'activePerson' => $activePerson,
+                    'displayTimezone' => config('cims.display_timezone'),
+                ])->render(),
+                // Client Folder Contents' own Recent Activity panel (client-folders/show.blade.php)
+                // AUTO-UPDATEs from this exact same authoritative save response — no second GET,
+                // same canonical AuditLog-backed source (ClientFolderOverview::recentPersonActivity)
+                // the initial page render itself uses, same Applicant/exact-Co-Maker isolation.
+                'recent_activity_html' => view('client-folders.partials.recent-activity-body', [
+                    'recentPersonActivity' => $overview->recentPersonActivity($clientFolder, $activePerson),
+                    'coMakers' => $clientFolder->coMakers,
+                    'viewingLabel' => $activePerson ? 'Co-Maker — '.mb_strtoupper($activePerson->full_name) : 'Applicant',
+                    'displayTimezone' => config('cims.display_timezone'),
+                ])->render(),
             ]);
         }
 

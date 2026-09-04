@@ -42,19 +42,19 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
     }
 
     #[DataProvider('nonCompletedStatuses')]
-    public function test_non_completed_activity_rejects_a_forged_attachment(string $status): void
+    public function test_add_activity_ignores_any_posted_attachments_field_for_non_completed_status(string $status): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
+        $this->mock(CloudinaryCiActivityProofStorage::class)->shouldNotReceive('store');
 
         $response = $this->actingAs($ci)->from(route('client-folders.activities.index', $folder))
             ->post(route('client-folders.activities.store', $folder), $this->activityPayload($status) + [
-                'attachment' => UploadedFile::fake()->image('proof.jpg'),
+                'attachments' => [UploadedFile::fake()->image('proof.jpg')],
             ]);
 
-        $response->assertRedirect(route('client-folders.activities.index', $folder))
-            ->assertSessionHasErrors('attachment');
-        $this->assertDatabaseCount('ci_activities', 0);
+        $response->assertRedirect();
+        $this->assertDatabaseCount('ci_activities', 1);
         $this->assertDatabaseCount('media_references', 0);
     }
 
@@ -85,22 +85,14 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
         $this->assertDatabaseCount('media_references', 0);
     }
 
-    public function test_completed_activity_uploads_and_links_optional_proof_without_marking_submitted(): void
+    public function test_completed_activity_ignores_any_posted_attachments_field_and_stores_no_proof(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
-        $storage = $this->mock(CloudinaryCiActivityProofStorage::class);
-        $storage->shouldReceive('store')
-            ->once()
-            ->withArgs(fn (ClientFolder $storedFolder, CiActivity $activity, UploadedFile $file): bool => $storedFolder->is($folder)
-                && $activity->client_folder_id === $folder->id
-                && $activity->co_maker_id === null
-                && $file->getClientOriginalName() === 'completed-proof.jpg')
-            ->andReturn($this->cloudinaryStored('completed-proof.jpg'));
-        $storage->shouldNotReceive('delete');
+        $this->mock(CloudinaryCiActivityProofStorage::class)->shouldNotReceive('store');
 
         $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), $this->activityPayload(ActivityStatus::Completed->value) + [
-            'attachment' => UploadedFile::fake()->image('completed-proof.jpg'),
+            'attachments' => [UploadedFile::fake()->image('completed-proof.jpg')],
         ], [
             'Accept' => 'application/json',
             'X-Requested-With' => 'XMLHttpRequest',
@@ -110,16 +102,9 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
             ->assertSessionHasNoErrors();
 
         $activity = CiActivity::sole();
-        $media = MediaReference::sole();
-        $this->assertTrue($activity->mediaReferences()->whereKey($media->id)->exists());
-        $this->assertSame($activity->co_maker_id, $media->co_maker_id);
+        $this->assertSame(ActivityStatus::Completed, $activity->status);
         $this->assertNull($activity->submitted_at);
-        $this->assertSame(MediaReference::STORAGE_PROVIDER_CLOUDINARY, $media->storage_provider);
-        $this->assertSame('brbi-cims/test-proof', $media->cloudinary_public_id);
-        $this->assertSame('image', $media->cloudinary_resource_type);
-        $this->assertSame('https://res.cloudinary.test/test-proof.jpg', $media->cloudinary_secure_url);
-        $this->assertNull($media->temporary_local_path);
-        $this->assertNull($media->thumbnail_path);
+        $this->assertDatabaseCount('media_references', 0);
     }
 
     public function test_cloudinary_folder_paths_are_exact_for_applicant_and_co_maker(): void
@@ -335,13 +320,35 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
         $this->actingAs($ci)
             ->get(route('client-folders.activities.edit', [$folder, $activity]))
             ->assertOk()
-            ->assertSee('Preview / Open')
+            ->assertSee('View')
             ->assertSee('Replace')
             ->assertSee('Remove')
             ->assertSee(route('client-folders.activities.proof.content', [$folder, $activity, $media]), false)
             ->assertSee(route('client-folders.activities.proof.replace', [$folder, $activity, $media]), false)
             ->assertSee('data-modal-open="remove-proof-'.$media->id.'"', false)
-            ->assertSee('id="remove-proof-'.$media->id.'"', false);
+            ->assertSee('id="remove-proof-'.$media->id.'"', false)
+            ->assertSee('Cloud Storage')
+            ->assertSee('Photos will be securely uploaded to cloud storage. Maximum 5 photos per activity.')
+            ->assertSee('data-ci-add-photos-form', false)
+            ->assertSee('data-ci-add-photos-submit', false);
+    }
+
+    public function test_non_completed_activity_edit_page_does_not_show_cloud_storage_replace_notice(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->activityFor($folder, $ci, 'NON COMPLETED EDIT CLOUD NOTICE', null, [
+            'status' => ActivityStatus::FollowUp,
+            'completed_at' => null,
+        ]);
+        $media = $this->cloudinaryMedia($folder, $ci, 'non-completed-proof.jpg', 'BRBI-CIMS/clients/current/non-completed-proof');
+        $activity->mediaReferences()->attach($media);
+
+        $this->actingAs($ci)
+            ->get(route('client-folders.activities.edit', [$folder, $activity]))
+            ->assertOk()
+            ->assertDontSee('Photos will be securely uploaded to cloud storage')
+            ->assertDontSee('Add Photos');
     }
 
     public function test_attachment_indicator_is_not_clickable_without_proof(): void
@@ -543,31 +550,6 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
         $this->assertStringNotContainsString('field-photo.jpg', $coMakerList);
         $this->assertStringNotContainsString('asset-result.pdf', $coMakerList);
         $this->assertNull($coMakerActivity->fresh()->submitted_at);
-    }
-
-    public function test_attachment_failure_rolls_back_activity_creation(): void
-    {
-        $ci = User::factory()->create();
-        $folder = $this->folderFor($ci);
-        $storage = $this->mock(CloudinaryCiActivityProofStorage::class);
-        $storage->shouldReceive('store')
-            ->once()
-            ->andThrow(new \RuntimeException('Simulated proof upload failure.'));
-        $storage->shouldNotReceive('delete');
-        $this->withoutExceptionHandling();
-
-        try {
-            $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), $this->activityPayload(ActivityStatus::Completed->value) + [
-                'attachment' => UploadedFile::fake()->image('failed-proof.jpg'),
-            ]);
-            $this->fail('The simulated proof upload failure was not raised.');
-        } catch (\RuntimeException $exception) {
-            $this->assertSame('Simulated proof upload failure.', $exception->getMessage());
-        }
-
-        $this->assertDatabaseCount('ci_activities', 0);
-        $this->assertDatabaseCount('media_references', 0);
-        $this->assertFalse(session()->has('status'));
     }
 
     public function test_database_failure_after_mocked_cloudinary_upload_invokes_cleanup(): void

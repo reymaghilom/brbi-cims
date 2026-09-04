@@ -68,6 +68,11 @@ class IncomeSource extends Model implements HasCiParticipants
         return $this->hasOne(BusinessReport::class);
     }
 
+    public function businessCheck(): HasOne
+    {
+        return $this->hasOne(BusinessCheck::class);
+    }
+
     public function mediaReferences(): HasMany
     {
         return $this->hasMany(MediaReference::class);

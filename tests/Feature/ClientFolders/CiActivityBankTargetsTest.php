@@ -372,7 +372,14 @@ class CiActivityBankTargetsTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
-        $definition = ActivityDefinition::query()->where('code', '!=', ActivityDefinition::BANK_COOP_CHECK_CODE)->where('is_active', true)->firstOrFail();
+
+        $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => true,
+            'new_activity_type' => 'Employment Verification',
+            'status' => ActivityStatus::Pending->value,
+        ])->assertRedirect()->assertSessionHasNoErrors();
+
+        $definition = ActivityDefinition::query()->where('name', 'Employment Verification')->sole();
 
         $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
             'activity_definition_id' => $definition->id,
@@ -401,8 +408,8 @@ class CiActivityBankTargetsTest extends TestCase
             ->assertSee('3 institutions · 2 completed')
             ->assertSee('data-bank-coop-open="'.$activity->id.'"', false)
             ->assertSee('data-bank-coop-url="'.$detailUrl.'"', false)
-            ->assertSee('aria-label="Edit Bank / Coop Check"', false)
-            ->assertSee('title="Edit"', false)
+            ->assertSee('aria-label="Actions for Bank / Coop Check"', false)
+            ->assertSee('Open')
             ->assertSee('id="bank-coop-tracker-modal"', false)
             ->assertSee('data-bank-coop-modal-body', false)
             ->assertSee('event.preventDefault();', false)
@@ -583,7 +590,8 @@ class CiActivityBankTargetsTest extends TestCase
 
         $detail = $this->actingAs($creator)->get($detailUrl);
         $detail->assertOk()
-            ->assertSee('data-bank-target-complete', false)
+            ->assertSee('Mark as Completed')
+            ->assertSee('data-modal-open="complete-bank-target-'.$scheduled->id.'"', false)
             ->assertSee('id="complete-bank-target-'.$scheduled->id.'"', false)
             ->assertSee('Mark as completed?')
             ->assertSee('Mark BDO – Carmen Branch as completed?')
@@ -591,12 +599,12 @@ class CiActivityBankTargetsTest extends TestCase
             ->assertSee('Mark Completed');
         foreach ([$pending, $scheduled, $followUp] as $incompleteTarget) {
             $this->assertMatchesRegularExpression(
-                '/<input(?=[^>]*data-bank-target-checkbox="'.$incompleteTarget->id.'")(?![^>]*\schecked(?:\s|=))[^>]*>/i',
+                '/<input(?=[^>]*data-bank-bulk-target="'.$incompleteTarget->id.'")(?![^>]*\schecked(?:\s|=))[^>]*>/i',
                 $detail->getContent(),
             );
         }
         $this->assertMatchesRegularExpression(
-            '/<input(?=[^>]*data-bank-target-checkbox="'.$completed->id.'")(?=[^>]*\schecked(?:\s|=))(?=[^>]*\sdisabled(?:\s|=))[^>]*>/i',
+            '/<input(?=[^>]*data-bank-bulk-target="'.$completed->id.'")(?=[^>]*\schecked(?:\s|=))(?=[^>]*\sdisabled(?:\s|=))[^>]*>/i',
             $detail->getContent(),
         );
         $detail->assertDontSee('id="complete-bank-target-'.$completed->id.'"', false);
@@ -634,7 +642,7 @@ class CiActivityBankTargetsTest extends TestCase
             ->assertSee('BDO')
             ->assertDontSee('id="complete-bank-target-'.$scheduled->id.'"', false);
         $this->assertMatchesRegularExpression(
-            '/<input(?=[^>]*data-bank-target-checkbox="'.$scheduled->id.'")(?=[^>]*\schecked(?:\s|=))(?=[^>]*\sdisabled(?:\s|=))[^>]*>/i',
+            '/<input(?=[^>]*data-bank-bulk-target="'.$scheduled->id.'")(?=[^>]*\schecked(?:\s|=))(?=[^>]*\sdisabled(?:\s|=))[^>]*>/i',
             $completedDetail->getContent(),
         );
 

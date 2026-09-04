@@ -28,20 +28,13 @@ class RestoreBusinessPair
             $lockedSource = $this->exactSourceQuery($folder, $source)->lockForUpdate()->firstOrFail();
             abort_unless($lockedSource->trashed(), 404);
 
-            $report = BusinessReport::withTrashed()
-                ->where('income_source_id', $lockedSource->id)
-                ->lockForUpdate()
-                ->first();
-            $check = $this->exactCheckQuery($folder, $lockedSource)
-                ->lockForUpdate()
-                ->first();
-
-            if ($report?->trashed()) {
-                $report->restore();
-            }
-            if ($check?->trashed()) {
-                $check->restore();
-            }
+            // Business Report and Business Check no longer support soft-delete/restore (see
+            // DeleteBusinessReport/DeleteBusinessCheck) — either can only still exist here
+            // untouched, never trashed, so this only ever restores the IncomeSource itself. This
+            // action remains in place solely for non-dedicated-business IncomeSource types, which
+            // never have either row to begin with.
+            $report = BusinessReport::query()->where('income_source_id', $lockedSource->id)->first();
+            $check = $this->exactCheckQuery($folder, $lockedSource)->first();
             $lockedSource->restore();
 
             AuditLog::create([
@@ -80,7 +73,7 @@ class RestoreBusinessPair
 
     private function exactCheckQuery(ClientFolder $folder, IncomeSource $source): Builder
     {
-        return BusinessCheck::withTrashed()
+        return BusinessCheck::query()
             ->where('client_folder_id', $folder->id)
             ->where('income_source_id', $source->id)
             ->when(

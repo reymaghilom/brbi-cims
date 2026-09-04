@@ -33,10 +33,15 @@ class CibiReportFormData
             'cibiReport.legalFindings',
         ]);
 
+        // 'name' is intentionally NOT force-overwritten here once a CIBI Report is already saved —
+        // the CI can manually edit "Name of Client/Co-Maker" inside the CIBI form itself, and that
+        // edit must only ever affect this report's own personal_snapshot, never the Client Folder's
+        // display_name or the Co-Maker's master record. A still-unsaved report has no personal_snapshot
+        // yet, so personalDefaults()'s own 'name' (the current Applicant/Co-Maker official name) is
+        // the only source — exactly the desired initial prefill.
         $personalSnapshot = array_replace(
             $this->personalDefaults($clientFolder, $activePerson),
             $clientFolder->cibiReport?->personal_snapshot ?? [],
-            ['name' => $this->officialName($clientFolder, $activePerson)],
         );
         foreach (['spouse_name', 'present_address', 'residence_status_from', 'monthly_rent', 'length_of_stay_months', 'other_residences', 'previous_address', 'parents_address', 'previous_address_length_of_stay_months', 'separated_year', 'vehicles_owned', 'contact_details', 'other_remarks'] as $field) {
             if (strcasecmp(trim((string) ($personalSnapshot[$field] ?? '')), 'N/A') === 0) {
@@ -49,9 +54,12 @@ class CibiReportFormData
             'loan_records_found' => $clientFolder->cibiReport?->loanRecords->whereNotNull('institution')->count() ?? 0,
         ];
         $defaultStartDate = $clientFolder->cibiReport?->start_date?->format('Y-m-d');
-        if (! $activePerson && ! $clientFolder->cibiReport && blank($defaultStartDate)) {
+        if (! $clientFolder->cibiReport && blank($defaultStartDate)) {
+            // CIBI has not been saved for this exact person yet — the exact person's own most
+            // recent Residence Check CI Date may prefill the still-unsaved CIBI form. Prefill
+            // before save only; once CIBI is saved, its own start_date above always wins.
             $defaultStartDate = $clientFolder->residenceChecks()
-                ->whereNull('co_maker_id')
+                ->where('co_maker_id', $activePerson?->id)
                 ->latest('id')
                 ->first(['ci_date'])?->ci_date?->format('Y-m-d');
         }
@@ -86,6 +94,19 @@ class CibiReportFormData
         ];
     }
 
+    /**
+     * The exact person's most recent Residence Check Location — a prefill source for a still-unsaved
+     * CI/BI Present Address only, mirroring PersonAddressResolver's own CIBI-to-Residence direction
+     * in reverse. Callers only invoke this once a saved CIBI Report is already confirmed absent.
+     */
+    private function residenceLocationFallback(ClientFolder $clientFolder, ?CoMaker $activePerson): ?string
+    {
+        return $clientFolder->residenceChecks()
+            ->where('co_maker_id', $activePerson?->id)
+            ->latest('id')
+            ->value('location');
+    }
+
     private function personalDefaults(ClientFolder $clientFolder, ?CoMaker $activePerson): array
     {
         // A Co-Maker only has the handful of fields captured on the Co-Maker record itself —
@@ -93,10 +114,15 @@ class CibiReportFormData
         // the rest of the personal snapshot simply starts blank for manual encoding, same as it
         // would for the Applicant before their own profile was ever filled in.
         if ($activePerson) {
+            $presentAddress = $activePerson->address;
+            if (! $clientFolder->cibiReport && blank($presentAddress)) {
+                $presentAddress = $this->residenceLocationFallback($clientFolder, $activePerson);
+            }
+
             return [
                 'name' => $this->officialName($clientFolder, $activePerson),
                 'age' => null, 'spouse_name' => null, 'spouse_age' => null,
-                'present_address' => $activePerson->address,
+                'present_address' => $presentAddress,
                 'length_of_stay_months' => null, 'residence_status' => null, 'residence_status_from' => null,
                 'monthly_rent' => null, 'living_with_parents' => false, 'other_residences' => null,
                 'home_condition' => null, 'number_of_storeys' => null, 'material_cost_level' => null,
@@ -121,10 +147,7 @@ class CibiReportFormData
 
         $presentAddress = $formatAddress($addresses->get('present'));
         if (! $clientFolder->cibiReport && blank($presentAddress)) {
-            $presentAddress = $clientFolder->residenceChecks()
-                ->whereNull('co_maker_id')
-                ->latest('id')
-                ->value('location');
+            $presentAddress = $this->residenceLocationFallback($clientFolder, null);
         }
 
         return [

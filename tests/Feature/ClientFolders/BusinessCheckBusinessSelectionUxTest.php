@@ -26,7 +26,7 @@ class BusinessCheckBusinessSelectionUxTest extends TestCase
         Storage::fake('local');
     }
 
-    public function test_checked_business_is_disabled_and_labeled_without_an_extra_edit_link_while_another_remains_selectable(): void
+    public function test_business_with_an_existing_check_is_fully_hidden_from_a_new_check_while_another_remains_selectable(): void
     {
         [$ci, $folder] = $this->folderWithCi();
         $retail = $this->createBusiness($folder, 'Retail Store');
@@ -34,18 +34,36 @@ class BusinessCheckBusinessSelectionUxTest extends TestCase
         $this->createCheck($folder, $ci, $retail);
 
         $response = $this->actingAs($ci)->get(route('client-folders.business-checks.create', $folder))->assertOk();
-        $response->assertSee('Retail Store — Business Check already exists.')
-            ->assertSee('Commercial Rental')
-            ->assertDontSee('View/Edit existing');
+        // The dropdown is a NEW Business Check candidate list — a business that already has one is
+        // no longer shown at all (not even disabled with a label); it simply is not a candidate.
+        $response->assertDontSee('Retail Store — Business Check already exists.')
+            ->assertSee('Commercial Rental');
 
         $document = new \DOMDocument;
         @$document->loadHTML($response->getContent());
         $xpath = new \DOMXPath($document);
         $retailOption = $xpath->query("//select[@name='income_source_id']/option[@value='{$retail->id}']")->item(0);
         $rentalOption = $xpath->query("//select[@name='income_source_id']/option[@value='{$rental->id}']")->item(0);
-        $this->assertTrue($retailOption->hasAttribute('disabled'));
+        $this->assertNull($retailOption, 'A business with an existing Business Check must not render as an option at all.');
+        $this->assertNotNull($rentalOption);
         $this->assertFalse($rentalOption->hasAttribute('disabled'));
+    }
 
+    public function test_editing_an_existing_check_still_shows_its_own_business_selected_even_though_it_has_a_check(): void
+    {
+        [$ci, $folder] = $this->folderWithCi();
+        $retail = $this->createBusiness($folder, 'Retail Store');
+        $check = $this->createCheck($folder, $ci, $retail);
+
+        $response = $this->actingAs($ci)->get(route('client-folders.business-checks.edit', [$folder, $check]))->assertOk();
+
+        $document = new \DOMDocument;
+        @$document->loadHTML($response->getContent());
+        $xpath = new \DOMXPath($document);
+        $retailOption = $xpath->query("//select[@name='income_source_id']/option[@value='{$retail->id}']")->item(0);
+        $this->assertNotNull($retailOption, 'The Check currently being edited must still show its own business as an option.');
+        $this->assertFalse($retailOption->hasAttribute('disabled'));
+        $this->assertSame('selected', $retailOption->getAttribute('selected'));
     }
 
     public function test_forged_duplicate_create_is_rejected_without_modifying_the_existing_check(): void
@@ -238,6 +256,11 @@ class BusinessCheckBusinessSelectionUxTest extends TestCase
             'main_business_address' => $name.' Address',
             'report_category' => $template->template_type,
         ]);
+        // Represents a genuinely, explicitly saved Business Report (revision > 1) — the Business
+        // Check dropdown is now Saved-Report-based (see BusinessCheckController::form()), so a
+        // revision-1 draft shell would no longer appear as a candidate at all, which is not what
+        // these business-selection UX tests are about.
+        $source->forceFill(['revision' => 2])->save();
 
         return $source;
     }

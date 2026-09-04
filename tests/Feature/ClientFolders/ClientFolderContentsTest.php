@@ -329,7 +329,8 @@ class ClientFolderContentsTest extends TestCase
         $this->assertStringContainsString("event.data?.type !== 'brbi:cibi-saved'", $javascript);
         $this->assertStringContainsString('window.parent.postMessage({', $javascript);
         $this->assertStringContainsString('window.location.assign(returnUrl.href)', $javascript);
-        $this->assertStringContainsString("status.replaceChildren('Completed')", $javascript);
+        $this->assertStringContainsString("document.getElementById('open-cibi-report')", $javascript);
+        $this->assertStringContainsString('cibiModuleCard.outerHTML = event.data.cibiModuleHtml', $javascript);
         $this->assertStringContainsString('dialog.dataset.cibiSavedReturnUrl = returnUrl.href', $javascript);
         $this->assertStringContainsString('duration = 2500', $javascript);
         $this->assertStringContainsString('window.setTimeout(() => toast.remove(), duration)', $javascript);
@@ -337,9 +338,12 @@ class ClientFolderContentsTest extends TestCase
         $this->assertStringContainsString('showToast(payload.message);', $javascript);
         $this->assertStringNotContainsString('if (dialog.open && dialog.dataset.cibiSavedReturnUrl === returnUrl.href) dialog.close()', $javascript);
         $this->assertStringNotContainsString('window.setTimeout(() => window.location.assign(payload.return_url), 2500)', $javascript);
-        $this->assertStringContainsString('window.location.reload()', $javascript);
+        // A confirmed successful save AUTO-UPDATEs the folder status/progress and shows the
+        // canonical toast on the parent page, then auto-closes the dialog immediately — no reload,
+        // no second GET for either the Applicant or the exact active Co-Maker context.
         $this->assertStringContainsString("dialog.addEventListener('close'", $javascript);
-        $this->assertStringContainsString('refreshSavedCibiFolder(returnUrl, folder)', $javascript);
+        $this->assertStringContainsString('dialog.close();', $javascript);
+        $this->assertStringContainsString("showToast(event.data.message, event.data.statusType || 'success')", $javascript);
         $this->assertStringNotContainsString("stateLabel?.replaceChildren('Completed')", $javascript);
         $this->assertStringContainsString('payload.report.child_ids || {}', $javascript);
         $this->assertStringContainsString('idField.value = String(id)', $javascript);

@@ -80,10 +80,10 @@
             </section>
 
             <section class="ui-panel p-5 sm:p-6" aria-labelledby="media-title">
-                <div class="flex items-center justify-between gap-3"><h2 id="media-title" class="ui-section-title">Supporting Proof</h2><span class="text-sm font-bold text-text-muted">{{ $activity->media_references_count }}</span></div>
-                <x-form.validation-message for="attachment" />
+                <div class="flex items-center justify-between gap-3"><h2 id="media-title" class="ui-section-title">Supporting Proof</h2><span class="text-sm font-bold text-text-muted">{{ $activity->media_references_count }} / 5 attachments</span></div>
+                <x-form.validation-message for="photos" />
                 @if($activity->mediaReferences->isEmpty())
-                    <div class="mt-4 rounded-control bg-surface-subtle p-4 text-sm leading-6 text-text-muted"><p>No proof is linked. Proof is optional.</p><a href="{{ route('client-folders.media.index', [$clientFolder] + $personParams) }}" class="mt-2 inline-flex font-semibold text-brand-primary hover:underline">Manage Photos &amp; Videos</a></div>
+                    <div class="mt-4 rounded-control bg-surface-subtle p-4 text-sm leading-6 text-text-muted"><p>No proof is linked. Proof is optional.</p></div>
                 @else
                     <ul class="mt-4 divide-y divide-ui-border overflow-hidden rounded-card border border-ui-border">
                         @foreach($activity->mediaReferences as $media)
@@ -91,12 +91,12 @@
                                 <p class="break-words font-semibold">{{ $media->pivot->label ?: $media->file_name }}</p>
                                 <p class="mt-1 text-xs text-text-muted">{{ str($media->media_type->value)->title() }} · {{ str($media->category->value)->replace('_', ' ')->title() }}</p>
                                 <div class="mt-3 flex flex-wrap gap-2">
-                                    <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $media]) }}" target="_blank" rel="noopener" class="ui-button-secondary-compact"><x-ui.icon name="eye" size="size-3.5" />Preview / Open</a>
+                                    <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $media]) }}" target="_blank" rel="noopener" class="ui-button-secondary-compact"><x-ui.icon name="eye" size="size-3.5" />View</a>
                                     @if($activity->status === App\Enums\ActivityStatus::Completed)
                                         <form method="POST" action="{{ route('client-folders.activities.proof.replace', [$clientFolder, $activity, $media]) }}" enctype="multipart/form-data" data-ci-proof-replace-form>
                                             @csrf
                                             @method('PUT')
-                                            <input id="replace-proof-{{ $media->id }}" name="attachment" type="file" accept="image/jpeg,image/png,image/webp,video/mp4" class="sr-only" data-ci-proof-replace-input>
+                                            <input id="replace-proof-{{ $media->id }}" name="attachment" type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" data-ci-proof-replace-input>
                                             <label for="replace-proof-{{ $media->id }}" class="ui-button-secondary-compact cursor-pointer" data-ci-proof-replace-label><x-ui.icon name="upload" size="size-3.5" />Replace</label>
                                         </form>
                                     @else
@@ -113,6 +113,22 @@
                             <p><span class="font-semibold text-text-main">{{ $media->file_name }}</span> will be removed from this activity. If it is not referenced elsewhere, its stored file will also be retired.</p>
                         </x-ui.confirmation-dialog>
                     @endforeach
+                @endif
+
+                @if($activity->status === App\Enums\ActivityStatus::Completed)
+                    @if($activity->media_references_count < 5)
+                        <form method="POST" action="{{ route('client-folders.activities.proof.store', [$clientFolder, $activity]) }}" enctype="multipart/form-data" class="mt-4" data-ci-add-photos-form>
+                            @csrf
+                            <label for="add-proof-photos" class="ui-label">Add Photos <span class="font-normal text-text-muted">(optional)</span></label>
+                            <input id="add-proof-photos" name="photos[]" type="file" accept="image/jpeg,image/png,image/webp" multiple class="ui-control !py-1.5 text-sm" data-ci-add-photos-input>
+                            <p class="mt-2 flex items-center gap-1.5 text-xs font-semibold text-text-main"><x-ui.icon name="cloud" size="size-3.5" class="text-brand-primary" />Cloud Storage</p>
+                            <p class="mt-0.5 text-xs leading-4 text-text-muted">Photos will be securely uploaded to cloud storage. Maximum 5 photos per activity.</p>
+                            <p class="ui-help">JPG, PNG, or WEBP · Optional</p>
+                            <button type="submit" class="ui-button-secondary-compact mt-3" data-ci-add-photos-submit><x-ui.icon name="upload" size="size-3.5" /><span data-ci-add-photos-label>Add Photos</span></button>
+                        </form>
+                    @else
+                        <p class="mt-4 rounded-control border border-ui-border bg-surface-subtle px-3 py-2 text-xs font-semibold text-text-muted">5 / 5 attachments — Maximum reached</p>
+                    @endif
                 @endif
             </section>
         </aside>
@@ -153,10 +169,32 @@
                     if (label) {
                         label.classList.add('pointer-events-none', 'opacity-60');
                         label.setAttribute('aria-disabled', 'true');
+                        label.setAttribute('aria-busy', 'true');
+                        label.textContent = 'Saving replacement to Cloud Storage…';
                     }
                     if (form instanceof HTMLFormElement) form.requestSubmit();
                 });
             });
+
+            const addPhotosForm = document.querySelector('[data-ci-add-photos-form]');
+            const addPhotosInput = addPhotosForm?.querySelector('[data-ci-add-photos-input]');
+            const addPhotosButton = addPhotosForm?.querySelector('[data-ci-add-photos-submit]');
+            const addPhotosLabel = addPhotosButton?.querySelector('[data-ci-add-photos-label]');
+            if (addPhotosForm instanceof HTMLFormElement
+                && addPhotosInput instanceof HTMLInputElement
+                && addPhotosButton instanceof HTMLButtonElement
+                && addPhotosLabel instanceof HTMLElement) {
+                addPhotosForm.addEventListener('submit', () => {
+                    if (addPhotosForm.dataset.submitting === 'true') return;
+                    addPhotosForm.dataset.submitting = 'true';
+                    const fileCount = addPhotosInput.files?.length ?? 0;
+                    addPhotosButton.disabled = true;
+                    addPhotosButton.setAttribute('aria-busy', 'true');
+                    addPhotosLabel.textContent = fileCount > 1
+                        ? `Saving ${fileCount} photos to Cloud Storage…`
+                        : 'Saving photo to Cloud Storage…';
+                });
+            }
         });
     </script>
 @endsection

@@ -16,33 +16,87 @@
         ->get(['id', 'client_folder_id', 'user_id', 'action', 'metadata', 'created_at'])
         ->groupBy('client_folder_id');
 @endphp
+{{-- Flash-prevention for the desktop Preview Panel collapse, same technique as the Photos &
+     Videos support panel: read the persisted choice before first paint so the CSS below can
+     suppress the wrong initial state — no show-then-hide (or hide-then-show) flash while app.js
+     is still loading. --}}
+<script>
+    (function () {
+        try {
+            if (localStorage.getItem('brbi-folder-preview-collapsed') === 'true') {
+                document.documentElement.setAttribute('data-folder-preview-collapsed', '');
+            }
+        } catch (e) {}
+    })();
+</script>
+<style>
+    @media (min-width: 1280px) {
+        html[data-folder-preview-collapsed] [data-folder-browser-layout] { grid-template-columns: minmax(0, 1fr) 0px; }
+        /* Also keep the panel out of the layout before first paint — a zeroed column alone still
+           leaves it a grid item wrapping its content into a very tall invisible box, which would
+           flash the page to that height until app.js takes over. */
+        html[data-folder-preview-collapsed] [data-folder-preview-panel] { display: none; }
+        html[data-folder-preview-collapsed] [data-folder-preview-show][hidden] { display: inline-flex !important; }
+        html[data-folder-preview-collapsed] [data-folder-preview-hide] { display: none; }
+    }
+</style>
 <section aria-label="Client folder browser" data-folder-browser>
-    <div class="ui-panel overflow-hidden">
-        <div class="px-4 py-3 sm:px-5 sm:py-4">
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <form method="GET" action="{{ $folderBrowserAction }}" class="min-w-0 w-full flex-1" data-folder-browser-form data-client-search-form>
-                    <label for="folder-search" class="sr-only">Search client name</label>
-                    <div class="relative min-w-0 flex-1" data-client-search data-live-search-url="{{ route('client-folders.live-search') }}" data-browser-context="{{ $folderBrowserContext }}">
-                        <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-text-muted" aria-hidden="true"><x-ui.icon name="search" size="size-4" /></span>
-                        <input id="folder-search" name="search" type="search" value="{{ $filters['search'] ?? '' }}" maxlength="150" class="ui-control min-h-10 py-2 pl-9 pr-10" placeholder="Search client name..." autocomplete="off" data-client-search-input>
-                        <button type="button" class="absolute inset-y-0 right-1 my-auto inline-flex size-9 items-center justify-center rounded-control text-text-muted transition hover:bg-surface-muted hover:text-text-main" aria-label="Clear client search" data-client-search-clear @if(blank($filters['search'] ?? null)) hidden @endif><x-ui.icon name="close" size="size-4" /></button>
-                    </div>
-                </form>
-
-                <button type="button" id="create-client-folder-trigger" class="ui-button-primary min-h-10 w-full shrink-0 px-4 py-2 sm:w-auto" data-modal-open="create-client-folder-dialog">
-                    <span class="text-lg leading-none" aria-hidden="true">+</span>
-                    Create Client Folder
-                </button>
-                <button type="button" class="ui-button-secondary-compact hidden shrink-0 xl:inline-flex" data-folder-preview-toggle aria-expanded="true">
-                    <x-ui.icon name="eye-off" size="size-3.5" data-folder-preview-toggle-icon="visible" />
-                    <x-ui.icon name="eye" size="size-3.5" data-folder-preview-toggle-icon="hidden" hidden />
-                    <span data-folder-preview-toggle-label>Hide Preview Panel</span>
-                </button>
-            </div>
+    {{-- TOP TOOLBAR — its own card, a complete sibling of the animated layout below. It is not
+         inside the main content container, not inside the animated grid, and not inside the
+         preview container, so that grid's animated grid-template-columns can never resize or
+         reposition any control in here. Same separation principle as the Photos & Videos page,
+         whose tab/panel toolbar row likewise sits above (never inside) its animated support-panel
+         grid. `min-w-0` throughout is deliberate: flex items default to `min-width: auto`, which
+         — combined with the search's own intrinsic content width — is exactly what can force a
+         flex row wider than its container and produce an unwanted horizontal scrollbar; every
+         flexible piece here is explicitly allowed to shrink below its content's natural size
+         instead. --}}
+    <div class="ui-panel flex w-full min-w-0 flex-col gap-3 px-4 py-3 sm:px-5 sm:py-4 md:flex-row md:items-center md:gap-2" data-folder-toolbar data-dashboard-toolbar>
+        {{-- Search fills all remaining toolbar width (flex: 1 1 0%, expressed here as flex-1)
+             rather than a fixed pixel width — it starts flush left and stops naturally where
+             Create Client Folder begins. `min-w-0` lets it actually shrink on narrower widths
+             instead of forcing the row wider than the toolbar. --}}
+        <div class="w-full min-w-0 md:flex-1" data-folder-toolbar-search data-dashboard-search>
+            <form method="GET" action="{{ $folderBrowserAction }}" class="min-w-0 w-full" data-folder-browser-form data-client-search-form>
+                <label for="folder-search" class="sr-only">Search client name</label>
+                <div class="relative min-w-0" data-client-search data-live-search-url="{{ route('client-folders.live-search') }}" data-browser-context="{{ $folderBrowserContext }}">
+                    <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-text-muted" aria-hidden="true"><x-ui.icon name="search" size="size-4" /></span>
+                    <input id="folder-search" name="search" type="search" value="{{ $filters['search'] ?? '' }}" maxlength="150" class="ui-control min-h-10 w-full max-w-full py-2 pl-9 pr-10" placeholder="Search client name..." autocomplete="off" data-client-search-input>
+                    <button type="button" class="absolute inset-y-0 right-1 my-auto inline-flex size-9 items-center justify-center rounded-control text-text-muted transition hover:bg-surface-muted hover:text-text-main" aria-label="Clear client search" data-client-search-clear @if(blank($filters['search'] ?? null)) hidden @endif><x-ui.icon name="close" size="size-4" /></button>
+                </div>
+            </form>
         </div>
 
-        <div class="client-folder-browser-layout" data-folder-browser-layout>
-            <div class="client-folder-results min-w-0 p-4 sm:p-5" data-folder-results>
+        <div class="w-full shrink-0 md:w-auto" data-folder-toolbar-create data-dashboard-create>
+            <button type="button" id="create-client-folder-trigger" class="ui-button-primary min-h-10 w-full px-4 py-2 md:w-auto" data-modal-open="create-client-folder-dialog">
+                <span class="text-lg leading-none" aria-hidden="true">+</span>
+                Create Client Folder
+            </button>
+        </div>
+
+        {{-- Far right, after Create — the last flex child in a row that no longer has any
+             auto-margin group to travel with; Search filling the remaining space already pins
+             this to the end of the row. Two separate buttons — not one button with a swapped
+             icon/label — the same technique, and the same wording, as the Photos & Videos support
+             panel: it lets the pre-paint CSS above show the correct one immediately via a plain
+             [hidden] attribute, with no JS needed to settle the initial label/icon before first
+             paint. --}}
+        <div class="hidden shrink-0 xl:block" data-folder-toolbar-preview-toggle data-dashboard-preview-toggle>
+            <button type="button" class="ui-button-secondary-compact inline-flex min-h-10 px-3 py-2 text-sm" title="Show Panel" aria-label="Show Panel" aria-controls="folder-preview-panel" aria-expanded="false" data-folder-preview-show hidden>
+                <x-ui.icon name="eye" size="size-3.5" />Show Panel
+            </button>
+            <button type="button" class="ui-button-secondary-compact inline-flex min-h-10 px-3 py-2 text-sm" title="Hide Panel" aria-label="Hide Panel" aria-controls="folder-preview-panel" aria-expanded="true" data-folder-preview-hide>
+                <x-ui.icon name="eye-off" size="size-3.5" />Hide Panel
+            </button>
+        </div>
+    </div>
+
+    {{-- ANIMATED LAYOUT — a bare grid, not a card. Its only job is to size/animate its two
+         children; the main content and the preview panel each carry their own .ui-panel card
+         surface so they read as two separate containers with a real gap between them, never one
+         merged card. --}}
+    <div class="client-folder-browser-layout mt-3" data-folder-browser-layout data-dashboard-preview-layout>
+        <div class="client-folder-results ui-panel min-w-0 p-4 sm:p-5" data-folder-results data-dashboard-main-container>
                 <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <p class="text-sm text-text-muted" aria-live="polite">
                         @if($clientFolders->total())
@@ -126,28 +180,30 @@
                     </div>
 
                     @if($clientFolders->hasPages())
-                        <nav class="mt-6" aria-label="Client folders pagination">{{ $clientFolders->onEachSide(1)->links() }}</nav>
+                        {{-- data-folder-pagination is the hook app.js uses to intercept ordinary
+                             left-clicks and AUTO-UPDATE just this fragment instead of navigating
+                             the whole page. Without JS these stay plain links and still work. --}}
+                        <nav class="mt-6" aria-label="Client folders pagination" data-folder-pagination>{{ $clientFolders->onEachSide(1)->links() }}</nav>
                     @endif
                 @endif
             </div>
 
-            <div class="client-folder-preview-backdrop" data-folder-preview-backdrop hidden></div>
-            <aside class="client-folder-preview-panel" aria-label="Selected client folder details" aria-live="polite" data-folder-preview-panel>
-                <div class="flex items-center justify-between px-5 py-4 xl:hidden">
-                    <p class="font-bold">Folder details</p>
-                    <button type="button" class="ui-icon-button -mr-2" aria-label="Close folder details" data-folder-preview-close><x-ui.icon name="close" /></button>
-                </div>
-                <div class="client-folder-preview-content" data-folder-preview-content>
-                    <div class="grid min-h-80 place-items-center p-6 text-center">
-                        <div>
-                            <span class="client-folder-glyph mx-auto scale-110" aria-hidden="true"></span>
-                            <h3 class="mt-5 text-lg font-bold">Select a Client Folder</h3>
-                            <p class="mx-auto mt-2 max-w-xs text-sm leading-6 text-text-muted">Select a folder to view its details and folder contents.</p>
-                        </div>
+        <div class="client-folder-preview-backdrop" data-folder-preview-backdrop></div>
+        <aside id="folder-preview-panel" class="client-folder-preview-panel" aria-label="Selected client folder details" aria-live="polite" data-folder-preview-panel data-dashboard-right-panel-container>
+            <div class="flex items-center justify-between px-5 py-4 xl:hidden">
+                <p class="font-bold">Folder details</p>
+                <button type="button" class="ui-icon-button -mr-2" aria-label="Close folder details" data-folder-preview-close><x-ui.icon name="close" /></button>
+            </div>
+            <div class="client-folder-preview-content" data-folder-preview-content>
+                <div class="grid min-h-80 place-items-center p-6 text-center">
+                    <div>
+                        <span class="client-folder-glyph mx-auto scale-110" aria-hidden="true"></span>
+                        <h3 class="mt-5 text-lg font-bold">Select a Client Folder</h3>
+                        <p class="mx-auto mt-2 max-w-xs text-sm leading-6 text-text-muted">Select a folder to view its details and folder contents.</p>
                     </div>
                 </div>
-            </aside>
-        </div>
+            </div>
+        </aside>
     </div>
 
     <div data-folder-browser-artifacts>

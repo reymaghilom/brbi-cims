@@ -6,6 +6,7 @@
         'amber' => 'bg-progress-soft text-progress',
         'folder' => 'bg-brand-soft text-brand-primary',
         'violet' => 'bg-violet-50 text-violet-700',
+        'red' => 'bg-danger-soft text-danger',
         default => 'bg-brand-soft text-brand-primary',
     };
 @endphp

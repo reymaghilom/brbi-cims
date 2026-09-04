@@ -11,6 +11,7 @@ use App\Http\Controllers\BusinessCheckController;
 use App\Http\Controllers\CiActivityAssetTargetController;
 use App\Http\Controllers\CiActivityBankTargetController;
 use App\Http\Controllers\CiActivityController;
+use App\Http\Controllers\CiActivityNotificationFeedController;
 use App\Http\Controllers\CiActivityNotificationReadController;
 use App\Http\Controllers\CibiReportController;
 use App\Http\Controllers\CibiSignatoryReassignmentController;
@@ -26,6 +27,7 @@ use App\Http\Controllers\CoMakerController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EditingPresenceController;
 use App\Http\Controllers\GeneratedReportController;
+use App\Http\Controllers\GlobalCiActivityController;
 use App\Http\Controllers\IncomeSourceController;
 use App\Http\Controllers\MediaReferenceController;
 use App\Http\Controllers\RecycleBinBusinessRestoreController;
@@ -33,6 +35,7 @@ use App\Http\Controllers\RecycleBinController;
 use App\Http\Controllers\RecycleBinPurgeController;
 use App\Http\Controllers\RecycleBinRestoreController;
 use App\Http\Controllers\ResidenceBusinessCheckReportController;
+use App\Http\Controllers\ResidenceBusinessDocumentationController;
 use App\Http\Controllers\ResidenceBusinessReportController;
 use App\Http\Controllers\ResidenceCheckController;
 use Illuminate\Support\Facades\Route;
@@ -51,11 +54,13 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::get('/', DashboardController::class)->name('home');
         Route::post('/notifications/ci-activities/{notification}/read', CiActivityNotificationReadController::class)
             ->name('notifications.ci-activities.read');
+        Route::get('/notifications/ci-activities/feed', CiActivityNotificationFeedController::class)
+            ->name('notifications.ci-activities.feed');
 
         Route::post('/editing-presence/heartbeat', [EditingPresenceController::class, 'heartbeat'])->name('editing-presence.heartbeat');
         Route::post('/editing-presence/release', [EditingPresenceController::class, 'release'])->name('editing-presence.release');
 
-        Route::view('/ci-activities', 'module-placeholder', ['title' => 'CI Activities'])->name('ci-activities.index');
+        Route::get('/ci-activities', GlobalCiActivityController::class)->name('ci-activities.index');
         Route::view('/reports', 'module-placeholder', ['title' => 'Reports'])->name('reports.index');
         Route::get('/photos-videos', [MediaReferenceController::class, 'globalIndex'])->name('media.index');
         Route::view('/telegram-history', 'module-placeholder', ['title' => 'Telegram History'])->name('telegram.index');
@@ -105,6 +110,9 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::put('/client-folders/{clientFolder}/activities/{ciActivity}/bank-targets/{bankTarget}', [CiActivityBankTargetController::class, 'update'])
             ->scopeBindings()
             ->name('client-folders.activities.bank-targets.update');
+        Route::patch('/client-folders/{clientFolder}/activities/{ciActivity}/bank-targets/complete-many', [CiActivityBankTargetController::class, 'completeMany'])
+            ->scopeBindings()
+            ->name('client-folders.activities.bank-targets.complete-many');
         Route::patch('/client-folders/{clientFolder}/activities/{ciActivity}/bank-targets/{bankTarget}/complete', [CiActivityBankTargetController::class, 'complete'])
             ->scopeBindings()
             ->name('client-folders.activities.bank-targets.complete');
@@ -141,9 +149,14 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::patch('/client-folders/{clientFolder}/activities/{ciActivity}/submission', [CiActivityController::class, 'submit'])
             ->scopeBindings()
             ->name('client-folders.activities.submit');
+        Route::patch('/client-folders/{clientFolder}/activities/submit-batch', [CiActivityController::class, 'submitBatch'])
+            ->name('client-folders.activities.submit-batch');
         Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/proof/{mediaReference}/content', [MediaReferenceController::class, 'activityContent'])
             ->scopeBindings()
             ->name('client-folders.activities.proof.content');
+        Route::post('/client-folders/{clientFolder}/activities/{ciActivity}/proof', [CiActivityController::class, 'storeProof'])
+            ->scopeBindings()
+            ->name('client-folders.activities.proof.store');
         Route::put('/client-folders/{clientFolder}/activities/{ciActivity}/proof/{mediaReference}', [CiActivityController::class, 'replaceProof'])
             ->scopeBindings()
             ->name('client-folders.activities.proof.replace');
@@ -174,6 +187,7 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
             ->name('client-folders.cibi-report.history');
         Route::get('/client-folders/{clientFolder}/income-sources', [IncomeSourceController::class, 'launch'])->name('client-folders.income-sources.index');
         Route::get('/client-folders/{clientFolder}/income-sources/manage', [IncomeSourceController::class, 'index'])->name('client-folders.income-sources.manage');
+        Route::delete('/client-folders/{clientFolder}/income-sources/business-reports/destroy-selected', [IncomeSourceController::class, 'destroySelectedBusinessReports'])->name('client-folders.income-sources.business-report.destroy-selected');
         Route::get('/client-folders/{clientFolder}/income-sources/new', [IncomeSourceController::class, 'selectTemplate'])->name('client-folders.income-sources.select-template');
         Route::get('/client-folders/{clientFolder}/income-sources/create', [IncomeSourceController::class, 'create'])->name('client-folders.income-sources.create');
         Route::post('/client-folders/{clientFolder}/income-sources', [IncomeSourceController::class, 'store'])->name('client-folders.income-sources.store');
@@ -198,6 +212,7 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::post('/client-folders/{clientFolder}/income-sources/{incomeSource}/export-pdf', [GeneratedReportController::class, 'exportBusinessPdf'])->scopeBindings()->name('client-folders.income-sources.export-pdf');
         Route::post('/client-folders/{clientFolder}/income-sources/{incomeSource}/export-excel', [GeneratedReportController::class, 'exportBusinessExcel'])->scopeBindings()->name('client-folders.income-sources.export-excel');
         Route::delete('/client-folders/{clientFolder}/income-sources/{incomeSource}', [IncomeSourceController::class, 'destroy'])->scopeBindings()->name('client-folders.income-sources.destroy');
+        Route::delete('/client-folders/{clientFolder}/income-sources/{incomeSource}/business-report', [IncomeSourceController::class, 'destroyBusinessReport'])->scopeBindings()->name('client-folders.income-sources.business-report.destroy');
         Route::get('/client-folders/{clientFolder}/residence-business-report', [ResidenceBusinessReportController::class, 'edit'])->name('client-folders.residence-business.edit');
         Route::get('/client-folders/{clientFolder}/residence-business-report/preview', [ResidenceBusinessReportController::class, 'preview'])->name('client-folders.residence-business.preview');
         // Registered before the {residenceCheck}/{businessCheck} wildcard routes below for the
@@ -232,6 +247,15 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::delete('/client-folders/{clientFolder}/media/{mediaReference}', [MediaReferenceController::class, 'destroy'])->scopeBindings()->name('client-folders.media.destroy');
         Route::get('/client-folders/{clientFolder}/media/{mediaReference}/content', [MediaReferenceController::class, 'content'])->scopeBindings()->name('client-folders.media.content');
         Route::get('/client-folders/{clientFolder}/media/{mediaReference}/download', [MediaReferenceController::class, 'download'])->scopeBindings()->name('client-folders.media.download');
+        Route::post('/client-folders/{clientFolder}/media/documentation', [ResidenceBusinessDocumentationController::class, 'store'])->name('client-folders.media.documentation.store');
+        Route::patch('/client-folders/{clientFolder}/media/documentation/{documentation}', [ResidenceBusinessDocumentationController::class, 'update'])->scopeBindings()->name('client-folders.media.documentation.update');
+        Route::post('/client-folders/{clientFolder}/media/documentation/{documentation}/map-screenshot', [ResidenceBusinessDocumentationController::class, 'uploadMapScreenshot'])->scopeBindings()->name('client-folders.media.documentation.map-screenshot');
+        Route::post('/client-folders/{clientFolder}/media/documentation/{documentation}/media', [ResidenceBusinessDocumentationController::class, 'uploadMedia'])->scopeBindings()->name('client-folders.media.documentation.upload-media');
+        Route::delete('/client-folders/{clientFolder}/media/documentation/{documentation}/media/{mediaReference}', [ResidenceBusinessDocumentationController::class, 'destroyMedia'])->scopeBindings()->name('client-folders.media.documentation.destroy-media');
+        Route::get('/client-folders/{clientFolder}/media/documentation/{documentation}/preview', [ResidenceBusinessDocumentationController::class, 'preview'])->scopeBindings()->name('client-folders.media.documentation.preview');
+        Route::post('/client-folders/{clientFolder}/media/documentation/{documentation}/telegram', [ResidenceBusinessDocumentationController::class, 'sendToTelegram'])->scopeBindings()->name('client-folders.media.documentation.telegram');
+        Route::get('/client-folders/{clientFolder}/media/business-documentations/preview', [ResidenceBusinessDocumentationController::class, 'previewAllBusinesses'])->name('client-folders.media.business-documentations.preview');
+        Route::post('/client-folders/{clientFolder}/media/business-documentations/telegram', [ResidenceBusinessDocumentationController::class, 'sendAllBusinesses'])->name('client-folders.media.business-documentations.telegram');
         Route::get('/client-folders/{clientFolder}', [ClientFolderAccessController::class, 'show'])
             ->name('client-folders.show');
         Route::get('/client-folders/{clientFolder}/modules/{module}', ClientFolderModulePlaceholderController::class)
