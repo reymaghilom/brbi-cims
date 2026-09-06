@@ -41,9 +41,6 @@ class PurgeClientFolder
     private function hasDeferredExternalCleanup(ClientFolder $folder): bool
     {
         return $folder->mediaReferences()->exists()
-            || $folder->attachments()->exists()
-            || $folder->driveReferences()->exists()
-            || $folder->telegramMessages()->exists()
             || $folder->generatedReports()->exists();
     }
 }

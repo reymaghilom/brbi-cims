@@ -141,90 +141,86 @@ class BusinessCheckBusinessSelectionUxTest extends TestCase
         $this->assertDatabaseHas('business_checks', ['id' => $existingCheck->id, 'income_source_id' => $retail->id]);
     }
 
-    public function test_existing_applicant_business_makes_selection_primary_and_gates_add_another(): void
+    /**
+     * The placeholder states what the CI is actually being asked to do, and the two states never
+     * borrow each other's wording: with businesses on hand the field prompts for a selection, and
+     * with none it is replaced entirely by the zero-business message.
+     */
+    public function test_placeholder_prompts_for_a_selection_when_the_person_has_businesses(): void
     {
         [$ci, $folder] = $this->folderWithCi();
-        $this->createBusiness($folder, 'Applicant Store');
+        $this->createBusiness($folder, 'ALPHA TRADING');
 
-        $this->actingAs($ci)
-            ->get(route('client-folders.business-checks.create', $folder))
-            ->assertOk()
-            ->assertSee('Applicant Store')
-            ->assertSee('An existing business is already available. Please select it first to avoid duplicate entries.')
-            ->assertSee('Add New Business')
-            ->assertSee('data-business-check-add-new', false)
-            ->assertSee('disabled data-lock-when-existing="true"', false)
-            ->assertSee('data-business-check-add-another', false)
-            ->assertSee('Add another business');
+        $html = $this->actingAs($ci)->get(route('client-folders.business-checks.create', $folder))->assertOk()->getContent();
 
-        $script = file_get_contents(resource_path('js/app.js'));
-        $this->assertStringContainsString('Only add another business if it is a genuinely separate business or income source.', $script);
-        $this->assertStringContainsString('if (!confirmed) return;', $script);
+        $this->assertMatchesRegularExpression(
+            '/<select[^>]*name="income_source_id"[^>]*>\s*(?:<!--.*?-->\s*)*<option value="">Select an existing business<\/option>/s',
+            $html,
+            'The empty option is the exact "Select an existing business" prompt.',
+        );
+        $this->assertStringContainsString('ALPHA TRADING', $html);
+
+        // The manual-entry wording belongs to the zero-business state only.
+        $this->assertStringNotContainsString('No existing business — enter details manually', $html);
+        $this->assertStringNotContainsString('No existing business found. Enter the business details below.', $html);
     }
 
-    public function test_applicant_without_a_business_keeps_the_normal_add_new_business_flow(): void
+    public function test_zero_business_state_shows_only_the_approved_message_and_no_dropdown(): void
     {
         [$ci, $folder] = $this->folderWithCi();
 
-        $this->actingAs($ci)
-            ->get(route('client-folders.business-checks.create', $folder))
-            ->assertOk()
-            ->assertSee('Add New Business')
-            ->assertSee('data-business-check-add-new', false)
-            ->assertDontSee('data-lock-when-existing', false)
-            ->assertDontSee('data-business-check-add-another', false)
-            ->assertDontSee('An existing business is already available. Please select it first to avoid duplicate entries.');
+        $html = $this->actingAs($ci)->get(route('client-folders.business-checks.create', $folder))->assertOk()->getContent();
+
+        $this->assertStringContainsString('No existing business found. Enter the business details below.', $html);
+        $this->assertStringNotContainsString('Select an existing business', $html);
+        $this->assertStringNotContainsString('No existing business — enter details manually', $html);
+        // No dropdown is rendered at all when there is nothing to select.
+        $this->assertDoesNotMatchRegularExpression('/<select[^>]*name="income_source_id"/', $html);
+
+        // Still exactly one message under the field — no Business Report helper text alongside it.
+        $this->assertSame(1, substr_count($html, 'data-business-source-helper'));
+        foreach ([
+            'Business Report available',
+            'Business Report not yet created',
+            'will not create a Business Report',
+            'never changes that Business Report',
+            'Business Check information is available',
+        ] as $retired) {
+            $this->assertStringNotContainsString($retired, $html, 'No Business Report helper text: '.$retired);
+        }
     }
 
-    public function test_co_maker_without_a_business_can_quick_add_only_to_that_exact_co_maker(): void
+    public function test_each_person_sees_their_own_placeholder_state_and_only_their_own_businesses(): void
     {
         [$ci, $folder] = $this->folderWithCi();
-        $coMaker = $folder->coMakers()->create(['full_name' => 'Maria Santos', 'address' => 'Co-Maker Address']);
-        $template = IncomeSourceTemplate::query()
-            ->where('is_active', true)
-            ->where('is_fallback', false)
-            ->where('form_handler', 'dedicated-business')
-            ->firstOrFail();
-        $personParams = ['person' => 'co-maker', 'co_maker_id' => $coMaker->id];
+        $coMakerA = $folder->coMakers()->create(['full_name' => 'CO MAKER A', 'address' => 'A Address']);
+        $coMakerB = $folder->coMakers()->create(['full_name' => 'CO MAKER B', 'address' => 'B Address']);
+        $this->createBusiness($folder, 'APPLICANT STORE');
+        $this->createBusiness($folder, 'CO MAKER A STORE', $coMakerA->id);
 
-        $this->actingAs($ci)->get(route('client-folders.business-checks.create', [$folder] + $personParams))
-            ->assertOk()
-            ->assertSee('Add New Business')
-            ->assertSee('name="co_maker_id" value="'.$coMaker->id.'"', false)
-            ->assertDontSee('No saved businesses yet');
+        // Applicant and Co-Maker A both have a business: each prompts for a selection, and each
+        // lists only their own.
+        $applicantHtml = $this->actingAs($ci)->get(route('client-folders.business-checks.create', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('Select an existing business', $applicantHtml);
+        $this->assertStringContainsString('APPLICANT STORE', $applicantHtml);
+        $this->assertStringNotContainsString('CO MAKER A STORE', $applicantHtml);
 
-        $this->actingAs($ci)->postJson(route('client-folders.income-sources.quick-create', $folder), [
-            'co_maker_id' => $coMaker->id,
-            'business_name' => 'Maria Store',
-            'income_source_template_id' => $template->id,
-            'location' => 'Maria Store Address',
-        ])->assertOk()->assertJsonFragment(['name' => 'Maria Store', 'location' => 'Maria Store Address']);
+        $aHtml = $this->actingAs($ci)->get(route('client-folders.business-checks.create', [
+            $folder, 'person' => 'co-maker', 'co_maker_id' => $coMakerA->id,
+        ]))->assertOk()->getContent();
+        $this->assertStringContainsString('Select an existing business', $aHtml);
+        $this->assertStringContainsString('CO MAKER A STORE', $aHtml);
+        $this->assertStringNotContainsString('APPLICANT STORE', $aHtml);
 
-        $source = $folder->incomeSources()->sole();
-        $this->assertSame($coMaker->id, $source->co_maker_id);
-        $this->assertSame('Maria Store Address', $source->businessReport->main_business_address);
-        $this->assertDatabaseMissing('income_sources', ['client_folder_id' => $folder->id, 'co_maker_id' => null]);
-    }
-
-    public function test_quick_add_rejects_a_co_maker_from_another_client_folder(): void
-    {
-        [$ci, $folder] = $this->folderWithCi();
-        $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
-        $foreignCoMaker = $otherFolder->coMakers()->create(['full_name' => 'Foreign Co-Maker', 'address' => 'Foreign Address']);
-        $template = IncomeSourceTemplate::query()
-            ->where('is_active', true)
-            ->where('is_fallback', false)
-            ->where('form_handler', 'dedicated-business')
-            ->firstOrFail();
-
-        $this->actingAs($ci)->postJson(route('client-folders.income-sources.quick-create', $folder), [
-            'co_maker_id' => $foreignCoMaker->id,
-            'business_name' => 'Forged Store',
-            'income_source_template_id' => $template->id,
-            'location' => 'Forged Address',
-        ])->assertUnprocessable()->assertJsonValidationErrors('co_maker_id');
-
-        $this->assertDatabaseCount('income_sources', 0);
+        // Co-Maker B owns nothing, so another person's business never lifts them out of the
+        // zero-business state.
+        $bHtml = $this->actingAs($ci)->get(route('client-folders.business-checks.create', [
+            $folder, 'person' => 'co-maker', 'co_maker_id' => $coMakerB->id,
+        ]))->assertOk()->getContent();
+        $this->assertStringContainsString('No existing business found. Enter the business details below.', $bHtml);
+        $this->assertStringNotContainsString('Select an existing business', $bHtml);
+        $this->assertStringNotContainsString('APPLICANT STORE', $bHtml);
+        $this->assertStringNotContainsString('CO MAKER A STORE', $bHtml);
     }
 
     /** @return array{User, ClientFolder} */

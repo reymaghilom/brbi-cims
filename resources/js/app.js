@@ -309,6 +309,22 @@ function resetFolderPreview(browser) {
 }
 
 
+/**
+ * After a CI / BI or Business Report save is confirmed, the Reports workspace re-reads its own
+ * authoritative rows and counts rather than guessing what changed: whether a row is now Completed
+ * is decided by the same query that renders the list, never inferred from the Save click. Every
+ * active tab, filter, search and sort is carried by the current URL, and a refresh in place adds no
+ * history entry. A no-op on every other page. One refresh mechanism, shared by both modals.
+ */
+function refreshReportsWorkspace() {
+    const region = document.querySelector('[data-reports-listing]');
+    if (!region) return;
+
+    region.dispatchEvent(new CustomEvent('async-list:load', {
+        detail: { url: window.location.href, history: null, withSummary: true },
+    }));
+}
+
 function initializeClientSearch(search) {
     const input = search.querySelector('[data-client-search-input]');
     const clear = search.querySelector('[data-client-search-clear]');
@@ -321,6 +337,14 @@ function initializeClientSearch(search) {
     let liveRequest;
 
     const updateClearVisibility = () => { clear.hidden = input.value.length === 0; };
+
+    // Autosuggest sits alongside the live grid filtering below — it never gates it. The grid keeps
+    // moving on the same keystrokes whether or not a suggestion is ever picked, so this is pure
+    // assistance: it offers the exact accessible client names behind what is already being typed.
+    const suggestions = initClientSearchSuggestions(search, input, () => {
+        updateClearVisibility();
+        refreshFolderGrid(0);
+    });
 
     // `page` drives pagination through this exact same authoritative request path as live search:
     // same endpoint, same backend paginator, same abort/stale-response protection, same failure
@@ -403,11 +427,14 @@ function initializeClientSearch(search) {
 
     input.addEventListener('input', () => {
         updateClearVisibility();
+        // Both halves of the same keystroke: the grid filters, and the suggestions follow.
+        suggestions.refresh();
         refreshFolderGrid();
     });
     clear.addEventListener('click', () => {
         input.value = '';
         updateClearVisibility();
+        suggestions.close();
         resetFolderPreview(search.closest('[data-folder-browser]'));
         refreshFolderGrid(0);
         input.focus();
@@ -430,8 +457,153 @@ function initializeClientSearch(search) {
         const params = new URL(window.location.href).searchParams;
         input.value = params.get('search') ?? '';
         updateClearVisibility();
+        suggestions.close();
         refreshFolderGrid(0, { page: Number(params.get('page')) || 1, history: 'none' });
     });
+}
+
+/**
+ * The Client Folders client-name autosuggest, presented and operated exactly like the Reports one:
+ * an accessible combobox listbox under the input, two characters before it offers anything, its own
+ * AbortController so a slower earlier keystroke can never replace a later one, and arrow/Enter/
+ * Escape/click-outside handling. It deliberately owns no filtering of its own — `onSelect` hands
+ * control straight back to the existing live search, which remains the single authority on what the
+ * folder grid shows.
+ */
+function initClientSearchSuggestions(container, input, onSelect) {
+    const list = container.querySelector('[data-client-search-suggestions]');
+    const endpoint = container.dataset.suggestUrl;
+    const MIN_LENGTH = 2;
+    let activeRequest;
+    let options = [];
+    let activeIndex = -1;
+
+    const close = () => {
+        if (!list) return;
+        list.hidden = true;
+        list.innerHTML = '';
+        options = [];
+        activeIndex = -1;
+        input.setAttribute('aria-expanded', 'false');
+        input.removeAttribute('aria-activedescendant');
+    };
+
+    if (!list || !endpoint) return { refresh: () => {}, close: () => {} };
+
+    const setActive = (index) => {
+        activeIndex = index;
+        options.forEach((option, position) => {
+            const selected = position === index;
+            option.setAttribute('aria-selected', selected ? 'true' : 'false');
+            option.classList.toggle('bg-brand-soft', selected);
+            option.classList.toggle('text-brand-primary', selected);
+        });
+        if (index >= 0) {
+            input.setAttribute('aria-activedescendant', options[index].id);
+            options[index].scrollIntoView({ block: 'nearest' });
+        } else {
+            input.removeAttribute('aria-activedescendant');
+        }
+    };
+
+    const choose = (option) => {
+        input.value = option.dataset.name;
+        close();
+        onSelect();
+    };
+
+    // The matched run is emphasised with weight and brand colour rather than a highlighter block,
+    // and is built from text nodes so a client name can never inject markup.
+    const renderOption = (name, index, term) => {
+        const option = document.createElement('li');
+        option.id = `folder-search-suggestion-${index}`;
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', 'false');
+        option.className = 'client-folder-menu-item cursor-pointer';
+        option.dataset.name = name;
+
+        const at = name.toLocaleLowerCase().indexOf(term.toLocaleLowerCase());
+        if (at < 0 || !term) {
+            option.textContent = name;
+        } else {
+            option.append(document.createTextNode(name.slice(0, at)));
+            const match = document.createElement('span');
+            match.className = 'font-semibold text-brand-primary';
+            match.textContent = name.slice(at, at + term.length);
+            option.append(match, document.createTextNode(name.slice(at + term.length)));
+        }
+        return option;
+    };
+
+    const refresh = () => {
+        const term = input.value.trim();
+        if (term.length < MIN_LENGTH) {
+            activeRequest?.abort();
+            close();
+            return;
+        }
+
+        activeRequest?.abort();
+        const request = new AbortController();
+        activeRequest = request;
+
+        const url = new URL(endpoint, window.location.origin);
+        url.searchParams.set('q', term);
+        fetch(url, { headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, signal: request.signal })
+            .then((response) => (response.ok ? response.json() : Promise.reject(new Error('Suggestions unavailable.'))))
+            .then((payload) => {
+                // A newer keystroke already superseded this response.
+                if (activeRequest !== request) return;
+                const names = Array.isArray(payload.suggestions) ? payload.suggestions : [];
+                list.innerHTML = '';
+                if (names.length === 0) {
+                    close();
+                    return;
+                }
+                names.forEach((name, index) => list.append(renderOption(String(name), index, term)));
+                options = [...list.querySelectorAll('[role="option"]')];
+                list.hidden = false;
+                input.setAttribute('aria-expanded', 'true');
+                setActive(-1);
+            })
+            // Suggestions are a convenience: a failure simply leaves the user typing freely, with
+            // the folder grid still filtering as normal.
+            .catch(() => { if (activeRequest === request) close(); });
+    };
+
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            close();
+            return;
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            if (options.length === 0) return;
+            event.preventDefault();
+            setActive(event.key === 'ArrowDown'
+                ? (activeIndex + 1) % options.length
+                : (activeIndex <= 0 ? options.length - 1 : activeIndex - 1));
+            return;
+        }
+        if (event.key === 'Enter' && activeIndex >= 0 && options[activeIndex]) {
+            event.preventDefault();
+            choose(options[activeIndex]);
+        }
+        // Tab is deliberately untouched, so focus moves on normally.
+    });
+
+    list.addEventListener('mousedown', (event) => {
+        const option = event.target.closest('[role="option"]');
+        if (!option) return;
+        // mousedown, so the click is not lost to the input's own blur.
+        event.preventDefault();
+        choose(option);
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!container.contains(event.target)) close();
+    });
+
+    return { refresh, close };
 }
 
 // Dashboard/Client Folders pagination: an ordinary left-click AUTO-UPDATEs just the folder-browser
@@ -681,6 +853,54 @@ window.addEventListener('resize', () => {
     document.querySelectorAll('details[data-context-menu][open]').forEach((menu) => closeContextMenu(menu));
 });
 
+// The one inline error line under the Business Template selector carries both of its messages —
+// "nothing selected yet" and "this template is already used" — so the CI never sees two competing
+// error styles, and never has to look away from the modal to find out why Next did nothing.
+const addBusinessTemplateIsDuplicate = (select) => {
+    if (!(select instanceof HTMLSelectElement) || !select.value) return false;
+    let usedTemplateIds = [];
+    try {
+        usedTemplateIds = JSON.parse(select.dataset.usedTemplateIds || '[]');
+    } catch {
+        usedTemplateIds = [];
+    }
+
+    return usedTemplateIds.map(String).includes(String(select.value));
+};
+
+const showAddBusinessTemplateError = (errorElement, message) => {
+    if (!errorElement) return;
+    const text = errorElement.querySelector('[data-add-business-template-error-text]');
+    if (text) text.textContent = message || text.dataset.defaultMessage || text.textContent;
+    errorElement.hidden = false;
+};
+
+const hideAddBusinessTemplateError = (errorElement) => {
+    if (!errorElement) return;
+    errorElement.hidden = true;
+    const text = errorElement.querySelector('[data-add-business-template-error-text]');
+    // Restored so the next "nothing selected" case never inherits the duplicate wording.
+    if (text && text.dataset.defaultMessage) text.textContent = text.dataset.defaultMessage;
+};
+
+// Choosing a different template answers the error immediately: a valid one clears it and unblocks
+// Next, another already-used one re-states the same reason without waiting for another click.
+document.addEventListener('change', (event) => {
+    const select = event.target.closest('[data-add-business-template-select]');
+    if (!(select instanceof HTMLSelectElement)) return;
+    const errorElement = select.closest('dialog')?.querySelector('[data-add-business-template-error]');
+
+    if (addBusinessTemplateIsDuplicate(select)) {
+        select.setAttribute('aria-invalid', 'true');
+        showAddBusinessTemplateError(errorElement, select.dataset.duplicateTemplateMessage);
+
+        return;
+    }
+
+    select.removeAttribute('aria-invalid');
+    hideAddBusinessTemplateError(errorElement);
+});
+
 document.addEventListener('click', (event) => {
     const contextMenuSummary = event.target.closest('details[data-context-menu] > summary');
     if (contextMenuSummary?.parentElement?.open) {
@@ -741,6 +961,9 @@ document.addEventListener('click', (event) => {
         closeFolderMenus();
         const dialog = document.getElementById(modalTrigger.dataset.modalOpen);
         if (dialog instanceof HTMLDialogElement) {
+            if (dialog.matches('[data-add-business-dialog]') && modalTrigger.dataset.businessTemplateBaseUrl) {
+                dialog.dataset.businessReportBaseUrl = modalTrigger.dataset.businessTemplateBaseUrl;
+            }
             const cibiFrame = dialog.querySelector('[data-cibi-report-frame]') || dialog.querySelector('[data-business-report-frame]') || dialog.querySelector('[data-check-report-frame]');
             const cibiLoading = dialog.querySelector('[data-cibi-report-loading]') || dialog.querySelector('[data-business-report-loading]') || dialog.querySelector('[data-check-report-loading]');
             const cibiUrl = modalTrigger.dataset.cibiReportUrl || modalTrigger.dataset.businessReportUrl || modalTrigger.dataset.checkReportUrl;
@@ -769,6 +992,15 @@ document.addEventListener('click', (event) => {
                 titleHeading.textContent = modalTrigger.dataset.checkReportTitle || titleHeading.dataset.checkReportDefaultTitle || titleHeading.textContent;
             }
             dialog.dataset.returnFocus = modalTrigger.id || '';
+            // A closed <dialog> is display:none, so it is never in the rendering tree and a
+            // loading="lazy" image inside it has nothing to intersect with. Opening the dialog does
+            // not reliably start that deferred load, which is what left CI Activity Supporting Proof
+            // previews showing an empty frame even though the image route itself answered fine.
+            // Promoting them to eager the moment the dialog opens costs nothing (the dialog is being
+            // shown anyway) and makes the load deterministic.
+            dialog.querySelectorAll('img[loading="lazy"]').forEach((image) => {
+                image.loading = 'eager';
+            });
             dialog.showModal();
             dialog.querySelector('[data-modal-close], [autofocus]')?.focus();
         }
@@ -787,14 +1019,36 @@ document.addEventListener('click', (event) => {
         if (templateSelect instanceof HTMLSelectElement) {
             if (!templateSelect.value) {
                 templateSelect.setAttribute('aria-invalid', 'true');
-                if (templateError) templateError.hidden = false;
+                showAddBusinessTemplateError(templateError, null);
                 templateSelect.focus();
             } else if (reportTrigger) {
+                // A standard template this exact person already uses is refused right here, so the
+                // encoding form is never opened for a business that cannot be created. Other
+                // Business / Source of Income is never in this list: its identity is the set of
+                // categories ticked inside the form, so it is judged on Save instead. The server
+                // repeats this check in IncomeSourceController::launch() — this is only the fast,
+                // friendly half of it.
+                let usedTemplateIds = [];
+                try {
+                    usedTemplateIds = JSON.parse(templateSelect.dataset.usedTemplateIds || '[]');
+                } catch {
+                    usedTemplateIds = [];
+                }
+                if (usedTemplateIds.map(String).includes(String(templateSelect.value))) {
+                    // Reported inline, in the modal the CI is looking at — never as a toast, which
+                    // would take the explanation away from the control that caused it.
+                    templateSelect.setAttribute('aria-invalid', 'true');
+                    showAddBusinessTemplateError(templateError, templateSelect.dataset.duplicateTemplateMessage);
+                    templateSelect.focus();
+
+                    return;
+                }
+
                 templateSelect.removeAttribute('aria-invalid');
-                if (templateError) templateError.hidden = true;
+                hideAddBusinessTemplateError(templateError);
                 // The base URL may already carry an active-person query string (?person=co-maker&co_maker_id=…),
                 // so the template id has to be appended with the right separator rather than always "?".
-                const baseUrl = reportTrigger.dataset.businessReportBaseUrl;
+                const baseUrl = addBusinessDialog.dataset.businessReportBaseUrl || reportTrigger.dataset.businessReportBaseUrl;
                 const separator = baseUrl.includes('?') ? '&' : '?';
                 reportTrigger.dataset.businessReportUrl = `${baseUrl}${separator}income_source_template_id=${encodeURIComponent(templateSelect.value)}`;
                 addBusinessDialog.close();
@@ -902,8 +1156,10 @@ window.addEventListener('message', (event) => {
 
     // Only a save made for a different person/folder context (returnUrl doesn't match the page
     // currently behind this dialog) still needs a navigation — read by this dialog's own 'close'
-    // handler further down, same pattern as the Business Report dialog above.
-    dialog.dataset.cibiSavedReturnUrl = returnUrl.href;
+    // handler further down, same pattern as the Business Report dialog above. A dialog opened from
+    // a workspace that refreshes itself (the Reports list) opts out: it must never navigate the
+    // user away from the list they were working through.
+    if (!dialog.matches('[data-cibi-report-stay]')) dialog.dataset.cibiSavedReturnUrl = returnUrl.href;
 
     const currentUrl = new URL(window.location.href);
     if (currentUrl.pathname === returnUrl.pathname && currentUrl.search === returnUrl.search) {
@@ -940,6 +1196,8 @@ window.addEventListener('message', (event) => {
 
     if (event.data.message) showToast(event.data.message, event.data.statusType || 'success');
 
+    refreshReportsWorkspace();
+
     dialog.close();
 });
 
@@ -969,6 +1227,16 @@ function applyBusinessManageRefresh(payload) {
 
     const searchInput = document.querySelector('[data-business-search]');
     if (searchInput && searchTerm) searchInput.value = searchTerm;
+
+    // The template picker is a page-level <dialog>, not part of the panel fragment, so its
+    // duplicate-template list is re-stated here from the same authoritative payload. Without it the
+    // dataset kept its first-render value for the rest of the session and drifted away from the
+    // server after every save and every Business Report delete.
+    if (Array.isArray(payload.usedTemplateIds)) {
+        document.querySelectorAll('[data-add-business-template-select]').forEach((select) => {
+            select.dataset.usedTemplateIds = JSON.stringify(payload.usedTemplateIds);
+        });
+    }
 
     document.querySelectorAll('[data-business-sort-table]').forEach(initSortableTable);
     window.initBusinessSearch?.();
@@ -1042,7 +1310,10 @@ window.addEventListener('message', (event) => {
 
     const dialog = document.querySelector('[data-business-report-dialog][open]');
     if (!dialog) return;
-    dialog.dataset.businessSavedReturnUrl = returnUrl.href;
+    // A dialog opened from a workspace that refreshes itself (the Reports list) opts out of the
+    // close-time navigation below: it must never take the user away from the list they are
+    // working through. Everywhere else keeps its existing behaviour exactly.
+    if (!dialog.matches('[data-business-report-stay]')) dialog.dataset.businessSavedReturnUrl = returnUrl.href;
 
     // AUTO-UPDATE the moment the save actually succeeds — the Businesses / Income Sources table
     // and Recent Activity apply the authoritative payload the message already carries (see
@@ -1063,6 +1334,8 @@ window.addEventListener('message', (event) => {
     // the dialog disappears, and uses the app's one existing toast helper/duration — no second
     // toast system.
     if (event.data.message) showToast(event.data.message, event.data.statusType || 'success');
+
+    refreshReportsWorkspace();
 
     // AUTO-CLOSE only now, after the table/activity update above has already run synchronously —
     // this message only ever fires from the save action's own session-flash-backed notify element
@@ -1099,6 +1372,18 @@ window.addEventListener('message', (event) => {
 
     const dialog = document.querySelector('[data-check-report-dialog][open]');
     if (!dialog) return;
+
+    // Reports owns an authoritative async listing/KPI refresh, so a confirmed Check save can use
+    // the same stay-on-page pattern as CI/BI and Business Report. The backend-provided canonical
+    // message is shown once in the persistent parent, then the modal closes. Error/no-change paths
+    // never post this message and therefore cannot close the modal.
+    if (dialog.matches('[data-check-report-stay]')) {
+        if (event.data.message) showToast(event.data.message, event.data.statusType || 'success');
+        refreshReportsWorkspace();
+        dialog.close();
+        return;
+    }
+
     dialog.dataset.checkSavedReturnUrl = returnUrl.href;
     // Unlike CI/BI Report and Business Report (which stay open for continued multi-section
     // editing), a Residence/Business Check is a single-shot save — closing immediately and
@@ -1226,9 +1511,10 @@ document.querySelectorAll('dialog').forEach((dialog) => {
         if (dialog.matches('[data-add-business-dialog]')) {
             const templateSelect = dialog.querySelector('[data-add-business-template-select]');
             const templateError = dialog.querySelector('[data-add-business-template-error]');
+            delete dialog.dataset.businessReportBaseUrl;
             templateSelect?.removeAttribute('aria-invalid');
             if (templateSelect) templateSelect.value = '';
-            if (templateError) templateError.hidden = true;
+            hideAddBusinessTemplateError(templateError);
         }
         if (dialog.matches('[data-business-report-dialog]') && dialog.dataset.businessSavedReturnUrl) {
             const returnUrl = new URL(dialog.dataset.businessSavedReturnUrl, window.location.href);
@@ -2066,7 +2352,11 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
         const outputActions = form.querySelector('[data-cibi-output-actions]');
         if (outputActions && payload.report.state === 'complete') outputActions.hidden = false;
         const submitButton = form.querySelector('[data-cibi-submit]');
-        submitButton?.replaceChildren(payload.report.submit_label || 'Update');
+        // Only the label text is swapped — replacing the whole button's children would drop the
+        // save icon rendered beside it.
+        const submitLabel = submitButton?.querySelector('[data-cibi-submit-text]');
+        if (submitLabel) submitLabel.textContent = payload.report.submit_label || 'Update CIBI Report';
+        else submitButton?.replaceChildren(payload.report.submit_label || 'Update CIBI Report');
         if (submitButton) submitButton.dataset.cibiSubmitMode = 'update';
         const totals = {
             checked: payload.report.institutions_checked,
@@ -2637,6 +2927,305 @@ function initSortableTable(table) {
 
 document.querySelectorAll('[data-business-sort-table], [data-check-sort-table]').forEach(initSortableTable);
 
+// Reports and CI Activities reuse the Client Folders pagination experience: an ordinary left-click
+// AUTO-UPDATEs just the results region instead of navigating the whole page (which visibly blinked
+// the sidebar, header, KPI cards and filter toolbar for a change confined to the list). The same
+// contract as [data-folder-pagination] above — same fragment request, same abort/stale-response
+// protection, same aria-busy + data-refreshing treatment, same pushState history, and the same
+// "leave the current results alone on failure" behaviour. Client Folders keeps its own
+// implementation untouched, because its refresh is tied to its live search and preview panel.
+//
+// The listener sits on the region itself, so links rendered by a previous AUTO-UPDATE keep working
+// with no rebinding — the region node persists, only its contents are replaced.
+//
+// Every modified click is left completely alone (Ctrl/Cmd, Shift, Alt, non-primary button), and a
+// disabled arrow rendered as href="#" is ignored rather than fetched.
+function initAsyncListRegion(region, linkSelector) {
+    let activeRequest;
+
+    const load = (url, historyMode, { withSummary = false } = {}) => {
+        activeRequest?.abort();
+        const request = new AbortController();
+        activeRequest = request;
+        region.setAttribute('aria-busy', 'true');
+        region.setAttribute('data-refreshing', 'true');
+
+        const headers = { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' };
+        // Counts are deliberately unfiltered, so only a mutation can move them — sorting and
+        // pagination never pay for recounting them.
+        if (withSummary) headers['X-Reports-Summary'] = '1';
+
+        fetch(url, { headers, signal: request.signal })
+            .then((response) => {
+                if (!response.ok) throw new Error('The list could not be updated.');
+                return response.text();
+            })
+            .then((html) => {
+                // A newer click or keystroke already superseded this one — never let a stale
+                // response win.
+                if (activeRequest !== request) return;
+                region.innerHTML = html;
+
+                // When the response carried freshly counted KPI cards, move them out of the region
+                // and into the summary row they belong to.
+                const summary = region.querySelector('[data-reports-summary-html]');
+                if (summary) {
+                    const target = document.querySelector('[data-reports-summary]');
+                    if (target) target.innerHTML = summary.innerHTML;
+                    summary.remove();
+                }
+
+                // pushState for a deliberate click or selection, so Back/Forward step through them;
+                // replaceState for search-as-you-type, so every keystroke is not a history entry.
+                if (historyMode === 'push') window.history.pushState({ asyncListRegion: true }, '', url);
+                else if (historyMode === 'replace') window.history.replaceState({ asyncListRegion: true }, '', url);
+            })
+            .catch((error) => {
+                // The results the user already has are deliberately left untouched on failure.
+                if (error.name !== 'AbortError') showToast('The list could not be updated. Please retry.', 'error');
+            })
+            .finally(() => {
+                if (activeRequest !== request) return;
+                region.removeAttribute('aria-busy');
+                region.removeAttribute('data-refreshing');
+            });
+    };
+
+    // Anything outside the region that needs to drive it (the Reports client search) asks through
+    // this one event, so it shares the same request, abort, history and failure handling.
+    region.addEventListener('async-list:load', (event) => {
+        if (event.detail?.url) load(event.detail.url, event.detail.history ?? 'push', { withSummary: event.detail.withSummary === true });
+    });
+
+    region.addEventListener('click', (event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        const link = event.target.closest(linkSelector);
+        if (!link || !region.contains(link)) return;
+        const href = link.getAttribute('href');
+        if (!href || href === '#') return;
+
+        event.preventDefault();
+        load(link.href, 'push');
+    });
+
+    // Back/Forward: re-read the authoritative state from the URL the browser just restored and
+    // AUTO-UPDATE to match — no hard reload, and no new history entry for a history move.
+    window.addEventListener('popstate', (event) => {
+        if (!event.state?.asyncListRegion || !document.contains(region)) return;
+        load(window.location.href, null);
+    });
+}
+
+// Reports: sortable headers and pagination both go through the same region. Sorting is server-side
+// over the whole result set (see ReportWorkspaceQuery::SORTS) — never a reorder of the rows that
+// happen to be on screen — and the links are real URLs, so both still work without JavaScript.
+document.querySelectorAll('[data-reports-listing]').forEach((region) => {
+    initAsyncListRegion(region, '[data-reports-sort], [data-reports-pagination] a[href]');
+});
+
+document.querySelectorAll('[data-ci-activities-listing]').forEach((region) => {
+    initAsyncListRegion(region, '[data-ci-activities-pagination] a[href]');
+});
+
+// Reports client-name search: an accessible combobox over the authorized client list. It borrows
+// the Client Folders live-search contract — a short debounce, one in-flight request at a time with
+// AbortController so a slower earlier keystroke can never overwrite a later one, and an
+// AUTO-UPDATE of just the results region instead of a page navigation. The input stays an ordinary
+// GET field, so with JavaScript unavailable the same search still works by submitting the form.
+function initReportsClientSearch(container) {
+    const input = container.querySelector('[data-reports-client-input]');
+    const hiddenId = container.querySelector('[data-reports-client-id]');
+    const list = container.querySelector('[data-reports-client-suggestions]');
+    const endpoint = container.dataset.suggestUrl;
+    const form = input?.closest('form');
+    if (!input || !hiddenId || !list || !endpoint || !form) return;
+
+    // Suggestions need two characters to be worth offering (the endpoint enforces the same floor),
+    // but the table itself filters from the first character — exactly like the Client Folders live
+    // search, which also uses this debounce.
+    const SUGGEST_MIN_LENGTH = 2;
+    const DEBOUNCE_MS = 275;
+    let debounceTimer;
+    let activeRequest;
+    let options = [];
+    let activeIndex = -1;
+
+    const close = () => {
+        list.hidden = true;
+        list.innerHTML = '';
+        options = [];
+        activeIndex = -1;
+        input.setAttribute('aria-expanded', 'false');
+        input.removeAttribute('aria-activedescendant');
+    };
+
+    const setActive = (index) => {
+        activeIndex = index;
+        options.forEach((option, position) => {
+            const selected = position === index;
+            option.setAttribute('aria-selected', selected ? 'true' : 'false');
+            option.classList.toggle('bg-brand-soft', selected);
+            option.classList.toggle('text-brand-primary', selected);
+        });
+        if (index >= 0) {
+            input.setAttribute('aria-activedescendant', options[index].id);
+            options[index].scrollIntoView({ block: 'nearest' });
+        } else {
+            input.removeAttribute('aria-activedescendant');
+        }
+    };
+
+    // Results AUTO-UPDATE through the same region contract pagination and sorting already use, so
+    // the Client Name field needs no Apply Filters click. `page` is never carried, so a changed
+    // search always starts at the first page; every other filter, the tab and the active sort come
+    // straight off the form and are preserved untouched.
+    const runSearch = (historyMode) => {
+        const region = document.querySelector('[data-reports-listing]');
+        const url = new URL(form.getAttribute('action'), window.location.origin);
+        new FormData(form).forEach((value, key) => {
+            if (typeof value === 'string' && value !== '') url.searchParams.set(key, value);
+        });
+        if (!region) {
+            window.location.assign(url.toString());
+            return;
+        }
+        region.dispatchEvent(new CustomEvent('async-list:load', { detail: { url: url.toString(), history: historyMode } }));
+    };
+
+    const choose = (option) => {
+        input.value = option.dataset.name;
+        hiddenId.value = option.dataset.id;
+        close();
+        // A deliberate selection is worth a history entry; typing is not.
+        runSearch('push');
+    };
+
+    // The matched run is emphasised with weight and brand colour rather than a highlighter block,
+    // and is built from text nodes so a client name can never inject markup.
+    const renderOption = (suggestion, index, term) => {
+        const option = document.createElement('li');
+        option.id = `reports-client-suggestion-${index}`;
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', 'false');
+        option.className = 'client-folder-menu-item cursor-pointer';
+        option.dataset.id = String(suggestion.id);
+        option.dataset.name = suggestion.name;
+
+        const name = suggestion.name ?? '';
+        const at = name.toLocaleLowerCase().indexOf(term.toLocaleLowerCase());
+        if (at < 0 || !term) {
+            option.textContent = name;
+        } else {
+            option.append(document.createTextNode(name.slice(0, at)));
+            const match = document.createElement('span');
+            match.className = 'font-semibold text-brand-primary';
+            match.textContent = name.slice(at, at + term.length);
+            option.append(match, document.createTextNode(name.slice(at + term.length)));
+        }
+        return option;
+    };
+
+    const suggest = () => {
+        const term = input.value.trim();
+        if (term.length < SUGGEST_MIN_LENGTH) {
+            activeRequest?.abort();
+            close();
+            return;
+        }
+
+        activeRequest?.abort();
+        const request = new AbortController();
+        activeRequest = request;
+
+        const url = new URL(endpoint, window.location.origin);
+        url.searchParams.set('q', term);
+        fetch(url, { headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, signal: request.signal })
+            .then((response) => (response.ok ? response.json() : Promise.reject(new Error('Suggestions unavailable.'))))
+            .then((payload) => {
+                // A newer keystroke already superseded this response.
+                if (activeRequest !== request) return;
+                const suggestions = Array.isArray(payload.suggestions) ? payload.suggestions : [];
+                list.innerHTML = '';
+                if (suggestions.length === 0) {
+                    close();
+                    return;
+                }
+                suggestions.forEach((suggestion, index) => list.append(renderOption(suggestion, index, term)));
+                options = [...list.querySelectorAll('[role="option"]')];
+                list.hidden = false;
+                input.setAttribute('aria-expanded', 'true');
+                setActive(-1);
+            })
+            // Suggestions are a convenience: a failure simply leaves the user typing freely.
+            .catch(() => { if (activeRequest === request) close(); });
+    };
+
+    // One debounced pass drives both halves of the same typed query: the suggestion list and the
+    // results themselves. The user never has to pick a suggestion — or press Apply Filters — for
+    // the table to follow along.
+    input.addEventListener('input', () => {
+        // Typing again means the pinned exact client no longer applies.
+        hiddenId.value = '';
+        clearTimeout(debounceTimer);
+        debounceTimer = window.setTimeout(() => {
+            suggest();
+            runSearch('replace');
+        }, DEBOUNCE_MS);
+    });
+
+    // A cleared field (including the native search "x") drops the client filter and restores the
+    // rest of the current view straight away, with no debounce to wait through.
+    input.addEventListener('search', () => {
+        if (input.value.trim() !== '') return;
+        clearTimeout(debounceTimer);
+        hiddenId.value = '';
+        close();
+        runSearch('replace');
+    });
+
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            close();
+            return;
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            if (options.length === 0) return;
+            event.preventDefault();
+            const next = event.key === 'ArrowDown'
+                ? (activeIndex + 1) % options.length
+                : (activeIndex <= 0 ? options.length - 1 : activeIndex - 1);
+            setActive(next);
+            return;
+        }
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            clearTimeout(debounceTimer);
+            if (activeIndex >= 0 && options[activeIndex]) {
+                choose(options[activeIndex]);
+                return;
+            }
+            // Free typing without picking a suggestion still searches — by client name only.
+            close();
+            runSearch('push');
+        }
+        // Tab is deliberately untouched, so focus moves on normally.
+    });
+
+    list.addEventListener('mousedown', (event) => {
+        const option = event.target.closest('[role="option"]');
+        if (!option) return;
+        // mousedown, so the click is not lost to the input's own blur.
+        event.preventDefault();
+        choose(option);
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!container.contains(event.target)) close();
+    });
+}
+
+document.querySelectorAll('[data-reports-client-search]').forEach(initReportsClientSearch);
+
 // Business / Income Sources: instant client-side search over the Saved Businesses table — matches
 // business name or address, reusing the same data-sort-business_name/data-sort-address values
 // already rendered on each row for sorting above, so no new data source or backend query is
@@ -2805,129 +3394,51 @@ document.addEventListener('DOMContentLoaded', () => window.initBusinessSearch())
     refresh();
 })();
 
-// Business Check form: selecting a saved business auto-fills the read-only Location field from
-// that option's own data-location, since Location always reflects whichever business is chosen
-// rather than being independently editable. It also swaps the one helper line under the field
-// between its default instructional text and the "Business Report available" / "not yet created"
-// status (Applicant flow only — the element is absent for Co-Maker) — a single line always, never
-// both stacked, to keep the section compact.
+// Business Check form: the business selector is a REFERENCE only — Business Check never creates
+// or edits a Business / Income Source. Selecting an existing business prefills that exact
+// business's own Business Name, Location and CI Date (Business Report -> Business Check, one way
+// only) and locks whichever of the three that business actually has a value for. Nothing is ever
+// created or written back on the Business / Income Sources side.
+//
+// One deliberately simple rule governs a selection change, with no cross-business bookkeeping:
+//
+//   RESET all three fields, then populate from the newly selected business alone.
+//
+// So nothing survives a switch — not a value prefilled from the previous business, and not one the
+// CI typed while that previous business was selected. Both belonged to that business's in-progress
+// Business Check context, and neither is Business B's data. Clearing the selection back to manual
+// mode empties all three the same way.
+//
+// The guard below is what keeps ordinary typing safe: the reset runs only when the selected
+// income_source_id genuinely CHANGES. While the CI stays on one business, whatever they type into
+// an unlocked field (an address for a business whose Business Report has none) is left alone.
 document.addEventListener('change', (event) => {
     const select = event.target.closest('[data-business-check-income-source-select]');
     if (!(select instanceof HTMLSelectElement) || !select.closest('[data-business-check-form]')) return;
+
+    const selectedId = select.value ?? '';
+    if (select.dataset.appliedIncomeSourceId === selectedId) return;
+    select.dataset.appliedIncomeSourceId = selectedId;
+
     const option = select.selectedOptions[0];
     const form = select.closest('[data-business-check-form]');
-    const location = option?.dataset.location ?? '';
-    const locationField = form.querySelector('[data-business-check-location]');
-    if (locationField instanceof HTMLInputElement) locationField.value = location;
-    // CI Date is the other value shared with this business's Business Report (start_date, "Start
-    // Date of CI") — same pattern as Location above: refreshed to match whichever business is
-    // currently selected, editable afterward, and only actually written back on Save.
-    const ciDate = option?.dataset.ciDate ?? '';
-    const ciDateField = form.querySelector('[data-business-check-ci-date]');
-    if (ciDateField instanceof HTMLInputElement && ciDate) ciDateField.value = ciDate;
+    const linked = Boolean(selectedId);
 
-    const helper = document.querySelector('[data-business-source-helper]');
-    if (!helper) return;
-    if (helper.dataset.defaultText === undefined) helper.dataset.defaultText = helper.textContent;
-    if (!option || !option.value) {
-        helper.textContent = helper.dataset.defaultText;
-        helper.classList.remove('text-success');
-        helper.classList.add('text-text-muted');
-        return;
-    }
-    const complete = option.dataset.reportComplete === '1';
-    helper.textContent = complete ? 'Business Report available' : 'Business Report not yet created';
-    helper.classList.toggle('text-success', complete);
-    helper.classList.toggle('text-text-muted', !complete);
-});
+    const apply = (selector, value) => {
+        const field = form.querySelector(selector);
+        if (!(field instanceof HTMLInputElement)) return;
+        const available = linked && (value ?? '') !== '';
 
-// "Add New Business" quick-create: creates the shared IncomeSource/BusinessReport
-// shell via a small AJAX endpoint, then appends+selects the new option locally — no page reload,
-// and the Business Check form itself is never auto-submitted by this action.
-document.querySelector('[data-business-check-add-another]')?.addEventListener('click', () => {
-    const confirmed = window.confirm('Only add another business if it is a genuinely separate business or income source. Do you want to continue?');
-    if (!confirmed) return;
-
-    const addButton = document.querySelector('[data-business-check-add-new]');
-    if (!(addButton instanceof HTMLButtonElement)) return;
-    addButton.disabled = false;
-    addButton.click();
-});
-
-document.querySelector('[data-quick-add-business-confirm]')?.addEventListener('click', async (event) => {
-    const button = event.target.closest('[data-quick-add-business-confirm]');
-    const dialog = button.closest('dialog');
-    const nameField = dialog.querySelector('[data-quick-add-business-name]');
-    const templateField = dialog.querySelector('[data-quick-add-business-template]');
-    const locationField = dialog.querySelector('[data-quick-add-business-location]');
-    const errorBox = dialog.querySelector('[data-quick-add-business-error]');
-    const showError = (message) => {
-        if (!errorBox) return;
-        errorBox.textContent = message;
-        errorBox.hidden = false;
+        // Reset first, unconditionally — then take only what the new business itself provides.
+        field.value = available ? value : '';
+        // Locked only where the new business has an authoritative value of its own; otherwise the
+        // CI may record one, and it is stored on this Business Check alone.
+        field.readOnly = available;
     };
 
-    const name = nameField?.value.trim() ?? '';
-    const templateId = templateField?.value ?? '';
-    const location = locationField?.value.trim() ?? '';
-    if (!name) { showError('Business Name is required.'); nameField?.focus(); return; }
-    if (!templateId) { showError('Business Type / Income Source is required.'); templateField?.focus(); return; }
-    if (!location) { showError('Business location is required.'); locationField?.focus(); return; }
-    if (errorBox) errorBox.hidden = true;
-
-    const token = document.querySelector('#business-check-form input[name="_token"]')?.value;
-    button.disabled = true;
-    try {
-        const response = await fetch(button.dataset.url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token ?? '' },
-            body: JSON.stringify({
-                co_maker_id: document.querySelector('#business-check-form input[name="co_maker_id"]')?.value || null,
-                business_name: name,
-                income_source_template_id: templateId,
-                location,
-            }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-            const firstError = payload?.errors ? Object.values(payload.errors)[0]?.[0] : null;
-            showError(firstError || payload?.message || 'Unable to add this business. Please try again.');
-            return;
-        }
-
-        const select = document.querySelector('[data-business-check-income-source-select]');
-        if (select instanceof HTMLSelectElement) {
-            const option = document.createElement('option');
-            option.value = payload.id;
-            option.textContent = payload.name;
-            // Reflects what the server actually saved as the shared business address (payload.location),
-            // not the raw locally-typed value — the two only ever differ if the save itself failed,
-            // and this option's data-location is what every later selection re-reads Location from.
-            option.dataset.location = payload.location ?? '';
-            option.dataset.reportComplete = '0';
-            select.appendChild(option);
-            select.value = String(payload.id);
-            select.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-
-        nameField.value = '';
-        templateField.value = '';
-        if (locationField) locationField.value = '';
-        dialog.close();
-    } catch {
-        showError('Unable to add this business. Please check your connection and try again.');
-    } finally {
-        button.disabled = false;
-    }
-});
-
-// Reset the quick-add form's error state (not its fields — Cancel discarding typed values is
-// expected either way) whenever the dialog closes, so a stale error doesn't linger next time.
-document.querySelector('[data-quick-add-business-dialog]')?.addEventListener('close', (event) => {
-    const errorBox = event.target.querySelector('[data-quick-add-business-error]');
-    if (errorBox) errorBox.hidden = true;
-    const addButton = document.querySelector('[data-business-check-add-new][data-lock-when-existing="true"]');
-    if (addButton instanceof HTMLButtonElement) addButton.disabled = true;
+    apply('[data-business-check-business-name]', option?.dataset.businessName);
+    apply('[data-business-check-location]', option?.dataset.location);
+    apply('[data-business-check-ci-date]', option?.dataset.ciDate);
 });
 
 // Direct multi-file photo upload widget (Residence/Business/Competitor Photos): keeps newly

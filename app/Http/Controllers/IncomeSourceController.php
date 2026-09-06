@@ -11,12 +11,10 @@ use App\Actions\ClientFolders\UpdateIncomeSourceContributors;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Exceptions\NoChangesDetectedException;
-use App\Http\Requests\ClientFolders\QuickCreateIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\StoreIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\UpdateBusinessIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\UpdateGeneralIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\UpdateIncomeSourceContributorsRequest;
-use App\Models\BusinessCheck;
 use App\Models\BusinessReport;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
@@ -40,12 +38,53 @@ class IncomeSourceController extends Controller
         private readonly ClientFolderOverview $overview,
     ) {}
 
-    public function launch(ClientFolder $clientFolder): View
+    public function launch(ClientFolder $clientFolder): View|RedirectResponse
     {
         Gate::authorize('view', $clientFolder);
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
 
+        // "Next" in Select Business Template lands here with the chosen template. A standard
+        // template this exact person already uses must never reach the encoding form at all, so it
+        // is turned away here rather than after the CI has filled the form in. Other Business /
+        // Source of Income is deliberately allowed through: its identity is the set of categories
+        // ticked inside the form, so it can only be judged on Save (StoreIncomeSourceRequest).
+        $template = IncomeSourceTemplate::query()->find((int) request()->query('income_source_template_id'));
+        if ($template && $template->template_type !== self::OTHER_BUSINESS_TEMPLATE_TYPE
+            && $this->personAlreadyUsesTemplate($clientFolder, $activePerson, $template)) {
+            return redirect()
+                ->route('client-folders.income-sources.manage', [$clientFolder] + ActivePersonResolver::queryParams($activePerson))
+                ->with('status', self::DUPLICATE_TEMPLATE_MESSAGE)
+                ->with('statusType', 'error');
+        }
+
         return $this->businessPage($clientFolder, null, $activePerson);
+    }
+
+    /**
+     * True when this exact person already holds a LEGITIMATE business report on this exact template.
+     *
+     * "Legitimate" is the important half. A surviving IncomeSource whose Business Report was
+     * intentionally deleted (business_report_deleted_at), or one that never had a report row at
+     * all, is not an existing report — treating it as one is what made a template like Remittance
+     * report itself as a duplicate when the person had no Remittance report at all. Neither is the
+     * unencoded shell CreateIncomeSource auto-creates for a Business Check-first business: see the
+     * revision condition below.
+     */
+    private function personAlreadyUsesTemplate(ClientFolder $clientFolder, ?CoMaker $activePerson, IncomeSourceTemplate $template): bool
+    {
+        return $clientFolder->incomeSources()
+            ->where('income_source_template_id', $template->id)
+            ->where('co_maker_id', $activePerson?->id)
+            ->whereNull('business_report_deleted_at')
+            ->has('businessReport')
+            // An encoded report, not a shell. A Business Check-first business already owns a
+            // business_reports row, but its revision stays 1 until SaveBusinessIncomeSource has
+            // actually run for it — the same convention checkFirstCandidates(),
+            // isBlankLegacyPlaceholder() and the picker's own used-template list (built from
+            // dedicatedSources(requireReport: true)) already use. Without this the Check-first
+            // business blocked its own Business Report, and Next disagreed with the picker.
+            ->where('revision', '>', 1)
+            ->exists();
     }
 
     public function index(ClientFolder $clientFolder): View
@@ -71,12 +110,38 @@ class IncomeSourceController extends Controller
         $checkFirstCandidates = $this->checkFirstCandidates($clientFolder, $activePerson);
         $displayTimezone = config('cims.display_timezone');
         $businessTemplates = $this->activeBusinessTemplates();
+        // Derived from the businesses already loaded above rather than a second query — this list
+        // only lets Select Business Template refuse a duplicate early; launch() re-checks it
+        // against the database, so nothing depends on this being exhaustive.
+        $usedTemplateIds = $businesses
+            ->reject(fn (IncomeSource $business): bool => $business->template?->template_type === self::OTHER_BUSINESS_TEMPLATE_TYPE)
+            // Same "legitimate" test the server applies, so Next and launch() can never disagree:
+            // a business whose report was intentionally deleted leaves its template free again.
+            ->reject(fn (IncomeSource $business): bool => $business->business_report_deleted_at !== null || $business->businessReport === null)
+            ->pluck('income_source_template_id')
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
         $recentActivity = $this->overview->businessActivity($clientFolder, $activePerson);
         $businessChecksCount = $clientFolder->businessChecks()->where('co_maker_id', $activePerson?->id)->count();
         $personParams = ActivePersonResolver::queryParams($activePerson);
 
-        return compact('clientFolder', 'businesses', 'checkFirstCandidates', 'displayTimezone', 'businessTemplates', 'activePerson', 'sort', 'sortDirection', 'recentActivity', 'businessChecksCount', 'personParams');
+        return compact('clientFolder', 'businesses', 'checkFirstCandidates', 'displayTimezone', 'businessTemplates', 'usedTemplateIds', 'activePerson', 'sort', 'sortDirection', 'recentActivity', 'businessChecksCount', 'personParams');
     }
+
+    private const OTHER_BUSINESS_TEMPLATE_TYPE = 'other_business_source_of_income';
+
+    /**
+     * The single wording for a STANDARD duplicate Business Template, wherever the CI meets it: the
+     * Select Business Template modal states it inline under the selector, launch() flashes it when
+     * the picker is bypassed, and StoreIncomeSourceRequest raises it on save. One string so the
+     * fast client-side refusal and the authoritative server one can never read differently.
+     *
+     * Other Business / Source of Income is never judged by this rule — its identity is the exact
+     * normalized set of categories ticked inside the form, and it has its own message.
+     */
+    public const DUPLICATE_TEMPLATE_MESSAGE = 'This business template already exists for this client. Please select another template.';
 
     public function create(ClientFolder $clientFolder): RedirectResponse
     {
@@ -104,37 +169,6 @@ class IncomeSourceController extends Controller
         $this->flashManageRefresh($clientFolder, ActivePersonResolver::resolve($clientFolder, $data['co_maker_id'] ?? null));
 
         return redirect()->route('client-folders.income-sources.edit', [$clientFolder, $source] + $personParams)->with('status', 'Business Report saved successfully.');
-    }
-
-    /**
-     * "+ Add Business" quick-create used from the Business Check form (Applicant only for now)
-     * when the business hasn't been created through the normal Business Report flow yet. Creates
-     * the exact same shared IncomeSource/BusinessReport shell as the full flow (CreateIncomeSource
-     * is reused as-is, unmodified) — never a Business-Check-only text field, never a duplicate
-     * identity, never a fake "completed" report. It stays in RecordState::Draft exactly like any
-     * other freshly created business until someone completes it through Business / Income Sources.
-     *
-     * The modal's own Location field is set as an extra step right here (not inside
-     * CreateIncomeSource) — it becomes the new BusinessReport's main_business_address, the one
-     * authoritative business address Business Check and Business Report both read from, so a
-     * business quick-added from Business Check already shows the same address if/when a Business
-     * Report is opened for it later.
-     */
-    public function quickCreate(QuickCreateIncomeSourceRequest $request, ClientFolder $clientFolder, CreateIncomeSource $create): JsonResponse
-    {
-        $data = $request->validated();
-        $source = $create->execute($request->user(), $clientFolder, [
-            'income_source_template_id' => $data['income_source_template_id'],
-            'source_name' => $data['business_name'],
-            'business_name' => $data['business_name'],
-            'co_maker_id' => $data['co_maker_id'] ?? null,
-        ]);
-
-        if (filled($data['location'] ?? null)) {
-            $source->businessReport?->update(['main_business_address' => $data['location']]);
-        }
-
-        return response()->json(['id' => $source->id, 'name' => $source->displayName(), 'location' => $source->businessReport?->main_business_address]);
     }
 
     public function show(ClientFolder $clientFolder, IncomeSource $incomeSource): RedirectResponse
@@ -321,12 +355,25 @@ class IncomeSourceController extends Controller
             'panel' => view('client-folders.income-sources.partials.saved-businesses-panel-body', $data)->render(),
             'activity' => view('client-folders.income-sources.partials.recent-activity-body', $data)->render(),
             'modal' => view('components.ui.recent-activity-modal', ['id' => 'business-recent-activity-dialog', 'activities' => $data['recentActivity']])->render(),
+            // The template picker lives outside the refreshed panel (it is a page-level <dialog>),
+            // so without this its data-used-template-ids stayed frozen at whatever was true when
+            // the page was first rendered — and after a save or a Business Report delete it started
+            // refusing templates the server would have allowed. The refresh now carries the same
+            // server-computed list the page was rendered with, so the picker's state has one source
+            // of truth and no separate lifecycle.
+            'usedTemplateIds' => $data['usedTemplateIds'],
         ];
     }
 
     private function afterSave(string $intent, ClientFolder $folder, IncomeSource $source, string $message, ?CoMaker $activePerson, string $statusType = 'success'): RedirectResponse
     {
-        $this->flashManageRefresh($folder, $activePerson);
+        // A no-change save ('info') wrote nothing, so there is nothing for the parent page to
+        // AUTO-UPDATE and no saved-state to hand it. Skipping the flash here is what keeps the
+        // encoding dialog open on a no-op: business-encoding.blade.php only emits its
+        // 'brbi:business-saved' notify element for a save that actually persisted.
+        if ($statusType !== 'info') {
+            $this->flashManageRefresh($folder, $activePerson);
+        }
         $personParams = ActivePersonResolver::queryParams($activePerson);
         $route = $intent === 'return'
             ? route('client-folders.income-sources.manage', [$folder] + $personParams)
@@ -355,12 +402,12 @@ class IncomeSourceController extends Controller
      * requires both: a business_reports row still existing (it survives a hard-delete of the Check,
      * see DeleteBusinessReport, but not of the Report itself) AND revision > 1, meaning
      * SaveBusinessIncomeSource has actually run at least once for this business — CreateIncomeSource
-     * alone (the Check-first "+Add Business" quick-create shell) leaves revision at 1 and must never
+     * alone leaves revision at 1 and must never
      * count as a saved Report (see IncomeSourceController::checkFirstCandidates() below for how that
      * shell is instead surfaced as a create-report candidate). The Business Report edit page's own
      * business-switcher sidebar (businessPage() below) intentionally keeps showing every dedicated
      * business regardless, since navigating straight to a Report-less one is exactly how it gets
-     * recreated (see IncomeSourceController::prefillReportFromCheckIfUnfinalized()).
+     * recreated — from the normal template workflow alone, never from Business Check data.
      */
     private function dedicatedSources(ClientFolder $folder, ?CoMaker $activePerson, ?string $sort = null, string $sortDirection = 'asc', bool $requireReport = false)
     {
@@ -375,12 +422,6 @@ class IncomeSourceController extends Controller
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
-
-        // Same Check → draft Report prefill as the edit page itself (in-memory only — never
-        // persisted, never audited) — applied here too so the CI Date column (and Main Business
-        // Address, used by sorting below) reflect it consistently across every business in the
-        // list, not just whichever one happens to currently be open for edit.
-        $businesses->each(fn (IncomeSource $business) => $this->prefillReportFromCheckIfUnfinalized($business));
 
         if ($sort === null) {
             return $businesses;
@@ -400,10 +441,10 @@ class IncomeSourceController extends Controller
     }
 
     /**
-     * Businesses that exist only because a Business Check was saved first (see
-     * BusinessCheckController::quickCreate() / IncomeSourceController::quickCreate()) — a real
-     * IncomeSource + business_reports shell, but never explicitly saved through the Business Report
-     * form (revision === 1). These are deliberately excluded from $businesses (see
+     * Historical businesses left behind by the retired Check-first flow — a real IncomeSource +
+     * business_reports shell that was never explicitly saved through the Business Report form
+     * (revision === 1) and already has its own Business Check. Business Check can no longer create
+     * one of these, but the ones already in the data must stay readable and completable. These are deliberately excluded from $businesses (see
      * dedicatedSources()'s $requireReport) so they never masquerade as a saved Business Report, but
      * they must still be reachable without forcing the user back through the generic "Choose
      * Business Template" picker — the whole point of Check-first is that the template was already
@@ -438,7 +479,6 @@ class IncomeSourceController extends Controller
                 'businessReport.suppliers', 'businessReport.observations', 'businessReport.competitors',
                 'creator:id,full_name', 'lastEditor:id,full_name', 'contributors:id,full_name',
             ]);
-            $this->prefillReportFromCheckIfUnfinalized($incomeSource);
         }
         $businesses = $this->dedicatedSources($clientFolder, $activePerson);
         $legacyPlaceholders = $businesses->filter(fn (IncomeSource $business): bool => $this->isBlankLegacyPlaceholder($business));
@@ -475,62 +515,10 @@ class IncomeSourceController extends Controller
     private function activeBusinessTemplates()
     {
         return IncomeSourceTemplate::query()
-            ->where('is_active', true)
-            ->where('is_fallback', false)
-            ->where('form_handler', 'dedicated-business')
+            ->activeBusiness()
             ->orderBy('sort_order')
             ->orderBy('name')
             ->get(['id', 'name', 'description', 'business_category', 'template_type', 'version', 'compatibility_tags']);
-    }
-
-    /**
-     * Check → draft Report prefill (never persisted here — see BusinessReportBusinessCheckIndependenceTest).
-     *
-     * Two cases:
-     * - No BusinessReport row exists at all (never created, or hard-deleted via
-     *   DeleteBusinessReport — see Rule 11): there is nothing to be independent from, so a fresh,
-     *   unsaved instance is prefilled from the surviving Check and attached in-memory via
-     *   setRelation() — SaveBusinessIncomeSource still creates the real row itself on save.
-     * - A BusinessReport row exists but a revision of 1 means SaveBusinessIncomeSource has never
-     *   actually run for this business (CreateIncomeSource's own auto-created shell is all that
-     *   exists) — still fair game to prefill. The moment it is explicitly saved (revision 2+, same
-     *   convention as isBlankLegacyPlaceholder() above), this stops: the Report is its own
-     *   authoritative snapshot from then on, exactly like BusinessCheckController::form() never
-     *   overlays a saved Check with newer Report values. Only fields still blank on the Report fall
-     *   back to the Check — an explicitly typed value is never replaced by this overlay.
-     */
-    private function prefillReportFromCheckIfUnfinalized(IncomeSource $incomeSource): void
-    {
-        $report = $incomeSource->businessReport;
-
-        if ($report === null) {
-            $check = BusinessCheck::query()->where('income_source_id', $incomeSource->id)->first();
-            if ($check !== null) {
-                $incomeSource->setRelation('businessReport', new BusinessReport([
-                    'income_source_id' => $incomeSource->id,
-                    'business_name' => $check->business_name,
-                    'main_business_address' => $check->location,
-                    'start_date' => $check->ci_date,
-                ]));
-            }
-
-            return;
-        }
-
-        if ($incomeSource->revision > 1) {
-            return;
-        }
-
-        $check = BusinessCheck::query()->where('income_source_id', $incomeSource->id)->first();
-        if ($check === null) {
-            return;
-        }
-
-        $report->forceFill([
-            'business_name' => $report->business_name ?: $check->business_name,
-            'main_business_address' => $report->main_business_address ?: $check->location,
-            'start_date' => $report->start_date ?: $check->ci_date,
-        ]);
     }
 
     private function isBlankLegacyPlaceholder(IncomeSource $source): bool

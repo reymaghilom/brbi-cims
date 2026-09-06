@@ -158,21 +158,6 @@ class ClientFolder extends Model
         return $this->hasMany(GeneratedReport::class);
     }
 
-    public function attachments(): HasMany
-    {
-        return $this->hasMany(Attachment::class);
-    }
-
-    public function driveReferences(): HasMany
-    {
-        return $this->hasMany(GoogleDriveReference::class);
-    }
-
-    public function telegramMessages(): HasMany
-    {
-        return $this->hasMany(TelegramMessage::class);
-    }
-
     public function completionResults(): HasMany
     {
         return $this->hasMany(ClientCompletionResult::class);

@@ -158,7 +158,7 @@
                     <div class="sm:col-span-2"><label for="add-target-remarks" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="add-target-remarks" name="remarks" rows="3" class="ui-control">{{ old('remarks') }}</textarea><x-form.validation-message for="remarks" /></div>
                 </div>
             </div>
-            <div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-modal-close>Cancel</button><button type="submit" class="ui-button-primary">Add Bank / Coop</button></div>
+            <div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary"><x-ui.icon name="check" size="size-4" />Add Bank / Coop</button></div>
         </form>
     </dialog>
 
@@ -192,7 +192,7 @@
                         <div class="sm:col-span-2"><label for="target-remarks-{{ $target->id }}" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="target-remarks-{{ $target->id }}" name="remarks" rows="3" class="ui-control">{{ $target->remarks }}</textarea></div>
                     </div>
                 </div>
-                <div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-modal-close>Cancel</button><button type="submit" class="ui-button-primary">Save</button></div>
+                <div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary"><x-ui.icon name="check" size="size-4" />Save Changes</button></div>
             </form>
         </dialog>
 

@@ -96,16 +96,32 @@ class CiTeamDocumentStorage
     }
 
     /**
-     * Picks the right local disk for one stored evidence path without consulting any global
-     * setting: a legacy `client-media/...` path was written by PrivateMediaStorage::store() onto
-     * the configured media disk, while anything else lives in the CI Team document tree. This is
-     * what keeps pictures saved before an Evidence Storage switch readable afterwards.
+     * Picks the right local disk for one stored evidence path without consulting any global setting.
+     *
+     * `client-media/...` is the shape PrivateMediaStorage::store() writes onto the configured media
+     * disk, so it resolves there immediately. Everything else is assumed to live in the CI Team
+     * document tree — but only after checking the media disk for a file that is genuinely there,
+     * because historical rows predate that prefix convention and still point at other locations on
+     * that disk. Falling straight through on the prefix alone would strand those older pictures.
+     *
+     * This is what keeps media saved before an Evidence Storage switch readable afterwards, and it
+     * is the single resolver every reader shares — the web delivery routes and the PDF/DOCX builder
+     * alike — so a file can never be visible in one and missing from the other.
      */
     public function evidenceDisk(string $path): FilesystemAdapter
     {
-        return $this->isLegacyMediaPath($path)
-            ? Storage::disk(config('cims.media_disk'))
-            : $this->ciTeamDiskFor($path);
+        if ($this->isLegacyMediaPath($path)) {
+            return Storage::disk(config('cims.media_disk'));
+        }
+
+        $ciTeamDisk = $this->ciTeamDiskFor($path);
+        if ($ciTeamDisk->fileExists($this->relative($path))) {
+            return $ciTeamDisk;
+        }
+
+        $mediaDisk = Storage::disk(config('cims.media_disk'));
+
+        return $mediaDisk->fileExists($path) ? $mediaDisk : $ciTeamDisk;
     }
 
     public function isLegacyMediaPath(string $path): bool

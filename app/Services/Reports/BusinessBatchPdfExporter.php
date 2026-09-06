@@ -11,8 +11,8 @@ use Dompdf\Options;
 use Illuminate\Support\Collection;
 
 /**
- * Renders one combined, print-ready PDF for a batch of selected Business Reports — the "Download
- * Selected" convenience download on the Business / Income Sources list. Deliberately bypasses
+ * Renders a print-ready PDF for one or more Business Reports, serving both per-row downloads and
+ * the "Download Selected" convenience action. Deliberately bypasses
  * GenerateOfficialReport's versioned GeneratedReport/disk-storage machinery (that system numbers
  * and audits one official report per income source at a time, which doesn't fit a combined,
  * disposable, non-versioned download); this mirrors BusinessExcelExporter's own direct/streamed
@@ -41,7 +41,7 @@ class BusinessBatchPdfExporter
         $options->set('defaultFont', 'DejaVu Sans');
         $options->set('isRemoteEnabled', false);
         $options->set('isPhpEnabled', false);
-        $options->set('chroot', [storage_path('app/private'), public_path()]);
+        $options->set('chroot', ReportImageRoots::all());
         // Same fix as DompdfOfficialReportGenerator: without this, Dompdf applies the preview-only
         // `@media screen` rules (meant for the on-screen browser view) to the PDF too.
         $options->set('defaultMediaType', 'print');

@@ -48,11 +48,19 @@
             @method('PUT')
             <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
             <input type="hidden" name="expected_revision" value="{{ $incomeSource->revision }}">
+
     @else
         <div class="business-encoding-page" data-business-report-form>
     @endif
 
-        @if($errors->any())
+        @if($errors->has(\App\Http\Requests\ClientFolders\StoreIncomeSourceRequest::DUPLICATE_CATEGORIES_KEY))
+            {{-- A duplicate category combination has one cause and one explanation, so it replaces
+                 the generic "correct the highlighted fields" banner entirely and is never repeated
+                 beside the checkboxes. The user's entries and ticks are preserved by old(). --}}
+            <div class="mb-3 rounded-control border border-danger/30 bg-danger-soft p-3 text-sm text-danger" role="alert" tabindex="-1" data-business-duplicate-categories-error>
+                {{ $errors->first(\App\Http\Requests\ClientFolders\StoreIncomeSourceRequest::DUPLICATE_CATEGORIES_KEY) }}
+            </div>
+        @elseif($errors->any())
             <div class="mb-3 rounded-control border border-danger/30 bg-danger-soft p-3 text-sm text-danger" role="alert" tabindex="-1">
                 <strong>Please correct the highlighted Business Report fields.</strong> No changes were saved.
             </div>
@@ -104,7 +112,7 @@
                     <div class="business-report-header-value"><input id="branch_name" name="branch_name" form="{{ $headerFormId }}" value="{{ old('branch_name', $headerBranch) }}" class="business-report-header-control" readonly aria-readonly="true" @error('branch_name') aria-invalid="true" aria-describedby="branch_name-error" @enderror><x-form.validation-message for="branch_name" /></div>
 
                     <label class="business-report-header-label" for="start_date">START DATE OF CI:</label>
-                    <div class="business-report-header-value"><input id="start_date" name="start_date" form="{{ $headerFormId }}" type="date" value="{{ old('start_date', $report?->start_date?->format('Y-m-d')) }}" class="business-report-header-control" @error('start_date') aria-invalid="true" aria-describedby="start_date-error" @enderror><x-form.validation-message for="start_date" /></div>
+                    <div class="business-report-header-value"><input id="start_date" name="start_date" form="{{ $headerFormId }}" type="date" required value="{{ old('start_date', $report?->start_date?->format('Y-m-d')) }}" class="business-report-header-control" @error('start_date') aria-invalid="true" aria-describedby="start_date-error" @enderror><x-form.validation-message for="start_date" /></div>
                     <div class="business-report-header-label">{{ $nameLabel }}</div>
                     <div class="business-report-header-value business-report-header-readonly">{{ ($activePerson ?? null)?->full_name ?? $clientFolder->display_name }}</div>
 
@@ -201,7 +209,15 @@
         :hidden="$incomeSource === null"
     >
         <span class="sr-only">Business Report actions</span>
-        <x-slot:actions><button type="submit" form="{{ $headerFormId }}" name="intent" value="complete" class="ui-button-primary" data-business-save>{{ $incomeSource ? ($hasActiveReport ? 'Update' : 'Create Business Report') : 'Save' }}</button></x-slot:actions>
+        {{-- Same action-bar convention as the Edit Business Check form: a secondary Cancel that
+             closes the dialog this form is opened in, and a primary submit carrying the save icon.
+             The label follows the one existing create/edit signal this page already uses —
+             $hasActiveReport — so a brand-new report reads "Save" and an existing one "Update".
+             The submit's form/name/value are untouched, so intent handling is exactly as before. --}}
+        <x-slot:actions>
+            <button type="button" class="ui-button-secondary" data-close-parent-dialog><x-ui.icon name="close" size="size-4" />Cancel</button>
+            <button type="submit" form="{{ $headerFormId }}" name="intent" value="complete" class="ui-button-primary" data-business-save><x-ui.icon name="check" size="size-4" />{{ $hasActiveReport ? 'Update Business Report' : 'Save Business Report' }}</button>
+        </x-slot:actions>
     </x-ui.sticky-form-toolbar>
 
     @foreach($businessTemplates as $previewTemplate)

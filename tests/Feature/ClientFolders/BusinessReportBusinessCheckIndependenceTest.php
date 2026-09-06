@@ -77,11 +77,11 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             ->assertDontSee('value="Lapasan"', false);
     }
 
-    public function test_applicant_check_first_prefills_draft_report_until_explicitly_saved(): void
+    public function test_applicant_check_first_never_prefills_the_draft_report(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        // Mirrors IncomeSourceController::quickCreate(): CreateIncomeSource only, no
+        // The shape the retired Check-first flow left behind: CreateIncomeSource only, no
         // SaveBusinessIncomeSource — the Business Report stays an unfinalized, revision-1 shell.
         $source = $this->createBusiness($ci, $folder, null, 'Store A');
         $this->assertSame(1, $source->revision);
@@ -92,22 +92,22 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         ]);
         $this->assertDatabaseHas('business_reports', ['income_source_id' => $source->id, 'main_business_address' => null]);
 
-        // Draft Report opened while still unfinalized shows the Check's values as prefill —
-        // nothing persisted merely by opening the form.
+        // Business Check data never reaches the Business Report form: the still-unfinalized draft
+        // opens blank, exactly as it would if no Business Check existed at all.
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
             ->assertOk()
-            ->assertSee('value="Carmen"', false)
-            ->assertSee('value="2026-09-02"', false);
+            ->assertDontSee('value="Carmen"', false)
+            ->assertDontSee('value="2026-09-02"', false);
         $this->assertDatabaseHas('business_reports', ['income_source_id' => $source->id, 'main_business_address' => null]);
 
-        // Check changes again before the Report is ever saved — the next open follows the latest Check.
+        // A later Check edit changes nothing on that form either.
         app(SaveBusinessCheck::class)->execute($ci, $folder, [
             'check_id' => $check->id, 'co_maker_id' => null, 'income_source_id' => $source->id,
             'ci_date' => '2026-09-05', 'location' => 'Lapasan',
         ]);
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
             ->assertOk()
-            ->assertSee('value="Lapasan"', false)
+            ->assertDontSee('value="Lapasan"', false)
             ->assertDontSee('value="Carmen"', false);
 
         // Explicitly saving the Report finalizes it — it becomes its own snapshot from now on.
@@ -150,7 +150,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             ->assertSee('data-location="Carmen"', false);
     }
 
-    public function test_hard_deleting_report_preserves_check_and_recreated_report_prefills_from_it(): void
+    public function test_hard_deleting_report_preserves_check_and_the_recreated_report_starts_blank(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -171,12 +171,12 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.business-checks.edit', [$folder, $check]))
             ->assertOk()->assertSee('value="Carmen"', false);
 
-        // The Business Report no longer exists at all — reopening it prefills from the surviving
-        // Check (never persisted merely by opening the form).
+        // The Business Report no longer exists at all — reopening it starts from the normal
+        // template workflow, with none of the surviving Check's values carried over.
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
             ->assertOk()
-            ->assertSee('value="Carmen"', false)
-            ->assertSee('value="2026-09-02"', false);
+            ->assertDontSee('value="Carmen"', false)
+            ->assertDontSee('value="2026-09-02"', false);
         $this->assertDatabaseMissing('business_reports', ['income_source_id' => $source->id]);
 
         // Saving recreates a real, independent BusinessReport row on the same income_source_id.
@@ -235,7 +235,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         $this->assertDatabaseHas('business_checks', ['id' => $checkA->id]);
     }
 
-    public function test_deleting_business_report_and_then_its_check_removes_the_orphaned_income_source_via_http(): void
+    public function test_deleting_business_report_and_then_its_check_keeps_the_income_source_via_http(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -257,7 +257,9 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             ->assertRedirect()
             ->assertSessionHas('status', 'Business Check permanently deleted.');
 
-        $this->assertDatabaseMissing('income_sources', ['id' => $source->id]);
+        $this->assertDatabaseHas('income_sources', ['id' => $source->id, 'deleted_at' => null]);
+        $this->assertDatabaseMissing('business_reports', ['income_source_id' => $source->id]);
+        $this->assertDatabaseMissing('business_checks', ['income_source_id' => $source->id]);
     }
 
     public function test_saved_business_check_output_snapshot_survives_a_later_business_report_rename(): void
@@ -415,7 +417,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             ->assertDontSee('data-modal-open="delete-business-'.$source->id.'"', false);
     }
 
-    public function test_ghost_row_disappears_and_income_source_is_removed_when_truly_orphaned(): void
+    public function test_saved_business_row_disappears_but_income_source_remains_after_report_delete(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -424,8 +426,8 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
 
         app(DeleteBusinessReport::class)->execute($ci, $folder, $source->fresh());
 
-        // No Business Check ever existed, so the now-report-less IncomeSource is truly orphaned.
-        $this->assertDatabaseMissing('income_sources', ['id' => $source->id]);
+        // A child delete never owns the parent IncomeSource, even when the other child is absent.
+        $this->assertDatabaseHas('income_sources', ['id' => $source->id, 'deleted_at' => null]);
 
         $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))
             ->assertOk()
@@ -483,7 +485,8 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         // saved.") also legitimately contains the word "Business" and must never be confused with it.
         $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->assertSee('>2 Businesses<', false);
 
-        // First Business Report hard-deleted with no surviving Check — orphan IncomeSource removed.
+        // First Business Report hard-deleted with no surviving Check — its IncomeSource remains,
+        // while the dashboard still counts only actually saved Business Reports.
         app(DeleteBusinessReport::class)->execute($ci, $folder, $sourceA->fresh());
         $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->assertSee('>1 Business<', false)->assertDontSee('>2 Businesses<', false);
 
@@ -544,12 +547,12 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             ->assertSee('>1 Business<', false);
     }
 
-    public function test_check_first_business_appears_as_a_report_pending_row_with_ci_date_prefill_in_the_form(): void
+    public function test_check_first_business_appears_as_a_report_pending_row_with_no_prefill_in_the_form(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        // Mirrors the Business Check "+Add Business" quick-create flow: CreateIncomeSource only,
-        // so the Business Report is still an unfinalized, revision-1 shell — it must appear as a
+        // The shape the retired Check-first flow left behind: CreateIncomeSource only, so the
+        // Business Report is still an unfinalized, revision-1 shell — it must appear as a
         // Report Pending row in the unified business list, never as a "Saved" row (see
         // IncomeSourceController::checkFirstCandidates()).
         $source = $this->createBusiness($ci, $folder, null, 'FARMING: CORN PRODUCTION');
@@ -564,18 +567,18 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             ->assertSee('Report Pending')
             ->assertSee('Complete Business Report');
 
-        // The same prefill drives the actual Business Report form fields, opened directly from
-        // that candidate with no template re-selection.
+        // That candidate still opens on its own exact template with no re-selection, but the
+        // Business Report form itself carries none of the Business Check's values.
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
             ->assertOk()
-            ->assertSee('value="Baikingon"', false)
-            ->assertSee('value="2026-09-02"', false);
+            ->assertDontSee('value="Baikingon"', false)
+            ->assertDontSee('value="2026-09-02"', false);
 
         // Never persisted merely by viewing either page.
         $this->assertDatabaseHas('business_reports', ['income_source_id' => $source->id, 'main_business_address' => null, 'start_date' => null]);
     }
 
-    public function test_check_first_candidate_form_ci_date_follows_the_latest_unsaved_check_update(): void
+    public function test_check_first_candidate_form_never_follows_the_business_check_ci_date(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -585,7 +588,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             'ci_date' => '2026-09-02', 'location' => 'Carmen',
         ]);
 
-        $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))->assertOk()->assertSee('value="2026-09-02"', false);
+        $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))->assertOk()->assertDontSee('value="2026-09-02"', false);
 
         app(SaveBusinessCheck::class)->execute($ci, $folder, [
             'check_id' => $check->id, 'co_maker_id' => null, 'income_source_id' => $source->id,
@@ -594,11 +597,11 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
 
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
             ->assertOk()
-            ->assertSee('value="2026-09-05"', false)
+            ->assertDontSee('value="2026-09-05"', false)
             ->assertDontSee('value="2026-09-02"', false);
     }
 
-    public function test_check_first_candidate_disappears_when_its_only_check_is_deleted(): void
+    public function test_check_first_candidate_disappears_but_its_income_source_and_report_shell_remain(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -620,19 +623,13 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             ->assertOk()
             ->assertDontSee('Business Reports to Create');
 
-        // The IncomeSource itself is now truly gone (see the orphan assertions below), so its edit
-        // page — which would previously have kept resolving with stale Check-derived prefill left
-        // behind — must 404 instead of rendering a ghost form for a business that no longer exists.
+        // Deleting the Check does not own either the parent source or its Business Report shell.
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
-            ->assertNotFound();
+            ->assertOk();
 
-        // The Business Report attached to this Check-first business was never explicitly saved
-        // (revision stayed 1 — SaveBusinessIncomeSource never ran), so once its only Check is gone
-        // there is nothing meaningful left on either side: this must be treated as a true orphan and
-        // its IncomeSource (and draft BusinessReport shell) permanently force-deleted, not merely
-        // hidden from one page's candidate section — see DeleteIncomeSourceIfOrphaned.
-        $this->assertDatabaseMissing('income_sources', ['id' => $source->id]);
-        $this->assertDatabaseMissing('business_reports', ['income_source_id' => $source->id]);
+        $this->assertDatabaseHas('income_sources', ['id' => $source->id, 'deleted_at' => null]);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $source->id]);
+        $this->assertDatabaseMissing('business_checks', ['income_source_id' => $source->id]);
     }
 
     public function test_check_first_ghost_never_appears_as_a_selectable_business_check_candidate_after_its_check_is_deleted(): void
@@ -836,7 +833,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             ->assertDontSee('B Dropdown Store');
     }
 
-    public function test_co_maker_check_first_orphan_cleanup_is_isolated(): void
+    public function test_co_maker_check_first_delete_keeps_its_exact_parent_source(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -849,7 +846,12 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
 
         app(DeleteBusinessCheck::class)->execute($ci, $folder, $check);
 
-        $this->assertDatabaseMissing('income_sources', ['id' => $source->id]);
+        $this->assertDatabaseHas('income_sources', [
+            'id' => $source->id,
+            'co_maker_id' => $coMaker->id,
+            'deleted_at' => null,
+        ]);
+        $this->assertDatabaseMissing('business_checks', ['id' => $check->id]);
         $personParams = ['person' => 'co-maker', 'co_maker_id' => $coMaker->id];
         $this->actingAs($ci)->get(route('client-folders.business-checks.create', [$folder] + $personParams))
             ->assertOk()
@@ -875,10 +877,15 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             'ci_date' => '2026-09-05', 'location' => 'Lapasan',
         ]);
 
-        $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))
+        $html = $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))
             ->assertOk()
-            ->assertSee('Sep 2, 2026')
-            ->assertDontSee('Sep 5, 2026');
+            ->getContent();
+        $panelStart = strpos($html, 'data-business-panel-body');
+        $panelEnd = strpos($html, '</section>', $panelStart);
+        $savedBusinessesPanel = substr($html, $panelStart, $panelEnd - $panelStart);
+
+        $this->assertStringContainsString('Sep 2, 2026', $savedBusinessesPanel);
+        $this->assertStringNotContainsString('Sep 5, 2026', $savedBusinessesPanel);
     }
 
     public function test_co_maker_check_first_candidate_is_isolated(): void
@@ -996,13 +1003,13 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         $overview = app(ClientFolderOverview::class)->for($folder->fresh());
         $this->assertSame(0, $overview['clientFolder']->income_sources_count);
 
-        // Opening the Report goes straight to the correct template — no generic picker — with
-        // Business Name/Address/Start Date prefilled from the Check, nothing persisted by viewing.
+        // Opening the Report goes straight to the correct template — no generic picker — and the
+        // form starts empty: Business Check data never prefills a Business Report.
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
             ->assertOk()
             ->assertSee('TRUCKING SERVICES')
-            ->assertSee('value="Opol, Misamis Oriental"', false)
-            ->assertSee('value="2026-09-02"', false);
+            ->assertDontSee('value="Opol, Misamis Oriental"', false)
+            ->assertDontSee('value="2026-09-02"', false);
         $this->assertDatabaseHas('business_reports', ['income_source_id' => $source->id, 'main_business_address' => null]);
 
         app(SaveBusinessIncomeSource::class)->execute($ci, $folder, $source->fresh(), $this->reportPayload($source, null, 'RCM Trucking', 'Opol, Misamis Oriental', '2026-09-02'));
@@ -1068,14 +1075,18 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             ->assertSee('Rey Store')
             ->assertSee('Retail: Grocery Store / Supermarket / Sari-Sari Store / Water Refilling');
 
+        // Each candidate opens on its own exact template, and neither Business Check's values
+        // appear on either Business Report form.
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $trucking]))
             ->assertOk()
             ->assertSee('TRUCKING SERVICES')
-            ->assertSee('value="Opol"', false);
+            ->assertDontSee('value="Opol"', false)
+            ->assertDontSee('value="Carmen"', false);
 
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $sariSari]))
             ->assertOk()
-            ->assertSee('value="Carmen"', false);
+            ->assertDontSee('value="Carmen"', false)
+            ->assertDontSee('value="Opol"', false);
 
         $this->assertSame(2, IncomeSource::where('client_folder_id', $folder->id)->count());
     }
@@ -1748,6 +1759,33 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
 
         $expectedHref = route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'business_income_source', 'income_source_id' => $source->id]);
         $this->assertStringContainsString(htmlspecialchars($expectedHref, ENT_QUOTES), $content);
+    }
+
+    public function test_saved_business_pdf_links_use_the_exact_authoritative_get_route_for_each_person(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Exact Co-Maker']);
+        $applicantBusiness = $this->createBusiness($ci, $folder, null, 'Applicant PDF Store');
+        $coMakerBusiness = $this->createBusiness($ci, $folder, $coMaker, 'Co-Maker PDF Store');
+        app(SaveBusinessIncomeSource::class)->execute($ci, $folder, $applicantBusiness, $this->reportPayload($applicantBusiness, null, 'Applicant PDF Store', 'Applicant Address', '2026-09-01'));
+        app(SaveBusinessIncomeSource::class)->execute($ci, $folder, $coMakerBusiness, $this->reportPayload($coMakerBusiness, $coMaker, 'Co-Maker PDF Store', 'Co-Maker Address', '2026-09-01'));
+
+        $applicantUrl = route('client-folders.income-sources.export-pdf', [$folder, $applicantBusiness]);
+        $coMakerUrl = route('client-folders.income-sources.export-pdf', [
+            $folder, $coMakerBusiness, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id,
+        ]);
+        $applicantHtml = $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))->assertOk()->getContent();
+        $coMakerHtml = $this->actingAs($ci)->get(route('client-folders.income-sources.manage', [
+            $folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id,
+        ]))->assertOk()->getContent();
+
+        $this->assertStringContainsString('href="'.htmlspecialchars($applicantUrl, ENT_QUOTES).'"', $applicantHtml);
+        $this->assertStringContainsString('href="'.htmlspecialchars($coMakerUrl, ENT_QUOTES).'"', $coMakerHtml);
+        $this->assertStringNotContainsString('business-'.$applicantBusiness->id.'-export-pdf-form', $applicantHtml);
+        $this->assertStringNotContainsString('business-'.$coMakerBusiness->id.'-export-pdf-form', $coMakerHtml);
+        $this->assertStringNotContainsString((string) $coMakerBusiness->id.'/export-pdf', $applicantHtml);
+        $this->assertStringNotContainsString((string) $applicantBusiness->id.'/export-pdf', $coMakerHtml);
     }
 
     public function test_preview_report_page_is_read_only_and_never_auto_triggers_browser_print(): void

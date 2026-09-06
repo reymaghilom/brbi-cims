@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\ClientFolders;
 
-use App\Models\BusinessCheck;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
@@ -141,7 +140,7 @@ class BusinessCheckReportMediaResolutionTest extends TestCase
 
         $docxPath = tempnam(sys_get_temp_dir(), 'docx').'.docx';
         file_put_contents($docxPath, $response->streamedContent());
-        $zip = new \ZipArchive();
+        $zip = new \ZipArchive;
         $zip->open($docxPath);
         $documentXml = $zip->getFromName('word/document.xml');
         $mediaEntries = [];
@@ -196,13 +195,10 @@ class BusinessCheckReportMediaResolutionTest extends TestCase
         $check = $folder->businessChecks()->create([
             'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan', 'ci_user_id' => $ci->id,
         ]);
-        // OfficialReportDataBuilder::safeMediaPath() checks storage_path('app/private/...') directly
-        // rather than going through the Storage facade, so — unlike every other test in this file —
-        // this one fixture has to land on that real path instead of Storage::fake('local')'s own
-        // sandboxed root, or safeMediaPath() would never find it regardless of this fix.
-        $realPath = storage_path('app/private/business/photos/local.jpg');
-        @mkdir(dirname($realPath), 0755, true);
-        file_put_contents($realPath, UploadedFile::fake()->image('local.jpg', 200, 200)->get());
+        // The fixture goes through the faked disk like every other test here: safeMediaPath() now
+        // resolves via CiTeamDocumentStorage::evidenceDisk() rather than reaching for a hard-coded
+        // storage_path(), so a historical media-disk path is found wherever that disk actually is.
+        Storage::disk(config('cims.media_disk'))->put('business/photos/local.jpg', UploadedFile::fake()->image('local.jpg', 200, 200)->get());
         $group = $check->photoGroups()->create(['caption' => null, 'sort_order' => 0]);
         $check->photos()->create([
             'category' => 'business', 'file_name' => 'local.jpg', 'path' => 'business/photos/local.jpg', 'thumbnail_path' => null,
@@ -224,7 +220,7 @@ class BusinessCheckReportMediaResolutionTest extends TestCase
             $this->assertFileExists($path);
             Http::assertNothingSent();
         } finally {
-            @unlink($realPath);
+            Storage::disk(config('cims.media_disk'))->delete('business/photos/local.jpg');
         }
     }
 

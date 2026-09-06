@@ -9,6 +9,10 @@
         $addingNewActivityType = (bool) old('create_new_activity_type');
         $selectedActivityDefinitionId = $addingNewActivityType ? App\Models\ActivityDefinition::NEW_TYPE_VALUE : (string) old('activity_definition_id', '');
         $selectedActivityDefinition = $definitions->firstWhere('id', (int) $selectedActivityDefinitionId);
+        $addableActivityLabels = [
+            App\Models\ActivityDefinition::ASSET_CHECK_CODE => 'Asset Check',
+            App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE => 'Bank/Coop Check',
+        ];
         $addingBankCoopCheck = ! $addingNewActivityType && $selectedActivityDefinition?->code === App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE;
         $addingAssetCheck = ! $addingNewActivityType && $selectedActivityDefinition?->code === App\Models\ActivityDefinition::ASSET_CHECK_CODE;
         $bankTargetRowsFromOldInput = is_array(old('bank_targets'));
@@ -174,7 +178,7 @@
                 <div class="flex min-w-0 items-start gap-3"><span class="mt-0.5 text-brand-primary"><x-ui.icon name="activity" size="size-6" /></span><div><h2 id="ci-activities-title" class="text-xl font-bold tracking-tight text-brand-sidebar sm:text-2xl">CI Activities</h2><p class="mt-1 max-w-3xl text-sm leading-6 text-text-muted">Track pending, scheduled, follow-up, and completed investigation activities with proof of submission.</p></div></div>
                 <div class="flex shrink-0 items-center justify-end gap-2">
                     <button type="button" class="ui-button-secondary-compact shrink-0" title="Show Panel" aria-label="Show Panel" aria-controls="activity-history-panel" aria-expanded="false" data-ci-history-show hidden><x-ui.icon name="eye" size="size-3.5" />Show Panel</button>
-                    <button type="button" class="ui-button-primary shrink-0" data-ci-activity-dialog-open><x-ui.icon name="plus" size="size-4" />Add Activity</button>
+                    <button type="button" class="ui-button-primary-compact shrink-0" data-ci-activity-dialog-open><x-ui.icon name="plus" size="size-3.5" />Add Activity</button>
                 </div>
             </div>
 
@@ -575,7 +579,7 @@
                     <div class="relative" data-activity-type-selector>
                         <input id="activity-definition" type="hidden" name="activity_definition_id" value="{{ $selectedActivityDefinitionId }}" data-activity-type-select>
                         <button type="button" class="ui-control flex w-full items-center justify-between gap-3 text-left" aria-haspopup="listbox" aria-controls="activity-type-options" aria-expanded="false" data-activity-type-trigger>
-                            <span class="min-w-0 flex-1 truncate {{ $selectedActivityDefinition || $addingNewActivityType ? 'text-text-main' : 'text-text-muted' }}" data-activity-type-label>{{ $addingNewActivityType ? '+ Add New Activity Type' : ($selectedActivityDefinition?->name ?? 'Select activity type') }}</span>
+                            <span class="min-w-0 flex-1 truncate {{ $selectedActivityDefinition || $addingNewActivityType ? 'text-text-main' : 'text-text-muted' }}" data-activity-type-label>{{ $addingNewActivityType ? '+ Add New Activity Type' : ($selectedActivityDefinition ? ($addableActivityLabels[$selectedActivityDefinition->code] ?? $selectedActivityDefinition->name) : 'Select Activity Type') }}</span>
                             <span class="grid size-5 shrink-0 place-items-center text-base leading-none text-text-muted" aria-hidden="true">&#9662;</span>
                         </button>
                         <div id="activity-type-options" class="absolute inset-x-0 z-30 mt-1.5 max-h-[min(18rem,50dvh)] overflow-y-auto rounded-control border border-ui-border bg-surface py-1.5 shadow-float" role="listbox" aria-label="Activity Type" data-activity-type-options hidden>
@@ -585,7 +589,7 @@
                                     @php
                                         $alreadyAdded = $existingDefinitionIds->contains($definition->id);
                                     @endphp
-                                    <button type="button" class="flex min-h-10 w-full items-center px-3 py-2 text-left text-sm font-normal leading-5 transition hover:bg-surface-subtle focus:bg-surface-subtle focus:outline-none aria-selected:bg-brand-soft aria-selected:text-brand-primary disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60" role="option" data-activity-type-option data-value="{{ $definition->id }}" data-code="{{ $definition->code }}" data-label="{{ $definition->name }}" aria-selected="{{ (string) $selectedActivityDefinitionId === (string) $definition->id ? 'true' : 'false' }}" @disabled($alreadyAdded)>{{ $definition->name }}@if($alreadyAdded)<span class="ml-auto pl-3 text-xs font-normal">Already Added</span>@endif</button>
+                                    <button type="button" class="flex min-h-10 w-full items-center px-3 py-2 text-left text-sm font-normal leading-5 transition hover:bg-surface-subtle focus:bg-surface-subtle focus:outline-none aria-selected:bg-brand-soft aria-selected:text-brand-primary disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60" role="option" data-activity-type-option data-value="{{ $definition->id }}" data-code="{{ $definition->code }}" data-label="{{ $addableActivityLabels[$definition->code] }}" aria-selected="{{ (string) $selectedActivityDefinitionId === (string) $definition->id ? 'true' : 'false' }}" @disabled($alreadyAdded)>{{ $addableActivityLabels[$definition->code] }}@if($alreadyAdded)<span class="ml-auto pl-3 text-xs font-normal">Already Added</span>@endif</button>
                                 @endforeach
                             @endif
 
@@ -705,7 +709,7 @@
                 </div>
                 </div>
             </div>
-            <div class="flex shrink-0 flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-ci-activity-dialog-close>Cancel</button><button type="submit" class="ui-button-primary" data-ci-activity-submit><x-ui.icon name="plus" size="size-4" /><span data-ci-activity-submit-label>{{ $addingNewActivityType ? 'Add Activity Type' : 'Add Activity' }}</span></button></div>
+            <div class="flex shrink-0 flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-ci-activity-dialog-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary" data-ci-activity-submit><x-ui.icon name="plus" size="size-4" /><span data-ci-activity-submit-label>{{ $addingNewActivityType ? 'Add Activity Type' : 'Add Activity' }}</span></button></div>
         </form>
     </dialog>
 

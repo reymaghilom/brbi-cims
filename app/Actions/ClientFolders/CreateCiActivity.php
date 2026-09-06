@@ -175,6 +175,12 @@ class CreateCiActivity
     private function resolveCustomDefinition(User $actor, ClientFolder $folder, string $name): ActivityDefinition
     {
         $name = ActivityDefinition::normalizeName($name);
+        if (ActivityDefinition::isCanonicalBuiltInName($name)) {
+            throw ValidationException::withMessages([
+                'new_activity_type' => 'This name is reserved for a built-in Activity Type.',
+            ]);
+        }
+
         if (ActivityDefinition::isDedicatedModuleName($name)) {
             throw ValidationException::withMessages([
                 'new_activity_type' => 'Residence Check and Business Check use their dedicated Client Folder modules.',

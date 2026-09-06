@@ -4,10 +4,10 @@ namespace Tests\Feature\ClientFolders;
 
 use App\Models\ClientFolder;
 use App\Models\User;
-use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use PhpOffice\PhpWord\IOFactory;
 use Tests\TestCase;
 
 /**
@@ -15,9 +15,10 @@ use Tests\TestCase;
  * Picture or Map Screenshot was uploaded as WebP (a format this app's own upload validation
  * allows everywhere): PhpWord's Word2007 writer only embeds JPEG/GIF/PNG/BMP/TIFF, so
  * Section::addImage() threw UnsupportedImageTypeException, uncaught, straight out of
- * ResidenceBusinessCheckBatchDocxExporter — reproducible only against the REAL storage disk
- * (safeMediaPath() resolves storage_path('app/private/...') directly, which Storage::fake()
- * does not redirect), so these deliberately do not fake storage and clean up after themselves.
+ * ResidenceBusinessCheckBatchDocxExporter — reproducible only against real files on disk, so these
+ * deliberately do not fake storage and clean up after themselves. Local evidence lands in the
+ * per-test temporary CI Team root that TestCase configures, and safeMediaPath() finds it through
+ * CiTeamDocumentStorage::evidenceDisk() rather than any hard-coded root.
  */
 class ResidenceReportDocxPdfDownloadTest extends TestCase
 {
@@ -113,7 +114,7 @@ class ResidenceReportDocxPdfDownloadTest extends TestCase
 
             for ($i = 0; $i < $zip->numFiles; $i++) {
                 $name = $zip->getNameIndex($i);
-                if (!str_ends_with($name, '.xml') && !str_ends_with($name, '.rels')) {
+                if (! str_ends_with($name, '.xml') && ! str_ends_with($name, '.rels')) {
                     continue;
                 }
                 libxml_use_internal_errors(true);
@@ -127,7 +128,7 @@ class ResidenceReportDocxPdfDownloadTest extends TestCase
 
             // The strongest sanity check available short of Word itself: PhpWord's own reader must
             // be able to load the file back without throwing.
-            $reopened = \PhpOffice\PhpWord\IOFactory::createReader('Word2007')->load($path);
+            $reopened = IOFactory::createReader('Word2007')->load($path);
             $this->assertNotEmpty($reopened->getSections());
         } finally {
             @unlink($path);

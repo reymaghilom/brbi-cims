@@ -32,10 +32,17 @@ class SaveBusinessCheckRequest extends FormRequest
                 'nullable', 'integer',
                 Rule::exists('business_checks', 'id')->where('client_folder_id', $folder->id)->where('co_maker_id', $coMakerId),
             ],
+            // Business Check is independent from Business / Income Sources: referencing an
+            // existing business is OPTIONAL. A person with no business yet records the business
+            // manually (business_name below), and the check simply keeps income_source_id null.
             'income_source_id' => [
-                'required', 'integer',
+                'nullable', 'integer',
                 Rule::exists('income_sources', 'id')->where('client_folder_id', $folder->id)->where('co_maker_id', $coMakerId),
             ],
+            // Only ever read for a manual (unreferenced) Business Check — when a business IS
+            // referenced, SaveBusinessCheck derives the name from that exact business instead and
+            // whatever the read-only input submitted is ignored.
+            'business_name' => [Rule::requiredIf(blank($this->input('income_source_id'))), 'nullable', 'string', 'max:255'],
             'expected_updated_at' => ['nullable', 'date'],
             'ci_date' => ['required', 'date', 'before_or_equal:today'],
             'location' => ['required', 'string', 'max:2000'],
@@ -77,6 +84,7 @@ class SaveBusinessCheckRequest extends FormRequest
         return [
             'location.required' => 'Business location is required.',
             'ci_date.required' => 'CI Date is required.',
+            'business_name.required' => 'Business Name is required.',
         ];
     }
 
@@ -113,7 +121,13 @@ class SaveBusinessCheckRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        $this->merge(['check_id' => filled($this->input('check_id')) ? $this->input('check_id') : null]);
+        $this->merge([
+            'check_id' => filled($this->input('check_id')) ? $this->input('check_id') : null,
+            // An unselected "Select a business" option posts an empty string; normalising it here
+            // is what makes a manual Business Check store a real null rather than 0.
+            'income_source_id' => filled($this->input('income_source_id')) ? $this->input('income_source_id') : null,
+            'business_name' => is_string($this->input('business_name')) ? trim($this->input('business_name')) : $this->input('business_name'),
+        ]);
 
         // The companion CI picker always renders this marker alongside its contributor_ids[]
         // hidden inputs, even when zero companions are selected — without it, an all-removed

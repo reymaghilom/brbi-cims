@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Actions\ClientFolders\CreateCiActivity;
 use App\Actions\ClientFolders\DeactivateActivityDefinition;
 use App\Actions\ClientFolders\DeleteCiActivity;
+use App\Actions\ClientFolders\SeedCiActivities;
 use App\Actions\ClientFolders\SubmitCiActivities;
 use App\Actions\ClientFolders\SubmitCiActivity;
 use App\Actions\ClientFolders\UpdateCiActivity;
@@ -37,10 +38,14 @@ use Illuminate\View\View;
 
 class CiActivityController extends Controller
 {
-    public function index(ClientFolder $clientFolder, BankInstitutionPrefill $prefill): View
-    {
+    public function index(
+        ClientFolder $clientFolder,
+        BankInstitutionPrefill $prefill,
+        SeedCiActivities $seedActivities,
+    ): View {
         Gate::authorize('view', $clientFolder);
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
+        $seedActivities->execute($clientFolder, $activePerson, request()->user());
 
         $activities = $clientFolder->activities()
             ->where('ci_activities.co_maker_id', $activePerson?->id)
@@ -143,7 +148,14 @@ class CiActivityController extends Controller
                 ->select(['id', 'name', 'code'])
                 ->withCount('activities')
                 ->where('is_active', true)
-                ->whereNotIn('code', ActivityDefinition::MANDATORY_DEFAULT_CODES)
+                ->where(function ($query): void {
+                    $query
+                        ->whereIn('code', [
+                            ActivityDefinition::ASSET_CHECK_CODE,
+                            ActivityDefinition::BANK_COOP_CHECK_CODE,
+                        ])
+                        ->orWhere('code', 'like', ActivityDefinition::CUSTOM_CODE_PREFIX.'%');
+                })
                 ->orderBy('sort_order')
                 ->get(),
             'counts' => $counts,

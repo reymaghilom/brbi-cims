@@ -40,7 +40,11 @@
         <section class="ui-panel mx-auto max-w-3xl overflow-hidden" aria-labelledby="default-check-title">
             <div class="flex flex-col gap-3 border-b border-ui-border px-5 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6">
                 <div class="min-w-0">
-                    <h2 id="default-check-title" class="break-words text-lg font-bold text-brand-sidebar">{{ $activity->name }}</h2>
+                    {{-- Barangay Check and Neighbor Check share this header, so both get the same
+                         verification icon — the one the app already uses for a completed/verified
+                         check. It sits inline with the title at the heading's own scale, never as an
+                         oversized decorative badge, and the title wording itself is untouched. --}}
+                    <h2 id="default-check-title" class="flex items-start gap-2 text-lg font-bold text-brand-sidebar"><x-ui.icon name="check-circle" size="size-5" class="mt-0.5 shrink-0 text-brand-primary" /><span class="min-w-0 break-words">{{ $activity->name }}</span></h2>
                     <p class="mt-1 break-words text-sm text-text-muted">{{ $contextLabel }}</p>
                 </div>
             </div>
@@ -75,8 +79,8 @@
                     <p class="text-sm font-semibold text-success" data-default-check-success role="status" aria-live="polite" hidden>✓ Changes saved successfully.</p>
                     <p class="flex items-start gap-1.5 rounded-control border border-progress/30 bg-progress-soft px-3 py-2 text-sm font-semibold text-progress" data-default-check-no-changes role="status" aria-live="polite" hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected. Nothing needs to be updated.</p>
                     <div class="flex flex-col-reverse gap-2.5 sm:ml-auto sm:flex-row">
-                        <button type="button" class="ui-button-secondary w-full sm:w-auto" data-default-check-cancel>Cancel</button>
-                        <button type="submit" class="ui-button-primary w-full sm:w-auto" data-default-check-submit>Save Changes</button>
+                        <button type="button" class="ui-button-secondary w-full sm:w-auto" data-default-check-cancel><x-ui.icon name="close" size="size-4" />Cancel</button>
+                        <button type="submit" class="ui-button-primary w-full sm:w-auto" data-default-check-submit><x-ui.icon name="check" size="size-4" />Save Changes</button>
                     </div>
                 </div>
             </form>

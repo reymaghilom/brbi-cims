@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Actions\ClientFolders\DeleteBusinessCheck;
 use App\Actions\ClientFolders\SaveBusinessCheck;
 use App\Actions\ClientFolders\UpdateBusinessCheckContributors;
-use App\Enums\RecordState;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Exceptions\NoChangesDetectedException;
@@ -14,7 +13,6 @@ use App\Http\Requests\ClientFolders\UpdateBusinessCheckContributorsRequest;
 use App\Models\BusinessCheck;
 use App\Models\BusinessCheckPhoto;
 use App\Models\ClientFolder;
-use App\Models\IncomeSourceTemplate;
 use App\Models\User;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CiParticipantService;
@@ -172,6 +170,9 @@ class BusinessCheckController extends Controller
     {
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
         $personName = $activePerson?->full_name ?? $clientFolder->display_name;
+        $requestedCreateIncomeSourceId = ! $businessCheck && request()->has('income_source_id')
+            ? request()->integer('income_source_id')
+            : null;
         $existingChecksByIncomeSource = $clientFolder->businessChecks()
             ->where('co_maker_id', $activePerson?->id)
             ->get(['id', 'income_source_id'])
@@ -190,19 +191,17 @@ class BusinessCheckController extends Controller
         // selected) no matter its Report/Check state, or the edit form itself would have nothing to
         // select — CREATE mode (no $businessCheck) never grants this exception.
         //
-        // "+ Add Business" quick-add deliberately does NOT go through this list at all: it creates
-        // its revision-1 IncomeSource via a separate AJAX endpoint and the client-side script
-        // (app.js) appends/selects that business's <option> directly in the already-open form — see
-        // ApplicantBusinessQuickAddTest. That in-session continuation never touches this query, so a
-        // quick-added business can still be used to finish creating the CURRENT Business Check, but
-        // reopening this form fresh afterward will not list it until its Report is explicitly saved.
+        // Business Check NEVER creates a business. When this list is empty (or the CI leaves it
+        // unselected) the business is recorded manually on the Business Check itself and
+        // income_source_id simply stays null — no IncomeSource, no BusinessReport, no shell.
         $businesses = $clientFolder->incomeSources()
             ->where('co_maker_id', $activePerson?->id)
             ->with(['businessReport:id,income_source_id,main_business_address,start_date', 'template'])
             ->whereHas('template', fn ($query) => $query->where('is_fallback', false)->where('form_handler', 'dedicated-business'))
             ->where(fn ($query) => $query
                 ->where(fn ($saved) => $saved->whereHas('businessReport')->where('revision', '>', 1))
-                ->when($businessCheck, fn ($query) => $query->orWhere('id', $businessCheck->income_source_id)))
+                ->when($businessCheck, fn ($query) => $query->orWhere('id', $businessCheck->income_source_id))
+                ->when($requestedCreateIncomeSourceId, fn ($query, int $incomeSourceId) => $query->orWhere('id', $incomeSourceId)))
             ->where(fn ($query) => $query
                 ->whereDoesntHave('businessCheck')
                 ->when($businessCheck, fn ($query) => $query->orWhere('id', $businessCheck->income_source_id)))
@@ -210,15 +209,20 @@ class BusinessCheckController extends Controller
             ->orderBy('id')
             ->get()
             ->map(fn ($source) => [
-                'id' => $source->id, 'name' => $source->displayName(),
+                // resolvedBusinessName() also covers the six templates that have no Business Name
+                // input, including historical rows saved before that default existed — so this
+                // dropdown and its prefill never show a blank business.
+                'id' => $source->id, 'name' => $source->resolvedBusinessName(),
                 'location' => $source->businessReport?->main_business_address,
                 'ci_date' => $source->businessReport?->start_date?->format('Y-m-d'),
                 'existing_check_id' => $existingChecksByIncomeSource->get($source->id)?->id,
-                // Drives the "Business Report available" / "Business Report not yet created"
-                // helper text — the same completion state already tracked for every income
-                // source, not a new concept invented for this selector.
-                'report_complete' => $source->state === RecordState::Complete,
             ]);
+
+        $requestedIncomeSourceId = $businessCheck?->income_source_id
+            ?? old('income_source_id', $requestedCreateIncomeSourceId);
+        if (! $businessCheck && request()->has('income_source_id')) {
+            abort_unless($businesses->contains('id', (int) $requestedIncomeSourceId), 404);
+        }
 
         // Report → Check is PREFILL ONLY, and only for a Business Check that doesn't exist yet —
         // an existing, already-saved Business Check always shows its own persisted values here,
@@ -227,9 +231,26 @@ class BusinessCheckController extends Controller
         // selected business (old('income_source_id') on a validation-failed reload) still prefills
         // from that business's current Business Report, exactly like each <option>'s
         // data-location/data-ci-date attributes drive the same prefill client-side on selection.
-        $selectedNewBusiness = $businessCheck ? null : $businesses->firstWhere('id', (int) old('income_source_id'));
+        $selectedNewBusiness = $businessCheck ? null : $businesses->firstWhere('id', (int) $requestedIncomeSourceId);
         $currentLocation = $businessCheck ? $businessCheck->location : ($selectedNewBusiness['location'] ?? null);
         $currentCiDate = $businessCheck ? $businessCheck->ci_date?->format('Y-m-d') : ($selectedNewBusiness['ci_date'] ?? null);
+        // Business Name is an editable input only for a manual Business Check; for one that
+        // references a business it renders read-only and shows that business's own name.
+        $currentBusinessName = $businessCheck ? $businessCheck->business_name : ($selectedNewBusiness['name'] ?? null);
+
+        // Read-only is decided PER FIELD, on whether an authoritative value actually exists —
+        // referencing a business is not on its own enough. Business Name and CI Date always have
+        // one for a saved Business Report (CI Date is mandatory in that workflow, and the six
+        // no-input templates now carry a derived name), but Main Business Address genuinely can be
+        // blank; when it is, the CI types it here and it is stored on the Business Check ALONE —
+        // SaveBusinessCheck never writes any of it back into the Business Report.
+        $linkedSource = $businessCheck?->income_source_id ?? ($selectedNewBusiness['id'] ?? null);
+        $linkedLocation = $businessCheck
+            ? ($businessCheck->income_source_id === null ? null : $businesses->firstWhere('id', $businessCheck->income_source_id)['location'] ?? null)
+            : ($selectedNewBusiness['location'] ?? null);
+        $businessNameReadOnly = $linkedSource !== null && filled($currentBusinessName);
+        $locationReadOnly = $linkedSource !== null && filled($linkedLocation);
+        $ciDateReadOnly = $linkedSource !== null && filled($currentCiDate);
 
         $mapQuery = $currentLocation;
         $photos = $businessCheck?->photos ?? collect();
@@ -281,27 +302,21 @@ class BusinessCheckController extends Controller
             ? $this->participants->orderedParticipants($businessCheck)->reject(fn (User $user): bool => (int) $user->id === (int) $primaryCiId)->values()
             : collect();
 
-        // Shared "+ Add Business" quick-create template list for the active Applicant or exact
-        // Co-Maker; ownership itself remains request-validated by co_maker_id.
-        $businessTemplates = IncomeSourceTemplate::query()
-            ->where('is_active', true)
-            ->where('is_fallback', false)
-            ->where('form_handler', 'dedicated-business')
-            ->orderBy('sort_order')
-            ->orderBy('name')
-            ->get(['id', 'name']);
-
         return view('client-folders.business-checks.form', [
             'clientFolder' => $clientFolder,
             'activePerson' => $activePerson,
             'personName' => $personName,
             'businessCheck' => $businessCheck,
             'businesses' => $businesses,
-            'businessTemplates' => $businessTemplates,
+            'selectedIncomeSourceId' => $requestedIncomeSourceId,
             'existingCompetitorPhotos' => $businessCheck ? $mapPhotos('competitor') : [],
             'photoGroups' => $photoGroups,
             'currentLocation' => $currentLocation,
             'currentCiDate' => $currentCiDate,
+            'currentBusinessName' => $currentBusinessName,
+            'businessNameReadOnly' => $businessNameReadOnly,
+            'locationReadOnly' => $locationReadOnly,
+            'ciDateReadOnly' => $ciDateReadOnly,
             // "Open in Google Maps" helper inside the Map Screenshot section, derived from Location
             // alone now that the separate Google Maps Link input/section is gone.
             'mapOpenLink' => $mapQuery ? 'https://www.google.com/maps?q='.urlencode($mapQuery) : null,

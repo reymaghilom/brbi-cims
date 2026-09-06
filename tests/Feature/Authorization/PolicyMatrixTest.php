@@ -13,7 +13,6 @@ use App\Models\IncomeSource;
 use App\Models\MediaReference;
 use App\Models\ResidenceBusinessReport;
 use App\Models\SystemSetting;
-use App\Models\TelegramMessage;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Gate;
@@ -90,16 +89,7 @@ class PolicyMatrixTest extends TestCase
         $activity = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $definition->id, 'name' => 'Policy activity']);
         $media = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'income_source_id' => $income->id, 'uploaded_by' => $user->id]);
         $generated = GeneratedReport::factory()->create(['client_folder_id' => $folder->id, 'income_source_id' => $income->id, 'generated_by' => $user->id]);
-        $telegram = TelegramMessage::create([
-            'client_folder_id' => $folder->id,
-            'category' => 'business',
-            'message_type' => 'photos',
-            'caption' => 'Policy test',
-            'caption_hash' => hash('sha256', 'Policy test'),
-            'idempotency_key' => 'policy-test-'.$folder->id,
-            'sent_by' => $user->id,
-        ]);
 
-        return [$information, $cibi, $income, $residence, $activity, $media, $generated, $telegram];
+        return [$information, $cibi, $income, $residence, $activity, $media, $generated];
     }
 }

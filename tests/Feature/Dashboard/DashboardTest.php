@@ -160,7 +160,7 @@ class DashboardTest extends TestCase
             ->assertSee('CI Activities')
             ->assertDontSee('/client-folders/'.$folder->id.'/media', false)
             ->assertSee('Generated Reports')
-            ->assertSee('Attachments / Documents')
+            ->assertDontSee('Attachments / Documents')
             ->assertDontSee('View Client Info')
             ->assertDontSee('Client Information')
             ->assertDontSee(route('client-folders.client-information.edit', $folder), false)

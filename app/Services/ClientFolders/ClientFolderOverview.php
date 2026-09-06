@@ -3,7 +3,6 @@
 namespace App\Services\ClientFolders;
 
 use App\Enums\ActivityStatus;
-use App\Enums\GenerationStatus;
 use App\Enums\RecordState;
 use App\Models\AuditLog;
 use App\Models\ClientCompletionResult;
@@ -51,20 +50,12 @@ class ClientFolderOverview
                 'activities as required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
                 'activities as completed_required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', ActivityStatus::Completed)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
                 'activities as started_required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', '!=', ActivityStatus::Pending)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
-                'generatedReports' => fn ($query) => $query->where('co_maker_id', $personId),
-                'generatedReports as completed_generated_reports_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', GenerationStatus::Completed),
-                // Dormant modules (no real UI yet) stay folder-level/unscoped — see decision #1.
-                'driveReferences',
-                'telegramMessages',
-                'attachments',
             ])
             ->withMax([
                 'incomeSources' => fn ($query) => $query->where('co_maker_id', $personId),
                 'residenceChecks' => fn ($query) => $query->where('co_maker_id', $personId),
                 'businessChecks' => fn ($query) => $query->where('co_maker_id', $personId),
                 'activities' => fn ($query) => $query->where('co_maker_id', $personId),
-                'generatedReports' => fn ($query) => $query->where('co_maker_id', $personId),
-                'driveReferences', 'telegramMessages', 'attachments',
             ], 'updated_at')
             ->findOrFail($folder->id);
 
@@ -342,10 +333,6 @@ class ClientFolderOverview
             $this->module('income-sources', 'Business / Income Sources', 'folder', $this->collectionState($folder->income_sources_count, $folder->completed_income_sources_count), null, $folder->income_sources_max_updated_at),
             $this->module('residence-business', 'Residence & Business Report', 'media', $this->residenceBusinessState($folder), $this->residenceBusinessDescription($folder), $this->latest($folder->residence_checks_max_updated_at, $folder->business_checks_max_updated_at)),
             $this->module('activities', 'CI Activities', 'activity', $this->activityState($folder), $this->activityDescription($folder), $folder->activities_max_updated_at),
-            $this->module('generated-reports', 'Generated Reports', 'report', $this->collectionState($folder->generated_reports_count, $folder->completed_generated_reports_count), $this->countDescription($folder->generated_reports_count, 'generated report'), $folder->generated_reports_max_updated_at),
-            $this->module('attachments', 'Attachments / Documents', 'attachment', $folder->attachments_count > 0 ? 'available' : 'not_started', $this->countDescription($folder->attachments_count, 'document'), $folder->attachments_max_updated_at),
-            $this->module('google-drive', 'Google Drive', 'drive', $folder->drive_references_count > 0 ? 'available' : 'not_configured', $this->countDescription($folder->drive_references_count, 'Drive reference'), $folder->drive_references_max_updated_at),
-            $this->module('telegram-history', 'Telegram History', 'telegram', $folder->telegram_messages_count > 0 ? 'available' : 'not_started', $this->countDescription($folder->telegram_messages_count, 'message'), $folder->telegram_messages_max_updated_at),
         ];
     }
 
@@ -405,10 +392,5 @@ class ClientFolderOverview
         $pending = $folder->required_activities_count - $folder->completed_required_activities_count;
 
         return "{$folder->completed_required_activities_count} of {$folder->required_activities_count} required activities completed; {$pending} pending.";
-    }
-
-    private function countDescription(int $count, string $label): string
-    {
-        return $count === 0 ? "No {$label}s available." : "{$count} ".str($label)->plural($count).' available.';
     }
 }

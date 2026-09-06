@@ -672,6 +672,96 @@ class GlobalCiActivitiesTest extends TestCase
     // Helpers
     // ==================================================
 
+    // ==================================================
+    // Pagination
+    // ==================================================
+
+    public function test_pagination_preserves_every_filter_and_the_active_sort(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci, ['display_name' => 'ALPHA, CLIENT']);
+        foreach (range(1, 12) as $index) {
+            $this->simpleActivity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['name' => 'Barangay Check '.$index]);
+        }
+
+        $query = [
+            'tab' => 'all', 'search' => 'ALPHA', 'person' => 'applicant',
+            'schedule' => 'all', 'sort' => 'client_name', 'per_page' => 5,
+        ];
+        $response = $this->actingAs($ci)->get(route('ci-activities.index', $query))->assertOk();
+        $html = str_replace('&amp;', '&', $response->getContent());
+
+        foreach (['search=ALPHA', 'person=applicant', 'sort=client_name', 'per_page=5', 'page=2'] as $carried) {
+            $this->assertStringContainsString($carried, $html, $carried.' survives pagination.');
+        }
+
+        // The results region and pagination hook the async handler looks for, with real hrefs.
+        $this->assertStringContainsString('data-ci-activities-listing', $html);
+        $this->assertStringContainsString('data-ci-activities-pagination', $html);
+        $this->assertStringContainsString('aria-current="page"', $html);
+    }
+
+    public function test_changing_the_sort_returns_to_the_first_page(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci, ['display_name' => 'ALPHA, CLIENT']);
+        foreach (range(1, 12) as $index) {
+            $this->simpleActivity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['name' => 'Barangay Check '.$index]);
+        }
+
+        // The sort/per-page form deliberately omits `page`, so switching either starts over at 1.
+        $html = $this->actingAs($ci)
+            ->get(route('ci-activities.index', ['sort' => 'client_name', 'per_page' => 5, 'page' => 3]))
+            ->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('name="page"', $html, 'The sort form must not carry the current page.');
+    }
+
+    public function test_page_two_returns_the_correct_server_side_activity_rows(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci, ['display_name' => 'ALPHA, CLIENT']);
+        foreach (range(1, 12) as $index) {
+            $this->simpleActivity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['name' => 'Barangay Check '.$index]);
+        }
+
+        $pageOne = $this->actingAs($ci)->get(route('ci-activities.index', ['per_page' => 5, 'page' => 1]))->assertOk()->viewData('rows');
+        $pageTwo = $this->actingAs($ci)->get(route('ci-activities.index', ['per_page' => 5, 'page' => 2]))->assertOk()->viewData('rows');
+
+        $this->assertCount(5, $pageOne->items());
+        $this->assertCount(5, $pageTwo->items());
+        $this->assertSame(12, $pageOne->total());
+        $this->assertSame(2, $pageTwo->currentPage());
+
+        $idsOne = collect($pageOne->items())->map(fn ($row) => $row->activity->id)->all();
+        $idsTwo = collect($pageTwo->items())->map(fn ($row) => $row->activity->id)->all();
+        $this->assertEmpty(array_intersect($idsOne, $idsTwo), 'The two pages never overlap.');
+    }
+
+    public function test_a_pagination_click_can_fetch_the_worklist_alone_without_mutating_anything(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci, ['display_name' => 'ALPHA, CLIENT']);
+        foreach (range(1, 12) as $index) {
+            $this->simpleActivity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['name' => 'Barangay Check '.$index]);
+        }
+        $before = CiActivity::query()->count();
+
+        $html = $this->actingAs($ci)
+            ->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
+            ->get(route('ci-activities.index', ['per_page' => 5, 'page' => 2]))
+            ->assertOk()->getContent();
+
+        // Only the worklist comes back — no layout, no tabs, no filter toolbar.
+        $this->assertStringNotContainsString('<!DOCTYPE html>', $html);
+        $this->assertStringNotContainsString('CI Activity tabs', $html);
+        // The replacement content still carries working pagination for the next click.
+        $this->assertStringContainsString('data-ci-activities-pagination', $html);
+        $this->assertStringContainsString('Showing 6 to 10 of 12 activities', $html);
+
+        $this->assertSame($before, CiActivity::query()->count(), 'Paginating mutates nothing.');
+    }
+
     private function folderFor(User $ci, array $overrides = []): ClientFolder
     {
         return ClientFolder::factory()->create(array_merge(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id], $overrides));

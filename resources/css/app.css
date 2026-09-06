@@ -93,6 +93,11 @@
     [data-folder-browser][data-refreshing="true"] [data-folder-results] { opacity: .65; }
     [data-folder-results] { transition: opacity 180ms ease-in-out; }
     [data-folder-browser][data-refreshing="true"] [data-folder-pagination] { pointer-events: none; }
+    /* Same subtle in-flight treatment for the Reports and CI Activities result regions while the
+       next page (or a new sort) is being fetched: the current rows stay visible and simply mute,
+       never a blocking spinner or a blanked area. */
+    [data-reports-listing], [data-ci-activities-listing] { transition: opacity 180ms ease-in-out; }
+    [data-reports-listing][data-refreshing="true"], [data-ci-activities-listing][data-refreshing="true"] { opacity: .65; pointer-events: none; }
     .client-folder-grid { @apply grid gap-2.5; grid-template-columns: repeat(auto-fill, minmax(9.25rem, 1fr)); }
     .client-folder-tile-shell { @apply relative min-w-0; }
     .client-folder-tile { @apply relative flex min-h-36 cursor-default select-none flex-col items-center rounded-card bg-surface-muted/65 px-2.5 pb-2.5 pt-4 text-center transition hover:bg-brand-soft/45 focus-visible:outline-none; }

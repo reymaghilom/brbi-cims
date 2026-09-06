@@ -69,8 +69,6 @@
             <div>
                 <p class="ui-sidebar-section-label mb-2 px-3 text-[0.68rem] font-bold uppercase tracking-[0.18em] text-white/45">Integrations &amp; records</p>
                 <div class="space-y-1">
-                    <x-ui.sidebar-link :href="route('telegram.index')" icon="telegram" :active="request()->routeIs('telegram.*')">Telegram History</x-ui.sidebar-link>
-                    <x-ui.sidebar-link :href="route('drive.index')" icon="drive" :active="request()->routeIs('drive.*')">Google Drive</x-ui.sidebar-link>
                     <x-ui.sidebar-link :href="route('recycle-bin.index')" icon="trash" :active="request()->routeIs('recycle-bin.*')">Recycle Bin</x-ui.sidebar-link>
                 </div>
             </div>

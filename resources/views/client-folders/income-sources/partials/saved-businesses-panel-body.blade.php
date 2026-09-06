@@ -44,13 +44,19 @@
 
         <div class="overflow-x-auto overflow-y-hidden rounded-card border border-ui-border {{ $businesses->isEmpty() ? 'mt-3' : '' }}">
             <table class="w-full min-w-[52rem] table-fixed text-left text-sm" data-business-sort-table>
+                {{-- Address stays the widest data column and still wraps a long address in full
+                     (the cell uses break-words, never truncation), but 40% left a short address
+                     stranded far from its CI Date. Narrowing it starts the CI Date column ten
+                     points further left, so the two read as related; the freed width is spread
+                     across the remaining columns rather than piled onto Business, which is capped
+                     deliberately. The total is unchanged, so proportional fill behaves as before. --}}
                 <colgroup>
                     <col class="w-10">
-                    <col class="w-[20%]">
-                    <col class="w-[40%]">
+                    <col class="w-[22%]">
+                    <col class="w-[30%]">
+                    <col class="w-[15%]">
+                    <col class="w-[14%]">
                     <col class="w-[13%]">
-                    <col class="w-[12%]">
-                    <col class="w-[9%]">
                 </colgroup>
                 <thead class="bg-surface-subtle text-xs font-bold text-text-muted">
                     <tr>
@@ -121,7 +127,10 @@
                             <td class="px-3 py-3 break-words text-xs leading-5 text-text-muted">{{ $business->businessReport?->main_business_address ?: '—' }}</td>
                             <td class="px-3 py-3 text-xs leading-5 text-text-muted">{{ optional($business->businessReport?->start_date)->format('M j, Y') ?? '—' }}</td>
                             <td class="px-3 py-3">
-                                <span class="inline-flex items-center rounded-full bg-success-soft px-2 py-0.5 text-xs font-bold text-success">Saved</span>
+                                {{-- Display wording only: this row is already the "explicitly saved Business Report" branch of
+                                     the list (see IncomeSourceController::dedicatedSources()'s $requireReport) — the
+                                     label reads Complete, the state behind it is untouched. --}}
+                                <span class="inline-flex items-center rounded-full bg-success-soft px-2 py-0.5 text-xs font-bold text-success">Complete</span>
                             </td>
                             <td class="px-3 py-3">
                                 <div class="flex items-center justify-center gap-1">
@@ -129,7 +138,7 @@
                                     <x-ui.context-menu :label="'Actions for '.$business->displayName()">
                                         <x-slot:trigger><span class="ui-dots-trigger"><x-ui.icon name="more-vertical" size="size-4" /></span></x-slot:trigger>
                                         <a href="{{ route('client-folders.generated-reports.preview', [$clientFolder, 'report_type' => 'business_income_source', 'income_source_id' => $business->id] + $personParams) }}" target="_blank" rel="noopener" role="menuitem" class="client-folder-menu-item">Preview Report</a>
-                                        <button type="submit" form="business-{{ $business->id }}-export-pdf-form" role="menuitem" class="client-folder-menu-item" data-business-download-submit>Download PDF</button>
+                                        <a href="{{ route('client-folders.income-sources.export-pdf', [$clientFolder, $business] + $personParams) }}" target="_blank" rel="noopener" role="menuitem" class="client-folder-menu-item">Download PDF</a>
                                         <button type="submit" form="business-{{ $business->id }}-export-excel-form" role="menuitem" class="client-folder-menu-item" data-business-download-submit>Download Excel</button>
                                         <div class="my-1 border-t border-ui-border"></div>
                                         <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-business-{{ $business->id }}">Delete</button>
@@ -145,9 +154,6 @@
     </div>
 
     @foreach($businesses as $business)
-        <form id="business-{{ $business->id }}-export-pdf-form" method="POST" action="{{ route('client-folders.income-sources.export-pdf', [$clientFolder, $business]) }}" target="_blank" hidden>
-            @csrf
-        </form>
         <form id="business-{{ $business->id }}-export-excel-form" method="POST" action="{{ route('client-folders.income-sources.export-excel', [$clientFolder, $business]) }}" hidden>
             @csrf
         </form>

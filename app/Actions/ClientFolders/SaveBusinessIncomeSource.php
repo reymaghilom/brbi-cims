@@ -8,6 +8,7 @@ use App\Models\AuditLog;
 use App\Models\BusinessReport;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
+use App\Models\IncomeSourceTemplate;
 use App\Models\User;
 use App\Services\ClientFolders\CiParticipantService;
 use App\Services\ClientFolders\IncomeSourcesCompletionEvaluator;
@@ -72,6 +73,18 @@ class SaveBusinessIncomeSource
             // applies to that first save, only to later edits of an already-saved record.
             $isFirstSave = $wasFirstSave;
 
+            // The six templates that have no Business Name input carry a derived name instead (see
+            // IncomeSourceTemplate::DEFAULT_BUSINESS_NAMES). Applying it here — once, on the
+            // authoritative save, before either fill() below — is what makes it real data on both
+            // the IncomeSource and its Business Report rather than a per-screen display fallback,
+            // so Business / Income Sources, the Business Check dropdown and prefill, Reports and
+            // every preview/export all read the same value. Every other template keeps whatever
+            // the CI typed into its own required Business Name field.
+            $mappedBusinessName = IncomeSourceTemplate::defaultBusinessNameFor($source->template_type);
+            if ($mappedBusinessName !== null) {
+                $data['business_name'] = $mappedBusinessName;
+            }
+
             $source->fill(Arr::only($data, self::SOURCE_FIELDS));
             $sourceFieldsChanged = $source->isDirty(self::SOURCE_FIELDS);
 
@@ -121,13 +134,24 @@ class SaveBusinessIncomeSource
             // they're ever persisted.
             $companionIds = array_key_exists('contributor_ids', $data) ? array_map('intval', (array) $data['contributor_ids']) : null;
             $participantsChanged = $companionIds !== null && $this->participants->wouldChangeCompanions($source, $companionIds);
+            $intendedState = $data['intent'] === 'complete' ? RecordState::Complete : RecordState::Draft;
+            // Finalizing an already-saved draft is itself a real change even when every form field
+            // is unchanged. Treating it as a no-op used to skip the Draft -> Complete transition,
+            // while the controller still returned the informational redirect consumed by the
+            // modal's saved notification. The modal consequently closed and refreshed Reports with
+            // the source still Draft, leaving Pending + Continue Report after a confirmed submit.
+            $stateChanged = $source->state !== $intendedState;
 
-            if (! $isFirstSave && ! $sourceFieldsChanged && ! $reportFieldsChanged && ! $childrenChanged && ! $participantsChanged) {
+            if (! $isFirstSave && ! $sourceFieldsChanged && ! $reportFieldsChanged && ! $childrenChanged && ! $participantsChanged && ! $stateChanged) {
                 throw new NoChangesDetectedException('Nothing changed. No updates were saved to the database.');
             }
 
-            $source->state = $data['intent'] === 'complete' ? RecordState::Complete : RecordState::Draft;
+            $source->state = $intendedState;
             $source->last_edited_by = $actor->id;
+            // Explicitly recreating/saving a Business Report for this business lifts any earlier
+            // intentional deletion, so the work item legitimately returns to the Reports workspace.
+            // Only a real save clears it — merely viewing Reports never does.
+            $source->business_report_deleted_at = null;
             $source->revision++;
             $source->save();
 

@@ -20,7 +20,7 @@ class IncomeSource extends Model implements HasCiParticipants
 
     protected function casts(): array
     {
-        return ['state' => RecordState::class, 'is_primary' => 'boolean', 'estimated_monthly_contribution' => 'decimal:2', 'completed_at' => 'datetime'];
+        return ['state' => RecordState::class, 'is_primary' => 'boolean', 'estimated_monthly_contribution' => 'decimal:2', 'completed_at' => 'datetime', 'business_report_deleted_at' => 'datetime', 'business_check_deleted_at' => 'datetime'];
     }
 
     public function clientFolder(): BelongsTo
@@ -100,13 +100,24 @@ class IncomeSource extends Model implements HasCiParticipants
      */
     public function displayName(): string
     {
-        return match ($this->template->template_type) {
-            'leasing_agricultural' => 'LEASING OPERATIONS: AGRICULTURAL REAL ESTATE',
-            'leasing_poultry_farm' => 'LEASING OF POULTRY FARM OPERATIONS',
-            'farming_corn' => 'FARMING: CORN PRODUCTION',
-            'farming_sugarcane' => 'FARMING: SUGARCANE PRODUCTION',
-            'remittance_income' => 'REMITTANCE',
-            default => $this->business_name ?: $this->source_name,
-        };
+        return IncomeSourceTemplate::defaultBusinessNameFor($this->template->template_type)
+            ?: ($this->business_name ?: $this->source_name);
+    }
+
+    /**
+     * The authoritative business name for this exact source, for every read path that needs one
+     * (Business Check's dropdown and its one-way prefill, Reports, previews).
+     *
+     * For the six no-name-input templates the mapped default always wins, so a historical row whose
+     * business_name was left blank — or was filled with the long template name before the default
+     * existed — still resolves to the same value a freshly saved one stores. Every other template
+     * keeps its own saved name, preferring the Business Report's copy exactly as before.
+     *
+     * Read-only: nothing here writes back to the IncomeSource or its Business Report.
+     */
+    public function resolvedBusinessName(): string
+    {
+        return IncomeSourceTemplate::defaultBusinessNameFor($this->template_type)
+            ?: ($this->businessReport?->business_name ?: ($this->business_name ?: $this->source_name));
     }
 }

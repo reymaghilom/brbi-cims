@@ -47,7 +47,19 @@ table { width: 100%; border-collapse: collapse; table-layout: fixed; } th, td { 
 }
 @endunless
 </style></head><body>
-@unless($pdfMode)<nav class="preview-toolbar" aria-label="Report preview actions"><div class="preview-brand"><img src="{{ asset('assets/branding/binhi-rural-bank-wordmark.png') }}" alt="Binhi Rural Bank Inc."></div><div><a href="{{ route('client-folders.residence-business.edit', [$clientFolder] + $personParams) }}">Back to Residence &amp; Business Report</a> <button type="button" onclick="window.print()">Print</button></div></nav>
+@unless($pdfMode)
+    @php($exportSelection = $exportSelection ?? ['co_maker_id' => null, 'residence_check_ids' => [], 'business_check_ids' => []])
+    {{-- Download PDF / Download Word re-post this preview's exact selection to the existing export
+         endpoints, so the downloaded file is always the report currently on screen. --}}
+    @foreach(['pdf' => 'client-folders.residence-business-checks.batch-export-pdf', 'docx' => 'client-folders.residence-business-checks.batch-export-docx'] as $format => $exportRoute)
+        <form id="preview-export-{{ $format }}" method="POST" action="{{ route($exportRoute, $clientFolder) }}" hidden>
+            @csrf
+            <input type="hidden" name="co_maker_id" value="{{ $exportSelection['co_maker_id'] }}">
+            @foreach($exportSelection['residence_check_ids'] as $id)<input type="hidden" name="residence_check_ids[]" value="{{ $id }}">@endforeach
+            @foreach($exportSelection['business_check_ids'] as $id)<input type="hidden" name="business_check_ids[]" value="{{ $id }}">@endforeach
+        </form>
+    @endforeach
+    <nav class="preview-toolbar" aria-label="Report preview actions"><div class="preview-brand"><img src="{{ asset('assets/branding/binhi-rural-bank-wordmark.png') }}" alt="Binhi Rural Bank Inc."></div><div><a href="{{ route('client-folders.residence-business.edit', [$clientFolder] + $personParams) }}">Back to Residence &amp; Business Report</a> <button type="submit" form="preview-export-pdf">Download PDF</button> <button type="submit" form="preview-export-docx">Download Word</button> <button type="button" onclick="window.print()">Print</button></div></nav>
 <p class="print-help-tip">For a clean printout, turn off "Headers and footers" in the browser print settings.</p>@endunless
 <main class="report-sheet">
 @include('reports.official._photo-sections', ['photoSections' => $photoSections])

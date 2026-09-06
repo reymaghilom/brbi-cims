@@ -39,7 +39,7 @@
     </form>
 
     <x-slot:footer>
-        <button type="button" data-modal-close class="ui-button-secondary">Cancel</button>
-        <button type="submit" form="co-maker-form" class="ui-button-primary" data-co-maker-submit>{{ old('co_maker_id') ? 'Update Co-Maker' : 'Save Co-Maker' }}</button>
+        <button type="button" data-modal-close class="ui-button-secondary"><x-ui.icon name="close" size="size-4" />Cancel</button>
+        <button type="submit" form="co-maker-form" class="ui-button-primary" data-co-maker-submit><x-ui.icon name="check" size="size-4" />{{ old('co_maker_id') ? 'Update Co-Maker' : 'Save Co-Maker' }}</button>
     </x-slot:footer>
 </x-ui.modal>

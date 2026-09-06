@@ -20,7 +20,7 @@ use Illuminate\Validation\ValidationException;
 
 class SaveBusinessCheck
 {
-    private const FIELDS = ['income_source_id', 'ci_date', 'location', 'remarks', 'competitor_remarks'];
+    private const FIELDS = ['income_source_id', 'business_name', 'ci_date', 'location', 'remarks', 'competitor_remarks'];
 
     public function __construct(
         private readonly ClientMediaUploader $mediaUploader,
@@ -47,17 +47,22 @@ class SaveBusinessCheck
 
         try {
             $check = DB::transaction(function () use ($actor, $folder, $data, $checkId, $activePerson, &$storedUploads, &$retiredCloudAssets): BusinessCheck {
-                if ($checkId === null) {
+                // Referencing an existing business is optional. A manual Business Check (no
+                // income_source_id) has no business row to serialize against and no
+                // one-check-per-business rule to enforce, so both guards below apply only to a
+                // check that actually references a business.
+                $referencedSourceId = filled($data['income_source_id'] ?? null) ? (int) $data['income_source_id'] : null;
+                if ($checkId === null && $referencedSourceId !== null) {
                     // Serialize creates for this exact scoped business, then re-check inside the
                     // transaction so a forged or concurrent request cannot insert a duplicate.
                     $folder->incomeSources()
                         ->where('co_maker_id', $activePerson?->id)
-                        ->whereKey((int) $data['income_source_id'])
+                        ->whereKey($referencedSourceId)
                         ->lockForUpdate()
                         ->firstOrFail();
                     if ($folder->businessChecks()
                         ->where('co_maker_id', $activePerson?->id)
-                        ->where('income_source_id', (int) $data['income_source_id'])
+                        ->where('income_source_id', $referencedSourceId)
                         ->exists()) {
                         throw ValidationException::withMessages([
                             'income_source_id' => 'A Business Check already exists for the selected business. Open the existing Business Check to view or edit it.',
@@ -76,25 +81,53 @@ class SaveBusinessCheck
                 }
 
                 $check->fill(Arr::only($data, self::FIELDS));
-                $fieldsChanged = $check->isDirty(self::FIELDS);
                 $incomeSourceChanged = $created || $check->isDirty('income_source_id');
                 if ($created) {
                     $check->ci_user_id = $actor->id;
                 }
                 $check->updated_by = $actor->id;
 
-                // Business Name has no editable input of its own on this form — the business is
-                // chosen via income_source_id — so its snapshot is (re)captured here, once, the
-                // moment the check starts pointing at this business. This is PREFILL, not live
-                // synchronization: once captured it never changes on its own again, even if the
-                // Business Report's own name is renamed or deleted afterwards (see
-                // BusinessReportBusinessCheckIndependenceTest for the independence coverage).
-                if ($incomeSourceChanged) {
-                    $source = $folder->incomeSources()->with('businessReport', 'template')->find((int) $data['income_source_id']);
-                    $check->business_name = $source?->businessReport?->business_name ?: $source?->displayName();
+                // Business Report / IncomeSource -> Business Check is the ONLY prefill direction.
+                // The moment this check starts pointing at a business, it snapshots that exact
+                // business's authoritative name, address and CI date — which is also why those
+                // three inputs render read-only for a referenced business: whatever they submit is
+                // ignored in favour of the source itself. This is PREFILL, not live
+                // synchronization: once captured the snapshot never changes on its own again, even
+                // if the Business Report is later renamed, re-addressed or deleted (see
+                // BusinessReportBusinessCheckIndependenceTest). Nothing here ever writes back into
+                // the IncomeSource or its Business Report.
+                //
+                // A manual Business Check (no referenced business) keeps exactly what the CI typed.
+                if ($incomeSourceChanged && $referencedSourceId !== null) {
+                    $source = $folder->incomeSources()->with('businessReport', 'template')->find($referencedSourceId);
+                    // Per field: the business's own value wins where it HAS one. Business Name
+                    // always resolves (the six templates with no Business Name input carry a
+                    // derived default — see IncomeSourceTemplate::DEFAULT_BUSINESS_NAMES), and so
+                    // does the mandatory CI Date. Main Business Address can genuinely be blank, in
+                    // which case the address the CI typed here is kept and stored on this Business
+                    // Check ALONE — the Business Report is never written to from here.
+                    $check->business_name = $source?->resolvedBusinessName() ?: $check->business_name;
+                    $check->location = $source?->businessReport?->main_business_address ?: $check->location;
+                    $check->ci_date = $source?->businessReport?->start_date ?: $check->ci_date;
                 }
+                // Evaluated after the snapshot above so a value the source itself supplied still
+                // counts as a real change for the audit/no-change rules below.
+                $fieldsChanged = $check->isDirty(self::FIELDS);
 
                 $check->save();
+
+                // Explicitly creating/saving a Business Check for this business lifts any earlier
+                // intentional deletion, so the work item legitimately returns to the Reports
+                // workspace. Only a real save clears it — merely viewing Reports never does. The
+                // Business Report's own suppression marker is deliberately not touched here.
+                // Only meaningful for a check that references a business — a manual Business Check
+                // has no income source whose suppression marker could need clearing.
+                if ($check->income_source_id !== null) {
+                    $folder->incomeSources()
+                        ->whereKey($check->income_source_id)
+                        ->whereNotNull('business_check_deleted_at')
+                        ->update(['business_check_deleted_at' => null]);
+                }
 
                 $photosRemoved = 0;
                 foreach ($data['removed_photo_ids'] ?? [] as $photoId) {

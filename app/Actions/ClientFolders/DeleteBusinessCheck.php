@@ -18,9 +18,13 @@ use Illuminate\Support\Facades\DB;
 /**
  * Permanently deletes a Business Check. There is no Recycle Bin entry and no restore for this —
  * the linked Business Report and IncomeSource are deliberately left untouched (see
- * BusinessReportBusinessCheckIndependenceTest): once each side has been explicitly saved, deleting
- * one is no longer allowed to affect the other. The IncomeSource itself is only ever removed if it
- * is left truly orphaned by this delete (see DeleteIncomeSourceIfOrphaned).
+ * BusinessReportBusinessCheckIndependenceTest): deleting one is never allowed to affect the other.
+ * Only deleting the parent IncomeSource may remove the business from active workflows.
+ *
+ * The deletion is also recorded on that exact IncomeSource (business_check_deleted_at) so the
+ * centralized Reports workspace can tell "never had a Business Check" apart from "its Business Check
+ * was intentionally deleted" and stop regenerating a Pending work item for the latter. This marker
+ * is the Business Check's alone — the Business Report's own state and visibility are untouched.
  */
 class DeleteBusinessCheck
 {
@@ -30,7 +34,6 @@ class DeleteBusinessCheck
         private readonly ClientProgressService $progress,
         private readonly PrivateMediaStorage $storage,
         private readonly ClientMediaUploader $mediaUploader,
-        private readonly DeleteIncomeSourceIfOrphaned $deleteIfOrphaned,
     ) {}
 
     public function execute(User $actor, ClientFolder $folder, BusinessCheck $check): void
@@ -66,7 +69,13 @@ class DeleteBusinessCheck
             $this->storage->deleteStoredFiles($localPaths);
 
             $lockedCheck->delete();
-            $orphanRemoved = $this->deleteIfOrphaned->execute($source);
+
+            // A missing business_checks row cannot say WHY it is missing. Recording the deletion on
+            // the exact IncomeSource is what stops the centralized Reports workspace re-synthesising
+            // a "Create Report" Business Check work item for a business whose check was deliberately
+            // removed. It is its own marker, never the Business Report's: the Business Report keeps
+            // whatever state it already had. SaveBusinessCheck clears it on the next real save.
+            $source->forceFill(['business_check_deleted_at' => now()])->save();
 
             AuditLog::create([
                 'user_id' => $actor->id,
@@ -80,7 +89,8 @@ class DeleteBusinessCheck
                     'co_maker_id' => $coMakerId,
                     'location' => $location,
                     'business_name' => $businessName,
-                    'income_source_orphan_removed' => $orphanRemoved,
+                    'income_source_orphan_removed' => false,
+                    'business_check_suppressed' => true,
                 ],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),

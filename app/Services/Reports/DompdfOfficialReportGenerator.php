@@ -29,7 +29,7 @@ class DompdfOfficialReportGenerator implements PdfGenerator
             $dompdfOptions->set('defaultFont', 'DejaVu Sans');
             $dompdfOptions->set('isRemoteEnabled', false);
             $dompdfOptions->set('isPhpEnabled', false);
-            $dompdfOptions->set('chroot', [storage_path('app/private'), public_path()]);
+            $dompdfOptions->set('chroot', ReportImageRoots::all());
             // Dompdf's own default media type is "screen" (not "print"), so without this it wrongly
             // applies every report stylesheet's `@media screen` rules — including the official-sheet
             // `min-height` meant only for the on-screen preview — to the generated PDF too, forcing

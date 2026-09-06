@@ -169,7 +169,7 @@ class GlobalCiActivityController extends Controller
             ['path' => $request->url(), 'query' => $request->query()],
         );
 
-        return view('ci-activities.index', [
+        $data = [
             'rows' => $activitiesPaginator,
             'counts' => $counts,
             'definitions' => $filterableDefinitions,
@@ -184,7 +184,15 @@ class GlobalCiActivityController extends Controller
                 'per_page' => $perPage,
             ],
             'perPageOptions' => self::PER_PAGE_OPTIONS,
-        ]);
+        ];
+
+        // A pagination click asks for the worklist alone, so the header, tabs, counts and filter
+        // toolbar are neither re-rendered nor recomputed for the user. Same authoritative query.
+        if ($request->ajax()) {
+            return view('ci-activities._listing', $data);
+        }
+
+        return view('ci-activities.index', $data);
     }
 
     private function buildRow(CiActivity $activity, string $timezone, Carbon $today): object

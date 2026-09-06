@@ -38,8 +38,8 @@ class GlobalLayoutTest extends TestCase
             ->assertSee('CI Activities')
             ->assertSee('Reports')
             ->assertDontSee('Photos &amp; Videos', false)
-            ->assertSee('Telegram History')
-            ->assertSee('Google Drive')
+            ->assertDontSee('Telegram History')
+            ->assertDontSee('Google Drive')
             ->assertSee('Recycle Bin');
     }
 

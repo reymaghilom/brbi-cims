@@ -13,9 +13,16 @@
 
     <main class="business-standalone-main mx-auto w-full max-w-[120rem] px-2 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-5">
         <div class="fixed right-4 top-4 z-[70] w-[calc(100%-2rem)] max-w-sm space-y-3 sm:right-6" data-toast-region aria-live="polite">
-            @if(session('status'))<x-ui.toast type="success" :message="session('status')" />@endif
+            @if(session('status'))<x-ui.toast :type="session('statusType', 'success')" :message="session('status')" />@endif
         </div>
-        @if(session('status') && isset($clientFolder))
+        {{-- Only a save that actually PERSISTED something announces itself to the parent. A no-change
+             update returns statusType 'info' (SaveBusinessIncomeSource raises NoChangesDetectedException
+             and IncomeSourceController::afterSave() flashes it as info), and must not emit the saved
+             signal below: that message is what closes the encoding dialog and refreshes the parent
+             list, and neither is correct when nothing was written. The CI stays on the form and reads
+             the info toast above instead — the same lifecycle Update Business Check already uses for
+             its own no-change result. --}}
+        @if(session('status') && isset($clientFolder) && session('statusType', 'success') !== 'info')
             {{--
                 data-business-saved-payload carries the same authoritative Saved Businesses /
                 Recent Activity / candidates / View-All-modal fragments IncomeSourceController's

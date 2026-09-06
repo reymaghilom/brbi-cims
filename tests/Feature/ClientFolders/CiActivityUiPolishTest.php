@@ -4,6 +4,7 @@ namespace Tests\Feature\ClientFolders;
 
 use App\Models\ActivityDefinition;
 use App\Models\CiActivity;
+use App\Models\CiActivityBankTarget;
 use App\Models\ClientFolder;
 use App\Models\User;
 use Database\Seeders\ReferenceDataSeeder;
@@ -553,6 +554,105 @@ class CiActivityUiPolishTest extends TestCase
     // ==================================================
     // Helpers
     // ==================================================
+
+    // ==================================================
+    // Action buttons — the shared icon + button convention
+    // ==================================================
+
+    /**
+     * Every action button in CI Activities leads with an icon from the shared <x-ui.icon> set, at
+     * the size its button class calls for: size-3.5 on the compact header pair, size-4 on the
+     * full-size form/modal pairs. These assertions pin the convention, never a full HTML snapshot.
+     */
+    public function test_the_header_pair_keeps_one_compact_size_and_both_carry_icons(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
+
+        // Add Activity: iconed, and still the compact class Show Panel beside it uses — height,
+        // padding, font size and radius all come from that one shared pair of classes.
+        $this->assertMatchesRegularExpression(
+            '/<button type="button" class="ui-button-primary-compact shrink-0" data-ci-activity-dialog-open><svg[^>]*class="[^"]*size-3\.5[^"]*"[^>]*>.*?<\/svg>\s*Add Activity<\/button>/s',
+            $content,
+        );
+        $this->assertStringContainsString('class="ui-button-secondary-compact shrink-0" title="Show Panel"', $content);
+        // The retired full-size treatment must not come back.
+        $this->assertStringNotContainsString('class="ui-button-primary shrink-0" data-ci-activity-dialog-open', $content);
+    }
+
+    public function test_the_add_activity_dialog_cancel_carries_the_shared_close_icon(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '/<button type="button" class="ui-button-secondary" data-ci-activity-dialog-close><svg[^>]*>.*?<\/svg>\s*Cancel<\/button>/s',
+            $content,
+        );
+        // The dialog's own close/submit wiring is untouched.
+        $this->assertStringContainsString('data-ci-activity-submit', $content);
+        $this->assertSame(2, substr_count($content, ' data-ci-activity-dialog-close'));
+    }
+
+    /** Barangay Check and Neighbor Check share one edit form, so both get the same pair. */
+    public function test_the_default_check_edit_form_offers_iconed_cancel_and_save_changes(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+
+        foreach ([ActivityDefinition::BARANGAY_CHECK_CODE, ActivityDefinition::NEIGHBOR_CHECK_CODE] as $code) {
+            $activity = $this->activity($folder, $ci, $code);
+
+            $content = $this->actingAs($ci)
+                ->get(route('client-folders.activities.default-check.show', [$folder, $activity]))
+                ->assertOk()->getContent();
+
+            $this->assertMatchesRegularExpression(
+                '/<button type="button" class="ui-button-secondary w-full sm:w-auto" data-default-check-cancel><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s',
+                $content,
+                $code.' cancel',
+            );
+            $this->assertMatchesRegularExpression(
+                '/<button type="submit" class="ui-button-primary w-full sm:w-auto" data-default-check-submit><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Save Changes<\/button>/s',
+                $content,
+                $code.' save',
+            );
+        }
+    }
+
+    public function test_the_bank_coop_target_edit_form_offers_iconed_cancel_and_save_changes(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $this->bankDefinition();
+        $activity = $this->activity($folder, $ci, ActivityDefinition::BANK_COOP_CHECK_CODE);
+        $target = $activity->bankTargets()->create([
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
+            'institution_name' => 'SAMPLE BANK',
+            'scheduled_has_time' => false,
+            'created_by' => $ci->id,
+            'updated_by' => $ci->id,
+        ]);
+
+        $content = $this->actingAs($ci)
+            ->get(route('client-folders.activities.bank-coop.show', [$folder, $activity]))
+            ->assertOk()->getContent();
+
+        $editStart = strpos($content, 'data-bank-target-detail-inquiry-type');
+        $this->assertNotFalse($editStart, 'The edit form for target '.$target->id.' renders.');
+
+        $this->assertMatchesRegularExpression(
+            '/<button type="button" class="ui-button-secondary" data-modal-close><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button><button type="submit" class="ui-button-primary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Save Changes<\/button>/s',
+            $content,
+        );
+        // The one-word label is gone, and the Add form beside it keeps its own distinct label.
+        $this->assertStringNotContainsString('<button type="submit" class="ui-button-primary">Save</button>', $content);
+        $this->assertStringContainsString('Add Bank / Coop</button>', $content);
+    }
 
     private function activity(ClientFolder $folder, User $creator, string $code, array $overrides = []): CiActivity
     {

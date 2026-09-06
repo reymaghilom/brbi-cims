@@ -13,9 +13,6 @@ class ClientFolderModulePlaceholderController extends Controller
         'activities' => ['CI Activities', 11],
         'cibi-report' => ['CI / BI Report', 12],
         'generated-reports' => ['Generated Reports', 15],
-        'google-drive' => ['Google Drive', 17],
-        'telegram-history' => ['Telegram History', 18],
-        'attachments' => ['Attachments / Documents', null],
     ];
 
     public function __invoke(ClientFolder $clientFolder, string $module): View

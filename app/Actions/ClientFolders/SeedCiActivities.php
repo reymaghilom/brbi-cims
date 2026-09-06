@@ -12,10 +12,15 @@ use Illuminate\Support\Facades\DB;
 
 class SeedCiActivities
 {
+    public function __construct(
+        private readonly EnsureCanonicalActivityDefinitions $ensureDefinitions,
+    ) {}
+
     /** @return array{created: int, restored: int, already_active: int} */
     public function execute(ClientFolder $folder, ?CoMaker $person = null, ?User $actor = null): array
     {
         return DB::transaction(function () use ($folder, $person, $actor): array {
+            $this->ensureDefinitions->execute();
             ClientFolder::query()->whereKey($folder->id)->lockForUpdate()->firstOrFail();
             if ($person !== null) {
                 $folder->coMakers()->whereKey($person->id)->firstOrFail();
@@ -52,17 +57,6 @@ class SeedCiActivities
                     ->lockForUpdate()
                     ->first();
                 if ($trashedActivity !== null) {
-                    $trashedActivity->forceFill([
-                        'status' => ActivityStatus::Pending,
-                        'scheduled_at' => null,
-                        'scheduled_has_time' => false,
-                        'reminder_sent_at' => null,
-                        'remarks' => null,
-                        'completed_at' => null,
-                        'submitted_at' => null,
-                        'submitted_by' => null,
-                        'submission_note' => null,
-                    ])->save();
                     $trashedActivity->restore();
                     $restored++;
 

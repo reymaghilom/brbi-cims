@@ -52,11 +52,9 @@ class ClientFolderContentsTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $modules = [
-            'google-drive' => 'Google Drive',
-            'telegram-history' => 'Telegram History',
-            'attachments' => 'Attachments / Documents',
-        ];
+        // Telegram History, Google Drive and Attachments / Documents were retired; nothing should
+        // render them and their placeholder routes are gone.
+        $modules = [];
 
         $contents = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk();
         $contents->assertDontSee(route('client-folders.client-information.edit', $folder), false);
@@ -71,7 +69,9 @@ class ClientFolderContentsTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.income-sources.index', $folder))->assertOk()->assertSee('Please choose Business Template')->assertDontSee('Add Income Source')->assertDontSee('Business / Income Sources')->assertDontSee('income sources available.');
         $contents->assertSee('Residence & Business Report')->assertSee(route('client-folders.residence-business.edit', $folder), false);
         $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk()->assertSee('Residence & Business Report');
-        $contents->assertSee('Generated Reports')->assertSee(route('client-folders.generated-reports.index', $folder), false);
+        // Generated report history moved to the global Reports workspace; Folder Contents no
+        // longer surfaces it as a module card, but the folder-scoped route itself stays live.
+        $contents->assertDontSee('Generated Reports')->assertDontSee('No generated reports available.')->assertDontSee(route('client-folders.generated-reports.index', $folder), false);
         $this->actingAs($ci)->get(route('client-folders.generated-reports.index', $folder))->assertOk()->assertSee('Protected official artifacts');
         $contents->assertDontSee('Photos &amp; Videos', false)->assertDontSee('/client-folders/'.$folder->id.'/media', false);
         $this->actingAs($ci)->get('/client-folders/'.$folder->id.'/media')->assertNotFound();
@@ -326,7 +326,9 @@ class ClientFolderContentsTest extends TestCase
         $this->assertStringContainsString('data-cibi-field-error', $javascript);
         $this->assertStringContainsString("payload.report.state === 'complete'", $javascript);
         $this->assertStringContainsString('outputActions.hidden = false', $javascript);
-        $this->assertStringContainsString("payload.report.submit_label || 'Update'", $javascript);
+        // Only the label span is retitled now, so the submit keeps its save icon across a refresh.
+        $this->assertStringContainsString("payload.report.submit_label || 'Update CIBI Report'", $javascript);
+        $this->assertStringContainsString('[data-cibi-submit-text]', $javascript);
         $this->assertStringContainsString("event.data?.type !== 'brbi:cibi-saved'", $javascript);
         $this->assertStringContainsString('window.parent.postMessage({', $javascript);
         $this->assertStringContainsString('window.location.assign(returnUrl.href)', $javascript);
@@ -599,7 +601,7 @@ class ClientFolderContentsTest extends TestCase
             ->fresh();
         $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'AFTER']);
 
-        $this->actingAs($ci)->get(route('home'))
+        $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('Folder History', false)
             ->assertSee('folder-history-dialog', false);

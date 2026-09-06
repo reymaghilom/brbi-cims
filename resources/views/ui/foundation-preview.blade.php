@@ -28,7 +28,7 @@
         </x-ui.form-section>
         <section class="space-y-4">
             <x-ui.missing-items-summary :items="['Complete CI / BI report', 'Attach residence photographs']" />
-            <x-ui.integration-status-badge provider="Google Drive" status="success" />
+            <x-ui.integration-status-badge provider="Cloudinary" status="success" />
             <x-ui.retry-state title="Sample connection error" message="The retry pattern is ready for later integration phases." />
             <x-ui.loading-state label="Loading sample records" />
         </section>

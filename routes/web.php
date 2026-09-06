@@ -35,6 +35,8 @@ use App\Http\Controllers\RecycleBinBusinessRestoreController;
 use App\Http\Controllers\RecycleBinController;
 use App\Http\Controllers\RecycleBinPurgeController;
 use App\Http\Controllers\RecycleBinRestoreController;
+use App\Http\Controllers\ReportClientSuggestionController;
+use App\Http\Controllers\ReportsController;
 use App\Http\Controllers\ResidenceBusinessCheckReportController;
 use App\Http\Controllers\ResidenceBusinessReportController;
 use App\Http\Controllers\ResidenceCheckController;
@@ -61,9 +63,10 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::post('/editing-presence/release', [EditingPresenceController::class, 'release'])->name('editing-presence.release');
 
         Route::get('/ci-activities', GlobalCiActivityController::class)->name('ci-activities.index');
-        Route::view('/reports', 'module-placeholder', ['title' => 'Reports'])->name('reports.index');
-        Route::view('/telegram-history', 'module-placeholder', ['title' => 'Telegram History'])->name('telegram.index');
-        Route::view('/google-drive', 'module-placeholder', ['title' => 'Google Drive'])->name('drive.index');
+        Route::get('/reports', ReportsController::class)->name('reports.index');
+        Route::get('/reports/client-suggestions', ReportClientSuggestionController::class)
+            ->middleware('throttle:60,1')
+            ->name('reports.client-suggestions');
         Route::get('/recycle-bin', RecycleBinController::class)->name('recycle-bin.index');
         Route::patch('/recycle-bin/businesses/{incomeSource}/restore', [RecycleBinBusinessRestoreController::class, 'update'])
             ->withTrashed()
@@ -131,6 +134,11 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::put('/client-folders/{clientFolder}/activities/{ciActivity}/asset-targets/{assetTarget}', [CiActivityAssetTargetController::class, 'update'])
             ->scopeBindings()
             ->name('client-folders.activities.asset-targets.update');
+        // Static "complete-many" must be registered before the {assetTarget} wildcard below, the
+        // same ordering the bank-targets routes already use.
+        Route::patch('/client-folders/{clientFolder}/activities/{ciActivity}/asset-targets/complete-many', [CiActivityAssetTargetController::class, 'completeMany'])
+            ->scopeBindings()
+            ->name('client-folders.activities.asset-targets.complete-many');
         Route::patch('/client-folders/{clientFolder}/activities/{ciActivity}/asset-targets/{assetTarget}/complete', [CiActivityAssetTargetController::class, 'complete'])
             ->scopeBindings()
             ->name('client-folders.activities.asset-targets.complete');
@@ -190,9 +198,6 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::get('/client-folders/{clientFolder}/income-sources/new', [IncomeSourceController::class, 'selectTemplate'])->name('client-folders.income-sources.select-template');
         Route::get('/client-folders/{clientFolder}/income-sources/create', [IncomeSourceController::class, 'create'])->name('client-folders.income-sources.create');
         Route::post('/client-folders/{clientFolder}/income-sources', [IncomeSourceController::class, 'store'])->name('client-folders.income-sources.store');
-        // Static "quick-create" segment must be registered before the {incomeSource} wildcard
-        // routes below — same reason as the income-sources batch routes further down.
-        Route::post('/client-folders/{clientFolder}/income-sources/quick-create', [IncomeSourceController::class, 'quickCreate'])->name('client-folders.income-sources.quick-create');
         Route::get('/client-folders/{clientFolder}/income-sources/{incomeSource}', [IncomeSourceController::class, 'show'])->scopeBindings()->name('client-folders.income-sources.show');
         Route::get('/client-folders/{clientFolder}/income-sources/{incomeSource}/edit', [IncomeSourceController::class, 'edit'])->scopeBindings()->name('client-folders.income-sources.edit');
         Route::post('/client-folders/{clientFolder}/income-sources/{incomeSource}/businesses', [IncomeSourceController::class, 'addBusiness'])->scopeBindings()->name('client-folders.income-sources.businesses.store');
@@ -208,7 +213,7 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::post('/client-folders/{clientFolder}/income-sources/batch/print', [GeneratedReportController::class, 'batchPreview'])->name('client-folders.income-sources.batch-print');
         Route::post('/client-folders/{clientFolder}/income-sources/batch/export-pdf', [GeneratedReportController::class, 'batchExportPdf'])->name('client-folders.income-sources.batch-export-pdf');
         Route::post('/client-folders/{clientFolder}/income-sources/batch/export-excel', [GeneratedReportController::class, 'batchExportExcel'])->name('client-folders.income-sources.batch-export-excel');
-        Route::post('/client-folders/{clientFolder}/income-sources/{incomeSource}/export-pdf', [GeneratedReportController::class, 'exportBusinessPdf'])->scopeBindings()->name('client-folders.income-sources.export-pdf');
+        Route::get('/client-folders/{clientFolder}/income-sources/{incomeSource}/export-pdf', [GeneratedReportController::class, 'exportBusinessPdf'])->scopeBindings()->name('client-folders.income-sources.export-pdf');
         Route::post('/client-folders/{clientFolder}/income-sources/{incomeSource}/export-excel', [GeneratedReportController::class, 'exportBusinessExcel'])->scopeBindings()->name('client-folders.income-sources.export-excel');
         Route::delete('/client-folders/{clientFolder}/income-sources/{incomeSource}', [IncomeSourceController::class, 'destroy'])->scopeBindings()->name('client-folders.income-sources.destroy');
         Route::delete('/client-folders/{clientFolder}/income-sources/{incomeSource}/business-report', [IncomeSourceController::class, 'destroyBusinessReport'])->scopeBindings()->name('client-folders.income-sources.business-report.destroy');

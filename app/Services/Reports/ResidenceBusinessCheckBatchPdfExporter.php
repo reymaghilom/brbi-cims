@@ -39,7 +39,7 @@ class ResidenceBusinessCheckBatchPdfExporter
             $options->set('defaultFont', 'DejaVu Sans');
             $options->set('isRemoteEnabled', false);
             $options->set('isPhpEnabled', false);
-            $options->set('chroot', [storage_path('app/private'), public_path()]);
+            $options->set('chroot', ReportImageRoots::all());
             $options->set('defaultMediaType', 'print');
 
             $render = ReportRenderOptions::brbiDefault();

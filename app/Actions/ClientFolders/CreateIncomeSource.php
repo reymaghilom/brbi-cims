@@ -23,6 +23,12 @@ class CreateIncomeSource
     {
         return DB::transaction(function () use ($actor, $folder, $data, $createBusinessReport): IncomeSource {
             $template = IncomeSourceTemplate::query()->whereKey($data['income_source_template_id'])->where('is_active', true)->firstOrFail();
+            // Same derived-name rule as the authoritative save (see SaveBusinessIncomeSource), applied
+            // the moment the row exists so a source created here is never briefly nameless.
+            $mappedBusinessName = IncomeSourceTemplate::defaultBusinessNameFor($template->template_type);
+            if ($mappedBusinessName !== null) {
+                $data['business_name'] = $mappedBusinessName;
+            }
             $coMakerId = $data['co_maker_id'] ?? null;
             $cibiReport = $folder->cibiReport()->where('co_maker_id', $coMakerId)->first();
             $owner = $coMakerId ? $folder->coMakers()->find($coMakerId) : null;

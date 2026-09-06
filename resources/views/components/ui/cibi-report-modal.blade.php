@@ -1,6 +1,6 @@
-@props(['id' => 'cibi-report-dialog'])
+@props(['id' => 'cibi-report-dialog', 'stayOnPage' => false])
 
-<dialog id="{{ $id }}" class="cibi-report-dialog fixed inset-0 m-auto h-[94dvh] max-h-[94dvh] w-[95vw] max-w-none overflow-hidden rounded-card border border-ui-border bg-surface p-0 text-text-main shadow-float backdrop:bg-brand-sidebar/65 backdrop:backdrop-blur-[1px]" data-cibi-report-dialog aria-labelledby="{{ $id }}-title">
+<dialog id="{{ $id }}" class="cibi-report-dialog fixed inset-0 m-auto h-[94dvh] max-h-[94dvh] w-[95vw] max-w-none overflow-hidden rounded-card border border-ui-border bg-surface p-0 text-text-main shadow-float backdrop:bg-brand-sidebar/65 backdrop:backdrop-blur-[1px]" data-cibi-report-dialog @if($stayOnPage) data-cibi-report-stay @endif aria-labelledby="{{ $id }}-title">
     <div class="flex h-full min-h-0 flex-col">
         <header class="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b border-ui-border bg-surface px-3 sm:px-4">
             <h2 id="{{ $id }}-title" class="text-sm font-semibold text-brand-sidebar">CI / BI Report</h2>

@@ -71,7 +71,7 @@ class SavedBusinessReportMissingStateTest extends TestCase
         $this->actingAs($ci)->get($editUrl)
             ->assertOk()
             ->assertSee('No active Business Report')
-            ->assertSee('Create Business Report');
+            ->assertSee('Save Business Report');
 
         $this->actingAs($ci)->put(
             route('client-folders.income-sources.business.update', [$folder, $source]),
@@ -121,7 +121,7 @@ class SavedBusinessReportMissingStateTest extends TestCase
         $this->actingAs($ci)->get($editUrl)
             ->assertOk()
             ->assertSee('No active Business Report')
-            ->assertSee('Create Business Report')
+            ->assertSee('Save Business Report')
             ->assertDontSee('Co-Maker A Active Business')
             ->assertDontSee('Co-Maker B Business');
 

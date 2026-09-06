@@ -33,4 +33,10 @@ class GeneratedReport extends Model
     {
         return $this->belongsTo(User::class, 'generated_by');
     }
+
+    /** Null for an Applicant report; the exact Co-Maker otherwise. Never a fallback to another person. */
+    public function coMaker(): BelongsTo
+    {
+        return $this->belongsTo(CoMaker::class);
+    }
 }

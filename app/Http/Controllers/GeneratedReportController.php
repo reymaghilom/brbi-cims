@@ -55,7 +55,14 @@ class GeneratedReportController extends Controller
         $activePerson = $this->activePersonFor($clientFolder, $source, $request->validated('co_maker_id'));
         $document = $builder->build($clientFolder, $type, $source, $activePerson);
 
-        return view('reports.official.document', ['document' => $document, 'pdfMode' => false, 'clientFolder' => $clientFolder, 'type' => $type, 'source' => $source]);
+        return view('reports.official.document', [
+            'document' => $document,
+            'pdfMode' => false,
+            'clientFolder' => $clientFolder,
+            'type' => $type,
+            'source' => $source,
+            'personParams' => ActivePersonResolver::queryParams($activePerson),
+        ]);
     }
 
     public function store(GenerateOfficialReportRequest $request, ClientFolder $clientFolder, GenerateOfficialReport $generate): RedirectResponse
@@ -87,24 +94,32 @@ class GeneratedReportController extends Controller
         return $this->downloadResponse($clientFolder, $report);
     }
 
-    public function exportBusinessPdf(ClientFolder $clientFolder, IncomeSource $incomeSource, GenerateOfficialReport $generate): StreamedResponse
+    public function exportBusinessPdf(ClientFolder $clientFolder, IncomeSource $incomeSource, BusinessBatchPdfExporter $exporter): StreamedResponse
     {
         Gate::authorize('view', $incomeSource);
-        Gate::authorize('create', [GeneratedReport::class, $clientFolder]);
-        $activePerson = $incomeSource->co_maker_id ? $clientFolder->coMakers()->find($incomeSource->co_maker_id) : null;
+        $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
+        ActivePersonResolver::assertOwnedBy($incomeSource, $activePerson);
         $incomeSource->loadMissing('template');
-        $type = $incomeSource->template->is_fallback ? OfficialReportType::GeneralIncomeSource : OfficialReportType::BusinessIncomeSource;
+        abort_if($incomeSource->template->is_fallback, 404);
 
-        $report = $generate->execute(request()->user(), $clientFolder, $type, ReportFormat::Pdf, $incomeSource, $activePerson);
-        abort_unless($report->status === GenerationStatus::Completed, 500, $report->failure_message);
+        $bytes = $exporter->generate($clientFolder, collect([$incomeSource]));
+        $client = Str::of($incomeSource->applicant_name_snapshot ?: $clientFolder->display_name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
+        $business = Str::of($incomeSource->source_name ?: $incomeSource->template->name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
+        $filename = Str::limit("BRBI_{$clientFolder->folder_number}_{$client}_{$business}_Business-Report_r{$incomeSource->revision}", 180, '').'.pdf';
 
-        return $this->downloadResponse($clientFolder, $report);
+        return response()->streamDownload(
+            static fn () => print $bytes,
+            $filename,
+            ['Content-Type' => 'application/pdf', 'X-Content-Type-Options' => 'nosniff', 'Cache-Control' => 'private, no-store, max-age=0'],
+        );
     }
 
     public function exportBusinessExcel(ClientFolder $clientFolder, IncomeSource $incomeSource, BusinessExcelExporter $exporter): StreamedResponse
     {
         Gate::authorize('view', $incomeSource);
         Gate::authorize('create', [GeneratedReport::class, $clientFolder]);
+        $activePerson = ActivePersonResolver::resolve($clientFolder, request()->input('co_maker_id'));
+        ActivePersonResolver::assertOwnedBy($incomeSource, $activePerson);
         $incomeSource->loadMissing('template');
         abort_if($incomeSource->template->is_fallback, 404);
 
@@ -112,17 +127,6 @@ class GeneratedReportController extends Controller
         $client = Str::of($incomeSource->applicant_name_snapshot ?: $clientFolder->display_name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
         $business = Str::of($incomeSource->source_name ?: $incomeSource->template->name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
         $filename = Str::limit("BRBI_{$clientFolder->folder_number}_{$client}_{$business}_Business-Report_r{$incomeSource->revision}", 180, '').'.xlsx';
-
-        AuditLog::create([
-            'user_id' => request()->user()->id,
-            'client_folder_id' => $clientFolder->id,
-            'action' => 'income_source.excel_downloaded',
-            'module' => 'income_sources',
-            'description' => 'A saved Business Report was downloaded as Excel.',
-            'metadata' => ['income_source_id' => $incomeSource->id, 'template_type' => $incomeSource->template_type, 'revision' => $incomeSource->revision],
-            'ip_address' => request()->ip(),
-            'user_agent' => request()->userAgent(),
-        ]);
 
         return response()->streamDownload(
             static fn () => print $bytes,

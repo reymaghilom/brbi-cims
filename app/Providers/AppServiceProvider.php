@@ -12,7 +12,6 @@ use App\Models\IncomeSource;
 use App\Models\MediaReference;
 use App\Models\ResidenceBusinessReport;
 use App\Models\SystemSetting;
-use App\Models\TelegramMessage;
 use App\Models\User;
 use App\Policies\AuditLogPolicy;
 use App\Policies\CiActivityPolicy;
@@ -24,13 +23,15 @@ use App\Policies\IncomeSourcePolicy;
 use App\Policies\MediaReferencePolicy;
 use App\Policies\ResidenceBusinessReportPolicy;
 use App\Policies\SystemSettingPolicy;
-use App\Policies\TelegramMessagePolicy;
 use App\Policies\UserPolicy;
 use App\Services\Media\EvidenceStorageRecorder;
 use App\Services\Reports\Contracts\DocxGenerator;
 use App\Services\Reports\Contracts\PdfGenerator;
 use App\Services\Reports\DompdfOfficialReportGenerator;
 use App\Services\Reports\PhpWordOfficialReportGenerator;
+use App\Support\Database\DestructiveDatabaseCommandGuard;
+use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 
@@ -53,6 +54,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Event::listen(CommandStarting::class, DestructiveDatabaseCommandGuard::class);
+
         Gate::policy(User::class, UserPolicy::class);
         Gate::policy(ClientFolder::class, ClientFolderPolicy::class);
         Gate::policy(ClientInformation::class, ClientInformationPolicy::class);
@@ -62,7 +65,6 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(CiActivity::class, CiActivityPolicy::class);
         Gate::policy(MediaReference::class, MediaReferencePolicy::class);
         Gate::policy(GeneratedReport::class, GeneratedReportPolicy::class);
-        Gate::policy(TelegramMessage::class, TelegramMessagePolicy::class);
         Gate::policy(SystemSetting::class, SystemSettingPolicy::class);
         Gate::policy(AuditLog::class, AuditLogPolicy::class);
     }

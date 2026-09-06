@@ -178,7 +178,7 @@ class IncomeSourcesTest extends TestCase
             ->assertOk()
             ->assertSee('CREDIT INVESTIGATION REPORT')
             ->assertSee('Please choose Business Template')
-            ->assertSee('>Save</button>', false)
+            ->assertSee('Save Business Report')
             ->assertDontSee('data-business-selector', false)
             ->assertDontSee('Business 1')
             ->assertDontSee('Revision 1')
@@ -204,7 +204,9 @@ class IncomeSourcesTest extends TestCase
             ->assertOk()
             ->assertSee('Approved Business')
             ->assertSee('!bottom-3 !rounded-control !p-2.5', false)
-            ->assertSee('form="business-report-form" name="intent" value="complete" class="ui-button-primary" data-business-save>Update</button>', false)
+            ->assertSee('form="business-report-form" name="intent" value="complete" class="ui-button-primary" data-business-save>', false)
+            ->assertSee('Update Business Report')
+            ->assertSee('<button type="button" class="ui-button-secondary" data-close-parent-dialog>', false)
             ->assertDontSee('Business 1')
             ->assertDontSee('Save and Return')
             ->assertDontSee('Save Draft')
@@ -317,7 +319,9 @@ class IncomeSourcesTest extends TestCase
         $response->assertSee('You have unsaved data in the current Business Report. Switching templates may cause this data to be lost. Do you want to continue?');
         $response->assertSee('<input type="hidden" name="intent" value="complete">', false);
         $response->assertSee('<span class="sr-only">Business Report actions</span>', false);
-        $response->assertSee('form="business-template-form" name="intent" value="complete" class="ui-button-primary" data-business-save>Save</button>', false);
+        $response->assertSee('form="business-template-form" name="intent" value="complete" class="ui-button-primary" data-business-save>', false);
+        $response->assertSee('Save Business Report');
+        $response->assertDontSee('Update Business Report');
         $this->assertSame(1, substr_count($response->getContent(), '<span class="sr-only">Business Report actions</span>'));
         $response->assertDontSee('This creates one independent Business Report using the selected template.');
         $response->assertDontSee('Save and Return');
@@ -336,6 +340,7 @@ class IncomeSourcesTest extends TestCase
         $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), [
             'income_source_template_id' => $corn->id,
             'business_name' => 'North Field',
+            'start_date' => '2026-01-01',
             'template_data' => [
                 'fields' => ['total_ha_planted' => '12.5'],
                 'tables' => ['farms' => [['location_size' => 'Barangay Norte - 12.5 HA']]],
@@ -404,14 +409,21 @@ class IncomeSourcesTest extends TestCase
 
         $template->update(['is_active' => true]);
 
-        foreach (['Consulting Income', 'Online Selling'] as $name) {
-            $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), [
-                'income_source_template_id' => $template->id,
-                'source_name' => $name,
-                'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
-                'year_established' => 2020,
-            ])->assertRedirect();
-        }
+        $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), [
+            'income_source_template_id' => $template->id,
+            'source_name' => 'Consulting Income',
+            'main_business_address' => 'Main Street', 'start_date' => '2026-01-01',
+            'year_established' => 2020,
+        ])->assertRedirect();
+        // A second entry on this same retired template is historical data, not something the
+        // create form still offers (see BusinessTemplateDuplicateGuardTest), so it is seeded
+        // directly — this test is about retired-template visibility, not about creating one.
+        $second = $this->app->make(CreateIncomeSource::class)->execute($ci, $folder, [
+            'income_source_template_id' => $template->id,
+            'source_name' => 'Online Selling',
+            'business_name' => 'Online Selling',
+        ]);
+        $this->assertNotNull($second->businessReport);
         $template->update(['is_active' => false]);
 
         $sources = $folder->incomeSources()->with('businessReport')->orderBy('id')->get();
@@ -471,6 +483,7 @@ class IncomeSourcesTest extends TestCase
         $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), [
             'income_source_template_id' => $template->id,
             'source_name' => 'Custom Income Activity',
+            'start_date' => '2026-01-01',
             'report_remarks' => 'Client-entered fallback details.',
             'template_data' => ['fields' => ['income_sources' => ['still_lotto_outlet']]],
         ])->assertRedirect();
@@ -486,6 +499,7 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Custom Income Activity',
             'business_name' => 'Other Business/Source of Income',
             'report_category' => 'Other',
+            'start_date' => '2026-01-01',
             'report_remarks' => 'Client-entered fallback details.',
             'template_data' => ['fields' => ['income_sources' => []]],
         ])->assertSessionHasErrors('template_data.fields.income_sources');
@@ -495,6 +509,7 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Custom Income Activity',
             'business_name' => 'Other Business/Source of Income',
             'report_category' => 'Other',
+            'start_date' => '2026-01-01',
             'template_data' => ['fields' => [
                 'income_sources' => ['still_lotto_outlet'],
             ]],
@@ -832,6 +847,7 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Agricultural Leasing',
             'business_name' => 'Agricultural Leasing',
             'report_category' => 'Leasing',
+            'start_date' => '2026-01-01',
         ];
         $summaryFields = [
             'total_declared' => '3',
@@ -934,6 +950,7 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Poultry Farm Leasing',
             'business_name' => 'Poultry Farm Leasing',
             'report_category' => 'Leasing',
+            'start_date' => '2026-01-01',
         ];
         $originalRevision = $source->revision;
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $basePayload + [
@@ -1712,8 +1729,11 @@ class IncomeSourcesTest extends TestCase
             ->assertDontSee('<span class="font-semibold" data-ci-primary-name>REY C. MAGHILOM</span>', false)
             ->assertDontSee('<span class="font-semibold" data-ci-primary-name>ANTHONY DELA CRUZ</span>', false)
             ->assertSee('<span class="font-semibold" data-ci-primary-name>REASAN SANTOS</span>', false);
+        // A different template, because one person keeps one business per template — the point
+        // here is only which CI ends up recorded as the creator.
+        $secondTemplate = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
         $this->actingAs($reasan)->post(route('client-folders.income-sources.store', $folder), [
-            'income_source_template_id' => $template->id,
+            'income_source_template_id' => $secondTemplate->id,
             'source_name' => 'Reasan Rice Trading',
             'main_business_address' => 'Main St., Reasan Business Area',
             'start_date' => '2026-01-01',
@@ -1762,8 +1782,11 @@ class IncomeSourcesTest extends TestCase
             ->assertDontSee('<span class="font-semibold" data-ci-primary-name>REY C. MAGHILOM</span>', false)
             ->assertDontSee('<span class="font-semibold" data-ci-primary-name>ANTHONY DELA CRUZ</span>', false)
             ->assertSee('<span class="font-semibold" data-ci-primary-name>REASAN SANTOS</span>', false);
+        // A different template, because one person keeps one business per template — the point
+        // here is only which CI ends up recorded as the creator.
+        $secondTemplate = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
         $this->actingAs($reasan)->post(route('client-folders.income-sources.store', $folder), [
-            'income_source_template_id' => $template->id,
+            'income_source_template_id' => $secondTemplate->id,
             'source_name' => 'Reasan Co-Maker Business',
             'co_maker_id' => $coMaker->id,
             'main_business_address' => 'Main St., Reasan Co-Maker Business Area',
@@ -1970,7 +1993,14 @@ class IncomeSourcesTest extends TestCase
     public function test_dedicated_child_ids_and_incompatible_sections_cannot_cross_report_boundaries(): void
     {
         [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
-        [, , $other] = $this->createSource('leasing_non_agricultural', $ci, $folder);
+        // A same-template sibling is seeded directly: the create form now allows only one business
+        // per template per person, and this test is about child rows never crossing between two
+        // reports, not about how the second one came to exist.
+        $other = $this->app->make(CreateIncomeSource::class)->execute($ci, $folder, [
+            'income_source_template_id' => $source->income_source_template_id,
+            'source_name' => 'Sibling Business',
+            'business_name' => 'Sibling Business',
+        ])->fresh();
         $foreignProperty = $other->businessReport->properties()->create(['property_type' => 'Foreign']);
         $payload = $this->businessPayload();
         $payload['properties'][0]['id'] = $foreignProperty->id;
@@ -2338,6 +2368,7 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Corn Farm',
             'business_name' => 'Corn Farm',
             'report_category' => 'Farming',
+            'start_date' => '2026-01-01',
             'template_data' => [
                 'fields' => [
                     'average_selling_price' => '42.50',
@@ -2393,6 +2424,7 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Required Corn Farm',
             'business_name' => 'Required Corn Farm',
             'report_category' => 'Agriculture',
+            'start_date' => '2026-01-01',
         ];
         $originalRevision = $source->revision;
         foreach (array_keys($requiredFields) as $missingField) {
@@ -2434,6 +2466,7 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Required Sugarcane Farm',
             'business_name' => 'Required Sugarcane Farm',
             'report_category' => 'Agriculture',
+            'start_date' => '2026-01-01',
         ];
         $originalRevision = $source->revision;
         foreach (array_keys($requiredFields) as $missingField) {
@@ -2474,6 +2507,7 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Family Remittance',
             'business_name' => 'Family Remittance',
             'report_category' => 'Remittance',
+            'start_date' => '2026-01-01',
             'template_data' => ['questions' => $answers],
         ])->assertSessionHasNoErrors();
 
@@ -2500,6 +2534,7 @@ class IncomeSourcesTest extends TestCase
             'source_name' => 'Required Remittance',
             'business_name' => 'Required Remittance',
             'report_category' => 'Remittance',
+            'start_date' => '2026-01-01',
         ];
         $originalRevision = $source->revision;
         $this->actingAs($ci)

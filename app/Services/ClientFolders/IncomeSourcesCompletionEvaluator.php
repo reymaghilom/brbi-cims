@@ -58,8 +58,26 @@ class IncomeSourcesCompletionEvaluator
             return false;
         }
 
-        if ($source->template->businessReportSchema() !== []) {
-            return collect($report->template_data ?? [])->flatten()->contains(fn ($value): bool => filled($value));
+        $schema = $source->template->businessReportSchema();
+        if ($schema !== []) {
+            // Schema fields/tables/questions are optional unless the HTTP request explicitly marks
+            // one required. Requiring any template_data value here was stricter than the real form
+            // validation: a valid trucking report with its required profile completed was saved,
+            // set Complete by SaveBusinessIncomeSource, then immediately downgraded back to Draft.
+            // Mirror the shared profile requirements instead and let the validated completion
+            // intent remain authoritative for optional schema content.
+            if (! (bool) data_get($schema, 'profile', false)) {
+                return true;
+            }
+
+            $hiddenProfileFields = (array) data_get($schema, 'hidden_profile_fields', []);
+            $ownerRequired = $source->template_type !== 'leasing_truck_equipment'
+                && ! in_array('registered_owner', $hiddenProfileFields, true);
+
+            return filled($report->main_business_address)
+                && filled($report->start_date)
+                && filled($report->year_established)
+                && (! $ownerRequired || filled($report->registered_owner));
         }
 
         if (! filled($report->main_business_address) || ! filled($report->registered_owner)) {

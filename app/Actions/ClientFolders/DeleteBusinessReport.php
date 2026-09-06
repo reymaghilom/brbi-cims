@@ -16,9 +16,14 @@ use Illuminate\Support\Facades\DB;
 /**
  * Permanently deletes a Business Report. There is no Recycle Bin entry and no restore for this —
  * the linked Business Check and IncomeSource are deliberately left untouched (see
- * BusinessReportBusinessCheckIndependenceTest). The IncomeSource itself is only ever removed if it
- * is left truly orphaned by this delete (see DeleteIncomeSourceIfOrphaned); the surviving Business
- * Check keeps using the same income_source_id it always has.
+ * BusinessReportBusinessCheckIndependenceTest). Only deleting the parent IncomeSource may remove
+ * the business from active workflows; the surviving Business Check keeps using the same
+ * income_source_id it always has.
+ *
+ * The deletion is also recorded on that exact IncomeSource (business_report_deleted_at) so the
+ * centralized Reports workspace can tell "never had a Business Report" apart from "its Business
+ * Report was intentionally deleted" and stop regenerating a Pending work item for the latter. A
+ * saved Business Check is untouched by that marker and stays visible with its own status.
  */
 class DeleteBusinessReport
 {
@@ -26,7 +31,6 @@ class DeleteBusinessReport
         private readonly IncomeSourcesCompletionEvaluator $incomeCompletion,
         private readonly ResidenceBusinessCheckCompletionEvaluator $checkCompletion,
         private readonly ClientProgressService $progress,
-        private readonly DeleteIncomeSourceIfOrphaned $deleteIfOrphaned,
     ) {}
 
     public function execute(User $actor, ClientFolder $folder, IncomeSource $source): void
@@ -40,7 +44,12 @@ class DeleteBusinessReport
             $coMakerId = $lockedSource->co_maker_id;
 
             $report->delete();
-            $orphanRemoved = $this->deleteIfOrphaned->execute($lockedSource);
+
+            // A missing business_reports row cannot say WHY it is missing. Recording the deletion on
+            // the exact IncomeSource is what stops the centralized Reports workspace re-synthesising
+            // a "Create Report" work item for a business whose report was deliberately removed. It
+            // is cleared again by SaveBusinessIncomeSource the moment a report is saved here.
+            $lockedSource->forceFill(['business_report_deleted_at' => now()])->save();
 
             AuditLog::create([
                 'user_id' => $actor->id,
@@ -53,7 +62,8 @@ class DeleteBusinessReport
                     'income_source_id' => $lockedSource->id,
                     'co_maker_id' => $coMakerId,
                     'business_name' => $businessName,
-                    'income_source_orphan_removed' => $orphanRemoved,
+                    'income_source_orphan_removed' => false,
+                    'business_report_suppressed' => true,
                 ],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),

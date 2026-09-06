@@ -6,6 +6,8 @@
         @case('folder') <path d="M3.5 6.5h6l2 2H20.5v9.75a1.75 1.75 0 0 1-1.75 1.75H5.25a1.75 1.75 0 0 1-1.75-1.75V6.5Z"/><path d="M3.5 9h17"/> @break
         @case('activity') <path d="M4 5h16M4 12h16M4 19h16"/><path d="m6 5 1 1 2-2m-3 8 1 1 2-2m-3 8 1 1 2-2"/> @break
         @case('report') <path d="M6 3.5h8l4 4v13H6v-17Z"/><path d="M14 3.5v4h4M9 12h6M9 16h6"/> @break
+        @case('file-pdf') <path d="M6 3.5h8l4 4v13H6v-17Z"/><path d="M14 3.5v4h4"/><path d="M8.5 16.5v-5h1.3a1.5 1.5 0 0 1 0 3H8.5M13 16.5v-5h1.1c1.4 0 2.4 1 2.4 2.5s-1 2.5-2.4 2.5H13Z"/> @break
+        @case('file-word') <path d="M6 3.5h8l4 4v13H6v-17Z"/><path d="M14 3.5v4h4"/><path d="m8.5 11.5 1.1 5 1.4-3.5 1.4 3.5 1.1-5"/> @break
         @case('media') <rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3 2.5 2.5-2 3 3"/> @break
         @case('video') <rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="m10 9 5 3-5 3V9Z"/> @break
         @case('telegram') <path d="m3.5 11 16.8-6.5-3.1 15-5.1-4-2.8 2.6.5-4.6L17 7.2 8.4 12"/> @break
@@ -27,6 +29,7 @@
         @case('more-vertical') <circle cx="12" cy="5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.2" fill="currentColor" stroke="none"/> @break
         @case('search') <circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/> @break
         @case('open') <path d="M4 7.5h6l2 2h8v9H4v-11Z"/><path d="m13 14 2-2 2 2m-2-2v5"/> @break
+        @case('folder-open') <path d="M3.5 18.5V6.5h6l2 2h7.5v2.5"/><path d="M3.5 18.5 6.2 11h16l-2.7 7.5H3.5Z"/> @break
         @case('edit') <path d="m4 20 4.2-1 10.4-10.4a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m13.8 7.4 3 3"/> @break
         @case('attachment') <path d="m8.5 12.5 6.7-6.7a3.2 3.2 0 0 1 4.5 4.5l-9.2 9.2a5 5 0 0 1-7.1-7.1l8.8-8.8"/><path d="m7 15 8.6-8.6"/> @break
         @case('info') <circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/> @break

@@ -57,10 +57,17 @@
         <div class="w-full min-w-0 md:flex-1" data-folder-toolbar-search data-dashboard-search>
             <form method="GET" action="{{ $folderBrowserAction }}" class="min-w-0 w-full" data-folder-browser-form data-client-search-form>
                 <label for="folder-search" class="sr-only">Search client name</label>
-                <div class="relative min-w-0" data-client-search data-live-search-url="{{ route('client-folders.live-search') }}" data-browser-context="{{ $folderBrowserContext }}">
+                <div class="relative min-w-0" data-client-search data-live-search-url="{{ route('client-folders.live-search') }}" data-suggest-url="{{ route('client-folders.suggestions') }}" data-browser-context="{{ $folderBrowserContext }}">
                     <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-text-muted" aria-hidden="true"><x-ui.icon name="search" size="size-4" /></span>
-                    <input id="folder-search" name="search" type="search" value="{{ $filters['search'] ?? '' }}" maxlength="150" class="ui-control min-h-10 w-full max-w-full py-2 pl-9 pr-10" placeholder="Search client name..." autocomplete="off" data-client-search-input>
+                    <input id="folder-search" name="search" type="search" value="{{ $filters['search'] ?? '' }}" maxlength="150" class="ui-control min-h-10 w-full max-w-full py-2 pl-9 pr-10" placeholder="Search client name..." autocomplete="off" data-client-search-input
+                           role="combobox" aria-expanded="false" aria-controls="folder-search-suggestions" aria-autocomplete="list">
                     <button type="button" class="absolute inset-y-0 right-1 my-auto inline-flex size-9 items-center justify-center rounded-control text-text-muted transition hover:bg-surface-muted hover:text-text-main" aria-label="Clear client search" data-client-search-clear @if(blank($filters['search'] ?? null)) hidden @endif><x-ui.icon name="close" size="size-4" /></button>
+                    {{-- Assistance only: the folder grid already filters live as the user types, with
+                         or without a suggestion being picked. Same presentation as the Reports
+                         client-name autosuggest. --}}
+                    <ul id="folder-search-suggestions" role="listbox" aria-label="Client name suggestions" hidden
+                        class="absolute inset-x-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-card border border-ui-border bg-surface p-1.5 shadow-float"
+                        data-client-search-suggestions></ul>
                 </div>
             </form>
         </div>
@@ -213,7 +220,6 @@
                 ['label' => 'Residence & Business Report', 'description' => 'Residence and business verification', 'icon' => 'report', 'tone' => 'orange', 'url' => route('client-folders.residence-business.edit', $clientFolder)],
                 ['label' => 'CI Activities', 'description' => 'Field investigation checklist and findings', 'icon' => 'activity', 'tone' => 'green', 'url' => route('client-folders.activities.index', $clientFolder)],
                 ['label' => 'Generated Reports', 'description' => 'PDF/DOCX reports ready for download and printing', 'icon' => 'report', 'tone' => 'red', 'url' => route('client-folders.generated-reports.index', $clientFolder)],
-                ['label' => 'Attachments / Documents', 'description' => 'Supporting documents', 'icon' => 'attachment', 'tone' => 'neutral', 'url' => route('client-folders.modules.show', [$clientFolder, 'attachments'])],
             ];
         @endphp
         <template id="client-folder-preview-{{ $clientFolder->id }}" data-folder-preview-template data-folder-id="{{ $clientFolder->id }}">

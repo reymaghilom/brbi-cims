@@ -138,7 +138,14 @@
     @endif
 </section>
 @else
-    <input type="hidden" name="business_name" value="{{ old('business_name', $report?->business_name ?: $template->name) }}">
+    {{-- This template has no Business Name input by design, so the name is derived from the
+         template itself. The mapped default is the same one the authoritative save stores (see
+         IncomeSourceTemplate::DEFAULT_BUSINESS_NAMES) — posting it here keeps the form and the
+         stored value identical, so a save never records a phantom business_name change. --}}
+    @php
+        $derivedBusinessName = \App\Models\IncomeSourceTemplate::defaultBusinessNameFor($template->template_type);
+    @endphp
+    <input type="hidden" name="business_name" value="{{ old('business_name', $derivedBusinessName ?: ($report?->business_name ?: $template->name)) }}">
 @endif
 
 @if(!empty($schema))

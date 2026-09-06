@@ -56,7 +56,7 @@ class CibiReportController extends Controller
                 'report' => [
                     'state' => $report->state->value,
                     'was_completed' => $wasCompleted,
-                    'submit_label' => 'Update',
+                    'submit_label' => 'Update CIBI Report',
                     'revision' => $report->revision,
                     'institutions_checked' => $report->summary_totals['institutions_checked'] ?? $report->creditChecks()->whereNotNull('institution')->count(),
                     'institutions_declared' => $report->summary_totals['institutions_declared'] ?? $report->creditChecks()->where('is_declared', true)->count(),

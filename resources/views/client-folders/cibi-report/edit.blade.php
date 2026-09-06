@@ -30,8 +30,15 @@
 
         <x-ui.sticky-form-toolbar class="!bottom-3 !rounded-control !p-2.5">
             <span class="sr-only" data-cibi-revision>{{ $report?->revision ?? 1 }}</span>
+            {{-- Same action-bar convention as Business Check / Business Report: a secondary Cancel
+                 that closes the dialog this form is opened in, and a primary submit carrying the
+                 save icon. The label follows the one existing create/edit signal this page already
+                 uses (the report's own completed state), and the submit's name/value/mode hooks are
+                 untouched, so CIBI's save/update lifecycle is exactly as before. The label lives in
+                 its own span so the AJAX refresh can retitle the button without dropping the icon. --}}
             <x-slot:actions>
-                <button type="submit" name="intent" value="complete" class="ui-button-primary" data-cibi-submit data-cibi-submit-mode="{{ $report?->state?->value === 'complete' ? 'update' : 'save' }}">{{ $report?->state?->value === 'complete' ? 'Update' : 'Save' }}</button>
+                <button type="button" class="ui-button-secondary" data-close-parent-dialog><x-ui.icon name="close" size="size-4" />Cancel</button>
+                <button type="submit" name="intent" value="complete" class="ui-button-primary" data-cibi-submit data-cibi-submit-mode="{{ $report?->state?->value === 'complete' ? 'update' : 'save' }}"><x-ui.icon name="check" size="size-4" /><span data-cibi-submit-text>{{ $report?->state?->value === 'complete' ? 'Update CIBI Report' : 'Save CIBI Report' }}</span></button>
             </x-slot:actions>
         </x-ui.sticky-form-toolbar>
     </form>

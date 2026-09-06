@@ -4,8 +4,12 @@
 
 @section('content')
     @php($personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null))
-    @php($isApplicant = ! ($activePerson ?? null))
     @php($hasExistingBusinesses = $businesses->isNotEmpty())
+    {{-- Read-only is decided PER FIELD by the controller, on whether the referenced business
+         actually has that value — not on "is a business referenced" alone. Business Name and CI
+         Date are always present on a saved Business Report, so they lock; Main Business Address
+         can genuinely be blank, and when it is the CI types it here and it stays on the Business
+         Check alone. A manual Business Check keeps all three editable. --}}
     <div class="mx-auto w-full max-w-5xl">
     <x-ui.breadcrumb :items="[
         ['label' => 'Client Folder', 'url' => route('client-folders.index')],
@@ -67,36 +71,41 @@
                                 <div class="relative"><x-ui.icon name="user" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><p class="ui-control bg-surface-subtle pl-9">{{ $personName }}</p></div>
                             </div>
                             <div>
-                                <label for="business-check-income-source" class="ui-label">Business / Income Source <span class="text-danger" aria-hidden="true">*</span></label>
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <select id="business-check-income-source" name="income_source_id" class="ui-control min-w-0 flex-1" required data-business-check-income-source-select>
-                                        <option value="">Select {{ $isApplicant ? 'an existing Applicant business' : 'a business' }}</option>
+                                <label for="business-check-income-source" class="ui-label">Business / Income Source</label>
+                                @if($hasExistingBusinesses)
+                                    <select id="business-check-income-source" name="income_source_id" class="ui-control" data-applied-income-source-id="{{ $selectedIncomeSourceId }}" data-business-check-income-source-select>
+                                        {{-- This branch only renders when the exact person actually
+                                             has selectable businesses, so the placeholder simply
+                                             prompts for one. The manual path is what the zero-business
+                                             branch below covers. --}}
+                                        <option value="">Select an existing business</option>
                                         @foreach($businesses as $business)
                                             @php($isCurrentBusiness = $businessCheck && (int) $businessCheck->income_source_id === (int) $business['id'])
                                             @php($alreadyChecked = filled($business['existing_check_id']) && ! $isCurrentBusiness)
-                                            <option value="{{ $business['id'] }}" data-location="{{ $business['location'] }}" data-ci-date="{{ $business['ci_date'] }}" data-report-complete="{{ $business['report_complete'] ? '1' : '0' }}" @disabled($alreadyChecked) @selected(old('income_source_id', $businessCheck?->income_source_id) == $business['id'])>{{ $business['name'] }}{{ $alreadyChecked ? ' — Business Check already exists.' : '' }}</option>
+                                            <option value="{{ $business['id'] }}" data-business-name="{{ $business['name'] }}" data-location="{{ $business['location'] }}" data-ci-date="{{ $business['ci_date'] }}" @disabled($alreadyChecked) @selected((int) $selectedIncomeSourceId === (int) $business['id'])>{{ $business['name'] }}{{ $alreadyChecked ? ' — Business Check already exists.' : '' }}</option>
                                         @endforeach
                                     </select>
-                                    <button type="button" class="inline-flex h-11 shrink-0 items-center gap-1 rounded-control border border-brand-primary bg-brand-soft px-3 text-sm font-semibold text-brand-primary transition hover:bg-brand-primary hover:text-white disabled:cursor-not-allowed disabled:border-ui-border disabled:bg-surface-subtle disabled:text-text-muted" data-business-check-add-new data-modal-open="business-check-quick-add-dialog" @if($hasExistingBusinesses) disabled data-lock-when-existing="true" @endif><span aria-hidden="true">+</span> Add New Business</button>
-                                </div>
-                                @if($hasExistingBusinesses)
-                                    <p class="mt-1.5 text-xs text-text-muted">An existing business is already available. Please select it first to avoid duplicate entries.</p>
-                                    <button type="button" class="mt-1 text-xs font-semibold text-brand-primary underline-offset-2 hover:underline" data-business-check-add-another>Add another business</button>
                                 @else
-                                    <p class="mt-1.5 text-xs text-text-muted" data-business-source-helper>Select an existing business for this person or add one if the Business Report has not been created yet.</p>
+                                    {{-- The one and only message under this field: no Business Report
+                                         availability/pending status, no explanation of what Business
+                                         Check does or does not create. --}}
+                                    <p class="mt-1.5 text-xs text-text-muted" data-business-source-helper>No existing business found. Enter the business details below.</p>
                                 @endif
                                 <x-form.validation-message for="income_source_id" />
                             </div>
                             <div>
+                                <label for="business-check-business-name" class="ui-label">Business Name <span class="text-danger" aria-hidden="true">*</span></label>
+                                <input id="business-check-business-name" name="business_name" type="text" class="ui-control read-only:bg-surface-subtle read-only:text-text-muted" maxlength="255" required placeholder="Enter business name" value="{{ old('business_name', $currentBusinessName) }}" @readonly($businessNameReadOnly) data-business-check-business-name @error('business_name') aria-invalid="true" aria-describedby="business_name-error" @enderror>
+                                <x-form.validation-message for="business_name" />
+                            </div>
+                            <div>
                                 <label for="business-check-location" class="ui-label">Location <span class="text-danger" aria-hidden="true">*</span></label>
-                                <div class="relative"><x-ui.icon name="pin" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><input id="business-check-location" name="location" type="text" class="ui-control pl-9" required placeholder="Select a business, or enter the location" value="{{ old('location', $currentLocation) }}" data-business-check-location @error('location') aria-invalid="true" aria-describedby="location-error" @enderror></div>
-                                <p class="mt-1.5 text-xs text-text-muted">Shared with this business's Business Report — editing it here updates that same address.</p>
+                                <div class="relative"><x-ui.icon name="pin" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><input id="business-check-location" name="location" type="text" class="ui-control pl-9 read-only:bg-surface-subtle read-only:text-text-muted" required placeholder="Enter the business location" value="{{ old('location', $currentLocation) }}" @readonly($locationReadOnly) data-business-check-location @error('location') aria-invalid="true" aria-describedby="location-error" @enderror></div>
                                 <x-form.validation-message for="location" />
                             </div>
                             <div>
                                 <label for="ci_date" class="ui-label">CI Date <span class="text-danger" aria-hidden="true">*</span></label>
-                                <input id="ci_date" name="ci_date" type="date" class="ui-control" required value="{{ old('ci_date', $currentCiDate) }}" data-business-check-ci-date @error('ci_date') aria-invalid="true" aria-describedby="ci_date-error" @enderror>
-                                <p class="mt-1.5 text-xs text-text-muted">Shared with this business's Business Report — editing it here updates that same date.</p>
+                                <input id="ci_date" name="ci_date" type="date" class="ui-control read-only:bg-surface-subtle read-only:text-text-muted" required value="{{ old('ci_date', $currentCiDate) }}" @readonly($ciDateReadOnly) data-business-check-ci-date @error('ci_date') aria-invalid="true" aria-describedby="ci_date-error" @enderror>
                                 <x-form.validation-message for="ci_date" />
                             </div>
                             <div class="sm:col-span-2">
@@ -244,30 +253,4 @@
         </x-slot:footer>
     </x-ui.modal>
 
-    <x-ui.modal id="business-check-quick-add-dialog" title="Add Business" size="max-w-sm" data-quick-add-business-dialog>
-            <p class="mb-3 rounded-control border border-danger/30 bg-danger-soft p-2.5 text-xs text-danger" data-quick-add-business-error hidden></p>
-            <div class="flex flex-col gap-4">
-                <div>
-                    <label for="quick-add-business-name" class="ui-label">Business Name <span class="text-danger" aria-hidden="true">*</span></label>
-                    <input id="quick-add-business-name" type="text" class="ui-control" placeholder="Enter business name" maxlength="255" data-quick-add-business-name>
-                </div>
-                <div>
-                    <label for="quick-add-business-template" class="ui-label">Business Type / Income Source <span class="text-danger" aria-hidden="true">*</span></label>
-                    <select id="quick-add-business-template" class="ui-control" data-quick-add-business-template>
-                        <option value="">Select business type</option>
-                        @foreach($businessTemplates as $template)
-                            <option value="{{ $template->id }}">{{ $template->name }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div>
-                    <label for="quick-add-business-location" class="ui-label">Location <span class="text-danger" aria-hidden="true">*</span></label>
-                    <input id="quick-add-business-location" type="text" class="ui-control" placeholder="Enter location" required data-quick-add-business-location>
-                </div>
-            </div>
-            <x-slot:footer>
-                <button type="button" class="ui-button-secondary" data-modal-close>Cancel</button>
-                <button type="button" class="ui-button-primary" data-quick-add-business-confirm data-url="{{ route('client-folders.income-sources.quick-create', $clientFolder) }}">Add &amp; Continue</button>
-            </x-slot:footer>
-    </x-ui.modal>
 @endsection

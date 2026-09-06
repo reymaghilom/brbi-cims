@@ -231,22 +231,7 @@
         document.addEventListener('DOMContentLoaded', () => window.initBusinessHistoryToggle());
     </script>
 
-    <x-ui.modal id="add-business-template-dialog" title="Add Business" description="Select a business template to continue." size="max-w-lg" data-add-business-dialog>
-        <div>
-            <label for="add-business-template-select" class="ui-label">Business Template <span class="text-danger" aria-hidden="true">*</span><span class="sr-only">required</span></label>
-            <select id="add-business-template-select" class="ui-control" data-add-business-template-select>
-                <option value="">Select a business template</option>
-                @foreach($businessTemplates as $template)
-                    <option value="{{ $template->id }}">{{ $template->name }}</option>
-                @endforeach
-            </select>
-            <p class="mt-2 flex items-start gap-1.5 text-sm font-medium text-danger" role="alert" data-add-business-template-error hidden><x-ui.icon name="warning" size="mt-0.5 size-4" />Please select a business template to continue.</p>
-        </div>
-        <x-slot:footer>
-            <button type="button" class="ui-button-secondary" data-modal-close>Cancel</button>
-            <button type="button" class="ui-button-primary" data-add-business-next>Next</button>
-        </x-slot:footer>
-    </x-ui.modal>
+    <x-ui.business-template-modal :business-templates="$businessTemplates" :used-template-ids="$usedTemplateIds ?? []" />
 
     <a id="business-report-trigger" hidden data-modal-open="business-report-dialog" data-business-report-url="{{ route('client-folders.income-sources.index', [$clientFolder] + $personParams) }}" data-business-report-base-url="{{ route('client-folders.income-sources.index', [$clientFolder] + $personParams) }}"></a>
 

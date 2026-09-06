@@ -29,6 +29,14 @@ class ResidenceBusinessCheckReportController extends Controller
             'title' => $this->reportTitle($photoSections, $personName),
             'clientFolder' => $clientFolder,
             'personParams' => ActivePersonResolver::queryParams($activePerson),
+            // Carried through so the preview's own Download PDF / Download Word actions can re-post
+            // the exact same selection to the existing export endpoints — no new routes, and the
+            // person scope travels with it so a Co-Maker preview can only export that Co-Maker.
+            'exportSelection' => [
+                'co_maker_id' => $activePerson?->id,
+                'residence_check_ids' => array_map('intval', $request->validated('residence_check_ids') ?? []),
+                'business_check_ids' => array_map('intval', $request->validated('business_check_ids') ?? []),
+            ],
         ]);
     }
 

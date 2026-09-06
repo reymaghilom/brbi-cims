@@ -850,8 +850,10 @@ class CibiReportTest extends TestCase
             ->assertDontSee('Print Preview')
             ->assertDontSee('Download PDF')
             ->assertDontSee('Download Excel')
-            ->assertSee('data-cibi-submit data-cibi-submit-mode="update">Update</button>', false)
-            ->assertDontSee('data-cibi-submit-mode="save">Save</button>', false)
+            ->assertSee('data-cibi-submit data-cibi-submit-mode="update">', false)
+            ->assertSee('Update CIBI Report')
+            ->assertDontSee('Save CIBI Report')
+            ->assertDontSee('data-cibi-submit-mode="save"', false)
             ->assertDontSee('data-cibi-state-badge', false)
             ->assertDontSee('data-cibi-state-label', false);
     }
@@ -868,7 +870,7 @@ class CibiReportTest extends TestCase
             ->assertJsonPath('return_url', route('client-folders.show', $folder))
             ->assertJsonPath('report.state', 'complete')
             ->assertJsonPath('report.was_completed', false)
-            ->assertJsonPath('report.submit_label', 'Update')
+            ->assertJsonPath('report.submit_label', 'Update CIBI Report')
             ->assertJsonPath('report.revision', 1)
             ->assertJsonPath('report.institutions_checked', 1)
             ->assertJsonPath('report.institutions_declared', 1)
@@ -944,7 +946,7 @@ class CibiReportTest extends TestCase
             ->assertJsonPath('return_url', route('client-folders.show', $folder))
             ->assertJsonPath('report.state', 'complete')
             ->assertJsonPath('report.was_completed', true)
-            ->assertJsonPath('report.submit_label', 'Update')
+            ->assertJsonPath('report.submit_label', 'Update CIBI Report')
             ->assertJsonPath('report.revision', 5);
 
         $this->assertDatabaseCount('cibi_reports', 1);

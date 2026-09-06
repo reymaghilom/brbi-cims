@@ -61,8 +61,8 @@ class StoreCiActivityRequest extends FormRequest
                         return;
                     }
 
-                    if (ActivityDefinition::isMandatoryDefaultName($value)) {
-                        $fail('Barangay Check and Neighbor Check are added automatically and cannot be added manually.');
+                    if (ActivityDefinition::isCanonicalBuiltInName($value)) {
+                        $fail('This name is reserved for a built-in Activity Type.');
 
                         return;
                     }

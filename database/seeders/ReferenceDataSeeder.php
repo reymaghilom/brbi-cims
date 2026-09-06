@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Actions\ClientFolders\EnsureCanonicalActivityDefinitions;
 use App\Models\ActivityDefinition;
 use App\Models\CompletionRule;
 use App\Models\IncomeSourceTemplate;
@@ -12,10 +13,10 @@ class ReferenceDataSeeder extends Seeder
 {
     public function run(): void
     {
+        app(EnsureCanonicalActivityDefinitions::class)->execute();
+
         foreach ([
             ['residence_check', 'Residence Check', false], ['business_check', 'Business Check', false],
-            ['barangay_check', 'Barangay Check', true], ['neighbor_check', 'Neighbor Check', true],
-            ['asset_check', 'Asset Check', true], ['bank_coop_check', 'Bank / Coop Check', true],
         ] as $index => [$code, $name, $isActive]) {
             ActivityDefinition::updateOrCreate(['code' => $code], ['name' => $name, 'sort_order' => $index + 1, 'is_required' => true, 'is_active' => $isActive]);
         }

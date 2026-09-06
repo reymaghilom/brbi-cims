@@ -23,7 +23,7 @@ th { background: #e7e7e7; font-size: 7.5pt; text-align: left; } .details td:nth-
 .map-photo-frame { text-align: center; overflow: hidden; } .map-photo-frame img { max-width: 100%; max-height: 10.6in; }
 .google-map-page { page-break-inside: avoid; }
 .footer-note { margin-top: .1in; text-align: right; color: #555; font-size: 7pt; }
-@unless($pdfMode) @media screen { body { background: #e5e7eb; } .preview-toolbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items:center; justify-content: space-between; gap: 12px; padding: 10px 18px; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-family:Arial,Helvetica,system-ui,sans-serif; font-size: 10pt; } .preview-brand { display:flex; min-width:0; align-items:center; color:#1e3a8a; } .preview-brand img { display:block; width:180px; max-width:42vw; height:38px; object-fit:contain; object-position:left center; } .preview-toolbar a,.preview-toolbar button { min-height: 40px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 14px; background: #fff; color: #1e3a8a; font-weight: 600; text-decoration: none; cursor: pointer; } .preview-toolbar button { background: #1e3a8a; color:#fff; } .preview-toolbar button:hover { background:#172f70; } .report-sheet { width: 8.5in; min-height: 13in; margin: .3in auto; padding: .45in; background:#fff; box-shadow:0 10px 30px rgba(15,23,42,.18); } } @endunless
+@unless($pdfMode) @media screen { body { background: #e5e7eb; } .preview-toolbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items:center; justify-content: space-between; gap: 12px; padding: 10px 18px; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-family:Arial,Helvetica,system-ui,sans-serif; font-size: 10pt; } .preview-brand { display:flex; min-width:0; align-items:center; color:#1e3a8a; } .preview-brand img { display:block; width:180px; max-width:42vw; height:38px; object-fit:contain; object-position:left center; } .preview-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; } .preview-toolbar a,.preview-toolbar button { min-height: 40px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 14px; background: #fff; color: #1e3a8a; font-weight: 600; text-decoration: none; cursor: pointer; } .preview-toolbar .preview-action { display:inline-flex; align-items:center; justify-content:center; gap:7px; white-space:nowrap; } .preview-toolbar .preview-action svg { width:16px; height:16px; } .preview-toolbar button,.preview-toolbar .preview-primary { border-color:#1e3a8a; background:#1e3a8a; color:#fff; } .preview-toolbar button:hover,.preview-toolbar .preview-primary:hover { background:#172f70; } .preview-toolbar a:hover { border-color:#1e3a8a; background:#eff6ff; } .preview-toolbar a:focus-visible,.preview-toolbar button:focus-visible { outline:3px solid rgba(37,99,235,.3); outline-offset:2px; } .report-sheet { width: 8.5in; min-height: 13in; margin: .3in auto; padding: .45in; background:#fff; box-shadow:0 10px 30px rgba(15,23,42,.18); } } @endunless
 @media print { .preview-toolbar { display:none; } .report-sheet { margin:0; padding:0; box-shadow:none; } }
 @if(!$pdfMode && ($document['type'] ?? null) === 'residence_business_photo')
 {{-- Residence & Business Photo Report only, Web Preview only: .official-report-page (used
@@ -42,7 +42,27 @@ th { background: #e7e7e7; font-size: 7.5pt; text-align: left; } .details td:nth-
 }
 @endif
 </style>@if(($document['type'] ?? null) === 'cibi') @include('reports.official.cibi-styles') @elseif(($document['type'] ?? null) === 'business_income_source') @include('reports.official.business-styles') @endif</head><body>
-@unless($pdfMode)<nav class="preview-toolbar" aria-label="Report preview actions">@if(in_array($document['type'] ?? null, ['cibi', 'business_income_source'], true))<div class="preview-brand"><img src="{{ asset('assets/branding/binhi-rural-bank-wordmark.png') }}" alt="Binhi Rural Bank Inc."></div><div><a href="{{ ($document['type'] ?? null) === 'cibi' ? route('client-folders.show', $clientFolder) : route('client-folders.generated-reports.index', $clientFolder) }}">Back to Reports</a> <button type="button" onclick="window.print()">Print</button></div>@else<div><strong>Read-only Report Preview</strong><br><span>8.5 × 13 inches · saved data only</span></div><div><a href="{{ route('client-folders.generated-reports.index', $clientFolder) }}">Back to Reports</a> <button type="button" onclick="window.print()">Print</button></div>@endif</nav>@endunless
+@unless($pdfMode)
+    @if(($document['type'] ?? null) === 'business_income_source')
+        <form id="business-preview-export-excel" method="POST" action="{{ route('client-folders.income-sources.export-excel', [$clientFolder, $source] + $personParams) }}" hidden>
+            @csrf
+            @if(array_key_exists('co_maker_id', $personParams))<input type="hidden" name="co_maker_id" value="{{ $personParams['co_maker_id'] }}">@endif
+        </form>
+        <nav class="preview-toolbar" aria-label="Business Report preview actions">
+            <div class="preview-brand"><img src="{{ asset('assets/branding/binhi-rural-bank-wordmark.png') }}" alt="Binhi Rural Bank Inc."></div>
+            <div class="preview-actions">
+                <a href="{{ route('client-folders.generated-reports.index', [$clientFolder] + $personParams) }}" class="preview-action">Back to Reports</a>
+                <a href="{{ route('client-folders.income-sources.export-pdf', [$clientFolder, $source] + $personParams) }}" class="preview-action preview-primary" aria-label="Download PDF"><x-ui.icon name="file-pdf" />Download PDF</a>
+                <button type="submit" form="business-preview-export-excel" class="preview-action" aria-label="Download Excel"><x-ui.icon name="spreadsheet" />Download Excel</button>
+                <button type="button" class="preview-action" onclick="window.print()" aria-label="Print current Business Report"><x-ui.icon name="printer" />Print</button>
+            </div>
+        </nav>
+    @elseif(($document['type'] ?? null) === 'cibi')
+        <nav class="preview-toolbar" aria-label="Report preview actions"><div class="preview-brand"><img src="{{ asset('assets/branding/binhi-rural-bank-wordmark.png') }}" alt="Binhi Rural Bank Inc."></div><div class="preview-actions"><a href="{{ route('client-folders.show', $clientFolder) }}">Back to Reports</a><button type="button" onclick="window.print()">Print</button></div></nav>
+    @else
+        <nav class="preview-toolbar" aria-label="Report preview actions"><div><strong>Read-only Report Preview</strong><br><span>8.5 × 13 inches · saved data only</span></div><div class="preview-actions"><a href="{{ route('client-folders.generated-reports.index', $clientFolder) }}">Back to Reports</a><button type="button" onclick="window.print()">Print</button></div></nav>
+    @endif
+@endunless
 <main class="report-sheet">
 @if(($document['type'] ?? null) === 'cibi')
 @include('reports.official.cibi')

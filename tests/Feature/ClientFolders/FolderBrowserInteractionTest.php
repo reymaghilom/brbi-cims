@@ -130,6 +130,91 @@ class FolderBrowserInteractionTest extends TestCase
         $this->assertTrue(ClientFolder::withTrashed()->findOrFail($folder->id)->trashed());
     }
 
+    public function test_the_search_box_offers_an_accessible_autosuggest_beside_the_live_grid(): void
+    {
+        $ci = User::factory()->create();
+        ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'DELA CRUZ, JUAN']);
+
+        $html = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
+
+        // The combobox sits on the existing live-search input, which keeps its own hooks intact.
+        foreach (['data-client-search', 'data-client-search-input', 'data-client-search-clear',
+            'data-client-search-suggestions', 'role="combobox"', 'aria-expanded="false"',
+            'aria-controls="folder-search-suggestions"', 'aria-autocomplete="list"', 'role="listbox"'] as $hook) {
+            $this->assertStringContainsString($hook, $html, $hook.' is part of the search control.');
+        }
+        // Both endpoints are wired: one keeps the grid moving, the other feeds the dropdown.
+        $this->assertStringContainsString(e(route('client-folders.live-search')), $html);
+        $this->assertStringContainsString(e(route('client-folders.suggestions')), $html);
+    }
+
+    public function test_typing_filters_the_grid_and_lists_suggestions_from_the_same_term(): void
+    {
+        $ci = User::factory()->create();
+        $colleague = User::factory()->create();
+        ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'DELA CRUZ, JUAN']);
+        ClientFolder::factory()->create(['assigned_ci_id' => $colleague->id, 'display_name' => 'DELA CRUZ, MARIA']);
+        ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'SANTOS, PEDRO']);
+        $recycled = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'DELA CRUZ, RECYCLED']);
+        $recycled->delete();
+
+        // The grid filters on the half-typed name, with no suggestion selected.
+        $grid = $this->actingAs($ci)
+            ->get(route('client-folders.live-search', ['search' => 'DELA', 'context' => 'client_folders']))
+            ->assertOk()->getContent();
+        $this->assertStringContainsString('DELA CRUZ, JUAN', $grid);
+        $this->assertStringContainsString('DELA CRUZ, MARIA', $grid, 'The shared workspace is included.');
+        $this->assertStringNotContainsString('SANTOS, PEDRO', $grid);
+        $this->assertStringNotContainsString('DELA CRUZ, RECYCLED', $grid, 'A recycled folder never returns.');
+
+        // The very same term drives the dropdown.
+        $suggestions = $this->actingAs($ci)
+            ->getJson(route('client-folders.suggestions', ['q' => 'DELA']))
+            ->assertOk()->json('suggestions');
+        $this->assertSame(['DELA CRUZ, JUAN', 'DELA CRUZ, MARIA'], $suggestions);
+        $this->assertNotContains('DELA CRUZ, RECYCLED', $suggestions);
+        $this->assertNotContains('SANTOS, PEDRO', $suggestions);
+
+        // Selecting a suggestion is only a shortcut to the exact name the grid already accepts.
+        $selected = $this->actingAs($ci)
+            ->get(route('client-folders.live-search', ['search' => 'DELA CRUZ, JUAN', 'context' => 'client_folders']))
+            ->assertOk()->getContent();
+        $this->assertStringContainsString('DELA CRUZ, JUAN', $selected);
+        $this->assertStringNotContainsString('DELA CRUZ, MARIA', $selected);
+    }
+
+    public function test_two_folders_sharing_a_name_both_survive_a_search(): void
+    {
+        $ci = User::factory()->create();
+        $first = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'DELA CRUZ, JUAN']);
+        $second = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'DELA CRUZ, JUAN']);
+
+        $grid = $this->actingAs($ci)
+            ->get(route('client-folders.live-search', ['search' => 'DELA CRUZ, JUAN', 'context' => 'client_folders']))
+            ->assertOk()->getContent();
+
+        // Two distinct folders, never collapsed into one because their names match.
+        $this->assertStringContainsString((string) $first->id, $grid);
+        $this->assertStringContainsString((string) $second->id, $grid);
+        $this->assertNotSame($first->id, $second->id);
+        $this->assertSame(2, ClientFolder::query()->where('display_name', 'DELA CRUZ, JUAN')->count());
+    }
+
+    public function test_searching_and_suggesting_never_touch_a_folder_record(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'DELA CRUZ, JUAN']);
+        $before = ClientFolder::query()->count();
+        $touched = $folder->updated_at;
+
+        $this->actingAs($ci)->get(route('client-folders.live-search', ['search' => 'DE', 'context' => 'client_folders']))->assertOk();
+        $this->actingAs($ci)->getJson(route('client-folders.suggestions', ['q' => 'DE']))->assertOk();
+        $this->actingAs($ci)->get(route('client-folders.live-search', ['search' => '', 'context' => 'client_folders']))->assertOk();
+
+        $this->assertSame($before, ClientFolder::query()->count());
+        $this->assertTrue($touched->equalTo($folder->fresh()->updated_at), 'Searching is a read.');
+    }
+
     public function test_ajax_actions_allow_any_ci_to_act_on_a_folder_assigned_to_another_ci(): void
     {
         $assigned = User::factory()->create();

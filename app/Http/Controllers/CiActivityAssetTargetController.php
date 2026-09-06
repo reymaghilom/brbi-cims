@@ -84,6 +84,40 @@ class CiActivityAssetTargetController extends Controller
         return $this->redirectToDetail($clientFolder, $ciActivity, 'Assessor target marked as completed.', $watermark);
     }
 
+    /**
+     * Bulk "Mark Selected as Completed", the exact counterpart of
+     * CiActivityBankTargetController::completeMany() — same validation shape, same per-target
+     * completion action, same history watermark, so one Select All can never take a shortcut the
+     * single-target route does not already allow.
+     *
+     * Every id is re-fetched through this activity's own relation and the count is compared, so a
+     * forged id belonging to another activity, another person or another folder aborts the whole
+     * request rather than silently completing a subset.
+     */
+    public function completeMany(Request $request, ClientFolder $clientFolder, CiActivity $ciActivity, SaveCiActivityAssetTarget $save): RedirectResponse
+    {
+        Gate::authorize('update', $clientFolder);
+        Gate::authorize('update', $ciActivity);
+        $validated = $request->validate([
+            'co_maker_id' => ActivePersonResolver::rule($clientFolder),
+            'asset_target_ids' => ['required', 'array', 'min:1'],
+            'asset_target_ids.*' => ['integer'],
+        ]);
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $validated['co_maker_id'] ?? null);
+        $this->assertExactAssetActivity($clientFolder, $ciActivity, $activePerson?->id);
+
+        $ids = array_values(array_unique(array_map('intval', $validated['asset_target_ids'])));
+        $targets = $ciActivity->assetTargets()->whereKey($ids)->get();
+        abort_unless($targets->count() === count($ids), 404);
+
+        $watermark = CiActivityHistoryFeed::watermark();
+        foreach ($targets as $target) {
+            $save->complete($request->user(), $clientFolder, $ciActivity, $target);
+        }
+
+        return $this->redirectToDetail($clientFolder, $ciActivity, 'Selected assessor targets marked as completed.', $watermark);
+    }
+
     private function authorizeMutation(Request $request, ClientFolder $folder, CiActivity $activity, CiActivityAssetTarget $target): void
     {
         Gate::authorize('update', $folder);

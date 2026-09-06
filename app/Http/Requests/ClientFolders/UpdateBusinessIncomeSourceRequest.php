@@ -59,11 +59,14 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             'source_name' => [Rule::requiredIf(! $this->preservesMissingSourceField('source_name')), 'nullable', 'string', 'max:255'], 'business_name' => [Rule::requiredIf(! $this->preservesMissingReportField('business_name')), 'nullable', 'string', 'max:255'],
             'contribution_rank' => ['nullable', 'integer', 'min:1', 'max:65535'], 'estimated_monthly_contribution' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'], 'is_primary' => ['nullable', 'boolean'],
             'branch_name' => ['nullable', 'string', 'max:255'], 'account_officer_name' => ['nullable', 'string', 'max:255'],
-            // "Start Date of CI" is the authoritative shared CI Date also used by Business Check
-            // (see BusinessCheckController::form()'s $currentCiDate and SaveBusinessCheck's
-            // write-back) — required under the same condition as main_business_address below,
-            // since a business needing a full profile can't be considered checked without either.
-            'start_date' => [Rule::requiredIf($requiresProfile && ! $this->preservesMissingReportField('start_date')), 'nullable', 'date', 'before_or_equal:today'], 'submitted_date' => ['nullable', 'date', 'before_or_equal:today'],
+            // "Start Date of CI" is the authoritative CI Date of the Business Report, and the one
+            // Business Check prefills from (see BusinessCheckController::form()'s $currentCiDate).
+            // It is required for EVERY active Business template without exception — deliberately
+            // NOT gated on $requiresProfile, the template type, or whether the template renders a
+            // Business Name input: a Business Report has no meaning without the date the CI was
+            // actually conducted. The only relaxation left is the companion-CI-only save, which
+            // submits no report fields at all (see preservesMissingReportField()).
+            'start_date' => [Rule::requiredIf(! $this->preservesMissingReportField('start_date')), 'nullable', 'date', 'before_or_equal:today'], 'submitted_date' => ['nullable', 'date', 'before_or_equal:today'],
             'report_category' => [Rule::requiredIf(! $this->preservesMissingReportField('report_category')), 'nullable', 'string', 'max:80'], 'main_business_address' => [Rule::requiredIf($requiresProfile && ! $this->preservesMissingReportField('main_business_address')), 'nullable', 'string', 'max:10000'],
             'previous_business_address' => ['nullable', 'string', 'max:10000'], 'previous_business_address_length_of_stay' => ['nullable', 'string', 'max:100'], 'reason_for_transfer' => ['nullable', 'string', 'max:10000'],
             'registered_owner' => [Rule::requiredIf($complete && $requiresProfile && ! $ownerOptional && ! in_array('registered_owner', $hiddenProfileFields, true) && ! $this->preservesMissingReportField('registered_owner')), 'nullable', 'string', 'max:255'], 'relationship_to_borrower' => ['nullable', 'string', 'max:255'],

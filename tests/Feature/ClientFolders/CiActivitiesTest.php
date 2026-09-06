@@ -1506,7 +1506,7 @@ class CiActivitiesTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $systemDefinition = ActivityDefinition::query()->where('is_active', true)->where('code', 'not like', 'custom%')->firstOrFail();
+        $systemDefinition = ActivityDefinition::query()->where('code', ActivityDefinition::ASSET_CHECK_CODE)->firstOrFail();
         $customDefinition = ActivityDefinition::factory()->create([
             'name' => 'Supplier Follow-up',
             'code' => ActivityDefinition::CUSTOM_CODE_PREFIX.'supplier_follow_up',

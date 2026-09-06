@@ -80,12 +80,27 @@ class ActivityDefinition extends Model
 
     public static function isMandatoryDefaultName(string $name): bool
     {
-        $key = Str::of($name)
+        $key = self::normalizedBuiltInNameKey($name);
+
+        return in_array($key, ['barangay check', 'neighbor check'], true);
+    }
+
+    public static function isCanonicalBuiltInName(string $name): bool
+    {
+        return in_array(self::normalizedBuiltInNameKey($name), [
+            'barangay check',
+            'neighbor check',
+            'asset check',
+            'bank coop check',
+        ], true);
+    }
+
+    private static function normalizedBuiltInNameKey(string $name): string
+    {
+        return Str::of($name)
             ->lower()
             ->replaceMatches('/[^\pL\pN]+/u', ' ')
             ->squish()
             ->toString();
-
-        return in_array($key, ['barangay check', 'neighbor check'], true);
     }
 }

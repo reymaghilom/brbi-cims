@@ -19,6 +19,17 @@ enum OfficialReportType: string
         };
     }
 
+    /** Compact label for dense listings (the Reports table badge); label() stays the full title. */
+    public function shortLabel(): string
+    {
+        return match ($this) {
+            self::Cibi => 'CIBI',
+            self::BusinessIncomeSource => 'Business Report',
+            self::GeneralIncomeSource => 'Declared Income',
+            self::ResidenceBusinessPhoto => 'Residence & Business',
+        };
+    }
+
     public function requiresIncomeSource(): bool
     {
         return $this === self::BusinessIncomeSource || $this === self::GeneralIncomeSource;

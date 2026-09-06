@@ -12,12 +12,16 @@ use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\ResidenceCheck;
 use App\Services\ClientFolders\CiParticipantService;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 class OfficialReportDataBuilder
 {
-    public function __construct(private readonly CiParticipantService $participants) {}
+    public function __construct(
+        private readonly CiParticipantService $participants,
+        private readonly CiTeamDocumentStorage $documents,
+    ) {}
 
     /** @return array<string, mixed> */
     public function build(ClientFolder $folder, OfficialReportType $type, ?IncomeSource $source = null, ?CoMaker $activePerson = null): array
@@ -571,12 +575,36 @@ class OfficialReportDataBuilder
         return ['public_id' => $publicId, 'resource_type' => $resourceType, 'delivery_type' => $deliveryType];
     }
 
+    /**
+     * Turns a stored media path into the real file on disk that Dompdf/PhpWord can embed.
+     *
+     * Location is resolved by CiTeamDocumentStorage::evidenceDisk(), the same authority every other
+     * reader already uses: a legacy `client-media/...` path resolves against the configured media
+     * disk, anything else against the CI Team document tree (which keeps its own legacy fallback).
+     * Hard-coding one root here is what made locally stored Residence/Business pictures and map
+     * screenshots silently vanish from PDF and DOCX once evidence moved into that tree — the path
+     * never matched, so the item was dropped instead of embedded.
+     */
     private function safeMediaPath(?string $path): ?string
     {
         if (! filled($path) || str_contains($path, '..') || preg_match('/^[a-z]+:\/\//i', $path)) {
             return null;
         }
-        $absolute = storage_path('app/private/'.ltrim(str_replace('\\', '/', $path), '/'));
+
+        $relative = ltrim(str_replace('\\', '/', $path), '/');
+
+        try {
+            $disk = $this->documents->evidenceDisk($relative);
+        } catch (\RuntimeException) {
+            // evidenceDisk() rejects traversal and absolute paths outright; treat that as no media.
+            return null;
+        }
+
+        if (! $disk->fileExists($relative)) {
+            return null;
+        }
+
+        $absolute = $disk->path($relative);
 
         return is_file($absolute) ? $absolute : null;
     }
