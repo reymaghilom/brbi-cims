@@ -22,6 +22,19 @@ class ClientFolderContentsTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_add_co_maker_modal_offers_iconed_cancel_and_save_actions(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '/<button type="button" data-modal-close class="ui-button-secondary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>\s*<button type="submit" form="co-maker-form" class="ui-button-primary" data-co-maker-submit><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Save Co-Maker<\/button>/s',
+            $content,
+        );
+    }
+
     public function test_administrator_and_any_ci_can_open_any_active_folder(): void
     {
         $administrator = User::factory()->administrator()->create();

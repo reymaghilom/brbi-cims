@@ -40,16 +40,10 @@
         <section class="ui-panel p-4 sm:p-5 lg:p-6" aria-labelledby="asset-targets-title">
             <div class="flex flex-col gap-3 border-b border-ui-border pb-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 id="asset-targets-title" class="ui-section-title">Assessor Offices</h2><p class="mt-1 text-sm text-text-muted">Each office keeps its own status, schedule, remarks, and updater.</p></div><div class="w-fit rounded-full bg-brand-soft px-3 py-1.5 text-sm font-bold text-brand-primary">{{ $completedCount }} of {{ $targetCount }} Completed</div></div>
             @if($targetCount > 0)
-                {{-- Same bulk-completion panel the Bank / Coop Check already uses: one Select All that
-                     only ever reaches this activity's own still-incomplete targets, a live count, and a
-                     confirm step before anything is written. Already-completed rows are disabled, so
-                     Select All can never re-complete or disturb them. --}}
-                @php
-                    $incompleteTargetCount = $targetCount - $completedCount;
-                @endphp
+                @php $incompleteTargetCount = $targetCount - $completedCount; @endphp
                 <div class="mt-3 flex flex-col gap-2.5 border-b border-ui-border pb-3 sm:flex-row sm:items-center sm:justify-between" data-asset-bulk-panel>
                     <label class="inline-flex items-center gap-2 text-sm font-semibold text-text-main">
-                        <input type="checkbox" class="size-4 rounded border-ui-border-strong text-success focus:ring-success" data-asset-bulk-select-all @disabled($incompleteTargetCount === 0)>
+                        <input type="checkbox" class="size-5 shrink-0 rounded border-ui-border-strong text-success focus:ring-success focus:ring-offset-2 disabled:cursor-default disabled:opacity-100" data-asset-bulk-select-all aria-label="Select all pending assessor targets" @disabled($incompleteTargetCount === 0)>
                         Select All
                     </label>
                     <div class="flex items-center gap-3">
@@ -57,7 +51,7 @@
                         <button type="button" class="ui-button-primary-compact" data-asset-bulk-open-confirm disabled><x-ui.icon name="check" size="size-3.5" />Mark Selected as Completed</button>
                     </div>
                 </div>
-                <form method="POST" action="{{ route('client-folders.activities.asset-targets.complete-many', [$clientFolder, $activity]) }}" data-asset-bulk-form>
+                <form method="POST" action="{{ route('client-folders.activities.asset-targets.complete-many', [$clientFolder, $activity]) }}" data-asset-target-form data-asset-bulk-form hidden>
                     @csrf
                     @method('PATCH')
                     <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
@@ -69,23 +63,22 @@
                     <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-asset-bulk-confirm-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-asset-bulk-confirm-submit><x-ui.icon name="check" size="size-4" />Mark as Completed</button></div>
                 </dialog>
             @endif
-            <div class="mt-4 grid gap-3 lg:grid-cols-2" data-asset-target-list>
+            <ul class="mt-3 divide-y divide-ui-border overflow-hidden rounded-control border border-ui-border" data-asset-target-list>
                 @forelse($activity->assetTargets as $target)
                     @php
                         $localSchedule = $target->scheduled_at?->timezone(config('cims.display_timezone'));
                         $targetCompleted = $target->status === App\Enums\ActivityStatus::Completed;
                         $targetLabel = $target->assessorLabel().' — '.$target->office_location;
                     @endphp
-                    <article class="min-w-0 rounded-card border border-ui-border bg-surface p-4 shadow-sm" data-asset-target-card="{{ $target->id }}">
-                        <div class="flex items-start gap-3">
-                            <label class="mt-0.5 inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-control has-[:disabled]:cursor-default" title="{{ $targetCompleted ? $targetLabel.' is completed' : 'Mark '.$targetLabel.' as completed' }}">
-                                <input type="checkbox" class="ci-completion-checkbox" data-asset-bulk-target="{{ $target->id }}" aria-label="{{ $targetCompleted ? $targetLabel.' is completed' : 'Mark '.$targetLabel.' as completed' }}" @checked($targetCompleted) @disabled($targetCompleted)>
-                            </label>
-                            <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><h3 class="break-words text-base font-bold text-brand-sidebar">{{ $target->assessorLabel() }}</h3><p class="mt-0.5 break-words text-sm text-text-muted">{{ $target->office_location }}</p></div><span class="inline-flex shrink-0 items-center gap-1">@if($targetCompleted)<x-ui.icon name="check-circle" size="size-4 text-success" />@endif<x-ui.status-badge :status="$target->status" /></span></div></div>
+                    <li class="flex items-start gap-3 bg-surface px-3 py-2.5 sm:items-center" data-asset-target-card="{{ $target->id }}">
+                        <input type="checkbox" class="mt-0.5 size-5 shrink-0 rounded border-ui-border-strong text-success focus:ring-success focus:ring-offset-2 disabled:cursor-default disabled:opacity-100 sm:mt-0" data-asset-bulk-target="{{ $target->id }}" aria-label="{{ $targetCompleted ? $targetLabel.' is completed' : 'Select '.$targetLabel.' for bulk completion' }}" @checked($targetCompleted) @disabled($targetCompleted)>
+                        <div class="min-w-0 flex-1">
+                            <p class="break-words text-sm font-bold text-brand-sidebar">{{ $target->assessorLabel() }} <span class="font-normal text-text-muted">&mdash; {{ $target->office_location }}</span></p>
+                            @if($localSchedule)<p class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-text-muted"><x-ui.icon name="calendar" size="size-3.5" />{{ $localSchedule->format('M j, Y') }} <span>&middot; {{ $target->scheduled_has_time ? $localSchedule->format('g:i A') : 'No specific time' }}</span></p>@elseif(in_array($target->status, [App\Enums\ActivityStatus::Scheduled, App\Enums\ActivityStatus::FollowUp], true))<p class="mt-1 text-xs text-text-muted">No date set</p>@endif
+                            @if($target->remarks)<p class="mt-1 truncate text-xs text-text-muted" title="{{ $target->remarks }}">{{ $target->remarks }}</p>@endif
                         </div>
-                        @if($localSchedule)<p class="mt-3 flex flex-wrap items-center gap-1.5 text-sm font-semibold text-text-main"><x-ui.icon name="calendar" size="size-4 text-text-muted" />{{ $localSchedule->format('M j, Y') }} <span class="font-normal text-text-muted">· {{ $target->scheduled_has_time ? $localSchedule->format('g:i A') : 'No specific time' }}</span></p>@elseif(in_array($target->status, [App\Enums\ActivityStatus::Scheduled, App\Enums\ActivityStatus::FollowUp], true))<p class="mt-3 text-sm text-text-muted">No date set</p>@endif
-                        @if($target->remarks)<p class="mt-3 whitespace-pre-line break-words text-sm leading-6 text-text-muted">{{ $target->remarks }}</p>@endif
-                        <div class="mt-4 flex items-center justify-end border-t border-ui-border pt-3">
+                        <x-ui.status-badge :status="$target->status" class="shrink-0" />
+                        <div class="shrink-0">
                             <x-ui.context-menu :label="'Actions for '.$targetLabel">
                                 <x-slot:trigger><span class="ui-dots-trigger !size-8"><x-ui.icon name="more-vertical" size="size-4" /></span></x-slot:trigger>
                                 <button type="button" role="menuitem" class="client-folder-menu-item" data-asset-modal-open="edit-asset-target-{{ $target->id }}"><x-ui.icon name="edit" size="size-4" class="text-text-muted" />Edit Asset Check</button>
@@ -94,11 +87,11 @@
                                 <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-asset-modal-open="delete-asset-target-{{ $target->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
                             </x-ui.context-menu>
                         </div>
-                    </article>
+                    </li>
                 @empty
-                    <div class="rounded-control border border-dashed border-ui-border-strong bg-surface-subtle p-6 text-center lg:col-span-2"><p class="font-semibold text-text-main">No assessor targets yet.</p><p class="mt-1 text-sm text-text-muted">The Asset Check parent remains Pending until an assessor is added.</p></div>
+                    <li class="bg-surface-subtle p-6 text-center"><p class="font-semibold text-text-main">No assessor targets yet.</p><p class="mt-1 text-sm text-text-muted">The Asset Check parent remains Pending until an assessor is added.</p></li>
                 @endforelse
-            </div>
+            </ul>
         </section>
 
         <dialog id="add-asset-target" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45">
@@ -122,13 +115,9 @@
             };
             document.querySelectorAll('[data-asset-target-form]').forEach((form) => bind(form));
 
-            // Selection panel, the exact counterpart of the Bank / Coop one: Select All reaches only
-            // the still-incomplete targets rendered for THIS activity and person, individual ticks
-            // keep it in sync (including the indeterminate half-state), and the confirm step posts
-            // the chosen ids to the activity's own complete-many endpoint.
             const bulkPanel = document.querySelector('[data-asset-bulk-panel]');
             if (bulkPanel) {
-                const eligibleTargets = () => [...document.querySelectorAll('[data-asset-bulk-target]')]
+                const targets = () => [...document.querySelectorAll('[data-asset-bulk-target]')]
                     .filter((target) => target instanceof HTMLInputElement && ! target.disabled);
 
                 const syncBulkPanel = () => {
@@ -137,11 +126,14 @@
                     const openConfirm = bulkPanel.querySelector('[data-asset-bulk-open-confirm]');
                     if (!(selectAll instanceof HTMLInputElement)) return;
 
-                    const eligible = eligibleTargets();
+                    const checkboxTargets = [...document.querySelectorAll('[data-asset-bulk-target]')]
+                        .filter((target) => target instanceof HTMLInputElement);
+                    const eligible = targets();
                     const selected = eligible.filter((target) => target.checked);
+                    const checked = checkboxTargets.filter((target) => target.checked);
 
-                    selectAll.checked = eligible.length > 0 && selected.length === eligible.length;
-                    selectAll.indeterminate = selected.length > 0 && selected.length < eligible.length;
+                    selectAll.checked = checkboxTargets.length > 0 && checked.length === checkboxTargets.length;
+                    selectAll.indeterminate = checked.length > 0 && checked.length < checkboxTargets.length;
                     if (counter instanceof HTMLElement) counter.textContent = `${selected.length} selected`;
                     if (openConfirm instanceof HTMLButtonElement) openConfirm.disabled = selected.length === 0;
                 };
@@ -149,31 +141,27 @@
                 bulkPanel.querySelector('[data-asset-bulk-select-all]')?.addEventListener('change', (event) => {
                     const selectAll = event.target;
                     if (!(selectAll instanceof HTMLInputElement)) return;
-                    eligibleTargets().forEach((target) => { target.checked = selectAll.checked; });
+                    targets().forEach((target) => {
+                        target.checked = selectAll.checked;
+                    });
                     syncBulkPanel();
                 });
 
-                document.querySelectorAll('[data-asset-bulk-target]').forEach((target) => {
-                    target.addEventListener('change', syncBulkPanel);
-                });
+                targets().forEach((target) => target.addEventListener('change', syncBulkPanel));
 
                 const confirmModal = document.getElementById('asset-bulk-complete-confirm');
                 bulkPanel.querySelector('[data-asset-bulk-open-confirm]')?.addEventListener('click', (event) => {
                     const button = event.currentTarget;
                     if (!(button instanceof HTMLButtonElement) || button.disabled) return;
-                    const selected = eligibleTargets().filter((target) => target.checked);
+                    const selected = targets().filter((target) => target.checked);
                     const title = confirmModal?.querySelector('[data-asset-bulk-confirm-title]');
                     const body = confirmModal?.querySelector('[data-asset-bulk-confirm-body]');
-                    if (title instanceof HTMLElement) {
-                        title.textContent = selected.length === 1
-                            ? 'Mark this assessor target as Completed?'
-                            : `Mark ${selected.length} assessor targets as Completed?`;
-                    }
-                    if (body instanceof HTMLElement) {
-                        body.textContent = selected.length === 1
-                            ? 'This will mark the selected assessor target as completed.'
-                            : 'This will mark all selected assessor targets as completed.';
-                    }
+                    if (title instanceof HTMLElement) title.textContent = selected.length === 1
+                        ? 'Mark this assessor target as Completed?'
+                        : `Mark ${selected.length} assessor targets as Completed?`;
+                    if (body instanceof HTMLElement) body.textContent = selected.length === 1
+                        ? 'This will mark the selected assessor target as completed.'
+                        : 'This will mark all selected assessor targets as completed.';
                     if (confirmModal instanceof HTMLDialogElement) confirmModal.showModal();
                 });
 
@@ -182,7 +170,7 @@
                 });
 
                 confirmModal?.querySelector('[data-asset-bulk-confirm-submit]')?.addEventListener('click', () => {
-                    const selected = eligibleTargets().filter((target) => target.checked);
+                    const selected = targets().filter((target) => target.checked);
                     if (selected.length === 0) return;
                     const form = document.querySelector('[data-asset-bulk-form]');
                     if (!(form instanceof HTMLFormElement)) return;

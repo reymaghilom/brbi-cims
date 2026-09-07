@@ -55,12 +55,12 @@
             @php $incompleteTargetCount = $targetCount - $completedCount; @endphp
             <div class="mt-3 flex flex-col gap-2.5 border-b border-ui-border pb-3 sm:flex-row sm:items-center sm:justify-between" data-bank-bulk-panel>
                 <label class="inline-flex items-center gap-2 text-sm font-semibold text-text-main">
-                    <input type="checkbox" class="size-4 rounded border-ui-border-strong text-success focus:ring-success" data-bank-bulk-select-all @disabled($incompleteTargetCount === 0)>
+                    <input type="checkbox" class="size-5 shrink-0 rounded border-ui-border-strong text-success focus:ring-success focus:ring-offset-2 disabled:cursor-default disabled:opacity-100" data-bank-bulk-select-all aria-label="Select all pending bank or cooperative targets" @disabled($incompleteTargetCount === 0)>
                     Select All
                 </label>
                 <div class="flex items-center gap-3">
                     <span class="text-xs font-semibold text-text-muted" data-bank-bulk-counter>0 selected</span>
-                    <button type="button" class="ui-button-primary-compact" data-bank-bulk-open-confirm disabled>Mark Selected as Completed</button>
+                    <button type="button" class="ui-button-primary-compact" data-bank-bulk-open-confirm disabled><x-ui.icon name="check" size="size-3.5" />Mark Selected as Completed</button>
                 </div>
             </div>
             <form method="POST" action="{{ route('client-folders.activities.bank-targets.complete-many', [$clientFolder, $activity]) }}" data-bank-bulk-form>
@@ -72,7 +72,7 @@
             <dialog id="bank-bulk-complete-confirm" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-bank-bulk-confirm-modal>
                 <div class="border-b border-ui-border px-5 py-4"><h2 class="break-words text-lg font-bold text-brand-sidebar" data-bank-bulk-confirm-title>Mark selected bank checks as Completed?</h2></div>
                 <div class="px-5 py-5 text-sm leading-6 text-text-muted"><p data-bank-bulk-confirm-body>This will mark all selected bank checks as completed.</p></div>
-                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-bank-bulk-confirm-cancel>Cancel</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-bank-bulk-confirm-submit>Mark as Completed</button></div>
+                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-bank-bulk-confirm-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-bank-bulk-confirm-submit><x-ui.icon name="check" size="size-4" />Mark as Completed</button></div>
             </dialog>
         @endif
 
@@ -86,7 +86,7 @@
                 <li class="flex items-start gap-3 bg-surface px-3 py-2.5 sm:items-center" data-bank-target-card="{{ $target->id }}">
                     <input
                         type="checkbox"
-                        class="ci-completion-checkbox mt-0.5 sm:mt-0"
+                        class="mt-0.5 size-5 shrink-0 rounded border-ui-border-strong text-success focus:ring-success focus:ring-offset-2 disabled:cursor-default disabled:opacity-100 sm:mt-0"
                         aria-label="{{ $targetCompleted ? $targetLabel.' is completed' : 'Select '.$targetLabel.' for bulk completion' }}"
                         data-bank-bulk-target="{{ $target->id }}"
                         @checked($targetCompleted)
@@ -168,7 +168,7 @@
             $completionLabel = $target->institution_name.($target->branch_location ? ' – '.$target->branch_location : '');
         @endphp
         @if($target->status !== App\Enums\ActivityStatus::Completed)
-            <x-ui.confirmation-dialog id="complete-bank-target-{{ $target->id }}" title="Mark as completed?" :action="route('client-folders.activities.bank-targets.complete', [$clientFolder, $activity, $target])" method="PATCH" confirm-label="Mark Completed">
+            <x-ui.confirmation-dialog id="complete-bank-target-{{ $target->id }}" title="Mark as completed?" :action="route('client-folders.activities.bank-targets.complete', [$clientFolder, $activity, $target])" method="PATCH" confirm-label="Mark as Completed" cancel-icon="close" confirm-icon="check">
                 <div class="space-y-2">
                     <p class="font-semibold text-text-main">Mark {{ $completionLabel }} as completed?</p>
                     <p>This confirms that the {{ $target->inquiryTypeLabel() }} for this institution has been completed.</p>
@@ -196,7 +196,7 @@
             </form>
         </dialog>
 
-        <x-ui.confirmation-dialog id="delete-bank-target-{{ $target->id }}" title="Delete Bank / Coop Target?" :action="route('client-folders.activities.bank-targets.destroy', [$clientFolder, $activity, $target])" method="DELETE" confirm-label="Delete Target" destructive>
+        <x-ui.confirmation-dialog id="delete-bank-target-{{ $target->id }}" title="Delete Bank / Coop Target?" :action="route('client-folders.activities.bank-targets.destroy', [$clientFolder, $activity, $target])" method="DELETE" confirm-label="Delete Target" cancel-icon="close" confirm-icon="trash" destructive>
             <p><span class="font-semibold text-text-main">{{ $target->institution_name }}</span> will be deleted from this Bank / Coop Check. The parent activity will remain.</p>
             <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
         </x-ui.confirmation-dialog>
@@ -279,11 +279,13 @@
                     const openConfirm = bulkPanel.querySelector('[data-bank-bulk-open-confirm]');
                     if (!(selectAll instanceof HTMLInputElement)) return;
 
-                    const eligible = targets.filter((target) => target instanceof HTMLInputElement && ! target.disabled);
+                    const checkboxTargets = targets.filter((target) => target instanceof HTMLInputElement);
+                    const eligible = checkboxTargets.filter((target) => ! target.disabled);
                     const selected = eligible.filter((target) => target instanceof HTMLInputElement && target.checked);
+                    const checked = checkboxTargets.filter((target) => target.checked);
 
-                    selectAll.checked = eligible.length > 0 && selected.length === eligible.length;
-                    selectAll.indeterminate = selected.length > 0 && selected.length < eligible.length;
+                    selectAll.checked = checkboxTargets.length > 0 && checked.length === checkboxTargets.length;
+                    selectAll.indeterminate = checked.length > 0 && checked.length < checkboxTargets.length;
                     if (counter instanceof HTMLElement) counter.textContent = `${selected.length} selected`;
                     if (openConfirm instanceof HTMLButtonElement) openConfirm.disabled = selected.length === 0;
                 };

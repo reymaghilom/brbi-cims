@@ -13,6 +13,7 @@
         $editScheduleTimeValue = $editScheduleEnabled
             ? old('scheduled_time', $activity->scheduled_has_time ? $activity->scheduled_at?->timezone(config('cims.display_timezone'))->format('H:i') : '')
             : '';
+        $contextLabel = $activePerson ? 'Co-Maker: '.$activePerson->full_name : 'Applicant: '.$clientFolder->display_name;
     @endphp
 
     <x-ui.breadcrumb :items="[
@@ -27,8 +28,8 @@
         <x-slot:actions><x-ui.status-badge :status="$activity->status" /><a href="{{ route('client-folders.activities.index', [$clientFolder] + $personParams) }}" class="ui-button-secondary">All Activities</a></x-slot:actions>
     </x-ui.page-header>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(20rem,0.7fr)]">
-        <form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}" class="min-w-0 space-y-6" data-unsaved-form>
+    <div class="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(20rem,0.7fr)]" data-custom-activity-modal-source data-custom-activity-id="{{ $activity->id }}" data-custom-activity-name="{{ $activity->name }}" data-custom-activity-context="{{ $contextLabel }}" data-custom-activity-status="{{ $activity->status->value }}" data-custom-activity-status-label="{{ $activity->status->label() }}" data-custom-activity-schedule="{{ $activity->scheduled_at?->timezone(config('cims.display_timezone'))->format('M j, Y') ?? '—' }}" data-custom-activity-schedule-time="{{ $activity->scheduled_at ? ($activity->scheduled_has_time ? $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time') : '' }}" data-custom-activity-updated-date="{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}" data-custom-activity-updated-detail="{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('g:i A') }}{{ $activity->updater ? ' · '.$activity->updater->full_name : '' }}" data-custom-activity-updated-timestamp="{{ $activity->updated_at->timestamp }}" data-custom-activity-updated-iso="{{ $activity->updated_at->toISOString() }}">
+        <form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}" class="min-w-0 space-y-6" data-unsaved-form data-custom-activity-form>
             @csrf
             @method('PUT')
             <input type="hidden" name="co_maker_id" value="{{ $activePerson->id ?? '' }}">
@@ -40,6 +41,7 @@
             <x-ui.record-meta :updated-by="$activity->updater?->full_name" :updated-at="$activity->updated_at" />
 
             <x-ui.form-section title="Activity Details" description="Schedule / Follow-up is available for Scheduled and For Follow-up statuses. A date is required for Scheduled activities; time is optional.">
+                <div class="sm:col-span-2"><p class="ui-label">Activity Type</p><p class="rounded-control border border-ui-border bg-surface-subtle px-3.5 py-2.5 font-semibold text-text-main">{{ $activity->definition->name }}</p></div>
                 <div data-ci-edit-status><x-form.select name="status" label="Status" :options="collect($statuses)->mapWithKeys(fn ($status) => [$status->value => $status->label()])->all()" :selected="$editActivityStatus" required /></div>
                 <div id="schedule"><label for="scheduled_at" class="ui-label">Schedule / Follow-up Date</label><input id="scheduled_at" name="scheduled_at" type="date" value="{{ $editScheduleValue }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-edit-schedule @disabled(! $editScheduleEnabled) aria-disabled="{{ $editScheduleEnabled ? 'false' : 'true' }}"><x-form.validation-message for="scheduled_at" /></div>
                 <div><label for="scheduled_time" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="scheduled_time" name="scheduled_time" type="time" value="{{ $editScheduleTimeValue }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-edit-schedule-time @disabled(! $editScheduleEnabled) aria-disabled="{{ $editScheduleEnabled ? 'false' : 'true' }}"><p class="ui-help" data-ci-edit-schedule-help>{{ $editScheduleEnabled ? 'Without a time, the creator is reminded at 8:00 AM on the selected date.' : 'Available when the status is Scheduled or For Follow-up.' }}</p><x-form.validation-message for="scheduled_time" /></div>
@@ -68,7 +70,7 @@
 
             <x-ui.sticky-form-toolbar>
                 <span>Only the creator receives schedule reminders; every authorized CI may update the record.</span>
-                <x-slot:actions><button type="submit" name="intent" value="return" class="ui-button-secondary">Save and Return</button><button type="submit" name="intent" value="stay" class="ui-button-primary">Save Activity</button></x-slot:actions>
+                <x-slot:actions><button type="button" class="ui-button-secondary" data-custom-activity-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" name="intent" value="return" class="ui-button-primary"><x-ui.icon name="check" size="size-4" />Save Changes</button></x-slot:actions>
             </x-ui.sticky-form-toolbar>
         </form>
 
@@ -160,6 +162,10 @@
 
             status.addEventListener('change', syncScheduleAvailability);
             syncScheduleAvailability();
+
+            document.querySelector('[data-custom-activity-cancel]')?.addEventListener('click', () => {
+                window.location.assign(@js(route('client-folders.activities.index', [$clientFolder] + $personParams)));
+            });
 
             document.querySelectorAll('[data-ci-proof-replace-input]').forEach((input) => {
                 input.addEventListener('change', () => {

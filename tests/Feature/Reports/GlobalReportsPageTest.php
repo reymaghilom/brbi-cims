@@ -722,6 +722,58 @@ class GlobalReportsPageTest extends TestCase
         $this->assertStringContainsString('data-report-card', $html);
     }
 
+    public function test_status_tabs_use_the_shared_async_listing_path_and_preserve_report_state(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folder($ci, 'ALPHA, CLIENT');
+        $today = now()->toDateString();
+        $filters = [
+            'tab' => 'pending', 'search' => 'ALPHA', 'client_folder_id' => $folder->id,
+            'report_type' => 'cibi', 'person' => 'applicant', 'from' => $today, 'to' => $today,
+            'sort' => 'client', 'direction' => 'asc',
+        ];
+
+        $html = $this->actingAs($ci)->get(route('reports.index', $filters))->assertOk()->getContent();
+        $this->assertStringContainsString('data-reports-tabs', $html);
+        foreach (['all', 'pending', 'completed'] as $tab) {
+            $this->assertStringContainsString('data-reports-tab="'.$tab.'"', $html);
+        }
+        foreach (['search=ALPHA', 'report_type=cibi', 'person=applicant', 'from='.$today, 'to='.$today] as $state) {
+            $this->assertStringContainsString($state, str_replace('&amp;', '&', $html));
+        }
+
+        $fragmentResponse = $this->actingAs($ci)
+            ->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
+            ->get(route('reports.index', array_merge($filters, ['tab' => 'completed'])))
+            ->assertOk();
+        $fragment = $fragmentResponse->getContent();
+        $this->assertStringNotContainsString('<!DOCTYPE html>', $fragment);
+        $this->assertStringNotContainsString('data-reports-tabs', $fragment);
+        $this->assertSame('ALPHA', $fragmentResponse->viewData('filters')['search']);
+        $this->assertSame('cibi', $fragmentResponse->viewData('filters')['report_type']);
+        $this->assertSame('completed', $fragmentResponse->viewData('filters')['tab']);
+
+        $script = file_get_contents(resource_path('js/app.js'));
+        $tabsStart = strpos($script, "document.querySelectorAll('[data-reports-tabs]')");
+        $tabsScript = substr($script, $tabsStart);
+        $this->assertStringContainsString('event.preventDefault();', $tabsScript);
+        $this->assertStringContainsString("region.dispatchEvent(new CustomEvent('async-list:load'", $tabsScript);
+        $this->assertStringContainsString("detail: { url: url.toString(), history: returningToCurrent ? null : 'push' }", $tabsScript);
+        $this->assertStringContainsString("url.searchParams.delete('page')", $tabsScript);
+        $this->assertStringContainsString('syncTabState(url)', $tabsScript);
+        $this->assertStringContainsString("window.addEventListener('popstate'", $tabsScript);
+        $this->assertStringContainsString("['sort', 'direction'].forEach", $tabsScript);
+
+        // The shared loader aborts the previous request and also guards response application by
+        // identity, so an older Pending response cannot overwrite a later Completed selection.
+        $this->assertStringContainsString('activeRequest?.abort();', $script);
+        $this->assertStringContainsString('if (activeRequest !== request) return;', $script);
+        $this->assertStringContainsString('if (pendingTab === requestedTab) return;', $tabsScript);
+        $this->assertStringContainsString('pendingTab = null;', $tabsScript);
+        $this->assertStringContainsString("region.setAttribute('data-refreshing', 'true')", $script);
+        $this->assertStringNotContainsString('window.location.assign(link.href)', $tabsScript);
+    }
+
     public function test_client_suggestions_are_bounded_scoped_and_carry_their_exact_folder(): void
     {
         $ci = User::factory()->create();

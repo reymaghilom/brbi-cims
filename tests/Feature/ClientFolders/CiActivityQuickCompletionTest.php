@@ -53,8 +53,8 @@ class CiActivityQuickCompletionTest extends TestCase
         $this->assertStringContainsString('data-asset-check-open="'.$asset->id.'"', $content);
         $this->assertStringContainsString('aria-label="Edit Barangay Check"', $content);
         $this->assertStringContainsString('aria-label="Edit Neighbor Check"', $content);
-        $this->assertStringContainsString('aria-label="Edit Bank / Coop Check"', $content);
-        $this->assertStringContainsString('aria-label="Edit Asset Check"', $content);
+        $this->assertStringContainsString('aria-label="Actions for Bank / Coop Check"', $content);
+        $this->assertStringContainsString('aria-label="Actions for Asset Check"', $content);
         $this->assertStringContainsString('aria-label="Mark Barangay Check as completed"', $content);
         $this->assertStringContainsString('aria-label="Neighbor Check completed"', $content);
         $this->assertStringContainsString('aria-label="Open Bank / Coop Check tracker to complete remaining targets"', $content);
@@ -101,7 +101,7 @@ class CiActivityQuickCompletionTest extends TestCase
         $incompletePage = $this->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
         $this->assertCheckboxState($incompletePage, $bank->id, false, false);
         $this->assertCheckboxState($incompletePage, $asset->id, false, false);
-        $this->assertStringContainsString("checkbox.dataset.completionKind !== 'default'", $incompletePage);
+        $this->assertStringContainsString("['bank', 'asset'].includes(checkbox.dataset.completionKind ?? '')", $incompletePage);
         $this->assertStringContainsString("checkbox.dataset.completionKind === 'bank' ? 'data-bank-coop-open' : 'data-asset-check-open'", $incompletePage);
         $this->assertDoesNotMatchRegularExpression('/data-ci-activity-completion="'.$bank->id.'"[^>]+data-completion-update-url/', $incompletePage);
         $this->assertDoesNotMatchRegularExpression('/data-ci-activity-completion="'.$asset->id.'"[^>]+data-completion-update-url/', $incompletePage);
@@ -141,10 +141,11 @@ class CiActivityQuickCompletionTest extends TestCase
         }
 
         $content = $this->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
-        $this->assertStringContainsString('Mark Barangay Check as completed?', str_replace('${checkbox.dataset.completionName ?? \'activity\'}', 'Barangay Check', $content));
+        $this->assertStringContainsString('data-quick-complete-title', $content);
+        $this->assertStringContainsString('Complete this activity?', $content);
         $this->assertStringContainsString("cancel.addEventListener('click', () => modal.close());", $content);
         $this->assertStringContainsString("confirm.addEventListener('click', async () =>", $content);
-        $this->assertStringContainsString("confirm.textContent = 'Completing…';", $content);
+        $this->assertStringContainsString("confirmLabel.textContent = 'Completing…';", $content);
         $this->assertStringContainsString('checkbox.disabled = true;', $content);
         $this->assertStringContainsString('checkbox.disabled = false;', $content);
     }

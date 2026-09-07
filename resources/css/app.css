@@ -180,6 +180,12 @@
         background-color: var(--color-success);
         background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3.5 8.5L6.5 11.5L12.5 4.5' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     }
+    .ci-completion-checkbox:indeterminate {
+        border-color: var(--color-success);
+        background-color: var(--color-success);
+        background-image: linear-gradient(#fff, #fff);
+        background-size: 55% 2px;
+    }
     .ci-completion-checkbox:disabled {
         cursor: default;
         opacity: 1;

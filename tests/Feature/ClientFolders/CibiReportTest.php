@@ -832,6 +832,11 @@ class CibiReportTest extends TestCase
             ->assertSee('Remove this entry?')
             ->assertDontSee('data-cibi-modal', false)
             ->assertDontSee('Generate PDF')->assertDontSee('Generate Word')->assertDontSee('type="file"', false);
+
+        $this->assertMatchesRegularExpression(
+            '/<button type="button" class="ui-button-secondary" data-close-parent-dialog><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>.*?<button type="submit"[^>]*data-cibi-submit-mode="save"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*<span data-cibi-submit-text>Save CIBI Report<\/span><\/button>/s',
+            $response->getContent(),
+        );
     }
 
     public function test_completed_report_shows_only_the_update_action_without_preview_or_download_links(): void
@@ -840,7 +845,7 @@ class CibiReportTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         CibiReport::factory()->create(['client_folder_id' => $folder->id, 'ci_in_charge_id' => $ci->id, 'state' => RecordState::Complete]);
 
-        $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()
+        $response = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()
             // Print Preview / Download PDF / Download Excel belong on the Folder Contents CI/BI
             // card after completion, not inside the encoding form — see ClientFolderContentsTest
             // for that card's own assertions.
@@ -856,6 +861,11 @@ class CibiReportTest extends TestCase
             ->assertDontSee('data-cibi-submit-mode="save"', false)
             ->assertDontSee('data-cibi-state-badge', false)
             ->assertDontSee('data-cibi-state-label', false);
+
+        $this->assertMatchesRegularExpression(
+            '/<button type="button" class="ui-button-secondary" data-close-parent-dialog><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>.*?<button type="submit"[^>]*data-cibi-submit-mode="update"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*<span data-cibi-submit-text>Update CIBI Report<\/span><\/button>/s',
+            $response->getContent(),
+        );
     }
 
     public function test_json_save_stays_on_encoding_page_and_automatically_completes(): void

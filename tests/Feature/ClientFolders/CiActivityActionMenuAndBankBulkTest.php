@@ -203,6 +203,13 @@ class CiActivityActionMenuAndBankBulkTest extends TestCase
         $this->assertSame(ActivityStatus::Completed, $pending2->fresh()->status);
         $this->assertSame(ActivityStatus::Completed, $followUp->fresh()->status);
         $this->assertSame(ActivityStatus::Completed, $completed->fresh()->status);
+
+        $reloaded = $this->actingAs($ci)->get(route('client-folders.activities.bank-coop.show', [$folder, $bank]))->assertOk()->getContent();
+        foreach ([$pending1, $pending2, $completed, $followUp] as $target) {
+            $this->assertMatchesRegularExpression('/data-bank-bulk-target="'.$target->id.'"[^>]*checked[^>]*disabled/', $reloaded);
+        }
+        $this->assertStringContainsString('selectAll.checked = checkboxTargets.length > 0 && checked.length === checkboxTargets.length;', $reloaded);
+        $this->assertStringContainsString('selectAll.indeterminate = checked.length > 0 && checked.length < checkboxTargets.length;', $reloaded);
     }
 
     public function test_bulk_completion_leaves_parent_not_completed_when_an_incomplete_target_remains(): void

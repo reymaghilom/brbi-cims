@@ -32,7 +32,7 @@ class CiActivityCompletionGuideTest extends TestCase
 
         $this->assertSame(1, substr_count($content, 'data-ci-completion-guide'));
         $this->assertSame(1, substr_count($content, 'Completion Guide:'));
-        $this->assertStringContainsString('Click the checkbox to mark Barangay or Neighbor checks as completed.', $content);
+        $this->assertStringContainsString('Click the checkbox to mark Barangay, Neighbor, or custom activities as completed.', $content);
         $this->assertStringContainsString('Bank / Coop and Asset checks are completed through their tracker items.', $content);
     }
 

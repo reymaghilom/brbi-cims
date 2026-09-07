@@ -64,16 +64,17 @@
     </section>
 
     {{-- Tabs scroll horizontally rather than wrapping on a narrow screen. --}}
-    <nav class="mt-4 -mb-px flex gap-1 overflow-x-auto border-b border-ui-border" aria-label="Report status">
+    <nav class="mt-4 -mb-px flex gap-1 overflow-x-auto border-b border-ui-border" aria-label="Report status" data-reports-tabs>
         @foreach($tabs as $value => $label)
             <a href="{{ route('reports.index', $tabQuery($value)) }}"
+               data-reports-tab="{{ $value }}"
                @if($tab === $value) aria-current="page" @endif
                class="whitespace-nowrap border-b-2 px-3.5 py-2.5 text-sm font-semibold transition {{ $tab === $value ? 'border-brand-primary text-brand-primary' : 'border-transparent text-text-muted hover:text-text-main' }}">{{ $label }}</a>
         @endforeach
     </nav>
 
     {{-- Filters are plain GET fields, so a filtered view is bookmarkable and survives pagination. --}}
-    <form method="GET" action="{{ route('reports.index') }}" class="ui-card mt-4 p-3 sm:p-4">
+    <form method="GET" action="{{ route('reports.index') }}" class="ui-card mt-4 p-3 sm:p-4" data-reports-filters>
         <h2 class="sr-only">Filter reports</h2>
         {{-- One toolbar row. The search absorbs the leftover width while every other control keeps
              a fixed, predictable size, so the bar reads the same on every screen it fits on. It

@@ -215,7 +215,7 @@ class CiActivityUiPolishTest extends TestCase
         $this->assertStringContainsString('value="'.$localSchedule->format('H:i').'"', $content);
     }
 
-    public function test_completed_bank_target_checkbox_uses_the_same_canonical_completion_style_as_asset_check(): void
+    public function test_bank_and_asset_use_the_same_normal_checkbox_and_persisted_partial_state_logic(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -231,17 +231,28 @@ class CiActivityUiPolishTest extends TestCase
 
         $content = $this->actingAs($ci)->get(route('client-folders.activities.bank-coop.show', [$folder, $bank]))->assertOk()->getContent();
 
-        // Same canonical checkbox class the Asset Check target cards use — not a bespoke
-        // bordered-checkbox style.
+        // Both modules use a simple project/native checkbox rather than suppressing browser
+        // appearance through the custom completion-checkbox class.
         $completedStart = strpos($content, 'data-bank-target-card="'.$completed->id.'"');
         $completedRow = substr($content, $completedStart, 500);
-        $this->assertStringContainsString('class="ci-completion-checkbox', $completedRow);
-        $this->assertMatchesRegularExpression('/<input[^>]*ci-completion-checkbox[^>]*checked[^>]*disabled/', $completedRow);
+        $this->assertStringContainsString('size-5 shrink-0 rounded border-ui-border-strong text-success', $completedRow);
+        $this->assertMatchesRegularExpression('/<input[^>]*type="checkbox"[^>]*checked[^>]*disabled/', $completedRow);
 
         $pendingStart = strpos($content, 'data-bank-target-card="'.$pending->id.'"');
         $pendingRow = substr($content, $pendingStart, 500);
-        $this->assertStringContainsString('class="ci-completion-checkbox', $pendingRow);
-        $this->assertDoesNotMatchRegularExpression('/<input[^>]*ci-completion-checkbox[^>]*\schecked/', $pendingRow);
+        $this->assertStringContainsString('size-5 shrink-0 rounded border-ui-border-strong text-success', $pendingRow);
+        $this->assertDoesNotMatchRegularExpression('/<input[^>]*data-bank-bulk-target[^>]*\schecked/', $pendingRow);
+        $this->assertStringNotContainsString('ci-completion-checkbox', $content);
+        $this->assertMatchesRegularExpression('/<input[^>]*type="checkbox"[^>]*size-5[^>]*data-bank-bulk-select-all/', $content);
+
+        $bankSource = file_get_contents(resource_path('views/client-folders/activities/bank-coop-show.blade.php'));
+        $assetSource = file_get_contents(resource_path('views/client-folders/activities/asset-check-show.blade.php'));
+        $indexSource = file_get_contents(resource_path('views/client-folders/activities/index.blade.php'));
+        $this->assertSame(1, substr_count($bankSource, 'checked.length > 0 && checked.length <'));
+        $this->assertSame(1, substr_count($assetSource, 'checked.length > 0 && checked.length <'));
+        $this->assertSame(2, substr_count($indexSource, 'checked.length > 0 && checked.length <'));
+        $this->assertStringNotContainsString('ci-completion-checkbox', $assetSource);
+        $this->assertSame(2, substr_count($assetSource, 'type="checkbox" class='));
     }
 
     public function test_bank_target_row_remove_warning_triggers_when_only_schedule_date_or_time_is_filled(): void
@@ -612,6 +623,11 @@ class CiActivityUiPolishTest extends TestCase
                 ->assertOk()->getContent();
 
             $this->assertMatchesRegularExpression(
+                '/<h2 id="default-check-title"[^>]*><svg[^>]*class="[^"]*size-5[^"]*"[^>]*>.*?<\/svg>\s*<span[^>]*>\s*Edit '.preg_quote($activity->name, '/').'\s*<\/span>\s*<\/h2>/s',
+                $content,
+                $code.' edit title',
+            );
+            $this->assertMatchesRegularExpression(
                 '/<button type="button" class="ui-button-secondary w-full sm:w-auto" data-default-check-cancel><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s',
                 $content,
                 $code.' cancel',
@@ -622,6 +638,92 @@ class CiActivityUiPolishTest extends TestCase
                 $code.' save',
             );
         }
+    }
+
+    /** Barangay Check and Neighbor Check share this completion dialog and its action wiring. */
+    public function test_the_default_check_completion_dialog_has_iconed_title_and_actions(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+
+        foreach ([ActivityDefinition::BARANGAY_CHECK_CODE, ActivityDefinition::NEIGHBOR_CHECK_CODE] as $code) {
+            $activity = $this->activity($folder, $ci, $code);
+
+            $content = $this->actingAs($ci)
+                ->get(route('client-folders.activities.default-check.show', [$folder, $activity]))
+                ->assertOk()->getContent();
+
+            $this->assertMatchesRegularExpression(
+                '/<h2 id="default-check-completion-title-[^"]+"[^>]*><svg[^>]*class="[^"]*size-5[^"]*"[^>]*>.*?<\/svg>\s*<span>\s*Mark '.preg_quote($activity->name, '/').' as completed\?\s*<\/span>\s*<\/h2>/s',
+                $content,
+                $code.' completion title',
+            );
+            $this->assertMatchesRegularExpression(
+                '/<button type="button" class="ui-button-secondary" data-default-check-completion-cancel><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s',
+                $content,
+                $code.' completion cancel',
+            );
+            $this->assertMatchesRegularExpression(
+                '/<button type="button" class="ui-button-primary" data-default-check-completion-confirm><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Mark Completed<\/button>/s',
+                $content,
+                $code.' completion confirm',
+            );
+        }
+    }
+
+    public function test_barangay_and_neighbor_share_the_iconed_quick_completion_modal(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+        $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('/<p class="mt-0\.5 flex items-center gap-1\.5 text-sm text-text-muted"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Complete this activity\?<\/p>/s', $content);
+        $this->assertMatchesRegularExpression('/data-quick-complete-cancel><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $content);
+        $this->assertMatchesRegularExpression('/data-quick-complete-confirm><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*<span data-quick-complete-confirm-label>Mark as Completed<\/span><\/button>/s', $content);
+        $this->assertStringContainsString("confirmLabel.textContent = 'Completing…';", $content);
+        $this->assertStringNotContainsString("confirm.textContent = 'Mark Completed';", $content);
+    }
+
+    public function test_bank_coop_completion_and_delete_actions_keep_labels_and_gain_shared_icons(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $this->bankDefinition();
+        $activity = $this->activity($folder, $ci, ActivityDefinition::BANK_COOP_CHECK_CODE);
+        $activity->bankTargets()->create([
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
+            'institution_name' => 'SAMPLE BANK',
+            'scheduled_has_time' => false,
+            'created_by' => $ci->id,
+            'updated_by' => $ci->id,
+        ]);
+
+        $content = $this->actingAs($ci)
+            ->get(route('client-folders.activities.bank-coop.show', [$folder, $activity]))
+            ->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('/data-bank-bulk-open-confirm disabled><svg[^>]*class="[^"]*size-3\.5[^"]*"[^>]*>.*?<\/svg>\s*Mark Selected as Completed<\/button>/s', $content);
+        $this->assertMatchesRegularExpression('/data-bank-bulk-confirm-submit><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Mark as Completed<\/button>/s', $content);
+        $this->assertMatchesRegularExpression('/data-modal-open="complete-bank-target-[^"]+"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Mark as Completed<\/button>/s', $content);
+        $this->assertMatchesRegularExpression('/class="client-folder-menu-item text-danger" data-modal-open="delete-bank-target-[^"]+"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Delete<\/button>/s', $content);
+
+        $completeStart = strpos($content, 'id="complete-bank-target-');
+        $deleteStart = strpos($content, 'id="delete-bank-target-');
+        $this->assertNotFalse($completeStart);
+        $this->assertNotFalse($deleteStart);
+        $completeDialog = substr($content, $completeStart, $deleteStart - $completeStart);
+        $deleteDialog = substr($content, $deleteStart, 2500);
+
+        $this->assertStringContainsString(route('client-folders.activities.bank-targets.complete', [$folder, $activity, $activity->bankTargets->sole()]), $completeDialog);
+        $this->assertMatchesRegularExpression('/data-modal-close class="ui-button-secondary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $completeDialog);
+        $this->assertMatchesRegularExpression('/class="ui-button-primary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Mark as Completed<\/button>/s', $completeDialog);
+
+        $this->assertStringContainsString(route('client-folders.activities.bank-targets.destroy', [$folder, $activity, $activity->bankTargets->sole()]), $deleteDialog);
+        $this->assertMatchesRegularExpression('/data-modal-close class="ui-button-secondary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $deleteDialog);
+        $this->assertMatchesRegularExpression('/class="ui-button-danger"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Delete Target<\/button>/s', $deleteDialog);
     }
 
     public function test_the_bank_coop_target_edit_form_offers_iconed_cancel_and_save_changes(): void
@@ -652,6 +754,23 @@ class CiActivityUiPolishTest extends TestCase
         // The one-word label is gone, and the Add form beside it keeps its own distinct label.
         $this->assertStringNotContainsString('<button type="submit" class="ui-button-primary">Save</button>', $content);
         $this->assertStringContainsString('Add Bank / Coop</button>', $content);
+    }
+
+    public function test_the_add_bank_coop_modal_offers_iconed_actions(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $this->bankDefinition();
+        $activity = $this->activity($folder, $ci, ActivityDefinition::BANK_COOP_CHECK_CODE);
+
+        $content = $this->actingAs($ci)
+            ->get(route('client-folders.activities.bank-coop.show', [$folder, $activity]))
+            ->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '/<button type="button" class="ui-button-secondary" data-modal-close><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button><button type="submit" class="ui-button-primary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Add Bank \/ Coop<\/button>/s',
+            $content,
+        );
     }
 
     private function activity(ClientFolder $folder, User $creator, string $code, array $overrides = []): CiActivity

@@ -200,7 +200,7 @@
                 </div>
             </div>
 
-            <p class="mt-3 flex items-start gap-1.5 text-xs leading-5 text-text-muted" data-ci-completion-guide><x-ui.icon name="info" size="size-3.5" class="mt-0.5 shrink-0" aria-hidden="true" /><span><span class="font-semibold text-text-main">Completion Guide:</span> Click the checkbox to mark Barangay or Neighbor checks as completed. Bank / Coop and Asset checks are completed through their tracker items.</span></p>
+            <p class="mt-3 flex items-start gap-1.5 text-xs leading-5 text-text-muted" data-ci-completion-guide><x-ui.icon name="info" size="size-3.5" class="mt-0.5 shrink-0" aria-hidden="true" /><span><span class="font-semibold text-text-main">Completion Guide:</span> Click the checkbox to mark Barangay, Neighbor, or custom activities as completed. Bank / Coop and Asset checks are completed through their tracker items.</span></p>
 
             <div class="mt-3 overflow-x-auto overflow-y-hidden rounded-card border border-ui-border">
                 <table class="w-full min-w-[64rem] text-left text-sm">
@@ -221,6 +221,7 @@
                             @php
                                 $isBankCoopCheck = $activity->definition?->code === App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE;
                                 $isAssetCheck = $activity->definition?->code === App\Models\ActivityDefinition::ASSET_CHECK_CODE;
+                                $isCustomActivity = $activity->definition?->isCustom() ?? false;
                                 $scheduleSummary = match (true) {
                                     $isBankCoopCheck => App\Services\ClientFolders\CiActivityScheduleSummary::fromCurrentTargets($activity->bankTargets),
                                     $isAssetCheck => App\Services\ClientFolders\CiActivityScheduleSummary::fromCurrentTargets($activity->assetTargets),
@@ -239,7 +240,7 @@
                                     && (Str::startsWith($singleAttachment->mime_type, 'image/') || Str::startsWith($singleAttachment->mime_type, 'video/'));
                                 $isMandatoryDefault = $activity->isMandatoryDefault();
                                 $isDefaultCheck = $isMandatoryDefault;
-                                $hasQuickCompletion = $isDefaultCheck || $isBankCoopCheck || $isAssetCheck;
+                                $hasQuickCompletion = $isDefaultCheck || $isBankCoopCheck || $isAssetCheck || $isCustomActivity;
                                 $completionIsChecked = match (true) {
                                     $isBankCoopCheck => $activity->bank_targets_count > 0 && $activity->bank_targets_count === $activity->completed_bank_targets_count,
                                     $isAssetCheck => $activity->asset_targets_count > 0 && $activity->asset_targets_count === $activity->completed_asset_targets_count,
@@ -248,6 +249,7 @@
                                 $completionKind = match (true) {
                                     $isBankCoopCheck => 'bank',
                                     $isAssetCheck => 'asset',
+                                    $isCustomActivity => 'custom',
                                     default => 'default',
                                 };
                                 $completionScheduleText = $activity->scheduled_at
@@ -258,17 +260,17 @@
                                 <td class="px-4 py-3">
                                     <div class="flex min-w-0 items-start gap-2.5">
                                         @if($hasQuickCompletion)
-                                            <label class="mt-0.5 inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-control has-[:disabled]:cursor-default" title="{{ $completionIsChecked ? $activity->name.' completed' : ($completionKind === 'default' ? 'Mark '.$activity->name.' as completed' : 'Open '.$activity->name.' tracker to complete remaining targets') }}">
+                                            <label class="mt-0.5 inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-control has-[:disabled]:cursor-default" title="{{ $completionIsChecked ? $activity->name.' completed' : (in_array($completionKind, ['default', 'custom'], true) ? 'Mark '.$activity->name.' as completed' : 'Open '.$activity->name.' tracker to complete remaining targets') }}">
                                                 <input
                                                     type="checkbox"
-                                                    class="ci-completion-checkbox"
-                                                    aria-label="{{ $completionIsChecked ? $activity->name.' completed' : ($completionKind === 'default' ? 'Mark '.$activity->name.' as completed' : 'Open '.$activity->name.' tracker to complete remaining targets') }}"
+                                                    class="{{ $isCustomActivity ? 'size-5 shrink-0 rounded border-ui-border-strong text-success focus:ring-success focus:ring-offset-2 disabled:cursor-default disabled:opacity-100' : 'ci-completion-checkbox' }}"
+                                                    aria-label="{{ $completionIsChecked ? $activity->name.' completed' : (in_array($completionKind, ['default', 'custom'], true) ? 'Mark '.$activity->name.' as completed' : 'Open '.$activity->name.' tracker to complete remaining targets') }}"
                                                     data-ci-activity-completion="{{ $activity->id }}"
                                                     data-completion-kind="{{ $completionKind }}"
-                                                    @if($isDefaultCheck)
+                                                    @if($isDefaultCheck || $isCustomActivity)
                                                         data-completion-name="{{ $activity->name }}"
                                                         data-completion-update-url="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}"
-                                                        data-completion-tracker-url="{{ route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}"
+                                                        data-completion-tracker-url="{{ $isCustomActivity ? route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) : route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}"
                                                         data-completion-expected-updated-at="{{ $activity->updated_at->toISOString() }}"
                                                         data-completion-co-maker-id="{{ $activePerson?->id }}"
                                                         data-completion-status-label="{{ $activity->status->label() }}"
@@ -303,7 +305,7 @@
                                 <td class="px-3 py-3 text-xs leading-5 text-text-muted" data-ci-activity-updated-cell="{{ $activity->id }}"><span class="block font-semibold text-text-main">{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('g:i A') }}@if($activity->updater) · {{ $activity->updater->full_name }}@endif</td>
                                 <td class="px-3 py-3">
                                     <div class="flex items-center justify-center gap-1">
-                                        @if(! $isDefaultCheck && ! $isBankCoopCheck && ! $isAssetCheck)
+                                        @if(! $isDefaultCheck && ! $isBankCoopCheck && ! $isAssetCheck && ! $isCustomActivity)
                                             <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Update {{ $activity->name }}" title="Update"><x-ui.icon name="edit" size="size-4" /></a>
                                             <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#schedule" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Schedule or reschedule {{ $activity->name }}" title="Schedule / Reschedule"><x-ui.icon name="calendar" size="size-4" /></a>
                                             @if($activity->status !== App\Enums\ActivityStatus::Completed)<form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}">@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at->toISOString() }}"><input type="hidden" name="status" value="completed"><input type="hidden" name="intent" value="return"><button type="submit" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Complete {{ $activity->name }}" title="Complete"><x-ui.icon name="check-circle" size="size-4" /></button></form>@endif
@@ -322,6 +324,10 @@
                                                     <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
                                                 @elseif($isAssetCheck)
                                                     <button type="button" role="menuitem" class="client-folder-menu-item" data-asset-check-open="{{ $activity->id }}" data-asset-check-url="{{ route('client-folders.activities.asset-check.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="folder" size="size-4" class="text-text-muted" />Open</button>
+                                                    <div class="my-1 border-t border-ui-border"></div>
+                                                    <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
+                                                @elseif($isCustomActivity)
+                                                    <button type="button" role="menuitem" class="client-folder-menu-item" data-custom-activity-open="{{ $activity->id }}" data-custom-activity-url="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="folder" size="size-4" class="text-text-muted" />Open</button>
                                                     <div class="my-1 border-t border-ui-border"></div>
                                                     <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
                                                 @else
@@ -375,10 +381,23 @@
                 </div>
             </dialog>
 
+            <dialog id="custom-activity-tracker-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-5xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-custom-activity-modal aria-labelledby="custom-activity-tracker-title">
+                <div class="flex max-h-[calc(100dvh-2rem)] flex-col">
+                    <div class="relative flex shrink-0 items-start justify-between gap-3 border-b border-ui-border px-5 py-4 sm:px-6">
+                        <div class="min-w-0 pr-10">
+                            <h2 id="custom-activity-tracker-title" class="flex items-center gap-2 break-words text-lg font-bold text-brand-sidebar"><x-ui.icon name="activity" size="size-5" class="shrink-0 text-brand-primary" /><span data-custom-activity-modal-title>Custom Activity</span></h2>
+                            <p class="mt-1 break-words text-sm text-text-muted" data-custom-activity-modal-context>Loading exact activity context&hellip;</p>
+                        </div>
+                        <button type="button" class="ui-icon-button absolute right-3 top-3" data-custom-activity-modal-close aria-label="Close custom activity"><x-ui.icon name="close" size="size-5" /></button>
+                    </div>
+                    <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-subtle/40 p-3 sm:p-4" data-custom-activity-modal-body><div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading custom activity&hellip;</div></div>
+                </div>
+            </dialog>
+
             <dialog id="quick-complete-activity-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-quick-complete-modal aria-labelledby="quick-complete-activity-title">
                 <div class="border-b border-ui-border px-5 py-4">
                     <h2 id="quick-complete-activity-title" class="break-words text-lg font-bold text-brand-sidebar" data-quick-complete-title></h2>
-                    <p class="mt-0.5 text-sm text-text-muted">Complete this activity?</p>
+                    <p class="mt-0.5 flex items-center gap-1.5 text-sm text-text-muted"><x-ui.icon name="check-circle" size="size-4" class="shrink-0 text-success" />Complete this activity?</p>
                 </div>
                 <div class="space-y-3 px-5 py-5 text-sm leading-6 text-text-muted">
                     <div data-quick-complete-schedule-block hidden>
@@ -392,7 +411,7 @@
                     <p class="text-xs text-text-muted">The schedule and time will be cleared. Completion will be recorded in Recent Activity under the actual user confirming this action.</p>
                     <p class="rounded-control border border-danger/25 bg-danger-soft px-3 py-2 font-semibold text-danger" role="alert" data-quick-complete-error hidden></p>
                 </div>
-                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-cancel>Cancel</button><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-edit>Edit</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-quick-complete-confirm>Mark as Completed</button></div>
+                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-edit>Edit</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-quick-complete-confirm><x-ui.icon name="check" size="size-4" /><span data-quick-complete-confirm-label>Mark as Completed</span></button></div>
             </dialog>
 
             <dialog id="remove-submission-proof-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-remove-submission-proof-modal aria-labelledby="remove-submission-proof-title">
@@ -513,7 +532,7 @@
                         </x-slot:formFields>
                     </x-ui.confirmation-dialog>
                 @unless($activity->isMandatoryDefault())
-                    <x-ui.confirmation-dialog id="delete-activity-{{ $activity->id }}" :title="'Permanently delete '.$activity->name.'?'" :action="route('client-folders.activities.destroy', [$clientFolder, $activity])" method="DELETE" confirm-label="Permanently Delete" destructive>
+                    <x-ui.confirmation-dialog id="delete-activity-{{ $activity->id }}" :title="'Permanently delete '.$activity->name.'?'" :action="route('client-folders.activities.destroy', [$clientFolder, $activity])" method="DELETE" :confirm-label="$activity->definition?->isCustom() ? 'Delete' : 'Permanently Delete'" :cancel-icon="$activity->definition?->isCustom() ? 'close' : null" :confirm-icon="$activity->definition?->isCustom() ? 'trash' : null" destructive>
                         <p>This action cannot be undone.</p>
                         <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
                     </x-ui.confirmation-dialog>
@@ -1758,6 +1777,152 @@
         });
 
         document.addEventListener('DOMContentLoaded', () => {
+            const modal = document.querySelector('[data-custom-activity-modal]');
+            const body = modal?.querySelector('[data-custom-activity-modal-body]');
+            const title = modal?.querySelector('[data-custom-activity-modal-title]');
+            const context = modal?.querySelector('[data-custom-activity-modal-context]');
+            if (!(modal instanceof HTMLDialogElement) || !(body instanceof HTMLElement) || !(title instanceof HTMLElement) || !(context instanceof HTMLElement)) return;
+
+            const loadingMarkup = '<div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading custom activity&hellip;</div>';
+            let currentUrl = '';
+            let currentActivityId = '';
+            let currentOpener = null;
+
+            const statusClasses = {
+                pending: ['bg-progress-soft', 'text-progress'],
+                scheduled: ['bg-brand-soft', 'text-brand-primary'],
+                follow_up: ['bg-[#fff0e7]', 'text-[#c85b12]'],
+                completed: ['bg-success-soft', 'text-success'],
+            };
+
+            const synchronizeTable = (source) => {
+                const activityId = source.dataset.customActivityId ?? '';
+                const status = source.dataset.customActivityStatus ?? 'pending';
+                const badge = document.querySelector(`[data-ci-activity-status-badge="${activityId}"]`);
+                const row = badge?.closest('[data-ci-activity-row]');
+                const checkbox = document.querySelector(`[data-ci-activity-completion="${activityId}"]`);
+                const scheduleCell = document.querySelector(`[data-ci-activity-schedule-cell="${activityId}"]`);
+                const updatedCell = document.querySelector(`[data-ci-activity-updated-cell="${activityId}"]`);
+
+                if (badge instanceof HTMLElement) {
+                    Object.values(statusClasses).flat().forEach((className) => badge.classList.remove(className));
+                    (statusClasses[status] ?? statusClasses.pending).forEach((className) => badge.classList.add(className));
+                    badge.textContent = source.dataset.customActivityStatusLabel ?? 'Pending';
+                }
+                if (checkbox instanceof HTMLInputElement) {
+                    const completed = status === 'completed';
+                    checkbox.checked = completed;
+                    checkbox.disabled = completed;
+                    checkbox.dataset.completionExpectedUpdatedAt = source.dataset.customActivityUpdatedIso ?? checkbox.dataset.completionExpectedUpdatedAt;
+                }
+                if (scheduleCell instanceof HTMLElement) {
+                    const schedule = source.dataset.customActivitySchedule ?? '—';
+                    scheduleCell.replaceChildren();
+                    if (schedule === '—') {
+                        scheduleCell.textContent = '—';
+                    } else {
+                        const date = document.createElement('span');
+                        date.className = 'block font-semibold text-text-main';
+                        date.textContent = schedule;
+                        scheduleCell.append(date, document.createTextNode(source.dataset.customActivityScheduleTime ?? ''));
+                    }
+                }
+                if (updatedCell instanceof HTMLElement) {
+                    const date = document.createElement('span');
+                    date.className = 'block font-semibold text-text-main';
+                    date.textContent = source.dataset.customActivityUpdatedDate ?? '';
+                    updatedCell.replaceChildren(date, document.createTextNode(source.dataset.customActivityUpdatedDetail ?? ''));
+                }
+                if (row instanceof HTMLTableRowElement) {
+                    row.dataset.status = status;
+                    row.dataset.sortStatus = (source.dataset.customActivityStatusLabel ?? status).toLocaleLowerCase();
+                    row.dataset.sortUpdated = source.dataset.customActivityUpdatedTimestamp ?? row.dataset.sortUpdated;
+                }
+            };
+
+            const bindSource = (source) => {
+                title.textContent = source.dataset.customActivityName ?? 'Custom Activity';
+                context.textContent = source.dataset.customActivityContext ?? '';
+                source.querySelector('[data-custom-activity-cancel]')?.addEventListener('click', () => modal.close());
+
+                const status = source.querySelector('[data-ci-edit-status] select[name="status"]');
+                const schedule = source.querySelector('[data-ci-edit-schedule]');
+                const scheduleTime = source.querySelector('[data-ci-edit-schedule-time]');
+                const help = source.querySelector('[data-ci-edit-schedule-help]');
+                if (status instanceof HTMLSelectElement && schedule instanceof HTMLInputElement && scheduleTime instanceof HTMLInputElement) {
+                    const syncScheduleAvailability = () => {
+                        const enabled = ['scheduled', 'follow_up'].includes(status.value);
+                        if (! enabled) { schedule.value = ''; scheduleTime.value = ''; }
+                        schedule.disabled = ! enabled;
+                        scheduleTime.disabled = ! enabled;
+                        schedule.required = status.value === 'scheduled';
+                        schedule.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+                        scheduleTime.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+                        if (help instanceof HTMLElement) help.textContent = enabled
+                            ? 'Without a time, the creator is reminded at 8:00 AM on the selected date.'
+                            : 'Available when the status is Scheduled or For Follow-up.';
+                    };
+                    status.addEventListener('change', syncScheduleAvailability);
+                    syncScheduleAvailability();
+                }
+
+                source.querySelectorAll('[data-ci-proof-replace-input]').forEach((input) => {
+                    input.addEventListener('change', () => {
+                        if (!(input instanceof HTMLInputElement) || ! input.files?.length) return;
+                        const form = input.closest('[data-ci-proof-replace-form]');
+                        if (form instanceof HTMLFormElement) form.requestSubmit();
+                    });
+                });
+                synchronizeTable(source);
+            };
+
+            const loadActivity = async (url, activityId) => {
+                body.innerHTML = loadingMarkup;
+                const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } });
+                if (! response.ok) throw new Error('Unable to load this custom activity.');
+                const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+                const source = page.querySelector('[data-custom-activity-modal-source]');
+                if (!(source instanceof HTMLElement) || source.dataset.customActivityId !== activityId) throw new Error('The requested custom activity context could not be verified.');
+                body.replaceChildren(source);
+                bindSource(source);
+            };
+
+            document.querySelectorAll('[data-custom-activity-open]').forEach((opener) => opener.addEventListener('click', async () => {
+                currentUrl = opener.dataset.customActivityUrl ?? '';
+                currentActivityId = opener.dataset.customActivityOpen ?? '';
+                currentOpener = opener;
+                context.textContent = 'Loading exact activity context…';
+                if (! modal.open) modal.showModal();
+                try {
+                    await loadActivity(currentUrl, currentActivityId);
+                } catch (error) {
+                    body.innerHTML = `<div class="rounded-card border border-danger/25 bg-danger-soft p-5 text-sm font-semibold text-danger">${error instanceof Error ? error.message : 'Unable to load this custom activity.'}</div>`;
+                }
+            }));
+
+            document.addEventListener('ci-custom-activity-refresh-request', async (event) => {
+                const url = String(event.detail?.url ?? '');
+                const activityId = String(event.detail?.activityId ?? '');
+                if (url === '' || activityId === '') return;
+                const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } });
+                if (! response.ok) return;
+                const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+                const source = page.querySelector('[data-custom-activity-modal-source]');
+                if (source instanceof HTMLElement && source.dataset.customActivityId === activityId) synchronizeTable(source);
+            });
+
+            modal.querySelectorAll('[data-custom-activity-modal-close]').forEach((button) => button.addEventListener('click', () => modal.close()));
+            modal.addEventListener('click', (event) => { if (event.target === modal) modal.close(); });
+            modal.addEventListener('close', () => {
+                body.innerHTML = loadingMarkup;
+                currentUrl = '';
+                currentActivityId = '';
+                currentOpener?.focus();
+                currentOpener = null;
+            });
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
             const completionCheckboxes = [...document.querySelectorAll('[data-ci-activity-completion]')];
             const modal = document.querySelector('[data-quick-complete-modal]');
             const title = modal?.querySelector('[data-quick-complete-title]');
@@ -1769,6 +1934,7 @@
             const cancel = modal?.querySelector('[data-quick-complete-cancel]');
             const editButton = modal?.querySelector('[data-quick-complete-edit]');
             const confirm = modal?.querySelector('[data-quick-complete-confirm]');
+            const confirmLabel = modal?.querySelector('[data-quick-complete-confirm-label]');
             if (!(modal instanceof HTMLDialogElement)
                 || !(title instanceof HTMLElement)
                 || !(scheduleBlock instanceof HTMLElement)
@@ -1778,7 +1944,8 @@
                 || !(error instanceof HTMLElement)
                 || !(cancel instanceof HTMLButtonElement)
                 || !(editButton instanceof HTMLButtonElement)
-                || !(confirm instanceof HTMLButtonElement)) return;
+                || !(confirm instanceof HTMLButtonElement)
+                || !(confirmLabel instanceof HTMLElement)) return;
 
             let pendingCheckbox = null;
 
@@ -1786,14 +1953,14 @@
                 error.hidden = true;
                 error.textContent = '';
                 confirm.disabled = false;
-                confirm.textContent = 'Mark as Completed';
+                confirmLabel.textContent = 'Mark as Completed';
             };
 
             completionCheckboxes.forEach((checkbox) => checkbox.addEventListener('change', () => {
                 if (!(checkbox instanceof HTMLInputElement) || ! checkbox.checked) return;
                 checkbox.checked = false;
 
-                if (checkbox.dataset.completionKind !== 'default') {
+                if (['bank', 'asset'].includes(checkbox.dataset.completionKind ?? '')) {
                     const activityId = checkbox.dataset.ciActivityCompletion ?? '';
                     const trackerAttribute = checkbox.dataset.completionKind === 'bank' ? 'data-bank-coop-open' : 'data-asset-check-open';
                     const tracker = document.querySelector(`[${trackerAttribute}="${activityId}"]`);
@@ -1816,8 +1983,11 @@
             cancel.addEventListener('click', () => modal.close());
             editButton.addEventListener('click', () => {
                 const activityId = pendingCheckbox?.dataset.ciActivityCompletion ?? '';
+                const isCustom = pendingCheckbox?.dataset.completionKind === 'custom';
                 modal.close();
-                const opener = document.querySelector(`[data-default-check-open="${activityId}"]`);
+                const opener = document.querySelector(isCustom
+                    ? `[data-custom-activity-open="${activityId}"]`
+                    : `[data-default-check-open="${activityId}"]`);
                 if (opener instanceof HTMLElement) opener.click();
             });
             modal.addEventListener('close', () => {
@@ -1839,7 +2009,7 @@
                 formData.set('status', 'completed');
                 formData.set('intent', 'return');
                 confirm.disabled = true;
-                confirm.textContent = 'Completing…';
+                confirmLabel.textContent = 'Completing…';
                 checkbox.disabled = true;
                 checkbox.checked = false;
                 error.hidden = true;
@@ -1857,7 +2027,10 @@
                     }
 
                     checkbox.checked = true;
-                    document.dispatchEvent(new CustomEvent('ci-default-check-refresh-request', {
+                    const refreshEvent = checkbox.dataset.completionKind === 'custom'
+                        ? 'ci-custom-activity-refresh-request'
+                        : 'ci-default-check-refresh-request';
+                    document.dispatchEvent(new CustomEvent(refreshEvent, {
                         detail: { activityId: checkbox.dataset.ciActivityCompletion ?? '', url: trackerUrl },
                     }));
                     insertCiActivityHistoryEntries(payload.history);
@@ -1868,7 +2041,7 @@
                     error.textContent = requestError instanceof Error ? requestError.message : 'Unable to complete this activity.';
                     error.hidden = false;
                     confirm.disabled = false;
-                    confirm.textContent = 'Mark Completed';
+                    confirmLabel.textContent = 'Mark as Completed';
                 }
             });
         });
@@ -2254,11 +2427,13 @@
                 const openConfirm = modalBody.querySelector('[data-bank-bulk-open-confirm]');
                 if (!(selectAll instanceof HTMLInputElement)) return;
 
-                const eligible = targets.filter((target) => target instanceof HTMLInputElement && ! target.disabled);
+                const checkboxTargets = targets.filter((target) => target instanceof HTMLInputElement);
+                const eligible = checkboxTargets.filter((target) => ! target.disabled);
                 const selected = eligible.filter((target) => target instanceof HTMLInputElement && target.checked);
+                const checked = checkboxTargets.filter((target) => target.checked);
 
-                selectAll.checked = eligible.length > 0 && selected.length === eligible.length;
-                selectAll.indeterminate = selected.length > 0 && selected.length < eligible.length;
+                selectAll.checked = checkboxTargets.length > 0 && checked.length === checkboxTargets.length;
+                selectAll.indeterminate = checked.length > 0 && checked.length < checkboxTargets.length;
                 if (counter instanceof HTMLElement) counter.textContent = `${selected.length} selected`;
                 if (openConfirm instanceof HTMLButtonElement) openConfirm.disabled = selected.length === 0;
             };
@@ -2645,6 +2820,7 @@
             const openers = [...document.querySelectorAll('[data-asset-check-open]')];
             if (!(modal instanceof HTMLDialogElement) || !(body instanceof HTMLElement) || !(context instanceof HTMLElement) || !(add instanceof HTMLButtonElement)) return;
             let currentUrl = '';
+            let currentActivityId = '';
             let currentOpener = null;
 
             const bindSchedule = (form) => {
@@ -2657,7 +2833,9 @@
             const render = (html) => {
                 const page = new DOMParser().parseFromString(html, 'text/html');
                 const source = page.querySelector('[data-asset-check-modal-source]');
-                if (!(source instanceof HTMLElement)) throw new Error('Asset Check tracker could not be loaded.');
+                if (!(source instanceof HTMLElement) || source.dataset.assetActivityId !== currentActivityId) {
+                    throw new Error('The exact Asset Check activity could not be loaded.');
+                }
                 body.replaceChildren(...[...source.childNodes].map((node) => document.importNode(node, true)));
                 context.textContent = source.dataset.assetContext ?? 'Asset Check';
                 add.disabled = false;
@@ -2699,6 +2877,7 @@
                 const assetMarkLink = document.querySelector(`[data-ci-submission-mark="${activityId}"]`);
                 if (assetMarkLink instanceof HTMLElement) assetMarkLink.hidden = !(targetCount > 0 && targetCount === completedCount);
                 body.querySelectorAll('[data-asset-target-form]').forEach((form) => bindSchedule(form));
+                syncBulkPanel();
                 document.dispatchEvent(new CustomEvent('ci-asset-check-updated', { detail: { activityId } }));
                 document.dispatchEvent(new CustomEvent('ci-bank-coop-updated', { detail: { activityId } }));
 
@@ -2719,7 +2898,7 @@
             };
 
             openers.forEach((opener) => opener.addEventListener('click', async (event) => {
-                event.preventDefault(); currentOpener = opener; currentUrl = opener.dataset.assetCheckUrl ?? opener.href;
+                event.preventDefault(); currentOpener = opener; currentActivityId = opener.dataset.assetCheckOpen ?? ''; currentUrl = opener.dataset.assetCheckUrl ?? opener.href;
                 if (! modal.open) modal.showModal();
                 try { await load(currentUrl); } catch (error) { body.innerHTML = `<div class="rounded-card border border-danger/30 bg-danger-soft p-5 text-sm font-semibold text-danger">${error.message}</div>`; }
             }));
@@ -2733,14 +2912,106 @@
                 if (trigger.matches('[data-asset-target-complete]')) trigger.checked = false;
                 const dialog = body.querySelector(`#${trigger.dataset.assetModalOpen}`); if (dialog instanceof HTMLDialogElement) dialog.showModal();
             });
+            const syncBulkPanel = () => {
+                const selectAll = body.querySelector('[data-asset-bulk-select-all]');
+                const targets = [...body.querySelectorAll('[data-asset-bulk-target]')]
+                    .filter((target) => target instanceof HTMLInputElement);
+                const eligible = targets.filter((target) => ! target.disabled);
+                const selected = eligible.filter((target) => target.checked);
+                const checked = targets.filter((target) => target.checked);
+                const counter = body.querySelector('[data-asset-bulk-counter]');
+                const openConfirm = body.querySelector('[data-asset-bulk-open-confirm]');
+                if (!(selectAll instanceof HTMLInputElement)) return;
+                selectAll.checked = targets.length > 0 && checked.length === targets.length;
+                selectAll.indeterminate = checked.length > 0 && checked.length < targets.length;
+                if (counter instanceof HTMLElement) counter.textContent = `${selected.length} selected`;
+                if (openConfirm instanceof HTMLButtonElement) openConfirm.disabled = selected.length === 0;
+            };
+            body.addEventListener('change', (event) => {
+                const control = event.target;
+                if (!(control instanceof HTMLInputElement)) return;
+
+                if (control.matches('[data-asset-bulk-target]')) {
+                    syncBulkPanel();
+                    return;
+                }
+
+                if (! control.matches('[data-asset-bulk-select-all]')) return;
+                body.querySelectorAll('[data-asset-bulk-target]').forEach((target) => {
+                    if (!(target instanceof HTMLInputElement) || target.disabled) return;
+                    target.checked = control.checked;
+                });
+                syncBulkPanel();
+            });
+            body.addEventListener('click', (event) => {
+                const openConfirm = event.target.closest('[data-asset-bulk-open-confirm]');
+                const cancel = event.target.closest('[data-asset-bulk-confirm-cancel]');
+                const submit = event.target.closest('[data-asset-bulk-confirm-submit]');
+                const confirmModal = body.querySelector('[data-asset-bulk-confirm-modal]');
+
+                if (cancel) {
+                    if (confirmModal instanceof HTMLDialogElement) confirmModal.close();
+                    return;
+                }
+
+                const selected = [...body.querySelectorAll('[data-asset-bulk-target]')]
+                    .filter((target) => target instanceof HTMLInputElement && ! target.disabled && target.checked);
+
+                if (openConfirm) {
+                    if (!(openConfirm instanceof HTMLButtonElement) || openConfirm.disabled) return;
+                    const title = confirmModal?.querySelector('[data-asset-bulk-confirm-title]');
+                    const message = confirmModal?.querySelector('[data-asset-bulk-confirm-body]');
+                    if (title instanceof HTMLElement) title.textContent = selected.length === 1
+                        ? 'Mark this assessor target as Completed?'
+                        : `Mark ${selected.length} assessor targets as Completed?`;
+                    if (message instanceof HTMLElement) message.textContent = selected.length === 1
+                        ? 'This will mark the selected assessor target as completed.'
+                        : 'This will mark all selected assessor targets as completed.';
+                    if (confirmModal instanceof HTMLDialogElement) confirmModal.showModal();
+                    return;
+                }
+
+                if (! submit || selected.length === 0) return;
+                const form = body.querySelector('[data-asset-bulk-form]');
+                if (!(form instanceof HTMLFormElement)) return;
+                form.querySelectorAll('input[name="asset_target_ids[]"]').forEach((input) => input.remove());
+                selected.forEach((target) => {
+                    const id = document.createElement('input');
+                    id.type = 'hidden';
+                    id.name = 'asset_target_ids[]';
+                    id.value = target.dataset.assetBulkTarget ?? '';
+                    form.append(id);
+                });
+                if (confirmModal instanceof HTMLDialogElement) confirmModal.close();
+                form.requestSubmit();
+            });
             body.addEventListener('submit', async (event) => {
                 const form = event.target;
                 if (!(form instanceof HTMLFormElement) || ! form.matches('[data-asset-target-form]')) return;
                 event.preventDefault();
+                form.querySelector('[data-asset-form-error]')?.remove();
                 const submit = form.querySelector('[type="submit"]'); if (submit instanceof HTMLButtonElement) submit.disabled = true;
-                const response = await fetch(form.action, { method: form.method, body: new FormData(form), headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
-                if (! response.ok) { if (submit instanceof HTMLButtonElement) submit.disabled = false; return; }
-                await load(response.url || currentUrl);
+                try {
+                    const response = await fetch(form.action, { method: form.method, body: new FormData(form), headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+                    if (! response.ok) {
+                        const payload = await response.json().catch(() => ({}));
+                        const message = Object.values(payload.errors ?? {}).flat()[0] ?? payload.message ?? 'Unable to save the Asset target.';
+                        throw new Error(message);
+                    }
+                    currentUrl = response.url || currentUrl;
+                    render(await response.text());
+                } catch (error) {
+                    const alert = document.createElement('div');
+                    alert.dataset.assetFormError = '';
+                    alert.className = 'mx-5 mt-4 rounded-control border border-danger/25 bg-danger-soft px-3 py-2 text-sm font-semibold text-danger sm:mx-6';
+                    alert.setAttribute('role', 'alert');
+                    alert.tabIndex = -1;
+                    alert.textContent = error instanceof Error ? error.message : 'Unable to save the Asset target.';
+                    (form.hidden ? body : form).prepend(alert);
+                    alert.focus();
+                    if (submit instanceof HTMLButtonElement) submit.disabled = false;
+                    syncBulkPanel();
+                }
             });
         });
     </script>

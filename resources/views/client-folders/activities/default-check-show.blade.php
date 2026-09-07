@@ -40,11 +40,7 @@
         <section class="ui-panel mx-auto max-w-3xl overflow-hidden" aria-labelledby="default-check-title">
             <div class="flex flex-col gap-3 border-b border-ui-border px-5 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6">
                 <div class="min-w-0">
-                    {{-- Barangay Check and Neighbor Check share this header, so both get the same
-                         verification icon — the one the app already uses for a completed/verified
-                         check. It sits inline with the title at the heading's own scale, never as an
-                         oversized decorative badge, and the title wording itself is untouched. --}}
-                    <h2 id="default-check-title" class="flex items-start gap-2 text-lg font-bold text-brand-sidebar"><x-ui.icon name="check-circle" size="size-5" class="mt-0.5 shrink-0 text-brand-primary" /><span class="min-w-0 break-words">{{ $activity->name }}</span></h2>
+                    <h2 id="default-check-title" class="flex items-start gap-2 text-lg font-bold text-brand-sidebar"><x-ui.icon name="edit" size="size-5" class="mt-0.5 shrink-0 text-brand-primary" /><span class="min-w-0 break-words">Edit {{ $activity->name }}</span></h2>
                     <p class="mt-1 break-words text-sm text-text-muted">{{ $contextLabel }}</p>
                 </div>
             </div>
@@ -87,9 +83,9 @@
         </section>
 
         <dialog class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-default-check-completion aria-labelledby="default-check-completion-title-{{ $activity->id }}">
-            <div class="border-b border-ui-border px-5 py-4"><h2 id="default-check-completion-title-{{ $activity->id }}" class="text-lg font-bold text-brand-sidebar">Mark {{ $activity->name }} as completed?</h2></div>
+            <div class="border-b border-ui-border px-5 py-4"><h2 id="default-check-completion-title-{{ $activity->id }}" class="flex items-center gap-2 text-lg font-bold text-brand-sidebar"><x-ui.icon name="check-circle" size="size-5" class="shrink-0 text-success" /><span>Mark {{ $activity->name }} as completed?</span></h2></div>
             <div class="px-5 py-5 text-sm leading-6 text-text-muted">The schedule and time will be cleared. Completion will be recorded in Recent Activity under the actual user confirming this action.</div>
-            <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-default-check-completion-cancel>Cancel</button><button type="button" class="ui-button-primary" data-default-check-completion-confirm>Mark Completed</button></div>
+            <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-default-check-completion-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-primary" data-default-check-completion-confirm><x-ui.icon name="check" size="size-4" />Mark Completed</button></div>
         </dialog>
 
         <dialog class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-default-check-discard-confirm aria-labelledby="default-check-discard-title-{{ $activity->id }}">

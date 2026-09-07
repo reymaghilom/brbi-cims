@@ -596,7 +596,7 @@ class CiActivityBankTargetsTest extends TestCase
             ->assertSee('Mark as completed?')
             ->assertSee('Mark BDO – Carmen Branch as completed?')
             ->assertSee('This confirms that the Bank / Coop Check for this institution has been completed.')
-            ->assertSee('Mark Completed');
+            ->assertSee('Mark as Completed');
         foreach ([$pending, $scheduled, $followUp] as $incompleteTarget) {
             $this->assertMatchesRegularExpression(
                 '/<input(?=[^>]*data-bank-bulk-target="'.$incompleteTarget->id.'")(?![^>]*\schecked(?:\s|=))[^>]*>/i',

@@ -2979,10 +2979,15 @@ function initAsyncListRegion(region, linkSelector) {
                 // replaceState for search-as-you-type, so every keystroke is not a history entry.
                 if (historyMode === 'push') window.history.pushState({ asyncListRegion: true }, '', url);
                 else if (historyMode === 'replace') window.history.replaceState({ asyncListRegion: true }, '', url);
+
+                region.dispatchEvent(new CustomEvent('async-list:loaded', { detail: { url, history: historyMode } }));
             })
             .catch((error) => {
                 // The results the user already has are deliberately left untouched on failure.
-                if (error.name !== 'AbortError') showToast('The list could not be updated. Please retry.', 'error');
+                if (error.name !== 'AbortError') {
+                    showToast('The list could not be updated. Please retry.', 'error');
+                    region.dispatchEvent(new CustomEvent('async-list:error', { detail: { url } }));
+                }
             })
             .finally(() => {
                 if (activeRequest !== request) return;
@@ -3011,7 +3016,10 @@ function initAsyncListRegion(region, linkSelector) {
     // Back/Forward: re-read the authoritative state from the URL the browser just restored and
     // AUTO-UPDATE to match — no hard reload, and no new history entry for a history move.
     window.addEventListener('popstate', (event) => {
-        if (!event.state?.asyncListRegion || !document.contains(region)) return;
+        if (!document.contains(region)) return;
+        // Reports must also restore the initial history entry, whose state predates the first
+        // pushState call. Other consumers retain their existing state-gated behaviour.
+        if (!event.state?.asyncListRegion && !region.matches('[data-reports-listing]')) return;
         load(window.location.href, null);
     });
 }
@@ -3021,6 +3029,95 @@ function initAsyncListRegion(region, linkSelector) {
 // happen to be on screen — and the links are real URLs, so both still work without JavaScript.
 document.querySelectorAll('[data-reports-listing]').forEach((region) => {
     initAsyncListRegion(region, '[data-reports-sort], [data-reports-pagination] a[href]');
+});
+
+// Reports status tabs use the same fragment loader as sorting, pagination and live search. Their
+// real hrefs remain the no-JavaScript fallback; enhanced clicks keep the shell and current rows in
+// place, optimistically update the active tab, and let the shared AbortController enforce
+// latest-request-wins when users move quickly between statuses.
+document.querySelectorAll('[data-reports-tabs]').forEach((tabs) => {
+    const region = document.querySelector('[data-reports-listing]');
+    const form = document.querySelector('[data-reports-filters]');
+    if (!region) return;
+
+    const validTabs = ['all', 'pending', 'completed'];
+    let pendingTab = null;
+    const tabFromUrl = (url) => {
+        const value = new URL(url, window.location.origin).searchParams.get('tab') ?? 'all';
+        return validTabs.includes(value) ? value : 'all';
+    };
+    const syncTabState = (url) => {
+        const activeTab = tabFromUrl(url);
+        tabs.querySelectorAll('[data-reports-tab]').forEach((link) => {
+            const active = link.dataset.reportsTab === activeTab;
+            link.classList.toggle('border-brand-primary', active);
+            link.classList.toggle('text-brand-primary', active);
+            link.classList.toggle('border-transparent', !active);
+            link.classList.toggle('text-text-muted', !active);
+            if (active) link.setAttribute('aria-current', 'page');
+            else link.removeAttribute('aria-current');
+        });
+
+        const status = form?.querySelector('[name="tab"]');
+        if (status instanceof HTMLSelectElement) status.value = activeTab;
+    };
+    const syncFilterState = (url) => {
+        if (!(form instanceof HTMLFormElement)) return;
+        const params = new URL(url, window.location.origin).searchParams;
+        ['search', 'client_folder_id', 'report_type', 'person', 'from', 'to'].forEach((name) => {
+            const control = form.elements.namedItem(name);
+            if (control instanceof HTMLInputElement || control instanceof HTMLSelectElement) {
+                control.value = params.get(name) ?? '';
+            }
+        });
+        ['sort', 'direction'].forEach((name) => {
+            let control = form.elements.namedItem(name);
+            const value = params.get(name);
+            if (!value) {
+                if (control instanceof HTMLInputElement) control.remove();
+                return;
+            }
+            if (!(control instanceof HTMLInputElement)) {
+                control = document.createElement('input');
+                control.type = 'hidden';
+                control.name = name;
+                form.append(control);
+            }
+            control.value = value;
+        });
+        syncTabState(url);
+    };
+
+    tabs.addEventListener('click', (event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        const link = event.target.closest('[data-reports-tab]');
+        if (!link || !tabs.contains(link)) return;
+
+        event.preventDefault();
+        const url = new URL(window.location.href);
+        const requestedTab = link.dataset.reportsTab ?? 'all';
+        if (pendingTab === requestedTab) return;
+        const returningToCurrent = tabFromUrl(url) === requestedTab && !url.searchParams.has('page');
+        if (pendingTab === null && returningToCurrent) return;
+        url.searchParams.set('tab', requestedTab);
+        url.searchParams.delete('page');
+
+        pendingTab = requestedTab;
+        syncTabState(url);
+        region.dispatchEvent(new CustomEvent('async-list:load', {
+            detail: { url: url.toString(), history: returningToCurrent ? null : 'push' },
+        }));
+    });
+
+    region.addEventListener('async-list:loaded', (event) => {
+        pendingTab = null;
+        syncFilterState(event.detail?.url ?? window.location.href);
+    });
+    region.addEventListener('async-list:error', () => {
+        pendingTab = null;
+        syncTabState(window.location.href);
+    });
+    window.addEventListener('popstate', () => syncFilterState(window.location.href));
 });
 
 document.querySelectorAll('[data-ci-activities-listing]').forEach((region) => {
