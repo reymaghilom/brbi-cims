@@ -18,9 +18,11 @@ class AuthenticationTest extends TestCase
 
     public function test_login_screen_is_private_entry_point_and_registration_is_absent(): void
     {
-        $this->get('/login')->assertOk()
+        $response = $this->get('/login')->assertOk()
             ->assertSee('Credit Investigation Management System')
             ->assertSee('Login');
+        $this->assertMatchesRegularExpression('/<p[^>]*text-brand-sidebar[^>]*>Credit Investigation Management System<\/p>/', $response->getContent());
+        $this->assertDoesNotMatchRegularExpression('/Credit Investigation\s*<br[^>]*>\s*Management System/', $response->getContent());
         $this->get('/register')->assertNotFound();
     }
 

@@ -968,6 +968,9 @@ document.addEventListener('click', (event) => {
     const contextMenuItem = event.target.closest('[data-context-menu] [role="menuitem"]');
     if (contextMenuItem) closeContextMenu(contextMenuItem.closest('details[data-context-menu]'));
 
+    const folderMenuItem = event.target.closest('[data-folder-action-menu] [role="menuitem"]');
+    if (folderMenuItem) closeFolderMenus();
+
     const menuTrigger = event.target.closest('[data-folder-menu-trigger]');
     if (menuTrigger) {
         const tile = menuTrigger.closest('[data-folder-shell]')?.querySelector('[data-folder-tile]');
@@ -995,6 +998,7 @@ document.addEventListener('click', (event) => {
 
     const folderTile = event.target.closest('[data-folder-tile]');
     if (folderTile && !event.target.closest('a, button, [role="menu"]')) {
+        closeFolderMenus();
         selectClientFolder(folderTile);
     } else if (!event.target.closest('[data-folder-action-menu]')) {
         closeFolderMenus();

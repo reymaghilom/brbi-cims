@@ -6,18 +6,16 @@ use App\Enums\RecordState;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use Illuminate\Support\Collection;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class CibiExcelExporter
 {
     private const SHEET = 'CI REPORT - CIBI';
-
-    private const BANK_CAPACITY = 5;
-
-    private const LOAN_CAPACITY = 5;
 
     private const INCOME_CAPACITY = 3;
 
@@ -36,8 +34,6 @@ class CibiExcelExporter
         $banks = $this->populated($report->bankAccounts, ['institution', 'branch', 'year_opened', 'adb_level', 'capital_share_amount', 'capital_share_text', 'relevant_remarks']);
         $loans = $this->populated($report->loanRecords, ['institution', 'original_amount', 'remaining_balance', 'amortization_amount', 'granted_date', 'maturity_date', 'cycle_number', 'cycle_label', 'security_type', 'payment_performance', 'remarks']);
         $incomes = $this->populated($report->incomeSourceSummaries, ['source_name', 'stability_result', 'key_information']);
-        abort_if($banks->count() > self::BANK_CAPACITY, 422, 'The official Excel template supports up to 5 Bank / Financial Institution records.');
-        abort_if($loans->count() > self::LOAN_CAPACITY, 422, 'The official Excel template supports up to 5 Credit / Loan records.');
         abort_if($incomes->count() > self::INCOME_CAPACITY, 422, 'The official Excel template supports up to 3 Income Source records.');
 
         $template = resource_path('report-templates/cibi-report.xlsx');
@@ -67,10 +63,12 @@ class CibiExcelExporter
         $this->value($sheet, 'G13', $this->na($personal['present_address'] ?? null));
         $this->value($sheet, 'Y13', $this->na($personal['length_of_stay_months'] ?? null));
         $residence = (string) ($personal['residence_status'] ?? '');
-        $this->value($sheet, 'C14', $this->choices($residence, ['Owned' => 'OWNED', 'Mortgaged' => 'MORTGAGED FROM', 'Rented' => 'RENTED FROM:']));
+        $this->value($sheet, 'C14', $this->choices($residence, ['Owned' => 'OWNED', 'Mortgaged' => 'MORTGAGED FROM:', 'Rented' => 'RENTED FROM:']));
         $hasPresentResidenceDetails = in_array($residence, ['Mortgaged', 'Rented'], true);
         $this->value($sheet, 'L14', $this->na($hasPresentResidenceDetails ? ($personal['residence_status_from'] ?? null) : null));
-        $this->value($sheet, 'Y14', $this->na($hasPresentResidenceDetails ? ($personal['monthly_rent'] ?? null) : null));
+        $this->value($sheet, 'Y14', $this->formattedNumberOrBlank($hasPresentResidenceDetails ? ($personal['monthly_rent'] ?? null) : null));
+        $sheet->getStyle('Y14')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_LEFT);
+        $sheet->getStyle('Y14')->getNumberFormat()->setFormatCode('#,##0');
         // Row 15 of the official template carries TWO groups: the LIVING W PARENTS marker itself,
         // then OWNED / MORTGAGED / RENTED for the parents' house. The second group is only ever
         // marked while the present address is "Living with Parents", and stays blank when the CI
@@ -80,7 +78,7 @@ class CibiExcelExporter
         $this->value($sheet, 'C15', $this->mark($withParents).' LIVING W PARENTS:  '.$this->choices($parentsHouse, ['Owned' => 'OWNED', 'Mortgaged' => 'MORTGAGED', 'Rented' => 'RENTED']));
         // OTHER RESIDENCES keeps its historical free text; an optional status is prefixed only
         // when one was actually chosen, so existing saved reports render exactly as before.
-        $this->value($sheet, 'R15', $this->joined([$personal['other_residence_status'] ?? null, $this->na($personal['other_residences'] ?? null)], ' - '));
+        $this->value($sheet, 'R15', $this->joined([$personal['other_residence_status'] ?? null, $personal['other_residences'] ?? null], ' - '));
         $this->value($sheet, 'G16', $this->choices($personal['home_condition'] ?? null, ['New' => 'NEW', 'Slightly New' => 'SLIGHTLY NEW', 'Ancestral' => 'ANCESTRAL', 'Apartment' => 'APARTMENT', 'Dorm' => 'DORM', 'Shanty' => 'SHANTY']));
         $this->value($sheet, 'Y16', $this->na($personal['number_of_storeys'] ?? null));
         $this->value($sheet, 'G17', $this->choices($personal['material_cost_level'] ?? null, ['Expensive' => 'EXPENSIVE', 'Medium' => 'MEDIUM', 'Low' => 'LOW']));
@@ -124,9 +122,13 @@ class CibiExcelExporter
         // every other data column, which is why the amounts and remarks looked mismatched.
         // Every written cell is normalized to size 10, not bold, matching what the reference
         // workbook already uses consistently everywhere else.
+        $bankStartRow = 36;
+        $bankVisibleRows = max($banks->count(), 3);
+        $bankRowDelta = $this->resizeDetailRows($sheet, $bankStartRow, 5, $bankVisibleRows);
         $bankColumns = ['C', 'G', 'J', 'L', 'Q', 'R', 'U'];
+        $this->clearDetailRows($sheet, $bankColumns, $bankStartRow, $bankVisibleRows);
         foreach ($banks as $index => $bank) {
-            $row = 36 + $index;
+            $row = $bankStartRow + $index;
             [$adbChoices, $adbFigures] = $this->adb($bank->adb_level);
             $this->value($sheet, 'C'.$row, $this->na($bank->institution));
             $this->value($sheet, 'G'.$row, $this->na($bank->branch));
@@ -139,44 +141,56 @@ class CibiExcelExporter
                 $sheet->getStyle($column.$row)->getFont()->setSize(10)->setBold(false);
             }
         }
-        $this->value($sheet, 'E42', 'N/A');
+        $this->value($sheet, 'E'.(42 + $bankRowDelta), 'N/A');
 
+        $loanStartRow = 45 + $bankRowDelta;
+        $loanVisibleRows = max($loans->count(), 3);
+        $loanRowDelta = $this->resizeDetailRows($sheet, $loanStartRow, 5, $loanVisibleRows);
+        $downstreamRowDelta = $bankRowDelta + $loanRowDelta;
         $loanColumns = ['C', 'G', 'J', 'M', 'P', 'S', 'T', 'V'];
+        $this->clearDetailRows($sheet, $loanColumns, $loanStartRow, $loanVisibleRows);
         $previousInstitution = null;
         foreach ($loans as $index => $loan) {
-            $row = 45 + $index;
+            $row = $loanStartRow + $index;
             // One Bank / Coop / Branch is written once and its further loan results sit beneath
             // it with the institution cell left blank, matching the grouped official layout.
             $institutionKey = mb_strtolower(trim((string) $loan->institution));
             $this->value($sheet, 'C'.$row, $institutionKey !== '' && $institutionKey === $previousInstitution ? '' : $this->na($loan->institution));
             $previousInstitution = $institutionKey;
-            $this->value($sheet, 'G'.$row, $this->numberOrNa($loan->original_amount));
-            $this->value($sheet, 'J'.$row, $this->numberOrNa($loan->remaining_balance));
-            $this->value($sheet, 'M'.$row, $this->numberOrNa($loan->amortization_amount));
-            $this->value($sheet, 'P'.$row, $this->dateText($loan->granted_date).' - '.$this->dateText($loan->maturity_date));
-            $this->value($sheet, 'S'.$row, $this->na($loan->cycle_label ?: $loan->cycle_number));
-            $this->value($sheet, 'T'.$row, $this->na($loan->security_type));
-            $this->value($sheet, 'V'.$row, $this->joined([$loan->payment_performance, $loan->remarks], ' '));
+            $this->value($sheet, 'G'.$row, $this->numberOrBlank($loan->original_amount));
+            $this->value($sheet, 'J'.$row, $this->numberOrBlank($loan->remaining_balance));
+            $this->value($sheet, 'M'.$row, $this->numberOrBlank($loan->amortization_amount));
+            $this->value($sheet, 'P'.$row, $this->joinedOrBlank([$this->dateTextOrBlank($loan->granted_date), $this->dateTextOrBlank($loan->maturity_date)], ' - '));
+            $this->value($sheet, 'S'.$row, $this->textOrBlank($loan->cycle_label ?: $loan->cycle_number));
+            $this->value($sheet, 'T'.$row, $this->textOrBlank($loan->security_type));
+            $this->value($sheet, 'V'.$row, $this->joinedOrBlank([$loan->payment_performance, $loan->remarks], ' '));
+            $sheet->getStyle('V'.$row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_LEFT);
             foreach ($loanColumns as $column) {
                 $sheet->getStyle($column.$row)->getFont()->setSize(10)->setBold(false);
             }
         }
+        $loanEndRow = $loanStartRow + $loanVisibleRows - 1;
+        $monetaryTotalRow = $loanEndRow + 1;
+        $sheet->setCellValue('G'.$monetaryTotalRow, "=SUM(G{$loanStartRow}:I{$loanEndRow})");
+        $sheet->setCellValue('J'.$monetaryTotalRow, "=SUM(J{$loanStartRow}:L{$loanEndRow})");
+        $sheet->setCellValue('M'.$monetaryTotalRow, "=SUM(M{$loanStartRow}:O{$loanEndRow})");
         $totals = $report->summary_totals ?? [];
-        $this->value($sheet, 'H52', (int) ($totals['institutions_checked'] ?? $report->creditChecks()->whereNotNull('institution')->count()));
-        $this->value($sheet, 'H53', (int) ($totals['institutions_declared'] ?? $report->creditChecks()->where('is_declared', true)->count()));
-        $this->value($sheet, 'H54', (int) ($totals['loan_records_found'] ?? $loans->count()));
-        $this->value($sheet, 'J53', $this->na($report->negative_credit_findings));
-        $this->value($sheet, 'E56', $this->na($report->other_remarks));
+        $this->value($sheet, 'H'.(52 + $downstreamRowDelta), (int) ($totals['institutions_checked'] ?? $report->creditChecks()->whereNotNull('institution')->count()));
+        $this->value($sheet, 'H'.(53 + $downstreamRowDelta), (int) ($totals['institutions_declared'] ?? $report->creditChecks()->where('is_declared', true)->count()));
+        $this->value($sheet, 'H'.(54 + $downstreamRowDelta), (int) ($totals['loan_records_found'] ?? $loans->count()));
+        $this->value($sheet, 'J'.(53 + $downstreamRowDelta), $this->na($report->negative_credit_findings));
+        $this->value($sheet, 'E'.(56 + $downstreamRowDelta), $this->na($report->other_remarks));
 
         foreach ($incomes as $index => $income) {
-            $row = 60 + $index;
+            $row = 60 + $downstreamRowDelta + $index;
             $this->value($sheet, 'C'.$row, $this->na($income->source_name));
             $this->value($sheet, 'G'.$row, $this->choices($income->stability_result, ['existing_strong_capacity' => 'EXISTING WITH STRONG CAPACITY', 'existing_weak_capacity' => 'EXISTING BUT WEAK CAPACITY', 'not_validated' => 'WAS NOT/CANNOT BE VALIDATED'], ' / '));
             $this->value($sheet, 'P'.$row, $this->na($income->key_information));
         }
 
-        $this->value($sheet, 'G63', mb_strtoupper($this->na($report->prepared_by_name ?: $report->investigator?->full_name)));
-        $this->value($sheet, 'S63', null);
+        $this->value($sheet, 'G'.(63 + $downstreamRowDelta), mb_strtoupper($this->na($report->prepared_by_name ?: $report->investigator?->full_name)));
+        $this->value($sheet, 'S'.(63 + $downstreamRowDelta), null);
+        $sheet->getPageSetup()->setPrintArea('B2:AB'.(64 + $downstreamRowDelta));
         $book->getProperties()
             ->setCreator('Binhi Rural Bank Inc.')
             ->setTitle('CI / BI Report - '.($activePerson?->full_name ?? $folder->display_name))
@@ -214,6 +228,62 @@ class CibiExcelExporter
         return $records->filter(fn ($record): bool => collect($record->only($fields))->contains(fn ($value): bool => filled($value)))->values();
     }
 
+    private function resizeDetailRows(Worksheet $sheet, int $startRow, int $templateCapacity, int $visibleRows): int
+    {
+        $delta = $visibleRows - $templateCapacity;
+        if ($delta < 0) {
+            $sheet->removeRow($startRow + $visibleRows, abs($delta));
+
+            return $delta;
+        }
+
+        if ($delta === 0) {
+            return 0;
+        }
+
+        $sourceRow = $startRow + $templateCapacity - 1;
+        $sheet->insertNewRowBefore($startRow + $templateCapacity, $delta);
+        for ($targetRow = $startRow + $templateCapacity; $targetRow < $startRow + $visibleRows; $targetRow++) {
+            $this->copyTemplateRow($sheet, $sourceRow, $targetRow);
+        }
+
+        return $delta;
+    }
+
+    /** @param  array<int, string>  $columns */
+    private function clearDetailRows(Worksheet $sheet, array $columns, int $startRow, int $rowCount): void
+    {
+        for ($row = $startRow; $row < $startRow + $rowCount; $row++) {
+            foreach ($columns as $column) {
+                $this->value($sheet, $column.$row, null);
+            }
+        }
+    }
+
+    private function copyTemplateRow(Worksheet $sheet, int $sourceRow, int $targetRow): void
+    {
+        $sheet->duplicateStyle($sheet->getStyle("B{$sourceRow}:AB{$sourceRow}"), "B{$targetRow}:AB{$targetRow}");
+        $sheet->getRowDimension($targetRow)->setRowHeight($sheet->getRowDimension($sourceRow)->getRowHeight());
+
+        for ($column = 2; $column <= 28; $column++) {
+            $columnName = Coordinate::stringFromColumnIndex($column);
+            $this->value($sheet, $columnName.$targetRow, $sheet->getCell($columnName.$sourceRow)->getValue());
+        }
+
+        $targetMerges = [];
+        foreach ($sheet->getMergeCells() as $merge) {
+            [$start, $end] = Coordinate::rangeBoundaries($merge);
+            if ($start[1] === $sourceRow && $end[1] === $sourceRow) {
+                $targetMerges[] = Coordinate::stringFromColumnIndex($start[0]).$targetRow.':'.Coordinate::stringFromColumnIndex($end[0]).$targetRow;
+            }
+        }
+        foreach ($targetMerges as $merge) {
+            if (! in_array($merge, $sheet->getMergeCells(), true)) {
+                $sheet->mergeCells($merge);
+            }
+        }
+    }
+
     private function value(Worksheet $sheet, string $coordinate, mixed $value): void
     {
         $sheet->setCellValue($coordinate, $value);
@@ -224,9 +294,9 @@ class CibiExcelExporter
         $this->value($sheet, $coordinate, $value ? ExcelDate::dateTimeToExcel($value) : 'N/A');
     }
 
-    private function dateText(mixed $value): string
+    private function dateTextOrBlank(mixed $value): ?string
     {
-        return $value ? $value->format('n/j/Y') : 'N/A';
+        return $value ? $value->format('n/j/Y') : null;
     }
 
     private function mark(bool $selected): string
@@ -282,6 +352,27 @@ class CibiExcelExporter
         return filled($value) ? (float) $value : 'N/A';
     }
 
+    private function numberOrBlank(mixed $value): ?float
+    {
+        return filled($value) ? (float) $value : null;
+    }
+
+    private function formattedNumberOrBlank(mixed $value): ?float
+    {
+        if (blank($value)) {
+            return null;
+        }
+
+        $numericValue = is_string($value) ? str_replace(',', '', trim($value)) : $value;
+
+        return is_numeric($numericValue) ? (float) $numericValue : null;
+    }
+
+    private function textOrBlank(mixed $value): ?string
+    {
+        return filled($value) ? (string) $value : null;
+    }
+
     private function na(mixed $value): string
     {
         return filled($value) ? (string) $value : 'N/A';
@@ -292,5 +383,12 @@ class CibiExcelExporter
         $joined = collect($values)->filter(fn ($value) => filled($value))->implode($separator);
 
         return filled($joined) ? $joined : 'N/A';
+    }
+
+    private function joinedOrBlank(array $values, string $separator): ?string
+    {
+        $joined = collect($values)->filter(fn ($value) => filled($value))->implode($separator);
+
+        return filled($joined) ? $joined : null;
     }
 }

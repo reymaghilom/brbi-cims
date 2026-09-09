@@ -44,7 +44,6 @@
     <div class="space-y-5">
         <x-ui.client-header
             :name="$clientFolder->display_name"
-            :folder-number="$clientFolder->folder_number"
             :status="$clientFolder->status"
             :progress="$progress['percentage']"
         >

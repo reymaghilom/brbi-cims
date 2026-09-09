@@ -12,7 +12,9 @@ use App\Services\Reports\CibiExcelExporter;
 use App\Services\Reports\OfficialReportDataBuilder;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -258,6 +260,126 @@ class CibiResidenceStatusTest extends TestCase
         $this->assertStringContainsString('Owned - Ancestral house in Bugo', (string) $sheet->getCell('R15')->getValue());
     }
 
+    public function test_web_preview_section_one_follows_the_excel_row_arrangement_without_missing_or_duplicate_values(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $this->save($ci, $folder, null, [
+            'residence_status' => 'Mortgaged',
+            'residence_status_from' => 'FICCO ARRANGEMENT VALUE',
+            'monthly_rent' => '100000',
+            'other_residence_status' => 'Owned',
+            'other_residences' => 'OTHER RESIDENCE ARRANGEMENT VALUE',
+        ]);
+
+        $html = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
+        preg_match('/<table class="cibi-form-table cibi-personal">.*?<\/table>/s', $html, $sectionMatch);
+        $this->assertNotEmpty($sectionMatch, 'Section I table was not rendered.');
+        $section = $sectionMatch[0];
+        preg_match_all('/<tr[^>]*>.*?<\/tr>/s', $section, $rowMatches);
+
+        $document = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi);
+        $pdfHtml = view('reports.official.document', [
+            'document' => $document,
+            'pdfMode' => true,
+            'clientFolder' => $folder,
+            'type' => OfficialReportType::Cibi,
+            'source' => null,
+            'personParams' => [],
+        ])->render();
+        preg_match('/<table class="cibi-form-table cibi-personal">.*?<\/table>/s', $pdfHtml, $pdfSectionMatch);
+        $this->assertSame($section, $pdfSectionMatch[0] ?? null, 'Web Preview and PDF must render Section I from the same authoritative layout.');
+
+        $sheet = $this->workbook($folder);
+        $this->assertSame(DataType::TYPE_NUMERIC, $sheet->getCell('Y14')->getDataType());
+        $this->assertSame(100000.0, (float) $sheet->getCell('Y14')->getValue());
+        $this->assertSame('100,000', $sheet->getCell('Y14')->getFormattedValue());
+        $this->assertSame('#,##0', $sheet->getStyle('Y14')->getNumberFormat()->getFormatCode());
+
+        $rowContaining = function (string $label) use ($rowMatches): string {
+            $row = collect($rowMatches[0])->first(fn (string $candidate): bool => str_contains($candidate, $label));
+            $this->assertNotNull($row, "Missing Section I row containing {$label}.");
+
+            return preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($row)));
+        };
+
+        $this->assertStringContainsString('AGE:', $rowContaining('NAME OF CLIENT:'));
+        $this->assertStringContainsString('AGE:', $rowContaining("SPOUSE'S NAME:"));
+        $this->assertStringContainsString('LENGTH OF STAY:', $rowContaining('PRESENT ADDRESS:'));
+
+        $residenceRow = $rowContaining('MORTGAGED FROM:');
+        foreach (['OWNED', 'MORTGAGED FROM:', 'RENTED FROM:', 'FICCO ARRANGEMENT VALUE', 'PHP MONTHLY:', '100,000'] as $value) {
+            $this->assertStringContainsString($value, $residenceRow);
+        }
+        $this->assertStringNotContainsString('LIVING WITH PARENTS:', $residenceRow);
+        $this->assertMatchesRegularExpression('/<td colspan="2" class="cibi-residence-source">FICCO ARRANGEMENT VALUE<\/td>/', $section);
+        $this->assertDoesNotMatchRegularExpression('/<span>[^<]*MORTGAGED FROM:[^<]*FICCO ARRANGEMENT VALUE<\/span>/', $section);
+
+        $parentsRow = $rowContaining('LIVING WITH PARENTS:');
+        foreach (['OWNED', 'MORTGAGED', 'RENTED', 'OTHER RESIDENCES:', 'Owned - OTHER RESIDENCE ARRANGEMENT VALUE'] as $value) {
+            $this->assertStringContainsString($value, $parentsRow);
+        }
+        $this->assertStringContainsString('.cibi-parents-house-choices{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:.09in}', $html);
+        $this->assertMatchesRegularExpression('/<span class="cibi-parents-house-choices"><span>[^<]*OWNED<\/span><span>[^<]*MORTGAGED<\/span><span>[^<]*RENTED<\/span><\/span>/', $section);
+
+        $this->assertStringContainsString('.cibi-home-condition-choices{flex-wrap:nowrap;column-gap:.06in;font-size:.9em}', $html);
+        $this->assertMatchesRegularExpression('/<tr><th>HOME CONDITION:<\/th>.*?<div class="cibi-choice-list cibi-home-condition-choices"><span>[^<]*NEW<\/span><span>[^<]*SLIGHTLY NEW<\/span><span>[^<]*ANCESTRAL<\/span><span>[^<]*APARTMENT<\/span><span>[^<]*DORM<\/span><span>[^<]*SHANTY<\/span><\/div>.*?<th># OF STOREYS:<\/th>/s', $section);
+
+        foreach ([
+            'HOME CONDITION:' => '# OF STOREYS:',
+            'MATERIAL COST:' => 'LIVING CONDITION:',
+            'PREVIOUS ADDRESS:' => 'LENGTH OF STAY:',
+            "PARENTS' ADDRESS:" => '# OF DEPENDENTS:',
+            'CIVIL STATUS:' => 'IF SEPARATED, YEAR:',
+            'LIFESTYLE:' => 'VEHICLES OWNED:',
+        ] as $left => $right) {
+            $this->assertStringContainsString($right, $rowContaining($left));
+        }
+
+        $orderedLabels = [
+            'NAME OF CLIENT:', "SPOUSE'S NAME:", 'PRESENT ADDRESS:', 'MORTGAGED FROM:',
+            'LIVING WITH PARENTS:', 'HOME CONDITION:', 'MATERIAL COST:', 'PREVIOUS ADDRESS:',
+            "PARENTS' ADDRESS:", 'CIVIL STATUS:', 'REPUTATION:', 'BRGY LEVEL FINDINGS:',
+            'COURT BACKGROUND:', 'LIFESTYLE:', 'VALIDATED CONTACT NUMBER(S)/EMAIL:', 'OTHER REMARKS:',
+        ];
+        $lastPosition = -1;
+        foreach ($orderedLabels as $label) {
+            $position = strpos($section, $label);
+            $this->assertNotFalse($position, "Missing Section I label {$label}.");
+            $this->assertGreaterThan($lastPosition, $position, "Section I label {$label} is out of order.");
+            $lastPosition = $position;
+        }
+
+        foreach (['FICCO ARRANGEMENT VALUE', '100,000', 'OTHER RESIDENCE ARRANGEMENT VALUE'] as $value) {
+            $this->assertSame(1, substr_count($section, $value), "{$value} should appear exactly once in Section I.");
+        }
+    }
+
+    public function test_rearranged_web_preview_keeps_applicant_and_exact_co_maker_personal_information_isolated(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'OUTPUT CO MAKER']);
+        $this->save($ci, $folder, null, [
+            'residence_status' => 'Owned',
+            'other_residences' => 'APPLICANT OUTPUT RESIDENCE',
+        ]);
+        $this->save($ci, $folder, $coMaker->id, [
+            'residence_status' => 'Rented',
+            'residence_status_from' => 'CO MAKER LANDLORD',
+            'monthly_rent' => '3,765',
+            'other_residences' => 'CO MAKER OTHER RESIDENCE',
+        ]);
+
+        $applicantHtml = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
+        $coMakerHtml = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi', 'co_maker_id' => $coMaker->id]))->assertOk()->getContent();
+
+        $this->assertStringContainsString('APPLICANT OUTPUT RESIDENCE', $applicantHtml);
+        $this->assertStringNotContainsString('CO MAKER LANDLORD', $applicantHtml);
+        $this->assertStringContainsString('CO MAKER LANDLORD', $coMakerHtml);
+        $this->assertStringContainsString('3,765', $coMakerHtml);
+        $this->assertStringContainsString('<td colspan="2" class="cibi-residence-source">CO MAKER LANDLORD</td>', $coMakerHtml);
+        $this->assertStringNotContainsString('APPLICANT OUTPUT RESIDENCE', $coMakerHtml);
+    }
+
     public function test_mortgage_and_rental_amounts_share_the_official_php_monthly_field(): void
     {
         [$ci, $folder] = $this->folder();
@@ -275,20 +397,47 @@ class CibiResidenceStatusTest extends TestCase
         $html = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
         $this->assertStringContainsString('PHP MONTHLY:', $html);
         $this->assertStringContainsString('5,000', $html);
-        $this->assertSame('5,000', (string) $this->workbook($folder)->getCell('Y14')->getValue());
+        $this->assertStringContainsString('<th>PHP MONTHLY:</th><td>5,000</td>', $html);
+        $this->assertStringContainsString('<th>PHP MONTHLY:</th><td>5,000</td>', $this->officialPdfHtml($folder));
+        $this->assertStringContainsString('<td colspan="2" class="cibi-residence-source">FICCO</td>', $html);
+        $this->assertDoesNotMatchRegularExpression('/<span>[^<]*MORTGAGED FROM:[^<]*FICCO<\/span>/', $html);
+        $sheet = $this->workbook($folder);
+        $this->assertStringContainsString('MORTGAGED FROM:', (string) $sheet->getCell('C14')->getValue());
+        $this->assertStringNotContainsString('FICCO', (string) $sheet->getCell('C14')->getValue());
+        $this->assertSame('FICCO', (string) $sheet->getCell('L14')->getValue());
+        $this->assertSame(DataType::TYPE_NUMERIC, $sheet->getCell('Y14')->getDataType());
+        $this->assertSame(5000.0, (float) $sheet->getCell('Y14')->getValue());
+        $this->assertSame('5,000', $sheet->getCell('Y14')->getFormattedValue());
+        $this->assertSame(Alignment::HORIZONTAL_LEFT, $sheet->getStyle('Y14')->getAlignment()->getHorizontal());
+        $this->assertSame('#,##0', $sheet->getStyle('Y14')->getNumberFormat()->getFormatCode());
+        $this->assertSame(Alignment::HORIZONTAL_GENERAL, $sheet->getStyle('L14')->getAlignment()->getHorizontal());
+        $this->assertContains('Y14:AA14', $sheet->getMergeCells());
 
         $report = $folder->cibiReport()->whereNull('co_maker_id')->sole();
         $this->save($ci, $folder, null, [
             'residence_status' => 'Rented',
             'residence_status_from' => 'Juan Dela Cruz',
-            'monthly_rent' => '4,500',
+            'monthly_rent' => '12,500',
         ], $report->revision);
         $document = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi);
-        $this->assertSame('4,500', $document['cibi']['personal']['monthly_rent']);
+        $this->assertSame('12,500', $document['cibi']['personal']['monthly_rent']);
         $rows = collect(collect($document['sections'])->firstWhere('title', 'I. Validated Personal Information')['rows'])
             ->mapWithKeys(fn (array $row): array => [$row[0] => $row[1]]);
-        $this->assertSame('4,500', $rows['Php Monthly']);
-        $this->assertSame('4,500', (string) $this->workbook($folder)->getCell('Y14')->getValue());
+        $this->assertSame('12,500', $rows['Php Monthly']);
+        $html = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
+        $this->assertStringContainsString('<th>PHP MONTHLY:</th><td>12,500</td>', $html);
+        $this->assertStringContainsString('<th>PHP MONTHLY:</th><td>12,500</td>', $this->officialPdfHtml($folder));
+        $this->assertStringContainsString('<td colspan="2" class="cibi-residence-source">Juan Dela Cruz</td>', $html);
+        $this->assertDoesNotMatchRegularExpression('/<span>[^<]*RENTED FROM:[^<]*Juan Dela Cruz<\/span>/', $html);
+        $sheet = $this->workbook($folder);
+        $this->assertStringContainsString('RENTED FROM:', (string) $sheet->getCell('C14')->getValue());
+        $this->assertStringNotContainsString('Juan Dela Cruz', (string) $sheet->getCell('C14')->getValue());
+        $this->assertSame('Juan Dela Cruz', (string) $sheet->getCell('L14')->getValue());
+        $this->assertSame(DataType::TYPE_NUMERIC, $sheet->getCell('Y14')->getDataType());
+        $this->assertSame(12500.0, (float) $sheet->getCell('Y14')->getValue());
+        $this->assertSame('12,500', $sheet->getCell('Y14')->getFormattedValue());
+        $this->assertSame('#,##0', $sheet->getStyle('Y14')->getNumberFormat()->getFormatCode());
+        $this->assertSame(Alignment::HORIZONTAL_LEFT, $sheet->getStyle('Y14')->getAlignment()->getHorizontal());
 
         $report->refresh();
         $this->save($ci, $folder, null, [
@@ -299,7 +448,19 @@ class CibiResidenceStatusTest extends TestCase
         $document = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi);
         $this->assertSame('N/A', $document['cibi']['personal']['residence_status_from']);
         $this->assertSame('N/A', $document['cibi']['personal']['monthly_rent']);
-        $this->assertSame('N/A', (string) $this->workbook($folder)->getCell('Y14')->getValue());
+        $html = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
+        $this->assertStringContainsString('<th>PHP MONTHLY:</th><td></td>', $html);
+        $this->assertStringContainsString('<th>PHP MONTHLY:</th><td></td>', $this->officialPdfHtml($folder));
+        $this->assertStringContainsString('<td colspan="2" class="cibi-residence-source">N/A</td>', $html);
+        $this->assertStringNotContainsString('stale source', $html);
+        $this->assertStringNotContainsString('9,999', $html);
+        $sheet = $this->workbook($folder);
+        $this->assertStringContainsString('OWNED', (string) $sheet->getCell('C14')->getValue());
+        $this->assertSame('N/A', (string) $sheet->getCell('L14')->getValue());
+        $this->assertNull($sheet->getCell('Y14')->getValue());
+        $this->assertSame('', $sheet->getCell('Y14')->getFormattedValue());
+        $this->assertSame('#,##0', $sheet->getStyle('Y14')->getNumberFormat()->getFormatCode());
+        $this->assertStringNotContainsString('stale source', (string) $sheet->getCell('C14')->getValue());
     }
 
     public function test_a_blank_parents_status_is_never_fabricated_in_the_outputs(): void
@@ -315,7 +476,10 @@ class CibiResidenceStatusTest extends TestCase
         $this->assertSame('N/A', $rows['Other Residence Status']);
 
         // No box on the parents' group is ticked when the CI left it unanswered.
-        $c15 = (string) $this->workbook($folder)->getCell('C15')->getValue();
+        $sheet = $this->workbook($folder);
+        $c15 = (string) $sheet->getCell('C15')->getValue();
+        $this->assertSame('N/A', (string) $sheet->getCell('L14')->getValue());
+        $this->assertNull($sheet->getCell('Y14')->getValue());
         $this->assertStringContainsString('( ✓ ) LIVING W PARENTS', $c15);
         $this->assertStringNotContainsString('( ✓ ) OWNED', $c15);
         $this->assertStringNotContainsString('( ✓ ) MORTGAGED', $c15);
@@ -380,6 +544,20 @@ class CibiResidenceStatusTest extends TestCase
         unlink($temporary);
 
         return $sheet;
+    }
+
+    private function officialPdfHtml(ClientFolder $folder): string
+    {
+        $document = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi);
+
+        return view('reports.official.document', [
+            'document' => $document,
+            'pdfMode' => true,
+            'clientFolder' => $folder,
+            'type' => OfficialReportType::Cibi,
+            'source' => null,
+            'personParams' => [],
+        ])->render();
     }
 
     private function payload(array $snapshot = []): array

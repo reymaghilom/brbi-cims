@@ -16,6 +16,25 @@ class ClientFolderLifecycleTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_client_folder_header_hides_the_reference_number_but_keeps_status_and_client_name(): void
+    {
+        $investigator = User::factory()->create();
+        $folder = ClientFolder::factory()->create([
+            'assigned_ci_id' => $investigator->id,
+            'display_name' => 'VISIBLE CLIENT NAME',
+            'folder_number' => 'BRBI-CI-2026-00023',
+        ]);
+        $originalFolderNumber = $folder->folder_number;
+
+        $this->actingAs($investigator)->get(route('client-folders.show', $folder))
+            ->assertOk()
+            ->assertSee('On Progress')
+            ->assertSee('VISIBLE CLIENT NAME')
+            ->assertDontSee('BRBI-CI-2026-00023');
+
+        $this->assertSame($originalFolderNumber, $folder->fresh()->folder_number);
+    }
+
     public function test_administrator_can_create_a_folder_for_an_active_credit_investigator(): void
     {
         $administrator = User::factory()->administrator()->create();

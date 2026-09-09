@@ -1261,13 +1261,36 @@ class CibiReportTest extends TestCase
         $this->assertStringContainsString('.cibi-encoding-paper { width: 100%; max-width: none;', $stylesheet);
         $this->assertStringNotContainsString('width: min(100%, 76rem)', $stylesheet);
         $this->assertStringContainsString('.cibi-income-entry-table { width: 100%; min-width: 48rem;', $stylesheet);
-        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(6) { width: 25%; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(1) { width: 19%; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(2) { width: 12%; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(3) { width: 7%; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(4) { width: 18%; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(5) { width: 16%; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(6) { width: 24%; }', $stylesheet);
         $this->assertStringContainsString('.cibi-entry-table-wrap', $stylesheet);
         $this->assertStringContainsString('.cibi-signatory-role', $stylesheet);
         $this->assertStringContainsString('.cibi-excel-metadata > .cibi-party-risk-row { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);', $stylesheet);
         $this->assertStringNotContainsString('.cibi-encoding-signatory-name { min-height: 1.75rem; border-bottom:', $stylesheet);
         $this->assertStringContainsString('.cibi-signatories .ui-control { min-height: 1.3rem; border: 0;', $stylesheet);
         $this->assertStringContainsString('.cibi-section-note { margin: .55rem 1rem 0; color: var(--color-danger);', $stylesheet);
+    }
+
+    public function test_section_three_bank_fields_use_compact_responsive_column_proportions_without_changing_bindings(): void
+    {
+        $stylesheet = file_get_contents(resource_path('css/app.css'));
+        $this->assertStringContainsString('.cibi-bank-entry-table { min-width: 64rem; table-layout: fixed; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(1) { width: 19%; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(2) { width: 12%; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(3) { width: 7%; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(4) { width: 18%; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(5) { width: 16%; }', $stylesheet);
+        $this->assertStringContainsString('.cibi-bank-entry-table th:nth-child(6) { width: 24%; }', $stylesheet);
+        $this->assertStringContainsString('cibi-entry-table-wrap overflow-x-auto', file_get_contents(resource_path('views/client-folders/cibi-report/_official-table.blade.php')));
+
+        $row = file_get_contents(resource_path('views/client-folders/cibi-report/_official-table-row.blade.php'));
+        foreach (['[institution]', '[branch]', '[year_opened]', '[adb_level_choice]', '[adb_level_figures]', '[capital_share_text]', '[relevant_remarks]'] as $binding) {
+            $this->assertStringContainsString($binding, $row);
+        }
     }
 
     public function test_saved_residence_status_is_selected_in_the_single_choice_radio_group(): void

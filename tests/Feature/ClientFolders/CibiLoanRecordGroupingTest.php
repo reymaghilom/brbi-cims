@@ -12,6 +12,7 @@ use App\Services\Reports\OfficialReportDataBuilder;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use Tests\TestCase;
 
 /**
@@ -605,6 +606,235 @@ class CibiLoanRecordGroupingTest extends TestCase
         $this->assertSame('No existing loan record found during verification.', $loanSection['rows'][2][6]);
     }
 
+    public function test_official_web_and_pdf_show_at_least_three_section_three_bank_rows_without_truncating_actual_rows(): void
+    {
+        foreach ([0 => 3, 1 => 3, 2 => 3, 3 => 3, 4 => 4] as $actualCount => $visibleCount) {
+            [$ci, $folder] = $this->folder();
+            $payload = $this->payload();
+            $payload['summary_totals'] = ['institutions_checked' => 9, 'institutions_declared' => 7, 'loan_records_found' => 5];
+            $payload['bank_accounts'] = [];
+            for ($index = 1; $index <= $actualCount; $index++) {
+                $payload['bank_accounts'][] = [
+                    'institution' => "Section III Bank {$index}",
+                    'branch' => "Branch {$index}",
+                    'year_opened' => 2000 + $index,
+                    'adb_level_choice' => 'mid',
+                    'adb_level_figures' => "Figures {$index}",
+                    'capital_share_amount' => (string) (2000 * $index),
+                    'capital_share_text' => "Capital {$index}",
+                    'relevant_remarks' => "Remark {$index}",
+                ];
+            }
+            $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+            $webHtml = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
+            $document = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi);
+            $pdfHtml = $this->officialHtml($folder, $document, true);
+            $webRows = $this->officialBankRows($webHtml);
+            $pdfRows = $this->officialBankRows($pdfHtml);
+
+            $this->assertCount($visibleCount, $webRows, "Unexpected Web Section III row count for {$actualCount} actual rows.");
+            $this->assertSame($webRows, $pdfRows, "Web and PDF Section III rows differ for {$actualCount} actual rows.");
+            $fillerMarkup = '<tr class="cibi-bank-filler-row">'.str_repeat('<td>&nbsp;</td>', 7).'</tr>';
+            $this->assertSame($visibleCount - $actualCount, substr_count($webHtml, $fillerMarkup));
+            $this->assertSame($visibleCount - $actualCount, substr_count($pdfHtml, $fillerMarkup));
+            $this->assertStringContainsString('.cibi-bank-filler-row td{height:.15in}', $webHtml);
+            $this->assertStringContainsString('.cibi-bank-filler-row td{height:.15in}', $pdfHtml);
+            for ($index = 0; $index < $actualCount; $index++) {
+                $number = $index + 1;
+                $this->assertSame("Section III Bank {$number}", $webRows[$index][0]);
+                $this->assertSame("Branch {$number}", $webRows[$index][1]);
+                $this->assertSame((string) (2000 + $number), $webRows[$index][2]);
+                $this->assertStringContainsString('MID', $webRows[$index][3]);
+                $this->assertSame("Figures {$number}", $webRows[$index][4]);
+                $this->assertSame("Capital {$number}", $webRows[$index][5]);
+                $this->assertSame("Remark {$number}", $webRows[$index][6]);
+            }
+            for ($index = $actualCount; $index < $visibleCount; $index++) {
+                $this->assertSame(array_fill(0, 7, ''), $webRows[$index], 'A Section III filler row contains fabricated data.');
+            }
+
+            $report = CibiReport::whereBelongsTo($folder)->sole();
+            $this->assertCount($actualCount, $report->bankAccounts, 'Section III filler rows must never persist.');
+            $this->assertSame(
+                ['institutions_checked' => 9, 'institutions_declared' => 7, 'loan_records_found' => 5],
+                $report->summary_totals,
+                'Section III filler rows must never affect the three submitted totals.',
+            );
+        }
+    }
+
+    public function test_minimum_section_three_bank_rows_are_applied_after_applicant_and_exact_co_maker_isolation(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'SECTION III CO MAKER']);
+
+        $applicantPayload = $this->payload();
+        $applicantPayload['bank_accounts'][0]['institution'] = 'APPLICANT SECTION III BANK';
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $applicantPayload)->assertRedirect();
+
+        $coMakerPayload = $this->payload();
+        $coMakerPayload['co_maker_id'] = $coMaker->id;
+        $coMakerPayload['bank_accounts'] = [];
+        for ($index = 1; $index <= 4; $index++) {
+            $bank = $this->payload()['bank_accounts'][0];
+            $bank['institution'] = "CO MAKER SECTION III BANK {$index}";
+            $coMakerPayload['bank_accounts'][] = $bank;
+        }
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $coMakerPayload)->assertRedirect();
+
+        $applicantHtml = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
+        $coMakerHtml = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi', 'co_maker_id' => $coMaker->id]))->assertOk()->getContent();
+        $applicantRows = $this->officialBankRows($applicantHtml);
+        $coMakerRows = $this->officialBankRows($coMakerHtml);
+
+        $this->assertCount(3, $applicantRows);
+        $this->assertSame('APPLICANT SECTION III BANK', $applicantRows[0][0]);
+        $this->assertSame(array_fill(0, 7, ''), $applicantRows[1]);
+        $this->assertCount(4, $coMakerRows);
+        $this->assertSame(
+            ['CO MAKER SECTION III BANK 1', 'CO MAKER SECTION III BANK 2', 'CO MAKER SECTION III BANK 3', 'CO MAKER SECTION III BANK 4'],
+            array_column($coMakerRows, 0),
+        );
+        $this->assertStringNotContainsString('CO MAKER SECTION III BANK', $applicantHtml);
+        $this->assertStringNotContainsString('APPLICANT SECTION III BANK', $coMakerHtml);
+    }
+
+    public function test_official_web_and_pdf_show_at_least_three_display_only_loan_rows_without_truncating_actual_rows(): void
+    {
+        foreach ([0 => 3, 1 => 3, 2 => 3, 3 => 3, 4 => 4] as $actualCount => $visibleCount) {
+            [$ci, $folder] = $this->folder();
+            $payload = $this->payload();
+            $payload['summary_totals'] = ['institutions_checked' => 9, 'institutions_declared' => 7, 'loan_records_found' => 5];
+            $payload['loan_records'] = [];
+            for ($index = 1; $index <= $actualCount; $index++) {
+                $payload['loan_records'][] = $this->loanRow("Institution {$index}", "Security {$index}", (string) (10000 * $index));
+            }
+            $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+            $webHtml = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
+            $document = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi);
+            $pdfHtml = $this->officialHtml($folder, $document, true);
+            $webRows = $this->officialLoanRows($webHtml);
+            $pdfRows = $this->officialLoanRows($pdfHtml);
+
+            $this->assertCount($visibleCount, $webRows, "Unexpected Web visible-row count for {$actualCount} actual rows.");
+            $this->assertSame($webRows, $pdfRows, "Web and PDF rows differ for {$actualCount} actual rows.");
+            $this->assertSame($visibleCount - $actualCount, substr_count($webHtml, 'class="cibi-loan-filler-row"'));
+            $this->assertSame($visibleCount - $actualCount, substr_count($pdfHtml, 'class="cibi-loan-filler-row"'));
+            $fillerMarkup = '<tr class="cibi-loan-filler-row">'.str_repeat('<td>&nbsp;</td>', 8).'</tr>';
+            $this->assertSame($visibleCount - $actualCount, substr_count($webHtml, $fillerMarkup));
+            $this->assertSame($visibleCount - $actualCount, substr_count($pdfHtml, $fillerMarkup));
+            $this->assertStringContainsString('.cibi-loan-filler-row td{height:.15in}', $webHtml);
+            $this->assertStringContainsString('.cibi-loan-filler-row td{height:.15in}', $pdfHtml);
+            $expectedMoneyTotals = [
+                number_format(10000 * (($actualCount * ($actualCount + 1)) / 2), 2),
+                number_format(50000 * $actualCount, 2),
+                number_format(5000 * $actualCount, 2),
+            ];
+            $this->assertSame($expectedMoneyTotals, $this->officialLoanMoneyTotals($webHtml));
+            $this->assertSame($expectedMoneyTotals, $this->officialLoanMoneyTotals($pdfHtml));
+            for ($index = 0; $index < $actualCount; $index++) {
+                $this->assertSame('Institution '.($index + 1), $webRows[$index][0]);
+            }
+            for ($index = $actualCount; $index < $visibleCount; $index++) {
+                $this->assertSame(array_fill(0, 8, ''), $webRows[$index], 'A display filler row contains fabricated data.');
+            }
+
+            $report = CibiReport::whereBelongsTo($folder)->sole();
+            $this->assertCount($actualCount, $report->loanRecords, 'Display filler rows must never persist.');
+            $this->assertSame(
+                ['institutions_checked' => 9, 'institutions_declared' => 7, 'loan_records_found' => 5],
+                $report->summary_totals,
+                'Display filler rows must never affect the three submitted totals.',
+            );
+        }
+    }
+
+    public function test_a_zero_result_institution_is_an_actual_row_followed_by_only_blank_display_fillers(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $payload = $this->payload();
+        $payload['loan_records'] = [[
+            'institution' => 'FICCO ZERO RESULT',
+            'combined_findings' => 'TO BE FOLLOW',
+        ]];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+        $html = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
+        $rows = $this->officialLoanRows($html);
+
+        $this->assertCount(3, $rows);
+        $this->assertSame('FICCO ZERO RESULT', $rows[0][0]);
+        $this->assertSame('TO BE FOLLOW', $rows[0][7]);
+        $this->assertSame(array_fill(0, 8, ''), $rows[1]);
+        $this->assertSame(array_fill(0, 8, ''), $rows[2]);
+        $this->assertSame(['0.00', '0.00', '0.00'], $this->officialLoanMoneyTotals($html));
+        $this->assertCount(1, CibiReport::whereBelongsTo($folder)->sole()->loanRecords);
+    }
+
+    public function test_official_money_totals_sum_each_actual_loan_once_and_ignore_blank_zero_result_amounts(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $firstLoan = $this->loanRow('MCCB', 'Salary Loan', '100,000');
+        $firstLoan['remaining_balance'] = '40,000';
+        $firstLoan['amortization_amount'] = '5,000';
+        $secondLoan = $this->loanRow('MCCB', 'Emergency Loan', '21,022');
+        $secondLoan['remaining_balance'] = '10,500';
+        $secondLoan['amortization_amount'] = '2,250';
+        $payload = $this->payload();
+        $payload['loan_records'] = [
+            $firstLoan,
+            $secondLoan,
+            ['institution' => 'FICCO', 'combined_findings' => 'TO BE FOLLOW'],
+        ];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+        $document = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi);
+        $webHtml = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
+        $pdfHtml = $this->officialHtml($folder, $document, true);
+        $expected = ['121,022.00', '50,500.00', '7,250.00'];
+
+        $this->assertSame($expected, array_values($document['cibi']['loan_amount_totals']));
+        $this->assertSame($expected, $this->officialLoanMoneyTotals($webHtml));
+        $this->assertSame($expected, $this->officialLoanMoneyTotals($pdfHtml));
+        $this->assertSame(['MCCB', '', 'FICCO'], array_column($this->officialLoanRows($webHtml), 0));
+        $this->assertSame(1, substr_count($webHtml, '121,022.00'));
+    }
+
+    public function test_minimum_official_loan_rows_are_applied_independently_to_applicant_and_exact_co_maker(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'LOAN OUTPUT CO MAKER']);
+
+        $applicantPayload = $this->payload();
+        $applicantPayload['loan_records'] = [$this->loanRow('APPLICANT BANK', 'Applicant Security', '10,000')];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $applicantPayload)->assertRedirect();
+
+        $coMakerPayload = $this->payload();
+        $coMakerPayload['co_maker_id'] = $coMaker->id;
+        $coMakerPayload['loan_records'] = [];
+        for ($index = 1; $index <= 4; $index++) {
+            $coMakerPayload['loan_records'][] = $this->loanRow("CO MAKER BANK {$index}", "Co Maker Security {$index}", (string) (20000 * $index));
+        }
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $coMakerPayload)->assertRedirect();
+
+        $applicantHtml = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
+        $coMakerHtml = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi', 'co_maker_id' => $coMaker->id]))->assertOk()->getContent();
+        $applicantRows = $this->officialLoanRows($applicantHtml);
+        $coMakerRows = $this->officialLoanRows($coMakerHtml);
+
+        $this->assertCount(3, $applicantRows);
+        $this->assertSame('APPLICANT BANK', $applicantRows[0][0]);
+        $this->assertSame(array_fill(0, 8, ''), $applicantRows[1]);
+        $this->assertCount(4, $coMakerRows);
+        $this->assertSame(['CO MAKER BANK 1', 'CO MAKER BANK 2', 'CO MAKER BANK 3', 'CO MAKER BANK 4'], array_column($coMakerRows, 0));
+        $this->assertSame(['10,000.00', '50,000.00', '5,000.00'], $this->officialLoanMoneyTotals($applicantHtml));
+        $this->assertSame(['200,000.00', '200,000.00', '20,000.00'], $this->officialLoanMoneyTotals($coMakerHtml));
+        $this->assertStringNotContainsString('CO MAKER BANK', $applicantHtml);
+        $this->assertStringNotContainsString('APPLICANT BANK', $coMakerHtml);
+    }
+
     public function test_official_excel_output_prints_each_bank_coop_once_and_keeps_zero_result_findings(): void
     {
         [$ci, $folder] = $this->folder();
@@ -616,23 +846,183 @@ class CibiLoanRecordGroupingTest extends TestCase
         ];
         $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
 
-        $temporary = tempnam(sys_get_temp_dir(), 'cibi-loan-xlsx-');
-        file_put_contents($temporary, app(CibiExcelExporter::class)->generate($folder->fresh()));
-        $sheet = IOFactory::load($temporary)->getSheetByName('CI REPORT - CIBI');
+        $sheet = $this->officialWorkbookSheet($folder);
+        $loanStartRow = $this->rowContaining($sheet, 'IV. SUMMARY ON CREDIT/LOAN INFORMATION') + 2;
         $cells = [
-            'C45' => (string) $sheet->getCell('C45')->getValue(),
-            'C46' => (string) $sheet->getCell('C46')->getValue(),
-            'C47' => (string) $sheet->getCell('C47')->getValue(),
-            'V47' => (string) $sheet->getCell('V47')->getValue(),
-            'G47' => (string) $sheet->getCell('G47')->getValue(),
+            'first_institution' => (string) $sheet->getCell('C'.$loanStartRow)->getValue(),
+            'continuation_institution' => (string) $sheet->getCell('C'.($loanStartRow + 1))->getValue(),
+            'zero_result_institution' => (string) $sheet->getCell('C'.($loanStartRow + 2))->getValue(),
+            'zero_result_findings' => (string) $sheet->getCell('V'.($loanStartRow + 2))->getValue(),
+            'zero_result_amount' => (string) $sheet->getCell('G'.($loanStartRow + 2))->getValue(),
         ];
-        unlink($temporary);
 
-        $this->assertSame('ABC Cooperative', $cells['C45']);
-        $this->assertSame('', $cells['C46']);
-        $this->assertSame('Zero Result Bank', $cells['C47']);
-        $this->assertSame('No existing loan record found during verification.', $cells['V47']);
-        $this->assertSame('N/A', $cells['G47']);
+        $this->assertSame('ABC Cooperative', $cells['first_institution']);
+        $this->assertSame('', $cells['continuation_institution']);
+        $this->assertSame('Zero Result Bank', $cells['zero_result_institution']);
+        $this->assertSame('No existing loan record found during verification.', $cells['zero_result_findings']);
+        $this->assertSame('', $cells['zero_result_amount']);
+        foreach (range($loanStartRow, $loanStartRow + 2) as $row) {
+            $this->assertSame(Alignment::HORIZONTAL_LEFT, $sheet->getStyle('V'.$row)->getAlignment()->getHorizontal());
+            $this->assertContains("V{$row}:AA{$row}", $sheet->getMergeCells());
+        }
+        $this->assertSame(Alignment::HORIZONTAL_GENERAL, $sheet->getStyle('G'.$loanStartRow)->getAlignment()->getHorizontal());
+        $this->assertStringContainsString('#,##0.00', $sheet->getStyle('G'.$loanStartRow)->getNumberFormat()->getFormatCode());
+    }
+
+    public function test_excel_section_three_has_a_three_row_minimum_and_never_truncates_actual_banks(): void
+    {
+        foreach ([0 => 3, 1 => 3, 2 => 3, 3 => 3, 4 => 4, 6 => 6] as $actualCount => $visibleCount) {
+            [$ci, $folder] = $this->folder();
+            $payload = $this->payload();
+            $payload['bank_accounts'] = [];
+            $payload['summary_totals'] = ['institutions_checked' => 9, 'institutions_declared' => 7, 'loan_records_found' => 5];
+            $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+            $report = CibiReport::whereBelongsTo($folder)->sole();
+            for ($index = 1; $index <= $actualCount; $index++) {
+                $report->bankAccounts()->create([
+                    'institution' => "XLSX BANK {$index}", 'branch' => "BRANCH {$index}",
+                    'year_opened' => 2000 + $index, 'adb_level' => "mid / figures: {$index}000",
+                    'capital_share_text' => "CAPITAL {$index}", 'relevant_remarks' => "REMARK {$index}",
+                    'sort_order' => $index,
+                ]);
+            }
+
+            $sheet = $this->officialWorkbookSheet($folder);
+            $bankStartRow = $this->rowContaining($sheet, 'BANK/FINANCIAL INSTITUTION') + 2;
+            $sectionIvRow = $this->rowContaining($sheet, 'IV. SUMMARY ON CREDIT/LOAN INFORMATION');
+            $this->assertSame($visibleCount, $sectionIvRow - $bankStartRow - 2);
+            for ($index = 0; $index < $actualCount; $index++) {
+                $row = $bankStartRow + $index;
+                $number = $index + 1;
+                $this->assertSame("XLSX BANK {$number}", (string) $sheet->getCell('C'.$row)->getValue());
+                $this->assertSame("BRANCH {$number}", (string) $sheet->getCell('G'.$row)->getValue());
+                $this->assertSame((string) (2000 + $number), (string) $sheet->getCell('J'.$row)->getValue());
+                $this->assertStringContainsString('MID', (string) $sheet->getCell('L'.$row)->getValue());
+                $this->assertSame($number.'000', (string) $sheet->getCell('Q'.$row)->getValue());
+                $this->assertSame("CAPITAL {$number}", (string) $sheet->getCell('R'.$row)->getValue());
+                $this->assertSame("REMARK {$number}", (string) $sheet->getCell('U'.$row)->getValue());
+            }
+            for ($index = $actualCount; $index < $visibleCount; $index++) {
+                $row = $bankStartRow + $index;
+                foreach (['C', 'G', 'J', 'L', 'Q', 'R', 'U'] as $column) {
+                    $this->assertNull($sheet->getCell($column.$row)->getValue(), 'A Section III XLSX filler contains fabricated data.');
+                }
+                $this->assertGreaterThan(0, $sheet->getRowDimension($row)->getRowHeight());
+            }
+            $this->assertStringContainsString('B2:AB', $sheet->getPageSetup()->getPrintArea());
+            $this->assertGreaterThan($sectionIvRow, $this->rowContaining($sheet, 'V. INCOME SOURCES VALIDATION'));
+            $this->assertCount($actualCount, $report->fresh()->bankAccounts);
+            $this->assertSame(
+                ['institutions_checked' => 9, 'institutions_declared' => 7, 'loan_records_found' => 5],
+                $report->fresh()->summary_totals,
+            );
+        }
+    }
+
+    public function test_excel_section_four_has_a_three_row_minimum_and_never_truncates_actual_loans(): void
+    {
+        foreach ([0 => 3, 1 => 3, 2 => 3, 3 => 3, 4 => 4, 6 => 6] as $actualCount => $visibleCount) {
+            [$ci, $folder] = $this->folder();
+            $payload = $this->payload();
+            $payload['loan_records'] = [];
+            $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+            $report = CibiReport::whereBelongsTo($folder)->sole();
+            for ($index = 1; $index <= $actualCount; $index++) {
+                $report->loanRecords()->create([
+                    'institution' => "XLSX LOAN BANK {$index}", 'original_amount' => 100000 * $index,
+                    'remaining_balance' => 70000 * $index, 'amortization_amount' => 5000 * $index,
+                    'security_type' => "SECURITY {$index}", 'remarks' => "FINDING {$index}", 'sort_order' => $index,
+                ]);
+            }
+
+            $sheet = $this->officialWorkbookSheet($folder);
+            $loanStartRow = $this->rowContaining($sheet, 'IV. SUMMARY ON CREDIT/LOAN INFORMATION') + 2;
+            $monetaryTotalRow = $this->monetaryTotalRow($sheet, $loanStartRow);
+            $this->assertSame($visibleCount, $monetaryTotalRow - $loanStartRow);
+            for ($index = 0; $index < $actualCount; $index++) {
+                $row = $loanStartRow + $index;
+                $number = $index + 1;
+                $this->assertSame("XLSX LOAN BANK {$number}", (string) $sheet->getCell('C'.$row)->getValue());
+                $this->assertSame((string) (100000 * $number), (string) $sheet->getCell('G'.$row)->getValue());
+                $this->assertSame("FINDING {$number}", (string) $sheet->getCell('V'.$row)->getValue());
+            }
+            for ($index = $actualCount; $index < $visibleCount; $index++) {
+                $row = $loanStartRow + $index;
+                foreach (['C', 'G', 'J', 'M', 'P', 'S', 'T', 'V'] as $column) {
+                    $this->assertNull($sheet->getCell($column.$row)->getValue(), 'A Section IV XLSX filler contains fabricated data.');
+                }
+                $this->assertGreaterThan(0, $sheet->getRowDimension($row)->getRowHeight());
+            }
+            $factor = ($actualCount * ($actualCount + 1)) / 2;
+            $this->assertSame(100000.0 * $factor, (float) $sheet->getCell('G'.$monetaryTotalRow)->getCalculatedValue());
+            $this->assertSame(70000.0 * $factor, (float) $sheet->getCell('J'.$monetaryTotalRow)->getCalculatedValue());
+            $this->assertSame(5000.0 * $factor, (float) $sheet->getCell('M'.$monetaryTotalRow)->getCalculatedValue());
+            $this->assertGreaterThan($monetaryTotalRow, $this->rowContaining($sheet, 'V. INCOME SOURCES VALIDATION'));
+            $this->assertCount($actualCount, $report->fresh()->loanRecords);
+        }
+    }
+
+    public function test_excel_loan_order_grouping_and_monetary_totals_use_each_actual_row_once(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $payload = $this->payload();
+        $payload['loan_records'] = [];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+        $report = CibiReport::whereBelongsTo($folder)->sole();
+        $report->loanRecords()->create([
+            'institution' => 'MCCB', 'original_amount' => 50000, 'remaining_balance' => 20000,
+            'amortization_amount' => 2500, 'security_type' => 'SECOND BY ID', 'sort_order' => 2,
+        ]);
+        $report->loanRecords()->create([
+            'institution' => 'MCCB', 'original_amount' => 100000, 'remaining_balance' => 70000,
+            'amortization_amount' => 5000, 'security_type' => 'FIRST BY SORT', 'sort_order' => 1,
+        ]);
+
+        $sheet = $this->officialWorkbookSheet($folder);
+        $loanStartRow = $this->rowContaining($sheet, 'IV. SUMMARY ON CREDIT/LOAN INFORMATION') + 2;
+        $totalRow = $this->monetaryTotalRow($sheet, $loanStartRow);
+
+        $this->assertSame('MCCB', (string) $sheet->getCell('C'.$loanStartRow)->getValue());
+        $this->assertSame('', (string) $sheet->getCell('C'.($loanStartRow + 1))->getValue());
+        $this->assertSame('FIRST BY SORT', (string) $sheet->getCell('T'.$loanStartRow)->getValue());
+        $this->assertSame('SECOND BY ID', (string) $sheet->getCell('T'.($loanStartRow + 1))->getValue());
+        $this->assertNull($sheet->getCell('G'.($loanStartRow + 2))->getValue());
+        $this->assertSame(150000.0, (float) $sheet->getCell('G'.$totalRow)->getCalculatedValue());
+        $this->assertSame(90000.0, (float) $sheet->getCell('J'.$totalRow)->getCalculatedValue());
+        $this->assertSame(7500.0, (float) $sheet->getCell('M'.$totalRow)->getCalculatedValue());
+    }
+
+    public function test_excel_sections_and_monetary_totals_are_isolated_to_the_exact_applicant_or_co_maker(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'XLSX CO MAKER']);
+
+        $applicantPayload = $this->payload();
+        $applicantPayload['personal_snapshot']['name'] = 'XLSX APPLICANT';
+        $applicantPayload['bank_accounts'][0]['institution'] = 'APPLICANT XLSX BANK';
+        $applicantPayload['loan_records'] = [$this->loanRow('APPLICANT XLSX LOAN', 'Applicant Security', '10000')];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $applicantPayload)->assertRedirect();
+
+        $coMakerPayload = $this->payload();
+        $coMakerPayload['co_maker_id'] = $coMaker->id;
+        $coMakerPayload['personal_snapshot']['name'] = 'XLSX CO MAKER PERSON';
+        $coMakerPayload['bank_accounts'][0]['institution'] = 'CO MAKER XLSX BANK';
+        $coMakerPayload['loan_records'] = [$this->loanRow('CO MAKER XLSX LOAN', 'Co Maker Security', '30000')];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $coMakerPayload)->assertRedirect();
+
+        $applicantSheet = $this->officialWorkbookSheet($folder);
+        $coMakerSheet = $this->officialWorkbookSheet($folder, $coMaker);
+        $applicantLoanStart = $this->rowContaining($applicantSheet, 'IV. SUMMARY ON CREDIT/LOAN INFORMATION') + 2;
+        $coMakerLoanStart = $this->rowContaining($coMakerSheet, 'IV. SUMMARY ON CREDIT/LOAN INFORMATION') + 2;
+
+        $this->assertSame('XLSX APPLICANT', (string) $applicantSheet->getCell('G11')->getValue());
+        $this->assertSame('APPLICANT XLSX BANK', (string) $applicantSheet->getCell('C36')->getValue());
+        $this->assertSame('APPLICANT XLSX LOAN', (string) $applicantSheet->getCell('C'.$applicantLoanStart)->getValue());
+        $this->assertSame(10000.0, (float) $applicantSheet->getCell('G'.$this->monetaryTotalRow($applicantSheet, $applicantLoanStart))->getCalculatedValue());
+        $this->assertSame('XLSX CO MAKER PERSON', (string) $coMakerSheet->getCell('G11')->getValue());
+        $this->assertSame('CO MAKER XLSX BANK', (string) $coMakerSheet->getCell('C36')->getValue());
+        $this->assertSame('CO MAKER XLSX LOAN', (string) $coMakerSheet->getCell('C'.$coMakerLoanStart)->getValue());
+        $this->assertSame(30000.0, (float) $coMakerSheet->getCell('G'.$this->monetaryTotalRow($coMakerSheet, $coMakerLoanStart))->getCalculatedValue());
     }
 
     public function test_the_three_credit_totals_keep_their_own_submitted_values_and_are_never_derived_from_the_grouping(): void
@@ -698,6 +1088,88 @@ class CibiLoanRecordGroupingTest extends TestCase
         $end = strpos($section, '</button>', $start);
 
         return substr($section, $start, $end - $start);
+    }
+
+    /** @param  array<string, mixed>  $document */
+    private function officialHtml(ClientFolder $folder, array $document, bool $pdfMode): string
+    {
+        return view('reports.official.document', [
+            'document' => $document,
+            'pdfMode' => $pdfMode,
+            'clientFolder' => $folder,
+            'type' => OfficialReportType::Cibi,
+            'source' => null,
+            'personParams' => [],
+        ])->render();
+    }
+
+    private function officialWorkbookSheet(ClientFolder $folder, ?CoMaker $activePerson = null)
+    {
+        $temporary = tempnam(sys_get_temp_dir(), 'cibi-output-xlsx-');
+        file_put_contents($temporary, app(CibiExcelExporter::class)->generate($folder->fresh(), $activePerson));
+        $sheet = IOFactory::load($temporary)->getSheetByName('CI REPORT - CIBI');
+        unlink($temporary);
+
+        return $sheet;
+    }
+
+    private function rowContaining($sheet, string $text): int
+    {
+        for ($row = 1; $row <= $sheet->getHighestDataRow(); $row++) {
+            if (str_contains((string) $sheet->getCell('C'.$row)->getValue(), $text)) {
+                return $row;
+            }
+        }
+
+        $this->fail("Missing worksheet row containing: {$text}");
+    }
+
+    private function monetaryTotalRow($sheet, int $startRow): int
+    {
+        for ($row = $startRow; $row <= $sheet->getHighestDataRow(); $row++) {
+            if (str_starts_with((string) $sheet->getCell('G'.$row)->getValue(), '=SUM(')) {
+                return $row;
+            }
+        }
+
+        $this->fail('Missing Section IV monetary-total row.');
+    }
+
+    /** @return array<int, array<int, string>> */
+    private function officialBankRows(string $html): array
+    {
+        preg_match('/<table class="cibi-form-table cibi-grid-table cibi-banks">.*?<tbody>(.*?)<\/tbody>/s', $html, $tableMatch);
+        $this->assertArrayHasKey(1, $tableMatch, 'Missing official CIBI Section III table body.');
+        preg_match_all('/<tr[^>]*>(.*?)<\/tr>/s', $tableMatch[1], $rowMatches);
+
+        return collect($rowMatches[1])->map(function (string $row): array {
+            preg_match_all('/<td(?:\s[^>]*)?>(.*?)<\/td>/s', $row, $cellMatches);
+
+            return collect($cellMatches[1])->map(fn (string $cell): string => trim(str_replace("\u{00A0}", '', html_entity_decode(strip_tags($cell)))))->all();
+        })->all();
+    }
+
+    /** @return array<int, array<int, string>> */
+    private function officialLoanRows(string $html): array
+    {
+        preg_match('/<table class="cibi-form-table cibi-grid-table cibi-loans">.*?<tbody>(.*?)<\/tbody>/s', $html, $tableMatch);
+        $this->assertArrayHasKey(1, $tableMatch, 'Missing official CIBI loan table body.');
+        preg_match_all('/<tr[^>]*>(.*?)<\/tr>/s', $tableMatch[1], $rowMatches);
+
+        return collect($rowMatches[1])->map(function (string $row): array {
+            preg_match_all('/<td>(.*?)<\/td>/s', $row, $cellMatches);
+
+            return collect($cellMatches[1])->map(fn (string $cell): string => trim(str_replace("\u{00A0}", '', html_entity_decode(strip_tags($cell)))))->all();
+        })->all();
+    }
+
+    /** @return array{0: string, 1: string, 2: string} */
+    private function officialLoanMoneyTotals(string $html): array
+    {
+        preg_match('/<tr class="cibi-loan-money-totals"><th>TOTAL:<\/th><td>(.*?)<\/td><td>(.*?)<\/td><td>(.*?)<\/td><td colspan="4"><\/td><\/tr>/s', $html, $matches);
+        $this->assertCount(4, $matches, 'Missing the three aligned Section IV monetary totals.');
+
+        return array_map(fn (string $value): string => trim(html_entity_decode(strip_tags($value))), array_slice($matches, 1));
     }
 
     private function loanSection(string $content): string

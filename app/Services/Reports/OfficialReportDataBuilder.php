@@ -134,6 +134,11 @@ class OfficialReportDataBuilder
                 $this->shortDate($row->granted_date).' - '.$this->shortDate($row->maturity_date),
                 $this->na($row->cycle_label ?: $row->cycle_number), $this->na($row->security_type), $this->na(trim(($row->payment_performance ?? '').' '.($row->remarks ?? ''))),
             ]),
+            'loan_amount_totals' => [
+                'original' => $this->amount($report->loanRecords->sum(fn ($row) => (float) ($row->original_amount ?? 0))),
+                'remaining' => $this->amount($report->loanRecords->sum(fn ($row) => (float) ($row->remaining_balance ?? 0))),
+                'amortization' => $this->amount($report->loanRecords->sum(fn ($row) => (float) ($row->amortization_amount ?? 0))),
+            ],
             'totals' => [
                 'checked' => $report->summary_totals['institutions_checked'] ?? $report->creditChecks->whereNotNull('institution')->count(),
                 'declared' => $report->summary_totals['institutions_declared'] ?? $report->creditChecks->where('is_declared', true)->count(),
