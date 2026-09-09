@@ -68,10 +68,19 @@ class CibiExcelExporter
         $this->value($sheet, 'Y13', $this->na($personal['length_of_stay_months'] ?? null));
         $residence = (string) ($personal['residence_status'] ?? '');
         $this->value($sheet, 'C14', $this->choices($residence, ['Owned' => 'OWNED', 'Mortgaged' => 'MORTGAGED FROM', 'Rented' => 'RENTED FROM:']));
-        $this->value($sheet, 'L14', $this->na($personal['residence_status_from'] ?? null));
-        $this->value($sheet, 'Y14', $this->na($personal['monthly_rent'] ?? null));
-        $this->value($sheet, 'C15', $this->choices($residence === 'Living with Parents' ? $residence : null, ['Living with Parents' => 'LIVING W PARENTS:', 'Owned' => 'OWNED', 'Mortgaged' => 'MORTGAGED', 'Rented' => 'RENTED']));
-        $this->value($sheet, 'R15', $this->na($personal['other_residences'] ?? null));
+        $hasPresentResidenceDetails = in_array($residence, ['Mortgaged', 'Rented'], true);
+        $this->value($sheet, 'L14', $this->na($hasPresentResidenceDetails ? ($personal['residence_status_from'] ?? null) : null));
+        $this->value($sheet, 'Y14', $this->na($hasPresentResidenceDetails ? ($personal['monthly_rent'] ?? null) : null));
+        // Row 15 of the official template carries TWO groups: the LIVING W PARENTS marker itself,
+        // then OWNED / MORTGAGED / RENTED for the parents' house. The second group is only ever
+        // marked while the present address is "Living with Parents", and stays blank when the CI
+        // left that optional secondary choice unanswered.
+        $withParents = $residence === 'Living with Parents';
+        $parentsHouse = $withParents ? ($personal['parents_house_status'] ?? null) : null;
+        $this->value($sheet, 'C15', $this->mark($withParents).' LIVING W PARENTS:  '.$this->choices($parentsHouse, ['Owned' => 'OWNED', 'Mortgaged' => 'MORTGAGED', 'Rented' => 'RENTED']));
+        // OTHER RESIDENCES keeps its historical free text; an optional status is prefixed only
+        // when one was actually chosen, so existing saved reports render exactly as before.
+        $this->value($sheet, 'R15', $this->joined([$personal['other_residence_status'] ?? null, $this->na($personal['other_residences'] ?? null)], ' - '));
         $this->value($sheet, 'G16', $this->choices($personal['home_condition'] ?? null, ['New' => 'NEW', 'Slightly New' => 'SLIGHTLY NEW', 'Ancestral' => 'ANCESTRAL', 'Apartment' => 'APARTMENT', 'Dorm' => 'DORM', 'Shanty' => 'SHANTY']));
         $this->value($sheet, 'Y16', $this->na($personal['number_of_storeys'] ?? null));
         $this->value($sheet, 'G17', $this->choices($personal['material_cost_level'] ?? null, ['Expensive' => 'EXPENSIVE', 'Medium' => 'MEDIUM', 'Low' => 'LOW']));

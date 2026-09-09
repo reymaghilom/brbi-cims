@@ -38,7 +38,7 @@ class SaveCibiReportRequest extends FormRequest
             'account_officer_name' => ['required', 'string', 'max:255'],
             'amount_applied' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'],
             'ci_risk_level' => ['required', Rule::in(['very_low', 'low', 'mid', 'high', 'very_high'])],
-            'personal_snapshot' => ['required', 'array:name,age,spouse_name,spouse_age,present_address,length_of_stay_months,residence_status,residence_status_from,monthly_rent,living_with_parents,other_residences,home_condition,number_of_storeys,material_cost_level,living_condition,previous_address,previous_address_length_of_stay_months,parents_address,dependents_count,civil_status,separated_year,reputation,barangay_findings,court_background_status,court_background,lifestyle,vehicles_owned,contact_details,other_remarks'],
+            'personal_snapshot' => ['required', 'array:name,age,spouse_name,spouse_age,present_address,length_of_stay_months,residence_status,residence_status_from,monthly_rent,living_with_parents,parents_house_status,other_residences,other_residence_status,home_condition,number_of_storeys,material_cost_level,living_condition,previous_address,previous_address_length_of_stay_months,parents_address,dependents_count,civil_status,separated_year,reputation,barangay_findings,court_background_status,court_background,lifestyle,vehicles_owned,contact_details,other_remarks'],
             'personal_snapshot.name' => ['required', 'string', 'max:255'],
             'personal_snapshot.age' => ['required', 'integer', 'min:0', 'max:150'],
             'personal_snapshot.spouse_name' => ['nullable', 'string', 'max:255'],
@@ -49,7 +49,13 @@ class SaveCibiReportRequest extends FormRequest
             'personal_snapshot.residence_status_from' => ['nullable', 'string', 'max:255'],
             'personal_snapshot.monthly_rent' => ['nullable', 'string', 'max:255'],
             'personal_snapshot.living_with_parents' => ['nullable', 'boolean'],
+            // Optional secondary status of the PARENTS' house — only meaningful while the present
+            // address itself is "Living with Parents", and never carries its own lender/lessor.
+            'personal_snapshot.parents_house_status' => ['nullable', Rule::in(['Owned', 'Mortgaged', 'Rented'])],
             'personal_snapshot.other_residences' => ['nullable', 'string', 'max:10000'],
+            // Status of a residence OTHER than the present address. Independent of both fields
+            // above, optional, and likewise carries no lender/lessor detail of its own.
+            'personal_snapshot.other_residence_status' => ['nullable', Rule::in(['Owned', 'Mortgaged', 'Rented'])],
             'personal_snapshot.home_condition' => ['required', 'string', 'max:60'],
             'personal_snapshot.number_of_storeys' => ['required', 'integer', 'min:0', 'max:100'],
             'personal_snapshot.material_cost_level' => ['required', 'string', 'max:60'],
@@ -190,8 +196,16 @@ class SaveCibiReportRequest extends FormRequest
         foreach (['spouse_name', 'present_address', 'length_of_stay_months', 'other_residences', 'previous_address', 'previous_address_length_of_stay_months', 'parents_address', 'separated_year', 'vehicles_owned', 'contact_details', 'other_remarks'] as $field) {
             $personal[$field] = $this->normalize($personal[$field] ?? null);
         }
-        $personal['monthly_rent'] = ($personal['residence_status'] ?? null) === 'Rented' ? $this->normalize($personal['monthly_rent'] ?? null) : null;
+        $personal['monthly_rent'] = in_array($personal['residence_status'] ?? null, ['Mortgaged', 'Rented'], true)
+            ? $this->normalize($personal['monthly_rent'] ?? null)
+            : null;
         $personal['residence_status_from'] = in_array($personal['residence_status'] ?? null, ['Mortgaged', 'Rented'], true) ? $this->normalize($personal['residence_status_from'] ?? null) : null;
+        // A parents' house status only exists while the client actually lives with their parents;
+        // switching the present address to Owned/Mortgaged/Rented must not leave the old secondary
+        // choice behind to contradict the report. Same guard the two fields above already use.
+        $personal['parents_house_status'] = ($personal['residence_status'] ?? null) === 'Living with Parents'
+            ? ($personal['parents_house_status'] ?? null)
+            : null;
         $personal['court_background'] = $this->normalize($personal['court_background'] ?? $existingReport?->personal_snapshot['court_background'] ?? null);
         $normalized['personal_snapshot'] = $personal;
 

@@ -1020,7 +1020,13 @@ document.addEventListener('click', (event) => {
             const cibiUrl = modalTrigger.dataset.cibiReportUrl || modalTrigger.dataset.businessReportUrl || modalTrigger.dataset.checkReportUrl;
             if (cibiFrame instanceof HTMLIFrameElement && cibiUrl) {
                 const requestedUrl = new URL(cibiUrl, window.location.href).href;
-                const alwaysReload = dialog.matches('[data-business-report-dialog]') || dialog.matches('[data-check-report-dialog]');
+                // The CI/BI dialog reloads on EVERY open, like the Business and Check dialogs. Its
+            // trigger URL is the same edit route before and after the report exists — only the
+            // persisted state behind it changes — so skipping the reload on a matching src is what
+            // left a freshly created report reopening into its cached "Save CIBI Report" document
+            // instead of the server's "Update CIBI Report". Re-navigating keeps the persisted
+            // report authoritative on the FIRST reopen, with no full-page reload.
+            const alwaysReload = dialog.matches('[data-cibi-report-dialog]') || dialog.matches('[data-business-report-dialog]') || dialog.matches('[data-check-report-dialog]');
                 const sameUrl = cibiFrame.src === requestedUrl;
                 if (alwaysReload || !sameUrl) {
                     if (cibiLoading) cibiLoading.hidden = false;
@@ -1249,14 +1255,13 @@ window.addEventListener('message', (event) => {
 
     refreshReportsWorkspace();
 
-    // Where the dialog goes next depends on WHO opened it, read from that caller's own dialog
-    // dataset rather than guessed from the URL. The Reports workspace (the only caller that sets
-    // it) refreshes its list behind the dialog, so closing returns the user to the row they were
-    // working through. A dialog opened from a Client Folder stays OPEN instead: everything behind
-    // it — the CI/BI module card, folder progress, Recent Activity — has just been swapped from
-    // this same authoritative payload with no reload, so the encoder can keep reading the report
-    // they just saved.
-    if (dialog.matches('[data-cibi-report-close-on-save]')) dialog.close();
+    // Everything behind the dialog — the Client Folder's CI/BI module card, folder progress and
+    // Recent Activity, or the Reports workspace list — has already been swapped from this same
+    // authoritative payload, with no reload and no second GET. So every caller closes here and
+    // returns the user to an already-updated page. Reopening then renders the saved report's own
+    // state (and therefore its own "Update CIBI Report" wording) server-side; the label is never
+    // faked here.
+    dialog.close();
 });
 
 // AUTO-UPDATE for the Business / Income Sources page: applies an authoritative refresh payload
@@ -2508,18 +2513,37 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
     const residenceFromValue = form.querySelector('[data-residence-from-value]');
     const monthlyRentDisplay = form.querySelector('[data-monthly-rent-display]');
     const monthlyRentValue = form.querySelector('[data-monthly-rent-value]');
+    const residenceFromField = form.querySelector('[data-residence-from-field]');
+    const residenceFromLabel = form.querySelector('[data-residence-from-label]');
+    const monthlyResidenceField = form.querySelector('[data-monthly-residence-field]');
+    const monthlyResidenceLabel = form.querySelector('[data-monthly-residence-label]');
+    const parentsHouseField = form.querySelector('[data-parents-house-field]');
+    const parentsHouseStatuses = [...form.querySelectorAll('[data-parents-house-status]')];
     const syncResidenceFields = () => {
         const status = residenceStatuses.find((option) => option.checked)?.value;
         const fromApplicable = ['Mortgaged', 'Rented'].includes(status);
+        const monthlyApplicable = ['Mortgaged', 'Rented'].includes(status);
         const rented = status === 'Rented';
+        // The one optional detail field is named after whichever status is actually selected, so
+        // "Mortgaged From" can never be read as a landlord (or the reverse).
+        if (residenceFromLabel && fromApplicable) residenceFromLabel.textContent = rented ? 'Rented From' : 'Mortgaged From';
+        if (residenceFromField) residenceFromField.hidden = !fromApplicable;
+        if (monthlyResidenceField) monthlyResidenceField.hidden = !monthlyApplicable;
+        if (monthlyResidenceLabel && monthlyApplicable) monthlyResidenceLabel.textContent = rented ? 'Monthly Rent' : 'Monthly Mortgage Payment';
+        // The parents' house status only exists while living with parents; leaving it behind would
+        // let a stale secondary choice contradict the present address. The server clears it on
+        // save the same way — this just keeps the form honest while the encoder is still working.
+        const withParents = status === 'Living with Parents';
+        if (parentsHouseField) parentsHouseField.hidden = !withParents;
+        if (!withParents) parentsHouseStatuses.forEach((option) => { option.checked = option.value === ''; });
         if (residenceFromDisplay && residenceFromValue) {
             residenceFromDisplay.disabled = !fromApplicable;
             if (!fromApplicable) residenceFromDisplay.value = residenceFromValue.value = '';
             else if (residenceFromDisplay.value === 'N/A') residenceFromDisplay.value = residenceFromValue.value = '';
         }
         if (monthlyRentDisplay && monthlyRentValue) {
-            monthlyRentDisplay.disabled = !rented;
-            if (!rented) monthlyRentDisplay.value = monthlyRentValue.value = '';
+            monthlyRentDisplay.disabled = !monthlyApplicable;
+            if (!monthlyApplicable) monthlyRentDisplay.value = monthlyRentValue.value = '';
             else if (monthlyRentDisplay.value === 'N/A') monthlyRentDisplay.value = monthlyRentValue.value = '';
         }
     };

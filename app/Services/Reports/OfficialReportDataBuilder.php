@@ -97,7 +97,16 @@ class OfficialReportDataBuilder
             ['Amount Applied', $this->amount($report->amount_applied)], ['CI in Charge', $report->investigator?->full_name],
             ['CI Risk Assessment', $this->human($report->ci_risk_level)], ['Purpose', $this->na(collect($report->purpose_codes ?? [])->map(fn ($item) => $this->human($item))->implode(', '))],
         ];
-        $personal = collect($report->personal_snapshot ?? [])->filter(fn ($value): bool => filled($value));
+        $personalSnapshot = $report->personal_snapshot ?? [];
+        $residenceStatus = $personalSnapshot['residence_status'] ?? null;
+        if (! in_array($residenceStatus, ['Mortgaged', 'Rented'], true)) {
+            $personalSnapshot['residence_status_from'] = null;
+            $personalSnapshot['monthly_rent'] = null;
+        }
+        if ($residenceStatus !== 'Living with Parents') {
+            $personalSnapshot['parents_house_status'] = null;
+        }
+        $personal = collect($personalSnapshot)->filter(fn ($value): bool => filled($value));
         $folder->loadMissing('coMakers');
         $data['cibi'] = [
             'ci_in_charge' => strtoupper($this->na($report->investigator?->full_name)),
@@ -113,7 +122,7 @@ class OfficialReportDataBuilder
             'party_type' => $activePerson ? 'co_maker' : 'borrower',
             'name_label' => $activePerson ? 'NAME OF COMAKER:' : 'NAME OF CLIENT:',
             'risk_level' => $report->ci_risk_level,
-            'personal' => collect($report->personal_snapshot ?? [])->map(fn ($value) => $this->na($value))->all(),
+            'personal' => collect($personalSnapshot)->map(fn ($value) => $this->na($value))->all(),
             'purpose_codes' => $report->purpose_codes ?? [],
             'purpose_remarks' => $this->na($report->purpose_remarks),
             'bank_accounts' => $report->bankAccounts->map(fn ($row) => [
@@ -154,7 +163,12 @@ class OfficialReportDataBuilder
                 ["Spouse's Name", $this->na($personal->get('spouse_name'))], ['Spouse Age', $personal->get('spouse_age')],
                 ['Present Address', $this->na($personal->get('present_address'))], ['Length of Stay', $this->na($personal->get('length_of_stay_months'))],
                 ['Residence Status', $personal->get('residence_status')], ['From', $this->na($personal->get('residence_status_from'))],
-                ['Monthly Rent', $this->na($personal->get('monthly_rent'))], ['OTHER RESIDENCES (OWNED/MORTGAGED)', $this->na($personal->get('other_residences'))],
+                ['Php Monthly', $this->na($personal->get('monthly_rent'))], ['OTHER RESIDENCES (OWNED/MORTGAGED)', $this->na($personal->get('other_residences'))],
+                // Three separate concepts, printed separately: the present address's own status
+                // above, the parents' house status (only while living with them) and the status of
+                // a residence other than the present one. A blank optional status stays blank.
+                ["Parents' House Status", $this->na($personal->get('residence_status') === 'Living with Parents' ? $personal->get('parents_house_status') : null)],
+                ['Other Residence Status', $this->na($personal->get('other_residence_status'))],
                 ['Home Condition', $personal->get('home_condition')], ['Number of Storeys', $personal->get('number_of_storeys')],
                 ['Material Cost', $personal->get('material_cost_level')], ['Living Condition', $personal->get('living_condition')],
                 ['Previous Address', $this->na($personal->get('previous_address'))], ['Previous Address Length of Stay', $this->na($personal->get('previous_address_length_of_stay_months'))],

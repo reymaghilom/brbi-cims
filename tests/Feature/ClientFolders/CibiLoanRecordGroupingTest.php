@@ -207,26 +207,145 @@ class CibiLoanRecordGroupingTest extends TestCase
         $this->assertStringNotContainsString('cibi-loan-remove-button', $section);
     }
 
-    public function test_the_cibi_dialog_closes_after_save_only_for_the_caller_that_asks_to(): void
+    public function test_the_cibi_dialog_closes_after_every_successful_save_and_never_fakes_the_update_label(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
 
-        // A Client Folder opens the dialog without the flag — it stays open after a save so the
-        // encoder can keep reading the report behind the freshly refreshed module card.
+        // Both callers mount the same shared dialog — there is no per-caller close flag any more.
         $folderPage = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
-        $this->assertStringContainsString('data-cibi-report-dialog', $folderPage);
-        $this->assertStringNotContainsString('data-cibi-report-close-on-save', $folderPage);
-
-        // The Reports workspace sets it, so its dialog auto-closes back to the list.
         $reportsPage = $this->actingAs($ci)->get(route('reports.index'))->assertOk()->getContent();
-        $this->assertStringContainsString('data-cibi-report-close-on-save', $reportsPage);
+        $this->assertStringContainsString('data-cibi-report-dialog', $folderPage);
+        $this->assertStringContainsString('data-cibi-report-dialog', $reportsPage);
+        $this->assertStringNotContainsString('data-cibi-report-close-on-save', $folderPage);
+        $this->assertStringNotContainsString('data-cibi-report-close-on-save', $reportsPage);
+        // The Reports workspace keeps its own opt-out of the post-save navigation.
         $this->assertStringContainsString('data-cibi-report-stay', $reportsPage);
+        $this->assertStringNotContainsString('data-cibi-report-stay', $folderPage);
 
-        // The close is gated on that caller flag, and the in-session Save→Update relabel is gone.
         $js = file_get_contents(resource_path('js/app.js'));
-        $this->assertStringContainsString("if (dialog.matches('[data-cibi-report-close-on-save]')) dialog.close();", $js);
+        // The parent page is refreshed from the authoritative payload, the toast is shown, and
+        // only then does the dialog close — for every caller, with no second GET.
+        $handler = substr($js, strpos($js, "event.data?.type !== 'brbi:cibi-saved'"));
+        $handler = substr($handler, 0, strpos($handler, '});'));
+        $this->assertLessThan(strpos($handler, 'showToast('), strpos($handler, 'cibiModuleHtml'));
+        $this->assertLessThan(strpos($handler, 'dialog.close();'), strpos($handler, 'showToast('));
+        $this->assertStringNotContainsString('data-cibi-report-close-on-save', $handler);
+        $this->assertStringContainsString('refreshReportsWorkspace();', $handler);
+        // The Save→Update wording is never faked client-side: the handler neither reads the
+        // server's submit_label nor touches the button's label element at all.
         $this->assertStringNotContainsString('submit_label', $js);
+        $this->assertStringNotContainsString('data-cibi-submit-text', $js);
+    }
+
+    public function test_the_cibi_dialog_reloads_on_every_open_so_a_saved_report_is_never_stale(): void
+    {
+        $js = file_get_contents(resource_path('js/app.js'));
+
+        // The CI/BI trigger URL is the SAME edit route before and after the report exists, so a
+        // src-match check would skip the reload and reopen the cached "Save CIBI Report" document.
+        // Reloading unconditionally is what makes the FIRST reopen show the persisted state.
+        $this->assertStringContainsString(
+            "const alwaysReload = dialog.matches('[data-cibi-report-dialog]') || dialog.matches('[data-business-report-dialog]') || dialog.matches('[data-check-report-dialog]');",
+            $js,
+        );
+        // …and it re-navigates the IFRAME in place (location.replace, so no history entry and no
+        // full-page reload of the Folder Contents behind it).
+        $this->assertStringContainsString('cibiFrame.contentWindow.location.replace(requestedUrl);', $js);
+    }
+
+    public function test_the_folder_contents_cibi_action_points_at_the_same_edit_route_before_and_after_saving(): void
+    {
+        [$ci, $folder] = $this->folder();
+
+        $before = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        preg_match('/data-cibi-report-url="([^"]+)"/', $before, $beforeUrl);
+        $this->assertNotEmpty($beforeUrl, 'Folder Contents must expose a CI/BI open URL.');
+
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $this->payload())->assertRedirect();
+
+        $after = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        preg_match('/data-cibi-report-url="([^"]+)"/', $after, $afterUrl);
+
+        // Identical URL — which is exactly why the reload can never be skipped on a src match.
+        $this->assertSame($beforeUrl[1], $afterUrl[1]);
+        // Opening that URL now serves the persisted report in Update state on the FIRST request.
+        $reopened = $this->actingAs($ci)->get(html_entity_decode($afterUrl[1]))->assertOk()->getContent();
+        $this->assertStringContainsString('<span data-cibi-submit-text>Update CIBI Report</span>', $reopened);
+        $this->assertStringNotContainsString('Save CIBI Report', $reopened);
+    }
+
+    public function test_the_present_address_length_of_stay_keeps_its_label_and_gains_an_example_placeholder(): void
+    {
+        [$ci, $folder] = $this->folder();
+
+        $page = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('Length of Stay', $page);
+        $this->assertStringNotContainsString('Duration of Stay', $page);
+        $this->assertStringContainsString('placeholder="e.g., 12 years"', $page);
+
+        // The example is a placeholder only — it is never persisted, and a real value reloads.
+        $payload = $this->payload();
+        $payload['personal_snapshot']['length_of_stay_months'] = '2 years 6 months';
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+        $saved = CibiReport::whereBelongsTo($folder)->sole()->personal_snapshot;
+        $this->assertSame('2 years 6 months', $saved['length_of_stay_months']);
+        $this->assertStringNotContainsString('e.g.', (string) $saved['length_of_stay_months']);
+        $reopened = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('value="2 years 6 months"', $reopened);
+    }
+
+    public function test_a_new_cibi_offers_save_while_a_saved_one_reopens_in_update_state_with_its_data(): void
+    {
+        [$ci, $folder] = $this->folder();
+
+        // A brand-new form is a Create: the server renders Save, not Update.
+        $newPage = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('<span data-cibi-submit-text>Save CIBI Report</span>', $newPage);
+        $this->assertStringNotContainsString('Update CIBI Report', $newPage);
+        $this->assertStringContainsString('data-cibi-submit-mode="save"', $newPage);
+
+        $payload = $this->payload();
+        $payload['loan_records'] = [
+            $this->loanRow('ABC Cooperative', 'Salary Loan', '100,000'),
+            $this->loanRow('ABC Cooperative', 'Emergency Loan', '20,000'),
+        ];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+        // Reopening loads the persisted report — not a blank Create — and the Update wording comes
+        // from that saved state on the server, already rendered before any JavaScript runs.
+        $reopened = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('<span data-cibi-submit-text>Update CIBI Report</span>', $reopened);
+        $this->assertStringContainsString('data-cibi-submit-mode="update"', $reopened);
+        $this->assertStringNotContainsString('Save CIBI Report', $reopened);
+
+        // …with the saved values intact, including both loan rows under the one Bank / Coop.
+        $section = $this->loanSection($reopened);
+        $this->assertSame(2, substr_count($section, '<tr data-repeater-row'));
+        $this->assertSame(2, substr_count($section, 'value="ABC Cooperative"'));
+        $this->assertStringContainsString('value="BLU TIN-AO"', $reopened);
+    }
+
+    public function test_a_saved_co_maker_cibi_reopens_in_update_state_scoped_to_that_person(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'REOPEN CO MAKER']);
+
+        $payload = $this->payload();
+        $payload['co_maker_id'] = $coMaker->id;
+        $payload['loan_records'] = [$this->loanRow('CO MAKER COOP', 'Salary Loan', '10,000')];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+        $coMakerUrl = route('client-folders.cibi-report.edit', $folder).'?person=co-maker&co_maker_id='.$coMaker->id;
+        $reopened = $this->actingAs($ci)->get($coMakerUrl)->assertOk()->getContent();
+        $this->assertStringContainsString('<span data-cibi-submit-text>Update CIBI Report</span>', $reopened);
+        $this->assertStringContainsString('value="CO MAKER COOP"', $reopened);
+
+        // The Applicant still has no report of its own, so its form is still a Create.
+        $applicantPage = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('<span data-cibi-submit-text>Save CIBI Report</span>', $applicantPage);
+        $this->assertStringNotContainsString('CO MAKER COOP', $applicantPage);
     }
 
     public function test_the_cibi_header_fields_use_the_standard_bordered_control_not_a_bare_underline(): void
