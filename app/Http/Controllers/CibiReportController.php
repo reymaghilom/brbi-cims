@@ -73,6 +73,14 @@ class CibiReportController extends Controller
                             ->orderBy('sort_order')
                             ->get(['id', 'sort_order'])
                             ->mapWithKeys(fn ($row): array => [(string) max(0, $row->sort_order - 1) => $row->id]),
+                        // IV. Summary on Credit / Loan Information renders Bank/Coop groups whose
+                        // rows are renumbered to DOM order, so sort_order is the submitted index
+                        // exactly — mapping by it (rather than by surviving-row position) keeps a
+                        // saved id on the row it actually belongs to.
+                        'loan_records' => $report->loanRecords()
+                            ->orderBy('sort_order')
+                            ->get(['id', 'sort_order'])
+                            ->mapWithKeys(fn ($row): array => [(string) max(0, $row->sort_order - 1) => $row->id]),
                     ],
                 ],
                 'folder' => [

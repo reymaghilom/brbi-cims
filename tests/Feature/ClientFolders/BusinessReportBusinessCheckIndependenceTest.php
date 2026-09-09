@@ -1125,7 +1125,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
 
         $response = $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))->assertOk();
         $response->assertSee('Business Report saved')
-            ->assertSee('Business Check saved')
+            ->assertSee('Business Check added')
             ->assertSee('id="business-recent-activity-dialog"', false)
             ->assertSee('Newest first.');
 

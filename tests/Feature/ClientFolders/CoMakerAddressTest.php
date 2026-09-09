@@ -36,18 +36,101 @@ class CoMakerAddressTest extends TestCase
         $this->assertSame('Zone 3, Barangay Puerto, Cagayan de Oro City, Misamis Oriental', $coMaker->address);
     }
 
-    public function test_existing_co_maker_address_is_available_for_the_edit_modal_to_load(): void
+    /**
+     * Every co-maker action carries an icon beside its label, and the Add/Edit label swap is done
+     * on its own element so the icon survives it — writing the whole button's text used to wipe
+     * the icon the moment the modal opened.
+     */
+    public function test_the_co_maker_actions_render_their_icons_and_keep_their_labels(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $folder->coMakers()->create(['full_name' => 'Juan Dela Cruz', 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'address' => 'Purok 5, Bulua']);
+        $folder->coMakers()->create(['full_name' => 'Juan Dela Cruz', 'first_name' => 'Juan', 'last_name' => 'Dela Cruz']);
 
-        // The edit modal is pre-filled entirely client-side from this data attribute (see
-        // app.js's co-maker edit-trigger handler), so its presence in the rendered page is what
-        // actually matters here, not any server-rendered form value.
-        $this->actingAs($ci)->get(route('client-folders.show', $folder))
-            ->assertOk()
-            ->assertSee('data-co-maker-address="Purok 5, Bulua"', false);
+        $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+
+        // Save / Update Co-Maker: one icon, and a label element the script can rewrite on its own.
+        $submit = $this->tagFor($content, 'data-co-maker-submit', '</button>');
+        $this->assertStringContainsString('<svg', $submit, 'Save Co-Maker must show an icon.');
+        $this->assertStringContainsString('Save Co-Maker', $submit);
+        $this->assertStringContainsString('data-co-maker-submit-label', $submit);
+        $this->assertStringContainsString('<span data-co-maker-submit-label>Save Co-Maker</span>', $submit);
+
+        // Remove confirmation: Cancel and the destructive action both carry an icon.
+        $removeDialog = substr($content, strpos($content, 'id="co-maker-remove-dialog"'));
+        $removeDialog = substr($removeDialog, 0, strpos($removeDialog, '</dialog>'));
+
+        $removeSubmit = $this->tagFor($removeDialog, 'class="ui-button-danger"', '</button>');
+        $this->assertStringContainsString('<svg', $removeSubmit, 'Remove Co-Maker must show an icon.');
+        $this->assertStringContainsString('Remove Co-Maker', $removeSubmit);
+        $this->assertStringContainsString('data-co-maker-remove-submit', $removeSubmit, 'The destructive action keeps its hook.');
+
+        $cancel = substr($removeDialog, strpos($removeDialog, 'data-modal-close class="ui-button-secondary"'), 600);
+        $this->assertStringContainsString('<svg', $cancel, 'Remove Co-Maker Cancel must show an icon.');
+        $this->assertStringContainsString('Cancel', $cancel);
+
+        // The script rewrites only the label element, never the button itself.
+        $script = file_get_contents(resource_path('js/app.js'));
+        $this->assertStringNotContainsString("submit.textContent = 'Update Co-Maker'", $script);
+        $this->assertStringNotContainsString("submit.textContent = 'Save Co-Maker'", $script);
+        $this->assertStringContainsString('[data-co-maker-submit-label]', $script);
+    }
+
+    /** Closing any co-maker dialog leaves the folder page alone; only its own errors reopen it. */
+    public function test_the_co_maker_dialogs_stay_isolated_from_one_another(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+
+        // A rejected co-maker submission reopens the co-maker dialog and nothing else.
+        $page = $this->actingAs($ci)
+            ->from(route('client-folders.show', $folder))
+            ->followingRedirects()
+            ->post(route('client-folders.co-maker.store', $folder), ['first_name' => '', 'last_name' => ''])
+            ->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-open-on-error="true"', $this->tagFor($page, 'id="co-maker-dialog"', '>'));
+        $this->assertStringNotContainsString('data-open-on-error="true"', $this->tagFor($page, 'id="co-maker-remove-dialog"', '>'));
+
+        // A clean page auto-opens nothing, and Add Co-Maker still has its own explicit trigger.
+        $clean = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('data-open-on-error="false"', $this->tagFor($clean, 'id="co-maker-dialog"', '>'));
+        $this->assertStringContainsString('data-modal-open="co-maker-dialog" data-co-maker-add-trigger', $clean);
+    }
+
+    /** The markup from a marker up to the given terminator. */
+    private function tagFor(string $html, string $marker, string $until): string
+    {
+        $start = strpos($html, $marker);
+        $this->assertNotFalse($start, $marker.' must be rendered.');
+
+        return substr($html, $start, strpos($html, $until, $start) - $start);
+    }
+
+    /**
+     * The Edit Co-Maker modal no longer carries an address field, so editing a co-maker can only
+     * change their name. The stored address still travels with the trigger's data attributes and
+     * stays on the record — it is simply not editable from this form.
+     */
+    public function test_the_edit_modal_no_longer_offers_an_address_but_the_stored_one_survives(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = $folder->coMakers()->create(['full_name' => 'Juan Dela Cruz', 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'address' => 'Purok 5, Bulua']);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('data-co-maker-address="Purok 5, Bulua"', $content, 'The record keeps its address.');
+
+        $form = substr($content, strpos($content, 'id="co-maker-form"'), strpos($content, '</form>', strpos($content, 'id="co-maker-form"')) - strpos($content, 'id="co-maker-form"'));
+        $this->assertStringNotContainsString('name="address"', $form);
+
+        // Editing the name the way the modal now posts it leaves the address exactly as it was.
+        $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
+            'co_maker_id' => $coMaker->id, 'first_name' => 'Juan', 'middle_name' => '', 'last_name' => 'Dela Cruz Jr.', 'suffix' => '',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame('Dela Cruz Jr.', $coMaker->fresh()->last_name);
+        $this->assertSame('Purok 5, Bulua', $coMaker->fresh()->address, 'An edit that never sends an address must not blank it.');
     }
 
     public function test_address_only_update_is_saved(): void
@@ -77,23 +160,82 @@ class CoMakerAddressTest extends TestCase
         $this->assertSame('Keep This Address', $coMaker->fresh()->address);
     }
 
-    public function test_blank_address_is_rejected_on_create_and_on_edit(): void
+    /**
+     * Address is no longer part of adding a co-maker: creation collects identity only and the
+     * address is captured afterwards through Edit Co-Maker, which is where Residence Check reads
+     * it from. An edit that does not carry the field must leave whatever is stored alone.
+     */
+    public function test_address_is_optional_on_create_and_is_not_cleared_by_an_edit_that_omits_it(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
 
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
             'first_name' => 'Juan', 'last_name' => 'Dela Cruz',
-        ])->assertSessionHasErrors('address');
-        $this->assertDatabaseCount('co_makers', 0);
+        ])->assertSessionHasNoErrors()->assertRedirect();
 
-        // A legacy co-maker saved (before this feature existed) with a blank address must be
-        // forced to get a real one the next time it's edited — the field cannot be skipped.
-        $legacyCoMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Legacy Person']);
+        $created = $folder->coMakers()->sole();
+        $this->assertNull($created->address, 'A new co-maker starts without an address rather than a placeholder.');
+
+        // Adding the address later, through the same modal in edit mode.
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $legacyCoMaker->id, 'first_name' => 'Legacy', 'last_name' => 'Person',
-        ])->assertSessionHasErrors('address');
-        $this->assertNull($legacyCoMaker->fresh()->address);
+            'co_maker_id' => $created->id, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz',
+            'address' => 'Purok 5, Bulua, Cagayan de Oro City',
+        ])->assertSessionHasNoErrors();
+        $this->assertSame('Purok 5, Bulua, Cagayan de Oro City', $created->fresh()->address);
+
+        // A later name-only edit that never sends the field keeps that address.
+        $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
+            'co_maker_id' => $created->id, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz Jr.',
+        ])->assertSessionHasNoErrors();
+        $this->assertSame('Dela Cruz Jr.', $created->fresh()->last_name);
+        $this->assertSame('Purok 5, Bulua, Cagayan de Oro City', $created->fresh()->address);
+    }
+
+    public function test_the_add_co_maker_form_collects_identity_only_and_middle_name_is_optional(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        $start = strpos($content, 'id="co-maker-form"');
+        $form = substr($content, $start, strpos($content, '</form>', $start) - $start);
+
+        // Address is not part of this form at all any more — neither when adding nor when editing.
+        $this->assertStringNotContainsString('name="address"', $form, 'The co-maker form must not collect an address.');
+        $this->assertStringNotContainsString('data-co-maker-address-field', $form);
+        $this->assertStringNotContainsString('co-maker-address', $form);
+
+        // Middle name carries the optional hint, no required marker and no required attribute.
+        $middleStart = strpos($form, 'for="co-maker-middle-name"');
+        $middleBlock = substr($form, $middleStart, 400);
+        $this->assertStringContainsString('(optional)', $middleBlock);
+        $this->assertStringNotContainsString('text-danger" aria-hidden="true">*', $middleBlock);
+        $this->assertStringNotContainsString('name="middle_name" class="ui-control" required', $form);
+
+        // First and last name keep their required markers.
+        foreach (['co-maker-first-name', 'co-maker-last-name'] as $requiredField) {
+            $block = substr($form, strpos($form, 'for="'.$requiredField.'"'), 400);
+            $this->assertStringContainsString('text-danger" aria-hidden="true">*', $block);
+        }
+    }
+
+    public function test_a_co_maker_saves_without_a_middle_name_and_keeps_a_clean_full_name(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+
+        $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
+            'first_name' => 'Juan', 'middle_name' => '', 'last_name' => 'Dela Cruz',
+        ])->assertSessionHasNoErrors();
+
+        $coMaker = $folder->coMakers()->sole();
+        $this->assertNull($coMaker->middle_name, 'A blank middle name is stored as null, never "N/A".');
+        $this->assertSame('Juan Dela Cruz', $coMaker->full_name);
+
+        // First and last name stay required.
+        $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), ['first_name' => '', 'last_name' => ''])
+            ->assertSessionHasErrors(['first_name', 'last_name']);
     }
 
     public function test_residence_check_resolves_the_newly_saved_co_maker_address(): void

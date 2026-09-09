@@ -234,7 +234,7 @@ class CreditInvestigatorDashboardTest extends TestCase
         $events = collect($this->actingAs($ci)->get(route('home'))->assertOk()->viewData('recentActivity'));
 
         $this->assertEqualsCanonicalizing(['HOTEL, CLIENT', 'ZULU, OTHER CI'], $events->pluck('client')->all());
-        $this->assertSame('Business Check saved', $events->first()['label'], 'Labels reuse the existing audit vocabulary.');
+        $this->assertSame('Business Check updated', $events->first()['label'], 'Labels reuse the existing audit vocabulary.');
         $this->assertSame('Team Mate', $events->first()['user']);
     }
 
@@ -389,6 +389,22 @@ class CreditInvestigatorDashboardTest extends TestCase
         } finally {
             Carbon::setTestNow();
         }
+    }
+
+    public function test_the_in_progress_hint_reads_ongoing_investigations(): void
+    {
+        $ci = User::factory()->create();
+        // "In Progress" means a folder whose CI Activities have actually started (a non-pending,
+        // non-overdue activity) — the same bucket rule DashboardData::workload() already applies.
+        $this->activity($this->folder($ci, 'NOVEMBER, CLIENT'), ActivityStatus::Completed);
+
+        $response = $this->actingAs($ci)->get(route('home'))->assertOk();
+
+        $response->assertSee('Ongoing Investigations')
+            ->assertDontSee('Investigations already underway');
+
+        // Wording only: the KPI it sits under still counts the same folders.
+        $this->assertSame(1, $response->viewData('summary')['in_progress']);
     }
 
     /**

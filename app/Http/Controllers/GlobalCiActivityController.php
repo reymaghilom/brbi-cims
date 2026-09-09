@@ -35,12 +35,11 @@ class GlobalCiActivityController extends Controller
 
     private const TABS = ['all', 'due_today', 'scheduled', 'follow_up', 'completed'];
 
-    // The Activity Type filter must only ever offer the current, genuinely supported operational
-    // types — never every ActivityDefinition row, which also includes obsolete/test custom_
-    // definitions (e.g. one-off types a CI typed once, like "sas" or "test") that are still
-    // is_active for historical CiActivity rows to keep referencing. Identity is ActivityDefinition
-    // ::code (never name/label/id), so this list is built from the model's own canonical code
-    // constants rather than a second hardcoded string list.
+    // The canonical half of the Activity Type filter. Identity is ActivityDefinition::code
+    // (never name/label/id), so this list is built from the model's own canonical code constants
+    // rather than a second hardcoded string list. User-created (custom_) definitions are added
+    // to it dynamically — see $filterableDefinitions — so a new Activity Type becomes filterable
+    // here without any code change.
     private const FILTERABLE_ACTIVITY_TYPE_CODES = [
         ActivityDefinition::BARANGAY_CHECK_CODE,
         ActivityDefinition::NEIGHBOR_CHECK_CODE,
@@ -76,17 +75,20 @@ class GlobalCiActivityController extends Controller
         $perPage = in_array($perPage, self::PER_PAGE_OPTIONS, true) ? $perPage : 5;
 
         $definitions = ActivityDefinition::query()
-            ->select(['id', 'name', 'code'])
+            ->select(['id', 'name', 'code', 'is_active', 'sort_order'])
             ->where(fn ($query) => $query->where('is_active', true)->orWhere('code', 'like', ActivityDefinition::CUSTOM_CODE_PREFIX.'%'))
             ->orderBy('sort_order')
             ->get();
 
-        // A separate, narrower set purely for the user-facing Activity Type filter dropdown —
-        // $definitions above stays the broader row-scoping source (whereIn below) so existing/
-        // historical activities under any active definition, custom types included, remain visible
-        // in the worklist itself; only the filter's own selectable options are restricted.
+        // The user-facing Activity Type filter: the canonical operational types plus every
+        // still-active user-created (custom_) definition, taken straight from the authoritative
+        // ActivityDefinition rows — so a newly created Activity Type is filterable on the next
+        // render with no code change, and a removed (deactivated) one stops being selectable.
+        // $definitions above stays the broader row-scoping source (whereIn below) so historical
+        // activities under a retired custom definition remain visible in the worklist itself.
         $filterableDefinitions = $definitions
-            ->whereIn('code', self::FILTERABLE_ACTIVITY_TYPE_CODES)
+            ->filter(fn (ActivityDefinition $definition): bool => in_array($definition->code, self::FILTERABLE_ACTIVITY_TYPE_CODES, true)
+                || ($definition->isCustom() && $definition->is_active))
             ->sortBy('sort_order')
             ->values();
 

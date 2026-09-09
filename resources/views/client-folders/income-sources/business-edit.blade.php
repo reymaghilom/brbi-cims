@@ -86,14 +86,24 @@
                          must never silently reassign who originally created it to whichever CI
                          happens to be editing it now. --}}
                     <div class="business-report-header-value business-report-header-readonly">
-                        <div class="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1.5" data-companion-ci-picker data-companion-dialog-id="business-companion-ci-dialog">
-                            <div class="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs uppercase" data-companion-ci-container data-header-form-id="{{ $headerFormId }}">
+                        <div class="flex w-full flex-nowrap items-center justify-between gap-x-3" data-companion-ci-picker data-companion-dialog-id="business-companion-ci-dialog">
+                            {{-- business-report-ci-names carries the responsive, slightly smaller type
+                                 that keeps several CI names on one line; text-xs is dropped so it is
+                                 not competing with that. Which names are shown, and in what form, is
+                                 unchanged — see the compact-display note on the companion list. --}}
+                            <div class="business-report-ci-names flex min-w-0 flex-1 flex-nowrap items-center gap-x-1 uppercase" data-companion-ci-container data-header-form-id="{{ $headerFormId }}">
                                 <span class="font-semibold" data-ci-primary-name>{{ $incomeSource ? ($incomeSource->creator?->full_name ?? '—') : auth()->user()->full_name }}</span>
-                                <span class="flex flex-wrap items-center gap-x-1.5" data-companion-participant-list>
+                                <span class="flex flex-nowrap items-center gap-x-1.5" data-companion-participant-list>
                                     @foreach($companions as $companion)
+                                        {{-- Display only: the first two CIs on the record keep their full
+                                             names and every CI after them is shown by first given name
+                                             alone (CiParticipantService::compactDisplayName). The stored
+                                             user, the hidden contributor_ids and every official output
+                                             still carry the full name — see data-full-name below, which
+                                             is what the remove control and the outputs read. --}}
                                         <span class="flex items-center gap-1" data-companion-participant data-user-id="{{ $companion->id }}">
                                             <span aria-hidden="true">/</span>
-                                            <span data-full-name>{{ $companion->full_name }}</span>
+                                            <span data-full-name="{{ $companion->full_name }}">{{ \App\Services\ClientFolders\CiParticipantService::compactDisplayName($companion->full_name, $loop->index + 1) }}</span>
                                             <button type="button" class="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-danger/40 bg-danger-soft text-[0.7rem] font-bold normal-case leading-none text-danger transition hover:border-danger hover:bg-danger hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/40" data-companion-remove aria-label="Remove {{ $companion->full_name }}">&times;</button>
                                         </span>
                                     @endforeach
@@ -109,7 +119,7 @@
                         </div>
                     </div>
                     <label class="business-report-header-label" for="branch_name">BRANCH:</label>
-                    <div class="business-report-header-value"><input id="branch_name" name="branch_name" form="{{ $headerFormId }}" value="{{ old('branch_name', $headerBranch) }}" class="business-report-header-control" readonly aria-readonly="true" @error('branch_name') aria-invalid="true" aria-describedby="branch_name-error" @enderror><x-form.validation-message for="branch_name" /></div>
+                    <div class="business-report-header-value business-report-header-branch"><input id="branch_name" name="branch_name" form="{{ $headerFormId }}" value="{{ old('branch_name', $headerBranch) }}" class="business-report-header-control" readonly aria-readonly="true" @error('branch_name') aria-invalid="true" aria-describedby="branch_name-error" @enderror><x-form.validation-message for="branch_name" /></div>
 
                     <label class="business-report-header-label" for="start_date">START DATE OF CI:</label>
                     <div class="business-report-header-value"><input id="start_date" name="start_date" form="{{ $headerFormId }}" type="date" required value="{{ old('start_date', $report?->start_date?->format('Y-m-d')) }}" class="business-report-header-control" @error('start_date') aria-invalid="true" aria-describedby="start_date-error" @enderror><x-form.validation-message for="start_date" /></div>

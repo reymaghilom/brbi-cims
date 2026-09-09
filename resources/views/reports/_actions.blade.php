@@ -19,9 +19,10 @@
     // Create and Continue are the same action at two points in a report's life, so they share one
     // compact outlined treatment — same height, padding, border, radius, text size and hover. Only
     // the icon and the label separate them: a plus for work that does not exist yet, a pencil for
-    // work already underway.
+    // work already underway. Both come from the work item itself so the pair always agrees (CI / BI
+    // reads Create Report on every Pending row — see ReportWorkItem::continueLabel()).
     $startButton = 'ui-button-secondary-compact px-2.5 text-brand-primary';
-    $startIcon = $item->sourceId === null ? 'plus' : 'edit';
+    $startIcon = $item->continueIcon();
 @endphp
 
 <div class="{{ $actionClass ?? 'flex flex-nowrap items-center gap-1.5' }} whitespace-nowrap">

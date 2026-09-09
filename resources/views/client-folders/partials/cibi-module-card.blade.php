@@ -25,7 +25,11 @@
                     <x-slot:trigger>
                         <span class="ui-action-icon-button ui-action-icon-button-neutral gap-0.5 !w-auto px-1.5"><x-ui.icon name="download" size="size-4" /><x-ui.icon name="chevron-down" size="size-3" /></span>
                     </x-slot:trigger>
-                    <button type="submit" form="dashboard-cibi-export-pdf-form" role="menuitem" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" />Download PDF</button>
+                    {{-- A plain download link carrying this exact person, matching the Preview link
+                         above and the Business Report's own Download PDF. The former hidden-form
+                         submission depended on a form living elsewhere in the page and broke as
+                         soon as the target URL was opened as a link. --}}
+                    <a href="{{ route('client-folders.cibi-report.export-pdf', [$clientFolder] + $personParams) }}" target="_blank" rel="noopener" role="menuitem" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="report" size="size-4" />Download PDF</a>
                     <button type="submit" form="dashboard-cibi-export-excel-form" role="menuitem" class="flex min-h-10 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm font-semibold hover:bg-brand-soft hover:text-brand-primary"><x-ui.icon name="spreadsheet" size="size-4" />Download Excel</button>
                 </x-ui.context-menu>
             @endif

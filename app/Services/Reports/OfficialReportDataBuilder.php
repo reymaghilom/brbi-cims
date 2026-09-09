@@ -6,10 +6,11 @@ use App\Enums\OfficialReportType;
 use App\Enums\RecordState;
 use App\Models\BusinessCheck;
 use App\Models\BusinessReport;
+use App\Models\CibiLoanRecord;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
+use App\Models\CustomBusinessCategory;
 use App\Models\IncomeSource;
-use App\Models\IncomeSourceTemplate;
 use App\Models\ResidenceCheck;
 use App\Services\ClientFolders\CiParticipantService;
 use App\Services\Storage\CiTeamDocumentStorage;
@@ -114,11 +115,11 @@ class OfficialReportDataBuilder
                 $this->na($row->institution), $this->na($row->branch), $this->na($row->year_opened), $this->na($row->adb_level),
                 $this->na($row->capital_share_text ?: $this->amount($row->capital_share_amount)), $this->na($row->relevant_remarks),
             ])->all(),
-            'loan_records' => $report->loanRecords->map(fn ($row) => [
-                $this->na($row->institution), $this->amount($row->original_amount), $this->amount($row->remaining_balance), $this->amount($row->amortization_amount),
+            'loan_records' => $this->groupedLoanRecords($report->loanRecords, fn ($row, bool $first): array => [
+                $first ? $this->na($row->institution) : '', $this->amount($row->original_amount), $this->amount($row->remaining_balance), $this->amount($row->amortization_amount),
                 $this->shortDate($row->granted_date).' - '.$this->shortDate($row->maturity_date),
                 $this->na($row->cycle_label ?: $row->cycle_number), $this->na($row->security_type), $this->na(trim(($row->payment_performance ?? '').' '.($row->remarks ?? ''))),
-            ])->all(),
+            ]),
             'totals' => [
                 'checked' => $report->summary_totals['institutions_checked'] ?? $report->creditChecks->whereNotNull('institution')->count(),
                 'declared' => $report->summary_totals['institutions_declared'] ?? $report->creditChecks->where('is_declared', true)->count(),
@@ -160,7 +161,7 @@ class OfficialReportDataBuilder
                 ['Validated Contact Number(s) / Email', $this->na($personal->get('contact_details'))], ['Other Remarks', $this->na($personal->get('other_remarks'))],
             ]) : null,
             $this->table('Bank / Cooperative Accounts', ['Institution', 'Branch', 'Year Opened', 'ADB Level', 'CA / SA / Share Capital', 'Remarks'], $report->bankAccounts->map(fn ($row) => [$this->na($row->institution), $this->na($row->branch), $this->na($row->year_opened), $this->na($row->adb_level), $this->na($row->capital_share_text ?: $this->amount($row->capital_share_amount)), $this->na($row->relevant_remarks)])),
-            $this->table('Loan Records', ['Institution', 'Original Amount', 'Balance', 'Amortization', 'Granted / Maturity', 'Cycle / Security', 'Performance & Findings'], $report->loanRecords->map(fn ($row) => [$this->na($row->institution), $this->amount($row->original_amount), $this->amount($row->remaining_balance), $this->amount($row->amortization_amount), $this->shortDate($row->granted_date).' - '.$this->shortDate($row->maturity_date), $this->na(trim(($row->cycle_label ?: $row->cycle_number).' / '.($row->security_type ?? ''), ' /')), $this->na(trim(($row->payment_performance ?? '').' '.($row->remarks ?? '')))])),
+            $this->table('Loan Records', ['Institution', 'Original Amount', 'Balance', 'Amortization', 'Granted / Maturity', 'Cycle / Security', 'Performance & Findings'], collect($this->groupedLoanRecords($report->loanRecords, fn ($row, bool $first): array => [$first ? $this->na($row->institution) : '', $this->amount($row->original_amount), $this->amount($row->remaining_balance), $this->amount($row->amortization_amount), $this->shortDate($row->granted_date).' - '.$this->shortDate($row->maturity_date), $this->na(trim(($row->cycle_label ?: $row->cycle_number).' / '.($row->security_type ?? ''), ' /')), $this->na(trim(($row->payment_performance ?? '').' '.($row->remarks ?? '')))]))),
             $this->details('Credit / Loan Summary', [['Institutions Checked', $report->summary_totals['institutions_checked'] ?? $report->creditChecks->whereNotNull('institution')->count()], ['Institutions Declared', $report->summary_totals['institutions_declared'] ?? $report->creditChecks->where('is_declared', true)->count()], ['Loan Records Found', $report->summary_totals['loan_records_found'] ?? $report->loanRecords->whereNotNull('institution')->count()]]),
             $this->table('Income Source Validation Summary', ['Source', 'Type', 'Stability', 'Validation', 'Monthly Amount', 'Key Information'], $report->incomeSourceSummaries->map(fn ($row) => [$this->na($row->source_name), $this->na($row->source_type), $this->na($row->stability_result), $this->na($row->validation_status), $this->amount($row->monthly_amount), $this->na($row->key_information)])),
             $this->narrative('Negative Credit Findings', $this->na($report->negative_credit_findings)),
@@ -203,6 +204,14 @@ class OfficialReportDataBuilder
         // saved primary creator plus companions, in saved order — never the folder's own
         // (unrelated) assigned_ci_id, and never Business Check's separate participant list.
         $ciInCharge = $this->participants->fullNames($source);
+        $templateData = (array) $report->template_data;
+        $schema = $source->template->businessReportSchema();
+        if ($source->template_type === 'other_business_source_of_income') {
+            $schema = CustomBusinessCategory::resolveOutputSchema(
+                $schema,
+                (array) data_get($templateData, 'fields.income_sources', []),
+            );
+        }
 
         $data = $this->base($folder, OfficialReportType::BusinessIncomeSource, $personName);
         $data['title'] = strtoupper($source->template->name);
@@ -257,8 +266,8 @@ class OfficialReportDataBuilder
             'branches_not_inspected' => $report->branches_not_inspected,
             'branches_reason_not_inspected' => $report->branches_reason_not_inspected,
             'report_remarks' => $report->report_remarks,
-            'template_data' => (array) $report->template_data,
-            'schema' => $source->template->businessReportSchema(),
+            'template_data' => $templateData,
+            'schema' => $schema,
             'properties' => $report->properties->sortBy('sort_order')->values()->map(fn ($row) => [
                 'property_type' => $row->property_type, 'is_inspected' => $row->is_inspected, 'units_available' => $row->units_available,
                 'units_with_tenants' => $row->units_with_tenants, 'location' => $row->location, 'area_square_meters' => $row->area_square_meters,
@@ -297,29 +306,33 @@ class OfficialReportDataBuilder
             'properties' => ['Properties'], 'tenants' => ['Tenants'], 'branches' => ['Branches / Operating Locations', 'Branch Inspection Summary'], 'products' => ['Products'], 'suppliers' => ['Suppliers'], 'observations' => ['Business Observations'], 'competitors' => ['Nearby Competitors'], default => []
         })->all());
         $sections = array_values(array_filter($sections, fn ($section) => $section !== null && in_array($section['title'], $allowed, true) && ($section['kind'] !== 'table' || $section['rows'] !== [])));
-        array_splice($sections, 1, 0, $this->templateSchemaSections($source->template, $report));
+        array_splice($sections, 1, 0, $this->templateSchemaSections($schema, $report));
         $data['sections'] = $sections;
 
         return $data;
     }
 
     /** @return array<int, array<string, mixed>> */
-    private function templateSchemaSections(IncomeSourceTemplate $template, BusinessReport $report): array
+    private function templateSchemaSections(array $schema, BusinessReport $report): array
     {
-        $schema = $template->businessReportSchema();
         if (empty($schema)) {
             return [];
         }
         $saved = (array) $report->template_data;
         $sections = [];
+        $incomeSourceLabels = collect($schema['income_source_groups'] ?? [])->flatten(1)->pluck('label', 'key');
 
         $fields = collect($schema['fields'] ?? []);
         if ($fields->isNotEmpty()) {
-            $rows = $fields->map(function (array $field) use ($saved) {
+            $rows = $fields->map(function (array $field) use ($saved, $incomeSourceLabels) {
                 $value = data_get($saved, "fields.{$field['key']}");
                 $display = match ($field['type'] ?? 'text') {
                     'checkbox' => $value ? 'Yes' : 'No',
-                    'array' => is_array($value) ? implode(', ', $value) : $value,
+                    'array' => is_array($value)
+                        ? ($field['key'] === 'income_sources'
+                            ? collect($value)->map(fn ($key) => $incomeSourceLabels->get($key))->filter()->implode(', ')
+                            : implode(', ', $value))
+                        : $value,
                     default => $value,
                 };
 
@@ -650,6 +663,29 @@ class OfficialReportDataBuilder
     private function yesNo(mixed $value): string
     {
         return $value === null ? '—' : ($value ? 'Yes' : 'No');
+    }
+
+    /**
+     * IV. SUMMARY ON CREDIT / LOAN INFORMATION renders one Bank / Coop / Branch once, followed by
+     * each of its loan results — so an institution with three loans is never printed as three
+     * separate institutions. The stored shape is still one flat row per loan result: only the
+     * repeated institution CELL is blanked here, and an institution with no loan result at all
+     * keeps its single row (and therefore its Performance & Findings) in the output.
+     *
+     * @param  Collection<int, CibiLoanRecord>  $records
+     * @param  callable(mixed, bool): array<int, string>  $map
+     * @return array<int, array<int, string>>
+     */
+    private function groupedLoanRecords(Collection $records, callable $map): array
+    {
+        $rows = [];
+        foreach ($records->groupBy(fn ($row): string => mb_strtolower(trim((string) $row->institution))) as $group) {
+            foreach ($group->values() as $position => $row) {
+                $rows[] = $map($row, $position === 0);
+            }
+        }
+
+        return $rows;
     }
 
     private function na(mixed $value): string

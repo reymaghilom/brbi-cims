@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\ClientFolders\BrowseClientFoldersRequest;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
+use App\Models\User;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CibiReportFormData;
 use App\Services\ClientFolders\ClientFolderBrowser;
@@ -33,7 +34,7 @@ class ClientFolderAccessController extends Controller
         ]);
     }
 
-    public function show(ClientFolder $clientFolder, ClientFolderOverview $overview, CibiReportFormData $cibiFormData, ClientFolderCreationOptions $creationOptions): View
+    public function show(ClientFolder $clientFolder, ClientFolderOverview $overview, CibiReportFormData $cibiFormData): View
     {
         Gate::authorize('view', $clientFolder);
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
@@ -41,9 +42,14 @@ class ClientFolderAccessController extends Controller
         $data = $overview->for($clientFolder, $activePerson);
 
         return view('client-folders.show', $data + $cibiFormData->for($data['clientFolder'], $activePerson) + [
-            // Empty for any non-Administrator — creditInvestigatorsFor() self-guards, so this
-            // never costs a query for the common (non-admin) case.
-            'reassignmentCandidates' => $creationOptions->creditInvestigatorsFor(request()->user()),
+            // Signatory candidates are their own list, not the folder-assignment one: who may be
+            // signed as Prepared By (both Credit Investigator grades, active) is a different rule
+            // from who may be assigned a folder, and the reassignment dropdown must be populated
+            // for every role allowed to use it, not for Administrators alone. Still skipped
+            // entirely for a user who cannot reassign, so it costs no query in the common case.
+            'reassignmentCandidates' => request()->user()->role->canManageCibiSignatory()
+                ? User::query()->eligibleCibiSignatories()->get(['id', 'full_name'])
+                : collect(),
         ]);
     }
 

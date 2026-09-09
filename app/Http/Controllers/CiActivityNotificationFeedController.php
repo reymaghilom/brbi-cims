@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Enums\UserRole;
 use App\Services\Notifications\ScheduledTodayNotificationFeed;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,7 +21,7 @@ class CiActivityNotificationFeedController extends Controller
     {
         $user = $request->user();
 
-        if ($user->role !== UserRole::CreditInvestigator) {
+        if (! $user->role->worksAsCreditInvestigator()) {
             return response()->json([
                 'html' => '',
                 'unread_count' => 0,

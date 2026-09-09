@@ -426,7 +426,7 @@ class GlobalCiActivitiesTest extends TestCase
         $this->assertStringNotContainsString('NEIGHBOR ROW CLIENT', $content);
     }
 
-    public function test_activity_type_dropdown_offers_only_canonical_operational_types(): void
+    public function test_activity_type_dropdown_offers_the_canonical_operational_types(): void
     {
         $ci = User::factory()->create();
 
@@ -437,45 +437,118 @@ class GlobalCiActivitiesTest extends TestCase
         $this->assertStringContainsString('>Bank / Coop Check</option>', $content);
         $this->assertStringContainsString('>Asset Check</option>', $content);
         // Residence Check / Business Check are dedicated modules, never surfaced through this
-        // generic Activity Type filter — is_active = false for both in ReferenceDataSeeder.
+        // generic Activity Type filter - is_active = false for both in ReferenceDataSeeder.
         $this->assertStringNotContainsString('>Residence Check</option>', $content);
         $this->assertStringNotContainsString('>Business Check</option>', $content);
     }
 
-    public function test_activity_type_dropdown_excludes_obsolete_and_test_custom_definitions(): void
+    public function test_activity_type_dropdown_includes_a_newly_created_custom_definition(): void
     {
         $ci = User::factory()->create();
-        foreach (['sas', 'rey', 'test', 'sample.', 'test1'] as $index => $name) {
-            ActivityDefinition::create([
-                'code' => ActivityDefinition::CUSTOM_CODE_PREFIX.'obsolete_'.$index,
-                'name' => $name,
-                'sort_order' => 100 + $index,
-                'is_required' => false,
-                'is_active' => true,
-            ]);
+        $custom = $this->customDefinition('Credit Verification');
+
+        $content = $this->actingAs($ci)->get(route('ci-activities.index'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('<option value="'.$custom->code.'"', $content);
+        $this->assertStringContainsString('>Credit Verification</option>', $content);
+        $this->assertStringContainsString('>Barangay Check</option>', $content);
+    }
+
+    public function test_activity_type_dropdown_lists_every_custom_definition_exactly_once(): void
+    {
+        $ci = User::factory()->create();
+        $credit = $this->customDefinition('Credit Verification');
+        $employment = $this->customDefinition('Employment Verification');
+        $folder = $this->folderFor($ci, ['display_name' => 'Duplicate Guard Client']);
+        // Several activities of the same type must never multiply that type's dropdown option.
+        foreach ([$credit, $credit, $employment] as $definition) {
+            $this->customActivity($folder, $ci, $definition);
         }
 
         $content = $this->actingAs($ci)->get(route('ci-activities.index'))->assertOk()->getContent();
 
-        foreach (['>sas</option>', '>rey</option>', '>test</option>', '>sample.</option>', '>test1</option>'] as $obsoleteOption) {
-            $this->assertStringNotContainsString($obsoleteOption, $content);
+        $this->assertSame(1, substr_count($content, '>Credit Verification</option>'));
+        $this->assertSame(1, substr_count($content, '>Employment Verification</option>'));
+        $this->assertSame(1, substr_count($content, '<option value="'.$credit->code.'"'));
+        $this->assertSame(1, substr_count($content, '<option value="'.$employment->code.'"'));
+    }
+
+    public function test_custom_activity_row_displays_the_actual_definition_name(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci, ['display_name' => 'Custom Name Row Client']);
+        $this->customActivity($folder, $ci, $this->customDefinition('Credit Verification'));
+
+        $content = $this->actingAs($ci)->get(route('ci-activities.index'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('CUSTOM NAME ROW CLIENT', $content);
+        $this->assertStringContainsString('>Credit Verification</span>', $content);
+        $this->assertStringNotContainsString('>Custom Activity</span>', $content);
+        $this->assertStringNotContainsString('>New Activity</span>', $content);
+    }
+
+    public function test_activity_type_filter_applies_to_the_exact_custom_definition(): void
+    {
+        $ci = User::factory()->create();
+        $creditFolder = $this->folderFor($ci, ['display_name' => 'Credit Verification Client']);
+        $employmentFolder = $this->folderFor($ci, ['display_name' => 'Employment Verification Client']);
+        $credit = $this->customDefinition('Credit Verification');
+        $employment = $this->customDefinition('Employment Verification');
+        $this->customActivity($creditFolder, $ci, $credit);
+        $this->customActivity($employmentFolder, $ci, $employment);
+
+        $content = $this->actingAs($ci)
+            ->get(route('ci-activities.index', ['activity_type' => $credit->code]))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertStringContainsString('CREDIT VERIFICATION CLIENT', $content);
+        $this->assertStringNotContainsString('EMPLOYMENT VERIFICATION CLIENT', $content);
+    }
+
+    public function test_activity_type_filter_still_applies_to_every_canonical_type(): void
+    {
+        $ci = User::factory()->create();
+        $codes = [
+            ActivityDefinition::BARANGAY_CHECK_CODE => 'Canonical Barangay Client',
+            ActivityDefinition::NEIGHBOR_CHECK_CODE => 'Canonical Neighbor Client',
+            ActivityDefinition::ASSET_CHECK_CODE => 'Canonical Asset Client',
+            ActivityDefinition::BANK_COOP_CHECK_CODE => 'Canonical Bank Client',
+        ];
+        foreach ($codes as $code => $displayName) {
+            $this->simpleActivity($this->folderFor($ci, ['display_name' => $displayName]), $ci, $code);
+        }
+
+        foreach ($codes as $code => $displayName) {
+            $content = $this->actingAs($ci)->get(route('ci-activities.index', ['activity_type' => $code]))->assertOk()->getContent();
+            $this->assertStringContainsString(strtoupper($displayName), $content);
+            foreach ($codes as $otherCode => $otherName) {
+                if ($otherCode === $code) {
+                    continue;
+                }
+                $this->assertStringNotContainsString(strtoupper($otherName), $content);
+            }
         }
     }
 
-    public function test_activity_type_dropdown_excludes_arbitrary_custom_definition_generically(): void
+    public function test_activity_type_dropdown_excludes_removed_custom_definitions(): void
     {
         $ci = User::factory()->create();
-        ActivityDefinition::create([
-            'code' => ActivityDefinition::CUSTOM_CODE_PREFIX.'ad_hoc',
-            'name' => 'Some Other Ad Hoc Type',
-            'sort_order' => 200,
+        $removed = ActivityDefinition::create([
+            'code' => ActivityDefinition::CUSTOM_CODE_PREFIX.'retired_type',
+            'name' => 'Retired Ad Hoc Type',
+            'sort_order' => 400,
             'is_required' => false,
-            'is_active' => true,
+            'is_active' => false,
         ]);
+        $folder = $this->folderFor($ci, ['display_name' => 'Retired Type Row Client']);
+        $this->customActivity($folder, $ci, $removed);
 
         $content = $this->actingAs($ci)->get(route('ci-activities.index'))->assertOk()->getContent();
 
-        $this->assertStringNotContainsString('>Some Other Ad Hoc Type</option>', $content);
+        // A removed Activity Type stops being selectable, but its historical rows stay visible.
+        $this->assertStringNotContainsString('>Retired Ad Hoc Type</option>', $content);
+        $this->assertStringContainsString('RETIRED TYPE ROW CLIENT', $content);
     }
 
     public function test_obsolete_activity_type_query_string_does_not_crash_and_is_ignored(): void
@@ -491,7 +564,7 @@ class GlobalCiActivitiesTest extends TestCase
         $this->assertStringContainsString('UNTOUCHED BY OBSOLETE FILTER', $content);
     }
 
-    public function test_custom_activity_definitions_still_scope_row_visibility_even_though_hidden_from_the_filter(): void
+    public function test_custom_activity_definitions_scope_row_visibility_and_are_filterable(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci, ['display_name' => 'Custom Type Row Client']);
@@ -512,10 +585,10 @@ class GlobalCiActivitiesTest extends TestCase
 
         $content = $this->actingAs($ci)->get(route('ci-activities.index'))->assertOk()->getContent();
 
-        // Historical/custom-type activities remain visible in the worklist itself — only the
-        // filter dropdown's own options are restricted, not which activities can be listed.
+        // Custom-type activities are listed in the worklist and their definition is selectable
+        // in the Activity Type filter, from the same authoritative ActivityDefinition rows.
         $this->assertStringContainsString('CUSTOM TYPE ROW CLIENT', $content);
-        $this->assertStringNotContainsString('>Employer Verification</option>', $content);
+        $this->assertStringContainsString('>Employer Verification</option>', $content);
     }
 
     public function test_schedule_filter_today(): void
@@ -770,6 +843,28 @@ class GlobalCiActivitiesTest extends TestCase
     private function coMakerFor(ClientFolder $folder, string $fullName): CoMaker
     {
         return CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => $fullName, 'first_name' => explode(' ', $fullName)[0], 'last_name' => explode(' ', $fullName)[array_key_last(explode(' ', $fullName))]]);
+    }
+
+    private function customDefinition(string $name): ActivityDefinition
+    {
+        return ActivityDefinition::create([
+            'code' => ActivityDefinition::CUSTOM_CODE_PREFIX.str()->uuid(),
+            'name' => $name,
+            'sort_order' => 500,
+            'is_required' => false,
+            'is_active' => true,
+        ]);
+    }
+
+    private function customActivity(ClientFolder $folder, User $creator, ActivityDefinition $definition, array $overrides = []): CiActivity
+    {
+        return CiActivity::create(array_merge([
+            'client_folder_id' => $folder->id,
+            'activity_definition_id' => $definition->id,
+            'name' => $definition->name,
+            'creator_id' => $creator->id,
+            'status' => ActivityStatus::Pending,
+        ], $overrides));
     }
 
     private function simpleActivity(ClientFolder $folder, User $creator, string $code, array $overrides = []): CiActivity

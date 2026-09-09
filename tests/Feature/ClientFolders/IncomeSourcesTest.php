@@ -466,7 +466,8 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame('leasing_real_estate_agri_rank', $template->businessReportSchema()['fields'][0]['key']);
 
         $page = $this->actingAs($ci)->get(route('client-folders.income-sources.index', $folder))->assertOk();
-        $page->assertSee('SELECT ALL APPLICABLE INCOME SOURCES');
+        // The catalog no longer carries a visible heading of its own.
+        $page->assertDontSee('SELECT ALL APPLICABLE INCOME SOURCES');
         $page->assertSee('data-other-income-source', false);
         $page->assertDontSee('INCOME SOURCE:');
         $page->assertSee('Agriculture Production');

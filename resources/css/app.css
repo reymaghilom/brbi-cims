@@ -93,11 +93,11 @@
     [data-folder-browser][data-refreshing="true"] [data-folder-results] { opacity: .65; }
     [data-folder-results] { transition: opacity 180ms ease-in-out; }
     [data-folder-browser][data-refreshing="true"] [data-folder-pagination] { pointer-events: none; }
-    /* Same subtle in-flight treatment for the Reports and CI Activities result regions while the
-       next page (or a new sort) is being fetched: the current rows stay visible and simply mute,
-       never a blocking spinner or a blanked area. */
-    [data-reports-listing], [data-ci-activities-listing] { transition: opacity 180ms ease-in-out; }
-    [data-reports-listing][data-refreshing="true"], [data-ci-activities-listing][data-refreshing="true"] { opacity: .65; pointer-events: none; }
+    /* Same subtle in-flight treatment for the Reports, CI Activities and Residence/Business check
+       result regions while the next page (or a new sort, or a post-save refresh) is being fetched:
+       the current rows stay visible and simply mute, never a blocking spinner or a blanked area. */
+    [data-reports-listing], [data-ci-activities-listing], [data-checks-listing] { transition: opacity 180ms ease-in-out; }
+    [data-reports-listing][data-refreshing="true"], [data-ci-activities-listing][data-refreshing="true"], [data-checks-listing][data-refreshing="true"] { opacity: .65; pointer-events: none; }
     .client-folder-grid { @apply grid gap-2.5; grid-template-columns: repeat(auto-fill, minmax(9.25rem, 1fr)); }
     .client-folder-tile-shell { @apply relative min-w-0; }
     .client-folder-tile { @apply relative flex min-h-36 cursor-default select-none flex-col items-center rounded-card bg-surface-muted/65 px-2.5 pb-2.5 pt-4 text-center transition hover:bg-brand-soft/45 focus-visible:outline-none; }
@@ -309,22 +309,61 @@
     .cibi-encoding-paper .cibi-entry-table .cibi-compact-financial-input { width: 7rem; max-width: 100%; flex: 0 1 7rem; }
     .cibi-encoding-paper .cibi-entry-table .cibi-adb-choice-line .cibi-compact-financial-input { width: 6.5rem; min-width: 4.5rem; max-width: 6.5rem; flex: 0 1 6.5rem; }
     .cibi-loan-entry-table { width: 100%; min-width: 60rem; table-layout: fixed; }
-    .cibi-loan-entry-table th:nth-child(1) { width: 16%; }
+    /* The LOAN RESULT column only has to identify its row, so it is the narrowest column here and
+       the width it gives up goes to Performance & Findings, which is the one people actually
+       write in. */
+    .cibi-loan-entry-table th:nth-child(1) { width: 6.25rem; }
     .cibi-loan-entry-table th:nth-child(2),
     .cibi-loan-entry-table th:nth-child(3),
-    .cibi-loan-entry-table th:nth-child(4) { width: 7.5%; }
-    .cibi-loan-entry-table th:nth-child(5) { width: 21%; }
-    .cibi-loan-entry-table th:nth-child(6) { width: 18.5%; }
+    .cibi-loan-entry-table th:nth-child(4) { width: 9%; }
+    .cibi-loan-entry-table th:nth-child(5) { width: 16.5%; }
+    .cibi-loan-entry-table th:nth-child(6) { width: 15%; }
     .cibi-loan-entry-table th:nth-child(7) { width: auto; }
-    .cibi-loan-entry-table th:nth-child(8) { width: 3rem; }
+    .cibi-loan-entry-table th:nth-child(8) { width: 2.6rem; }
     .cibi-loan-entry-table th,
-    .cibi-loan-entry-table td { padding-inline: .2rem; }
-    .cibi-loan-date-controls,
-    .cibi-loan-meta-controls { display: flex; min-width: 0; align-items: center; gap: .2rem; white-space: nowrap; }
-    .cibi-encoding-paper .cibi-entry-table .cibi-loan-amount-input { width: 5.75rem; max-width: 100%; }
-    .cibi-encoding-paper .cibi-entry-table .cibi-compact-date-input { width: 7.25rem; min-width: 0; flex: 1 1 7.25rem; }
-    .cibi-encoding-paper .cibi-entry-table .cibi-cycle-input { width: 3.75rem; min-width: 0; flex: 0 1 3.75rem; }
-    .cibi-encoding-paper .cibi-entry-table .cibi-security-input { width: 8rem; min-width: 0; flex: 1 1 8rem; }
+    .cibi-loan-entry-table td { padding-inline: .3rem; }
+    .cibi-encoding-paper .cibi-loan-entry-table td { padding-block: .3rem; vertical-align: top; }
+    /* Two controls share one cell (Granted/Maturity, Cycle/Security). Stacking them under their
+       own micro-labels reads far better at this density than squeezing them side by side, and it
+       lets each input take the cell's full usable width. */
+    .cibi-loan-paired-controls { display: flex; min-width: 0; flex-direction: column; align-items: stretch; gap: .2rem; white-space: normal; }
+    .cibi-loan-paired-field { display: flex; min-width: 0; align-items: center; gap: .3rem; }
+    .cibi-loan-micro-label { flex: 0 0 3.25rem; color: var(--color-text-muted); font-size: .58rem; font-weight: 600; letter-spacing: .04em; line-height: 1.2; text-transform: uppercase; }
+    .cibi-encoding-paper .cibi-entry-table .cibi-loan-amount-input { width: 100%; max-width: 100%; text-align: right; }
+    .cibi-encoding-paper .cibi-entry-table .cibi-compact-date-input,
+    .cibi-encoding-paper .cibi-entry-table .cibi-cycle-input,
+    .cibi-encoding-paper .cibi-entry-table .cibi-security-input { width: auto; min-width: 0; flex: 1 1 auto; }
+    .cibi-loan-findings-cell { min-width: 12rem; }
+    /* IV. Summary on Credit / Loan Information — one Bank/Coop group header owns 0..N loan-result
+       rows beneath it, so the institution is encoded once instead of retyped per loan. Reuses the
+       section's existing paper/table tokens; only the grouping chrome is new. The header carries
+       the only strong rules in this table, so the eye reads institution-then-results rather than
+       one flat grid of equally weighted borders. */
+    .cibi-loan-group-row > .cibi-loan-group-cell { border-color: #c2b9a2; border-top: 2px solid #b8ae95; border-bottom-width: 1px; background: #ece5d2; padding: .34rem .5rem !important; }
+    .cibi-entry-table tbody tr:first-child > .cibi-loan-group-cell { border-top-width: 0; }
+    .cibi-loan-group-bar { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .3rem .55rem; }
+    .cibi-loan-group-label { flex: 0 0 auto; color: var(--color-brand-sidebar); font-size: .625rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    /* Tinted rather than plain white, so the institution field reads as part of the group header
+       band instead of a large input floating on top of it. */
+    .cibi-encoding-paper .cibi-entry-table .cibi-loan-group-input { width: 20rem; min-width: 0; max-width: 100%; flex: 1 1 11rem; border: 1px solid #c2b9a2; background: #fbf8f0; font-size: .74rem; font-weight: 600; }
+    .cibi-encoding-paper .cibi-entry-table .cibi-loan-group-input::placeholder { color: #8a8271; font-weight: 400; }
+    .cibi-loan-group-actions { display: inline-flex; flex: 0 0 auto; align-items: center; gap: .3rem; margin-inline-start: auto; }
+    .cibi-loan-inline-button { display: inline-flex; min-height: 1.65rem; align-items: center; gap: .2rem; border: 1px solid #c2b9a2; border-radius: .2rem; background: #fbf8f0; padding: .12rem .45rem; color: var(--color-brand-sidebar); font-size: .66rem; font-weight: 600; letter-spacing: .01em; white-space: nowrap; transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease; }
+    .cibi-loan-inline-button:hover { border-color: var(--color-brand-primary); background: var(--color-brand-soft); color: var(--color-brand-primary); }
+    .cibi-loan-inline-button:focus-visible { outline: 2px solid var(--color-brand-primary); outline-offset: 1px; }
+    /* Removal is secondary to the data: neutral until hovered/focused, where it turns danger.
+       Scoped to this table so the other CI/BI sections keep their existing button treatment. */
+    .cibi-loan-entry-table .cibi-remove-entry-button { width: 1.65rem; height: 1.65rem; border-color: #c9c2ae; color: var(--color-text-muted); }
+    .cibi-loan-entry-table .cibi-remove-entry-button:hover,
+    .cibi-loan-entry-table .cibi-remove-entry-button:focus-visible { border-color: rgb(185 45 45 / .45); background: var(--color-danger-soft); color: var(--color-danger); }
+    .cibi-loan-result-cell { vertical-align: middle !important; }
+    .cibi-loan-result-badge { display: inline-block; border-radius: .18rem; background: #e6e0cf; padding: .1rem .35rem; color: var(--color-brand-sidebar); font-size: .6rem; font-weight: 700; letter-spacing: .045em; text-transform: uppercase; white-space: nowrap; }
+    .cibi-loan-result-empty { display: block; color: var(--color-text-muted); font-size: .66rem; font-style: italic; line-height: 1.3; }
+    .cibi-loan-blank { display: block; color: var(--color-text-muted); font-size: .78rem; line-height: 1.9; text-align: center; }
+    .cibi-loan-empty-state-row > td { color: var(--color-text-muted); font-size: .7rem; font-style: italic; text-align: center; }
+    .cibi-encoding-paper .cibi-loan-entry-table .cibi-loan-empty-state-row > td { padding-block: .7rem; }
+    .cibi-loan-group-add { display: flex; justify-content: flex-start; border-top: 1px solid #e4dece; margin: 0 .85rem; padding: .6rem 0 .75rem; }
+    .cibi-loan-group-add > button { display: inline-flex; align-items: center; gap: .25rem; }
     .cibi-income-entry-table { width: 100%; min-width: 48rem; table-layout: fixed; }
     .cibi-income-entry-table th:nth-child(1) { width: 27%; }
     .cibi-income-entry-table th:nth-child(2) { width: 30%; }
@@ -377,6 +416,16 @@
     .business-report-header-control[aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--color-danger); }
     .business-report-header-value [role="alert"] { margin: 0; border-top: 1px solid rgb(201 54 54 / .25); padding: .2rem .35rem; font-size: .65rem; }
     .business-report-header-value [role="alert"] svg { display: none; }
+    /* Match BRANCH to the adjacent read-only applicant value without changing any other header
+       control. The grid cell remains the sole separator and centres this compact value vertically
+       beside CI-IN CHARGE. */
+    .business-report-header-branch { display: flex; flex-direction: column; justify-content: center; padding: .3rem .45rem; }
+    .business-report-header-branch .business-report-header-control { min-height: 1.4rem; border-bottom: 0; padding: 0; }
+    /* CI-IN CHARGE often lists several investigators. The type scales with the viewport so the
+       names sit on one line at the widths this header is actually used at, without shrinking to an
+       unreadable size on a narrow screen or growing past the row's own .78rem elsewhere. */
+    .business-report-ci-names { font-size: clamp(.58rem, .34vw + .48rem, .72rem); line-height: 1.25; white-space: nowrap; }
+    .business-report-ci-names [data-ci-primary-name], .business-report-ci-names [data-full-name] { white-space: nowrap; }
     .business-report-header-party { grid-column: span 2; display: flex; min-height: 2rem; align-items: center; gap: 1.25rem; padding: .3rem .45rem; color: #26303c; font-size: .75rem; font-weight: 500; }
     .business-report-header-party > span { display: inline-flex; align-items: center; gap: .3rem; }
     .business-report-party-check { min-width: 1.75rem; color: #26303c; font-size: .75rem; line-height: 1; text-align: center; }
@@ -718,6 +767,28 @@
     .business-other-income-choice .business-report-checkbox { width: .9rem; height: .9rem; align-self: center; justify-self: center; margin: 0; border: 1px solid #6b7684; accent-color: var(--color-brand-primary); }
     .business-other-income-choice .business-report-checkbox:focus-visible { outline: 2px solid rgb(30 91 75 / .25); outline-offset: 1px; }
     .business-other-income-choice + [role="alert"] { margin: 0; padding: .15rem .3rem; border-top: 1px solid #e4dfd3; font-size: .62rem; }
+    /* A custom (CI-created) catalog row is the SAME row as a default one — same height, checkbox
+       column, typography and divider — with one extra auto-width column on the right for its
+       compact management icons. Without that third track the actions would wrap onto a second
+       implicit grid row and make the row taller than every default row beside it. */
+    .business-other-income-choice.has-row-actions { grid-template-columns: 2.45rem minmax(0, 1fr) auto; }
+    .business-other-income-choice > .business-other-income-choice-actions { gap: .05rem; padding: 0 .2rem 0 .1rem; }
+    .business-other-income-choice-action { display: inline-flex; height: 1.1rem; width: 1.1rem; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: .2rem; color: #7a8391; transition: color .12s ease, background-color .12s ease; }
+    .business-other-income-choice-action svg { width: .7rem; height: .7rem; }
+    .business-other-income-choice-action:hover { background: #ece6d6; color: var(--color-brand-sidebar); }
+    .business-other-income-choice-action-danger:hover { background: var(--color-danger-soft); color: var(--color-danger); }
+    .business-other-income-choice-action:focus-visible { outline: 2px solid rgb(30 91 75 / .25); outline-offset: 1px; }
+    .business-other-income-choice-retired { flex: 0 0 auto; margin-left: .25rem; color: #8a8577; font-size: .55rem; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+    /* Sits under the last row at the catalog's own scale, never at page-button size. */
+    .business-other-income-add { display: inline-flex; align-items: center; gap: .2rem; width: 100%; border-top: 1px solid #e4dfd3; padding: .28rem .32rem; color: var(--color-brand-primary); font-size: .62rem; font-weight: 700; line-height: 1.2; transition: background-color .12s ease; }
+    .business-other-income-add:hover { background: #ece6d6; }
+    .business-other-income-add svg { width: .72rem; height: .72rem; }
+    .custom-business-dialog .custom-business-dialog-field { display: grid; gap: .45rem; }
+    .custom-business-dialog .custom-business-dialog-field .ui-label { margin-bottom: 0; color: var(--color-text-muted); font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .custom-business-dialog .custom-business-dialog-field .ui-control { min-height: 2.75rem; border: 1px solid var(--color-ui-border-strong); border-radius: var(--radius-control); background: var(--color-surface); padding: .65rem .8rem; box-shadow: 0 1px 2px rgb(15 45 80 / .05); }
+    .custom-business-dialog .custom-business-dialog-field .ui-control:hover { border-color: color-mix(in srgb, var(--color-brand-primary) 55%, var(--color-ui-border-strong)); }
+    .custom-business-dialog .custom-business-dialog-field .ui-control:focus { border-color: var(--color-brand-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-primary) 16%, transparent); outline: none; }
+    .custom-business-dialog footer { gap: .65rem; padding-block: .8rem; }
     .business-other-income-summary { min-width: 0; border: 1px solid #d8d3c6; background: #fffdf9; }
     .business-other-income-summary h3 { border-bottom: 1px solid #d8d3c6; background: #ece6d6; padding: .42rem .45rem; color: var(--color-brand-sidebar); font-size: .625rem; font-weight: 700; letter-spacing: .035em; line-height: 1.2; text-transform: uppercase; }
     .business-other-income-summary ol { display: grid; gap: .2rem; margin: 0; padding: .45rem .65rem .55rem 1.8rem; color: #26303c; font-size: .72rem; line-height: 1.35; }

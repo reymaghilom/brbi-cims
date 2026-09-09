@@ -29,7 +29,9 @@ class CiActivityHistoryFeed
             ->where('client_folder_id', $folder->id)
             ->where('id', '>', $watermarkId)
             ->where(function ($query): void {
-                $query->where('module', 'ci_activities')->orWhere('action', 'media.uploaded');
+                $query
+                    ->whereIn('module', ['ci_activities', 'activity_definitions'])
+                    ->orWhere('action', 'media.uploaded');
             })
             ->with('user:id,full_name')
             ->oldest('id')
@@ -42,6 +44,13 @@ class CiActivityHistoryFeed
 
     public static function belongsToPerson(AuditLog $event, ?int $coMakerId): bool
     {
+        // Activity Type management edits the reusable ActivityDefinition, which is shared
+        // configuration rather than one person's record, so those events are shown in every
+        // Applicant/Co-Maker context of the folder they were performed from.
+        if ($event->module === 'activity_definitions') {
+            return true;
+        }
+
         $metadata = (array) $event->metadata;
 
         if ($event->action === 'media.uploaded') {
@@ -99,6 +108,11 @@ class CiActivityHistoryFeed
                 'ci_activity.reopened' => data_get($metadata, 'activity_title').' reopened',
                 'ci_activity.deleted' => data_get($metadata, 'activity_title').' deleted',
                 'ci_activity.assignment_changed' => data_get($metadata, 'activity_title', 'CI Activity').' assignment updated',
+                'activity_definition.created' => 'Created Activity Type "'.data_get($metadata, 'activity_title').'"',
+                'activity_definition.renamed' => 'Updated Activity Type from "'.data_get($metadata, 'previous_name').'" to "'.data_get($metadata, 'activity_title').'"',
+                'activity_definition.activated' => 'Activated Activity Type "'.data_get($metadata, 'activity_title').'"',
+                'activity_definition.deactivated' => 'Deactivated Activity Type "'.data_get($metadata, 'activity_title').'"',
+                'activity_definition.deleted' => 'Deleted Activity Type "'.data_get($metadata, 'activity_title').'"',
                 'media.uploaded' => 'Proof uploaded',
                 default => data_get($metadata, 'activity_title', 'CI Activity').' updated',
             },

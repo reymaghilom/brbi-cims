@@ -5,6 +5,7 @@ namespace App\Services\Reports;
 use App\Enums\OfficialReportType;
 use App\Models\BusinessReport;
 use App\Models\ClientFolder;
+use App\Models\CustomBusinessCategory;
 use App\Models\IncomeSource;
 use App\Services\ClientFolders\CiParticipantService;
 use Illuminate\Support\Collection;
@@ -369,7 +370,7 @@ class BusinessExcelExporter
      * them are, since PhpSpreadsheet does not re-anchor images when rows are
      * deleted above them.
      *
-     * @param array{0: int, 1: int} $range
+     * @param  array{0: int, 1: int}  $range
      */
     private function fromTemplate(string $templatePath, array $range, ClientFolder $folder, IncomeSource $source, array $document, bool $showCommonHeader = true): Spreadsheet
     {
@@ -489,26 +490,57 @@ class BusinessExcelExporter
             $rowDimension->setVisible(true);
         }
 
+        // This worksheet's official client block is exactly two rows: applicant/branch, followed
+        // by amount/account officer. Its original positions are retained without inserted rows.
         $report = $source->businessReport;
-        $cibiReport = $folder->cibiReport()->where('co_maker_id', $source->co_maker_id)->first();
+        $header = (array) ($document['business'] ?? []);
 
-        // C6 is this sheet's own (differently-positioned) "NAME OF APPLICANT:" label cell —
-        // same Co-Maker override as injectHeader()'s O7. Batch sheets after the first blank
-        // these instead of repeating the same client's identifying info — see injectHeader()'s
-        // matching note.
+        // Use the same report identity as the authoritative Web/PDF output instead of retaining
+        // the legacy worksheet's "Sources of Income Declared by Client" draft title.
+        $this->set($sheet, 'C', 3, 'CREDIT INVESTIGATION REPORT');
+        $this->set($sheet, 'C', 4, '(SOURCE OF INCOME VALIDATION)');
+        $sheet->mergeCells('C3:N3');
+        $sheet->mergeCells('C4:N4');
+        $sheet->getStyle('C3:N3')->getFont()->setBold(true)->setSize(15);
+        $sheet->getStyle('C4:N4')->getFont()->setItalic(true)->setSize(8);
+
+        // The value is the shared builder's active person, preserving applicant/co-maker isolation;
+        // this template's visible label remains the original worksheet's NAME OF APPLICANT.
         if ($showCommonHeader) {
-            $this->set($sheet, 'C', 6, $source->co_maker_id ? 'NAME OF CO-MAKER:' : 'NAME OF APPLICANT:');
-            $this->set($sheet, 'G', 6, $source->applicant_name_snapshot ?: $folder->display_name);
-            $this->set($sheet, 'T', 6, $source->branch_name ?: $cibiReport?->branch_name);
-            $this->set($sheet, 'G', 7, $cibiReport?->amount_applied);
-            $this->set($sheet, 'T', 7, $source->account_officer_name ?: $cibiReport?->account_officer_name);
+            $this->set($sheet, 'C', 6, 'NAME OF APPLICANT:');
+            $this->set($sheet, 'G', 6, $header['applicant_name'] ?? null);
+            $this->set($sheet, 'O', 6, 'BRANCH:');
+            $this->set($sheet, 'T', 6, $header['branch'] ?? null);
+            $this->set($sheet, 'C', 7, 'AMOUNT APPLIED:');
+            $this->set($sheet, 'G', 7, $header['amount_applied'] ?? null);
+            $this->set($sheet, 'O', 7, 'ACCOUNT OFFICER:');
+            $this->set($sheet, 'T', 7, $header['account_officer'] ?? null);
         } else {
-            $this->set($sheet, 'C', 6, '');
-            $this->set($sheet, 'G', 6, '');
-            $this->set($sheet, 'T', 6, '');
-            $this->set($sheet, 'G', 7, '');
-            $this->set($sheet, 'T', 7, '');
+            foreach ([['C', 6], ['G', 6], ['O', 6], ['T', 6], ['C', 7], ['G', 7], ['O', 7], ['T', 7]] as [$column, $row]) {
+                $this->set($sheet, $column, $row, '');
+            }
         }
+        // The reference workbook boxes the applicant value with allBorders across G6:M6 instead of
+        // a single outline, so every interior column edge inside that merged block carries its own
+        // vertical border, and its right edge lands one column short of the amount box below it
+        // (G7:N7). On screen that reads as stacked lines inside the box plus a jog in the vertical
+        // rule between the two header rows. Both rows are given the same G:N block and one outline.
+        if (in_array('G6:M6', $sheet->getMergeCells(), true)) {
+            $sheet->unmergeCells('G6:M6');
+        }
+        $sheet->getStyle('G6:N6')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_NONE);
+        $sheet->mergeCells('G6:N6');
+        $sheet->getStyle('G6:N6')->getBorders()->getOutline()->setBorderStyle(Border::BORDER_THIN);
+
+        foreach ([6, 7] as $headerRow) {
+            $sheet->getStyle('C'.$headerRow)->getFont()->setBold(true);
+            $sheet->getStyle('O'.$headerRow)->getFont()->setBold(true);
+            $sheet->getStyle('G'.$headerRow.':N'.$headerRow)->getAlignment()->setWrapText(true)->setVertical(Alignment::VERTICAL_CENTER);
+            $sheet->getStyle('T'.$headerRow.':Z'.$headerRow)->getAlignment()->setWrapText(true)->setVertical(Alignment::VERTICAL_CENTER);
+        }
+        // The section bar the reference workbook filled with the old ranking instruction now
+        // carries the template's own name, matching the bar every other template prints.
+        $this->set($sheet, 'C', 8, strtoupper($source->template->name));
 
         // Columns C, I, O and U are each already a fully-bordered single square cell in the
         // reference workbook — one immediately before each of the 4 group columns (D, J, P,
@@ -522,28 +554,46 @@ class BusinessExcelExporter
         // two nested squares instead of one. With the cell's own border as the only square,
         // a selected choice is just a checkmark inside it and an unselected one is truly
         // empty — which still reads as an empty box, because the cell's border is the box.
-        $schema = $source->template->businessReportSchema();
+        // OfficialReportDataBuilder resolves selected custom keys into human-readable choices once;
+        // Web/PDF and Excel consume that same schema instead of implementing separate key parsing.
+        $schema = (array) data_get($document, 'business.schema', $source->template->businessReportSchema());
         $groups = (array) ($schema['income_source_groups'] ?? []);
         $selected = (array) data_get($report?->template_data, 'fields.income_sources', []);
         $mark = fn (bool $isSelected): string => $isSelected ? '✓' : '';
-        // Every checkbox cell shares its row's height with 3 other groups' cells (the row is one
-        // Excel row wide), so a per-row height driven by that row's own longest label made rows
-        // — and so the checkbox squares sitting in them, since their column width is already
-        // fixed and uniform — different heights depending on what else happened to share that
-        // row. A single row height, sized once for the single longest label anywhere in the
-        // whole checklist (so nothing ever wraps into a clipped line) and applied to every row,
-        // keeps every checkbox the same square size throughout.
-        $longestLabelLength = collect($groups)->flatten(1)->max(fn (array $choice): int => mb_strlen($choice['label']));
-        $uniformRowHeight = max(1, (int) ceil($longestLabelLength / 26)) * 12;
-        $writeChoices = function (string $boxColumn, string $labelColumn, string $labelEndColumn, array $rows, array $choices) use ($sheet, $mark, $selected, $uniformRowHeight): void {
+
+        // The reference gives every base column the same width, which makes the four checkbox
+        // columns needlessly bulky. Keep each group's total width unchanged: narrow its checkbox
+        // cell and return the recovered width to the first column of the merged business label.
+        $checkboxWidth = 2.1;
+        foreach ([['C', 'D'], ['I', 'J'], ['O', 'P'], ['U', 'V']] as [$boxColumn, $labelColumn]) {
+            $recoveredWidth = $sheet->getColumnDimension($boxColumn)->getWidth() - $checkboxWidth;
+            $sheet->getColumnDimension($boxColumn)->setWidth($checkboxWidth);
+            $sheet->getColumnDimension($labelColumn)->setWidth($sheet->getColumnDimension($labelColumn)->getWidth() + $recoveredWidth);
+        }
+
+        // Group captions live in the checkbox columns in the original sheet. Span each caption
+        // across its group so narrowing those columns never clips a heading.
+        foreach (['C9:H9', 'I9:N9', 'O9:T9', 'O16:T16', 'U9:Z9', 'U15:Z15', 'U20:Z20'] as $headingRange) {
+            $sheet->mergeCells($headingRange);
+            $sheet->getStyle($headingRange)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_LEFT)->setVertical(Alignment::VERTICAL_CENTER);
+        }
+
+        $normalRowHeight = 13.5;
+        $rowHeights = [];
+        $renderedRows = [];
+        $renderedBoxCells = [];
+        $writeChoices = function (string $boxColumn, string $labelColumn, string $labelEndColumn, array $rows, array $choices) use ($sheet, $mark, $selected, $normalRowHeight, &$rowHeights, &$renderedRows, &$renderedBoxCells): void {
             foreach ($rows as $index => $templateRow) {
                 $choice = $choices[$index] ?? null;
                 if ($choice === null) {
                     continue;
                 }
+                $renderedRows[] = $templateRow;
+                $renderedBoxCells[$boxColumn.$templateRow] = true;
                 $this->set($sheet, $boxColumn, $templateRow, $mark(in_array($choice['key'], $selected, true)));
-                $sheet->getStyle($boxColumn.$templateRow)->getFont()->setSize(12)->setBold(true);
+                $sheet->getStyle($boxColumn.$templateRow)->getFont()->setSize(9)->setBold(true);
                 $sheet->getStyle($boxColumn.$templateRow)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER)->setVertical(Alignment::VERTICAL_CENTER);
+                $sheet->getStyle($boxColumn.$templateRow)->getBorders()->getOutline()->setBorderStyle(Border::BORDER_THIN);
 
                 $this->set($sheet, $labelColumn, $templateRow, $choice['label']);
                 // D10:H10 through D14:H14 are already merged exactly like this in the reference
@@ -551,20 +601,67 @@ class BusinessExcelExporter
                 // merged the same way here rather than special-casing those 5.
                 $range = $labelColumn.$templateRow.':'.$labelEndColumn.$templateRow;
                 $sheet->mergeCells($range);
-                $sheet->getStyle($range)->getFont()->setSize(7);
-                $sheet->getStyle($range)->getAlignment()->setWrapText(true)->setVertical(Alignment::VERTICAL_CENTER);
-                $sheet->getRowDimension($templateRow)->setRowHeight($uniformRowHeight);
+                $sheet->getStyle($range)->getFont()->setSize(7)->setBold(false);
+                $sheet->getStyle($range)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_LEFT)->setIndent(0)->setWrapText(true)->setVertical(Alignment::VERTICAL_CENTER);
+
+                // Most labels fit on one compact row. Only the row containing a genuinely long
+                // label grows, using the tallest requirement among the four choices on that row.
+                // The merged label block fits roughly 41 characters of this 7pt font on one line
+                // (measured against the longest catalog label, "OFW/Foreigner Allotment/Alimony/
+                // Allowance"), so only a genuinely longer label grows its row, and a wrapped row
+                // only needs two 7pt lines rather than the previous 12pt-per-line allowance.
+                $lineCount = max(1, (int) ceil(mb_strlen($choice['label']) / 41));
+                $rowHeights[$templateRow] = max($rowHeights[$templateRow] ?? $normalRowHeight, $lineCount * 10);
             }
         };
 
         $business = array_values($groups['business'] ?? []);
-        $writeChoices('C', 'D', 'H', range(10, 25), array_slice($business, 0, 16));
-        $writeChoices('I', 'J', 'N', range(10, 24), array_slice($business, 16, 15));
-        $writeChoices('O', 'P', 'T', range(10, 15), array_slice($business, 31));
+        $customBusinessChoices = array_values(array_filter(
+            $business,
+            fn (array $choice): bool => CustomBusinessCategory::isCustomKey($choice['key'] ?? null),
+        ));
+        $defaultBusinessChoices = array_values(array_filter(
+            $business,
+            fn (array $choice): bool => ! CustomBusinessCategory::isCustomKey($choice['key'] ?? null),
+        ));
+
+        // Row 26 is the template's original catalog bottom. It becomes an interior row whenever
+        // custom businesses extend the first column, so remove that fixed full-width rule now;
+        // the shared bottom rule is applied after the tallest rendered row is known.
+        $sheet->getStyle('B26:AA26')->getBorders()->getBottom()->setBorderStyle(Border::BORDER_NONE);
+
+        $writeChoices('C', 'D', 'H', range(10, 25), array_slice($defaultBusinessChoices, 0, 16));
+        $writeChoices('I', 'J', 'N', range(10, 24), array_slice($defaultBusinessChoices, 16, 15));
+        $writeChoices('O', 'P', 'T', range(10, 15), array_slice($defaultBusinessChoices, 31));
         $writeChoices('O', 'P', 'T', range(17, 26), array_values($groups['agriculture'] ?? []));
         $writeChoices('U', 'V', 'Z', range(10, 14), array_values($groups['professional'] ?? []));
         $writeChoices('U', 'V', 'Z', range(16, 18), array_values($groups['remittance'] ?? []));
         $writeChoices('U', 'V', 'Z', range(21, 23), array_values($groups['employment'] ?? []));
+
+        // Match the Web output: custom choices continue the first Business column immediately
+        // after STL/Lotto Outlet. The first uses row 26, already free in that column; only further
+        // choices insert rows before remarks. Each row copies the default row's checkbox styling.
+        if (count($customBusinessChoices) > 1) {
+            $sheet->insertNewRowBefore(27, count($customBusinessChoices) - 1);
+        }
+        if ($customBusinessChoices !== []) {
+            $customRows = range(26, 25 + count($customBusinessChoices));
+            foreach ($customRows as $customRow) {
+                // Inserted worksheet rows inherit formatting across the full report width. Only
+                // row 26 shares content with another group; subsequent rows are first-column-only.
+                if ($customRow > 26) {
+                    $sheet->getStyle('B'.$customRow.':AA'.$customRow)->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_NONE);
+                }
+
+                // Copy STL/Lotto Outlet cell by cell. Applying C25's checkbox style to C:H would
+                // give every label cell its own vertical borders and create a separate grid.
+                foreach (range('C', 'H') as $column) {
+                    $sheet->duplicateStyle($sheet->getStyle($column.'25'), $column.$customRow);
+                }
+                $sheet->getRowDimension($customRow)->setRowHeight($sheet->getRowDimension(25)->getRowHeight());
+            }
+            $writeChoices('C', 'D', 'H', $customRows, $customBusinessChoices);
+        }
 
         // J25 is a leftover sample-data cell in the reference workbook that sits just below
         // the J-group's own written range (J stops at row 24) — never overwritten by
@@ -573,27 +670,50 @@ class BusinessExcelExporter
         // checkbox cell for row 25 ("Stl/Lotto Outlet"), already overwritten above.
         $sheet->getCellCollection()->delete('J25');
 
-        // Row 26's bottom border is drawn explicitly across the checklist's whole B:AA width
-        // (rather than trusting each cell's own pre-existing style to already agree), because
-        // P26:T26 ("Fish Peddling"'s label) is a merge created here, not one that was already in
-        // the reference workbook — every cell it merges already carried the same bottom border,
-        // but this guarantees one uniform line with no risk of any cell rendering out of step
-        // with its neighbors. B26's left and AA26's right are reasserted too, so both outer
-        // sides still meet the bottom line cleanly at the corners.
-        $sheet->getStyle('B26:AA26')->getBorders()->getBottom()->setBorderStyle(Border::BORDER_THIN);
-        $sheet->getStyle('B26')->getBorders()->getLeft()->setBorderStyle(Border::BORDER_THIN);
-        $sheet->getStyle('AA26')->getBorders()->getRight()->setBorderStyle(Border::BORDER_THIN);
+        // The bottom comes from the actual rendered rows, not a fixed worksheet coordinate.
+        $catalogBottomRow = max($renderedRows);
+        foreach (range(10, $catalogBottomRow) as $catalogRow) {
+            $sheet->getRowDimension($catalogRow)->setRowHeight($rowHeights[$catalogRow] ?? $normalRowHeight);
 
-        $this->set($sheet, 'B', 27, 'OTHER REMARKS:');
-        $sheet->getStyle('B27')->getFont()->setBold(true);
+            // A checkbox cell only keeps its box where an option was actually written. The
+            // reference workbook leaves fully-bordered but empty checkbox cells behind wherever a
+            // group is shorter than the template's own range (e.g. I25, just past the second
+            // Business column's last option), which reads as a stray box and a broken line rather
+            // than part of the form.
+            foreach (['C', 'I', 'O', 'U'] as $boxColumn) {
+                if (! isset($renderedBoxCells[$boxColumn.$catalogRow])) {
+                    $sheet->getStyle($boxColumn.$catalogRow)->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_NONE);
+                }
+            }
+
+            // Continue the frame and the group boundaries through blank cells in shorter columns.
+            // For groups 2-4 the boundary is the checkbox cell's own left edge (I, O, U); the first
+            // group's boundary is C's left edge, one column inside the frame at B. C is listed here
+            // as well so that boundary survives a blank first-column row — without it the divider
+            // stops wherever the first column runs shorter than the tallest one (a default report
+            // ends its first column at row 25 while Agriculture reaches 26) and the line breaks.
+            // Checkbox/name separators stay local to real option cells rather than forming a grid.
+            foreach (['B', 'C', 'I', 'O', 'U'] as $leftBoundaryColumn) {
+                $sheet->getStyle($leftBoundaryColumn.$catalogRow)->getBorders()->getLeft()->setBorderStyle(Border::BORDER_THIN);
+            }
+            $sheet->getStyle('AA'.$catalogRow)->getBorders()->getRight()->setBorderStyle(Border::BORDER_THIN);
+        }
+        $sheet->getStyle('B'.$catalogBottomRow.':AA'.$catalogBottomRow)->getBorders()->getBottom()->setBorderStyle(Border::BORDER_THIN);
+
+        $remarksLabelRow = $catalogBottomRow + 1;
+
+        $remarksValueRow = $remarksLabelRow + 1;
+        $remarksEndRow = $remarksValueRow + 2;
+        $this->set($sheet, 'B', $remarksLabelRow, 'OTHER REMARKS:');
+        $sheet->getStyle('B'.$remarksLabelRow)->getFont()->setBold(true);
         $remarks = filled($report?->report_remarks) ? $report->report_remarks : 'N/A';
-        $this->set($sheet, 'B', 28, $remarks);
-        $sheet->getStyle('B28')->getAlignment()->setWrapText(true)->setVertical(Alignment::VERTICAL_TOP);
+        $this->set($sheet, 'B', $remarksValueRow, $remarks);
+        $sheet->getStyle('B'.$remarksValueRow)->getAlignment()->setWrapText(true)->setVertical(Alignment::VERTICAL_TOP);
         // The reference workbook already merges the remarks value into a single B28:AA30 block
         // (the same left/right width as the checklist above it) but never draws a border around
         // it — unlike Print/PDF, which already boxes this section. Only the outline is drawn
         // (not every internal gridline) so it reads as one clean bordered box.
-        $sheet->getStyle('B28:AA30')->getBorders()->getOutline()->setBorderStyle(Border::BORDER_THIN);
+        $sheet->getStyle('B'.$remarksValueRow.':AA'.$remarksEndRow)->getBorders()->getOutline()->setBorderStyle(Border::BORDER_THIN);
         // The reference's own 3-row block (row 28's explicit 15.75pt height plus rows 29-30's
         // ~15pt defaults) already fits several wrapped lines, and Excel never auto-fits a merged
         // cell's row height regardless — so this only grows row 30 (the last of the 3), and only
@@ -601,23 +721,60 @@ class BusinessExcelExporter
         // from its length against the merge's ~110 character-per-line capacity at this width.
         $remarksLines = max(1, (int) ceil(mb_strlen($remarks) / 110));
         if ($remarksLines > 3) {
-            $sheet->getRowDimension(30)->setRowHeight(($remarksLines - 2) * 15);
+            $sheet->getRowDimension($remarksEndRow)->setRowHeight(($remarksLines - 2) * 15);
         }
 
         // The reference workbook defines column widths all the way out to BY even though this
-        // section's real content and its own print area never go past AB — getHighestColumn()
+        // section's real content and its own print area never go past AA — getHighestColumn()
         // picks up those far-right column definitions regardless of content, so it must not be
         // used here, or the exported print area balloons far past the report's intended right
-        // boundary. AF9:AF26 is also a fully-bordered but entirely empty column left over from
-        // an earlier version of this sheet, sitting outside the checklist and outside the
-        // reference workbook's own print area — removed the same way this exporter already
-        // removes other stray leftover cells (see the AD-column notes in
+        // boundary.
+        //
+        // Everything past AA is leftover from earlier versions of this sheet: AB carries a
+        // right border on a scattered set of rows, which paints a second, broken vertical rule
+        // just outside the frame (and pushes row 2's top rule one column past the corner); AF is
+        // a fully bordered but entirely empty column; AG:AK holds unused merges. None of it is
+        // inside the print area, but Excel still draws it beside the report on screen, so the
+        // whole strip is removed in one pass rather than column by column — the same way this
+        // exporter already removes other stray leftover cells (see the AD-column notes in
         // injectLeasingTruckEquipmentSection() and elsewhere).
-        foreach (range(9, 26) as $templateRow) {
-            $sheet->getCellCollection()->delete('AF'.$templateRow);
+        $reportRightEdge = Coordinate::columnIndexFromString('AA');
+        $isPastRightEdge = static function (string $coordinate) use ($reportRightEdge): bool {
+            [$column] = Coordinate::coordinateFromString($coordinate);
+
+            return Coordinate::columnIndexFromString($column) > $reportRightEdge;
+        };
+        foreach ($sheet->getMergeCells() as $mergeRange) {
+            if ($isPastRightEdge(explode(':', $mergeRange)[0])) {
+                $sheet->unmergeCells($mergeRange);
+            }
         }
-        // Print area ends at row 30, the last row of the restored remarks box.
-        $sheet->getPageSetup()->setPrintArea('B2:AB30');
+        foreach ($sheet->getCellCollection()->getCoordinates() as $coordinate) {
+            if ($isPastRightEdge($coordinate)) {
+                $sheet->getCellCollection()->delete($coordinate);
+            }
+        }
+        // Deleting those cells is not enough on its own: the reference workbook also gives column
+        // AB a column-level format (an xf whose border carries a thin right edge), and Excel
+        // applies a column's format to every cell in it that has no format of its own. With AB's
+        // own cells gone, that column format is what finally paints the rule — a full-height
+        // vertical line one column outside the frame, which is what shows up in Excel even though
+        // PhpSpreadsheet reports no borders (getStyle() on a cell that does not exist answers with
+        // the default style, never the column's) and the print area excludes it. Every column past
+        // the edge is reset to the workbook's default format so nothing outside the report can
+        // draw itself.
+        foreach ($sheet->getColumnDimensions() as $columnDimension) {
+            $column = (string) $columnDimension->getColumnIndex();
+            if ($column !== '' && Coordinate::columnIndexFromString($column) > $reportRightEdge) {
+                $columnDimension->setXfIndex(0);
+            }
+        }
+        // Print area ends at the last row of the restored remarks box.
+        $sheet->getPageSetup()->setPrintArea('B2:AA'.$remarksEndRow);
+        $sheet->getPageSetup()->setFitToWidth(1)->setFitToHeight(0);
+        $sheet->getPageSetup()->setHorizontalCentered(true);
+        $sheet->getPageMargins()->setTop(0.35)->setRight(0.3)->setBottom(0.35)->setLeft(0.3)->setHeader(0.15)->setFooter(0.15);
+        $sheet->getSheetView()->setZoomScale(90);
         $sheet->setSelectedCells('A1');
         $sheet->setTopLeftCell('A1');
         $book->setActiveSheetIndex(0);
@@ -1733,7 +1890,7 @@ class BusinessExcelExporter
     /** Fallback for templates with no mapped section in the reference workbook (e.g. "Other Business/Source of Income"). */
     private function fromDocument(array $document, bool $showCommonHeader = true): Spreadsheet
     {
-        $book = new Spreadsheet();
+        $book = new Spreadsheet;
         $sheet = $book->getActiveSheet();
         $sheet->setTitle('Business Report');
 

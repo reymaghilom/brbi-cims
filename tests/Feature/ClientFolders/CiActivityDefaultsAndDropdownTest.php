@@ -98,8 +98,13 @@ class CiActivityDefaultsAndDropdownTest extends TestCase
         $response = $this->get(route('client-folders.activities.index', $folder))
             ->assertOk()
             ->assertSee('Existing Custom Inquiry')
-            ->assertDontSee('Inactive Custom Inquiry')
             ->assertDontSee('Test Only Definition');
+
+        // An inactive custom type is still listed (read-only) in Activity Type Management so it
+        // can be reactivated, but it is never offered as a selectable Add Activity type.
+        $content = $response->getContent();
+        $this->assertStringContainsString('data-activity-type-name="Inactive Custom Inquiry"', $content);
+        $this->assertStringNotContainsString('data-label="Inactive Custom Inquiry"', $content);
 
         $this->assertSame([
             ActivityDefinition::ASSET_CHECK_CODE,

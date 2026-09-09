@@ -19,6 +19,7 @@ use App\Services\Reports\BusinessBatchPdfExporter;
 use App\Services\Reports\BusinessExcelExporter;
 use App\Services\Reports\CibiExcelExporter;
 use App\Services\Reports\OfficialReportDataBuilder;
+use App\Services\Reports\ReportDownloadName;
 use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
@@ -103,9 +104,12 @@ class GeneratedReportController extends Controller
         abort_if($incomeSource->template->is_fallback, 404);
 
         $bytes = $exporter->generate($clientFolder, collect([$incomeSource]));
-        $client = Str::of($incomeSource->applicant_name_snapshot ?: $clientFolder->display_name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
-        $business = Str::of($incomeSource->source_name ?: $incomeSource->template->name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
-        $filename = Str::limit("BRBI_{$clientFolder->folder_number}_{$client}_{$business}_Business-Report_r{$incomeSource->revision}", 180, '').'.pdf';
+        $filename = ReportDownloadName::make(
+            'Business',
+            $incomeSource->applicant_name_snapshot ?: $clientFolder->display_name,
+            'pdf',
+            $incomeSource->source_name ?: $incomeSource->template->name,
+        );
 
         return response()->streamDownload(
             static fn () => print $bytes,
@@ -124,9 +128,12 @@ class GeneratedReportController extends Controller
         abort_if($incomeSource->template->is_fallback, 404);
 
         $bytes = $exporter->generate($clientFolder, $incomeSource);
-        $client = Str::of($incomeSource->applicant_name_snapshot ?: $clientFolder->display_name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
-        $business = Str::of($incomeSource->source_name ?: $incomeSource->template->name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
-        $filename = Str::limit("BRBI_{$clientFolder->folder_number}_{$client}_{$business}_Business-Report_r{$incomeSource->revision}", 180, '').'.xlsx';
+        $filename = ReportDownloadName::make(
+            'Business',
+            $incomeSource->applicant_name_snapshot ?: $clientFolder->display_name,
+            'xlsx',
+            $incomeSource->source_name ?: $incomeSource->template->name,
+        );
 
         return response()->streamDownload(
             static fn () => print $bytes,
@@ -224,9 +231,7 @@ class GeneratedReportController extends Controller
 
     private function batchFilename(ClientFolder $clientFolder, ?CoMaker $activePerson, int $count, string $extension): string
     {
-        $client = Str::of($activePerson?->full_name ?? $clientFolder->display_name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
-
-        return Str::limit("BRBI_{$clientFolder->folder_number}_{$client}_Business-Reports-Batch-{$count}", 180, '').'.'.$extension;
+        return ReportDownloadName::make('Business', $activePerson?->full_name ?? $clientFolder->display_name, $extension, 'Batch-'.$count);
     }
 
     public function exportCibiExcel(ClientFolder $clientFolder, CibiExcelExporter $exporter): StreamedResponse
@@ -238,7 +243,7 @@ class GeneratedReportController extends Controller
 
         $bytes = $exporter->generate($clientFolder, $activePerson);
         $client = Str::of($activePerson?->full_name ?? $clientFolder->display_name)->ascii()->replaceMatches('/[^A-Za-z0-9]+/', '-')->trim('-');
-        $filename = Str::limit("BRBI_{$clientFolder->folder_number}_{$client}_CI-BI-Report_v{$report->revision}", 180, '').'.xlsx';
+        $filename = ReportDownloadName::make('CIBI', $activePerson?->full_name ?? $clientFolder->display_name, 'xlsx');
 
         AuditLog::create([
             'user_id' => request()->user()->id,
@@ -297,7 +302,13 @@ class GeneratedReportController extends Controller
             'ip_address' => request()->ip(), 'user_agent' => request()->userAgent(),
         ]);
 
-        return $disk->download($generatedReport->private_file_reference, basename($generatedReport->private_file_reference), ['Content-Type' => $generatedReport->mime_type, 'X-Content-Type-Options' => 'nosniff']);
+        // The stored path keeps its collision-safe identity (folder number, type, person,
+        // source, version); only the name offered to the browser is the short readable one.
+        return $disk->download(
+            $generatedReport->private_file_reference,
+            ReportDownloadName::forGeneratedReport($clientFolder, $generatedReport),
+            ['Content-Type' => $generatedReport->mime_type, 'X-Content-Type-Options' => 'nosniff'],
+        );
     }
 
     private function source(ClientFolder $folder, mixed $id): ?IncomeSource

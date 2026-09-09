@@ -28,4 +28,9 @@ class UserFactory extends Factory
     {
         return $this->state(['role' => UserRole::Administrator]);
     }
+
+    public function seniorCreditInvestigator(): static
+    {
+        return $this->state(['role' => UserRole::SeniorCreditInvestigator]);
+    }
 }

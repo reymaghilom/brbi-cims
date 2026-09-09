@@ -21,6 +21,7 @@ use App\Services\Reports\OfficialReportDataBuilder;
 use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use RuntimeException;
 use Throwable;
 
 class GenerateOfficialReport
@@ -37,7 +38,18 @@ class GenerateOfficialReport
     public function execute(User $actor, ClientFolder $folder, OfficialReportType $type, ReportFormat $format, ?IncomeSource $source = null, ?CoMaker $activePerson = null): GeneratedReport
     {
         $data = $this->dataBuilder->build($folder, $type, $source, $activePerson);
-        $template = ReportTemplate::query()->where('report_type', $type->value)->where('format', $format->value)->where('is_active', true)->latest('version')->firstOrFail();
+        // A missing report template is a server configuration problem (the reference data has not
+        // been seeded), not a bad URL — but firstOrFail() raises ModelNotFoundException, which
+        // Laravel renders as a bare "404 Not Found". That made an unseeded environment look
+        // exactly like a broken route on the CI/BI Download PDF action and hid the real cause,
+        // while the CI/BI Excel download kept working because it never reads a template at all.
+        // Failing loudly here keeps the cause in the log and out of the 404 page.
+        $template = ReportTemplate::query()->where('report_type', $type->value)->where('format', $format->value)->where('is_active', true)->latest('version')->first();
+        throw_unless(
+            $template,
+            RuntimeException::class,
+            'No active '.strtoupper($format->value).' report template is configured for "'.$type->value.'". Seed the reference data (ReferenceDataSeeder) for this environment.',
+        );
         // Co-maker id is folded into the scope key (even for $source-bearing types, where it's
         // redundant-but-harmless since the source id already disambiguates) so that the Applicant
         // and every Co-Maker each get their own independent version-numbering sequence instead of

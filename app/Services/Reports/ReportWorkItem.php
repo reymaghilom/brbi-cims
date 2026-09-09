@@ -28,9 +28,15 @@ final class ReportWorkItem
         public readonly string $clientName,
         public readonly ?string $personName,
         public readonly ?string $businessName,
+        /**
+         * CI / BI only: the exact person's own Residence Check already supplies at least one value
+         * the still-unsaved CI / BI form will runtime-prefill. Derived per render from current data
+         * — never stored, and it creates nothing. See ReportWorkspaceQuery::residencePrefilledKeys().
+         */
+        public readonly bool $hasResidencePrefill = false,
     ) {}
 
-    public static function fromRow(object $row): self
+    public static function fromRow(object $row, bool $hasResidencePrefill = false): self
     {
         return new self(
             kind: (string) $row->kind,
@@ -43,6 +49,7 @@ final class ReportWorkItem
             clientName: (string) $row->client_name,
             personName: $row->person_name === null ? null : (string) $row->person_name,
             businessName: $row->business_name === null ? null : (string) $row->business_name,
+            hasResidencePrefill: $hasResidencePrefill,
         );
     }
 
@@ -95,10 +102,49 @@ final class ReportWorkItem
         return route('client-folders.show', [$this->clientFolderId] + $this->personParams());
     }
 
-    /** Nothing saved yet is a Create; an existing but unfinished record is a Continue. */
+    /**
+     * Nothing saved yet is a Create; an existing but unfinished record is a Continue.
+     *
+     * CI / BI is the one deliberate exception: its encoding page is a single save-once form rather
+     * than a workflow the CI works through in stages, so an unfinished cibi_reports row is not
+     * something they "continue" — every Pending CI / BI row reads Create Report. This is presentation
+     * only: the row still comes from the same persisted-record query, the draft row is left exactly
+     * as it is, and continueUrl() still opens that same exact-person CI / BI form.
+     */
     public function continueLabel(): string
     {
+        if ($this->kind === 'cibi') {
+            return 'Create Report';
+        }
+
         return $this->sourceId === null ? 'Create Report' : 'Continue Report';
+    }
+
+    /**
+     * Is there already something to carry on from — a saved record, or (CI / BI only) a Residence
+     * Check the form will prefill from? Presentation state only: nothing is written to make this
+     * true, and it never changes the label.
+     */
+    public function hasPartialData(): bool
+    {
+        return $this->sourceId !== null || $this->hasResidencePrefill;
+    }
+
+    /**
+     * A plus for work with nothing behind it yet, a pencil for work already part-way there.
+     *
+     * Every Pending CI / BI row reads Create Report (see continueLabel()), so for CI / BI the icon
+     * is the only thing that distinguishes a blank start from one the CI can immediately continue
+     * encoding — including the case where nothing is saved yet but the exact person's Residence
+     * Check already supplies the runtime prefill. Every other kind keeps the label-matching rule.
+     */
+    public function continueIcon(): string
+    {
+        if ($this->kind === 'cibi') {
+            return $this->hasPartialData() ? 'edit' : 'plus';
+        }
+
+        return $this->continueLabel() === 'Create Report' ? 'plus' : 'edit';
     }
 
     /**

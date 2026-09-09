@@ -71,7 +71,7 @@ class BusinessReportAndReportsUiTest extends TestCase
     // Saved Businesses status wording
     // ---------------------------------------------------------------------
 
-    public function test_a_saved_business_report_row_reads_complete(): void
+    public function test_a_saved_business_report_row_reads_completed(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
@@ -79,7 +79,8 @@ class BusinessReportAndReportsUiTest extends TestCase
 
         $html = $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))->assertOk()->getContent();
 
-        $this->assertStringContainsString('text-xs font-bold text-success">Complete</span>', $html);
+        $this->assertStringContainsString('text-xs font-bold text-success">Completed</span>', $html);
+        $this->assertStringNotContainsString('text-xs font-bold text-success">Complete</span>', $html);
         $this->assertStringNotContainsString('text-xs font-bold text-success">Saved</span>', $html);
 
         // Wording only — the record behind it is untouched.

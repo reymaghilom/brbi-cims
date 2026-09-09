@@ -162,9 +162,9 @@
                  page-level CTA. They pair up on a phone and join the toolbar row from tablet up. --}}
             <div class="flex items-center gap-2 sm:contents">
                 <button type="submit" class="ui-button-primary-compact shrink-0 px-3">Apply Filters</button>
-                {{-- aria-label disambiguates it from the date popover's own Clear, which drops only
+                {{-- The visible label already distinguishes it from the date popover's own Clear, which drops only
                      the two dates: this one drops every filter and the search. --}}
-                @if($hasFilters)<a href="{{ route('reports.index', ['tab' => $tab]) }}" class="ui-button-secondary-compact shrink-0 px-2.5" aria-label="Clear filters">Clear</a>@endif
+                @if($hasFilters)<a href="{{ route('reports.index', ['tab' => $tab]) }}" class="ui-button-secondary-compact shrink-0 px-2.5">Clear Filters</a>@endif
             </div>
         </div>
         {{-- The active sort travels with any filter submit, so searching a client never silently

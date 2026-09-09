@@ -16,21 +16,32 @@ use Illuminate\View\View;
 
 class ResidenceBusinessReportController extends Controller
 {
-    public function edit(ClientFolder $clientFolder): View
+    public function edit(Request $request, ClientFolder $clientFolder): View
     {
         Gate::authorize('view', $clientFolder);
-        $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
+        $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, $request);
         $personId = $activePerson?->id;
 
         $residenceChecks = $clientFolder->residenceChecks()->where('co_maker_id', $personId)->withCount('photos')->with(['photos', 'investigator:id,full_name'])->orderByDesc('ci_date')->orderByDesc('id')->get();
         $businessChecks = $clientFolder->businessChecks()->where('co_maker_id', $personId)->withCount(['businessPhotos', 'competitorPhotos'])->with(['photos', 'investigator:id,full_name', 'incomeSource:id,source_name,business_name,income_source_template_id', 'incomeSource.template:id,template_type'])->orderByDesc('ci_date')->orderByDesc('id')->get();
 
-        return view('client-folders.residence-business.edit', [
+        $data = [
             'clientFolder' => $clientFolder,
             'activePerson' => $activePerson,
             'residenceChecks' => $residenceChecks,
             'businessChecks' => $businessChecks,
-        ]);
+        ];
+
+        // Async listing refresh (same $request->ajax() convention as ReportsController's own
+        // fragment branch): return ONLY the listing partial, built from the exact same
+        // authoritative query results above — same folder, same resolved Applicant/Co-Maker, same
+        // ordering. An ordinary browser request never sends X-Requested-With, so the full page is
+        // returned exactly as before.
+        if ($request->ajax()) {
+            return view('client-folders.residence-business.partials.checks-listing', $data);
+        }
+
+        return view('client-folders.residence-business.edit', $data);
     }
 
     public function batchDelete(

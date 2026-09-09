@@ -8,6 +8,7 @@ use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\Reports\OfficialReportDataBuilder;
+use App\Services\Reports\ReportDownloadName;
 use App\Services\Reports\ResidenceBusinessCheckBatchDocxExporter;
 use App\Services\Reports\ResidenceBusinessCheckBatchPdfExporter;
 use Illuminate\Support\Str;
@@ -111,13 +112,13 @@ class ResidenceBusinessCheckReportController extends Controller
     /** @param  array<int, array<string, mixed>>  $photoSections */
     private function batchFilename(array $photoSections, string $personName, string $extension): string
     {
-        $prefix = match ($this->selectedReportType($photoSections)) {
+        $reportName = match ($this->selectedReportType($photoSections)) {
             'residence' => 'Residence',
-            'business' => 'Business',
+            'business' => 'BusinessCheck',
             default => 'Checks',
         };
 
-        return $prefix.'-'.$this->shortName($personName).'.'.$extension;
+        return ReportDownloadName::make($reportName, $this->shortName($personName), $extension);
     }
 
     /** @param  array<int, array<string, mixed>>  $photoSections */

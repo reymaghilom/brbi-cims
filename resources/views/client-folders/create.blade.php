@@ -48,8 +48,8 @@
                 </div>
             @else
                 <div class="rounded-card border border-brand-primary/20 bg-brand-soft p-4 sm:col-span-2">
-                    <p class="text-sm font-semibold text-brand-primary">You'll be recorded as the creator of this folder.</p>
-                    <p class="mt-1 text-sm text-text-muted">{{ auth()->user()->full_name }} · every Credit Investigator can still open and work on it.</p>
+                    <p class="text-sm font-semibold text-brand-primary">You'll be listed as the creator of this folder.</p>
+                    <p class="mt-1 text-sm text-text-muted">{{ auth()->user()->full_name }} · All Credit Investigators can still access and work on this folder.</p>
                 </div>
             @endif
         </x-ui.form-section>

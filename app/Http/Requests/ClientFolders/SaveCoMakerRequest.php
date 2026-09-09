@@ -24,7 +24,9 @@ class SaveCoMakerRequest extends FormRequest
             'first_name' => ['required', 'string', 'max:255'],
             'middle_name' => ['nullable', 'string', 'max:255'],
             'suffix' => ['nullable', 'string', 'max:30'],
-            'address' => ['required', 'string', 'max:2000'],
+            // Optional: the Add form does not collect it at all, and an existing co-maker whose
+            // address was never captured must still be editable by name alone.
+            'address' => ['nullable', 'string', 'max:2000'],
         ];
     }
 

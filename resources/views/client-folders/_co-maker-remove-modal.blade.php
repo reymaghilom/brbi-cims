@@ -17,7 +17,7 @@
     </form>
 
     <x-slot:footer>
-        <button type="button" data-modal-close class="ui-button-secondary">Cancel</button>
-        <button type="submit" form="co-maker-remove-form" class="ui-button-danger" data-co-maker-remove-submit>Remove Co-Maker</button>
+        <button type="button" data-modal-close class="ui-button-secondary"><x-ui.icon name="close" size="size-4" />Cancel</button>
+        <button type="submit" form="co-maker-remove-form" class="ui-button-danger" data-co-maker-remove-submit><x-ui.icon name="trash" size="size-4" />Remove Co-Maker</button>
     </x-slot:footer>
 </x-ui.modal>

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ActivityDefinitionController;
 use App\Http\Controllers\ActivityNoteController;
 use App\Http\Controllers\Admin\AdminSectionController;
 use App\Http\Controllers\Admin\EvidenceStorageSettingController;
@@ -25,6 +26,7 @@ use App\Http\Controllers\ClientFolderRecycleController;
 use App\Http\Controllers\ClientFolderSuggestionController;
 use App\Http\Controllers\ClientInformationController;
 use App\Http\Controllers\CoMakerController;
+use App\Http\Controllers\CustomBusinessCategoryController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EditingPresenceController;
 use App\Http\Controllers\GeneratedReportController;
@@ -128,6 +130,10 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
             ->whereNumber('clientFolder')
             ->whereNumber('ciActivity')
             ->name('client-folders.activities.default-check.show');
+        Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/custom-check', [CiActivityController::class, 'showCustomCheck'])
+            ->whereNumber('clientFolder')
+            ->whereNumber('ciActivity')
+            ->name('client-folders.activities.custom-check.show');
         Route::post('/client-folders/{clientFolder}/activities/{ciActivity}/asset-targets', [CiActivityAssetTargetController::class, 'store'])
             ->scopeBindings()
             ->name('client-folders.activities.asset-targets.store');
@@ -147,6 +153,22 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
             ->name('client-folders.activities.asset-targets.destroy');
         Route::delete('/client-folders/{clientFolder}/activity-definitions/{activityDefinition}', [CiActivityController::class, 'deactivateDefinition'])
             ->name('client-folders.activity-definitions.deactivate');
+        Route::put('/client-folders/{clientFolder}/activity-definitions/{activityDefinition}', [ActivityDefinitionController::class, 'update'])
+            ->name('client-folders.activity-definitions.update');
+        Route::patch('/client-folders/{clientFolder}/activity-definitions/{activityDefinition}/activation', [ActivityDefinitionController::class, 'activation'])
+            ->name('client-folders.activity-definitions.activation');
+        Route::delete('/client-folders/{clientFolder}/activity-definitions/{activityDefinition}/permanent', [ActivityDefinitionController::class, 'destroy'])
+            ->name('client-folders.activity-definitions.destroy');
+        // Custom "Other Business / Source of Income" checkbox options. Deliberately NOT nested under
+        // an income source: these are reusable catalog definitions shared by every Business Report,
+        // not rows belonging to one folder — the {clientFolder} segment is only the authorization
+        // and audit context the encoding form already carries.
+        Route::post('/client-folders/{clientFolder}/custom-business-categories', [CustomBusinessCategoryController::class, 'store'])
+            ->name('client-folders.custom-business-categories.store');
+        Route::put('/client-folders/{clientFolder}/custom-business-categories/{customBusinessCategory}', [CustomBusinessCategoryController::class, 'update'])
+            ->name('client-folders.custom-business-categories.update');
+        Route::delete('/client-folders/{clientFolder}/custom-business-categories/{customBusinessCategory}', [CustomBusinessCategoryController::class, 'destroy'])
+            ->name('client-folders.custom-business-categories.destroy');
         Route::get('/client-folders/{clientFolder}/activities/{ciActivity}/edit', [CiActivityController::class, 'edit'])
             ->scopeBindings()
             ->name('client-folders.activities.edit');
@@ -182,7 +204,12 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
             ->name('client-folders.cibi-report.edit');
         Route::put('/client-folders/{clientFolder}/cibi-report', [CibiReportController::class, 'update'])
             ->name('client-folders.cibi-report.update');
-        Route::post('/client-folders/{clientFolder}/cibi-report/export-pdf', [GeneratedReportController::class, 'exportCibiPdf'])
+        // A single record's PDF download is a link in this application — the Business Report's
+        // own export-pdf is already GET — so the CI/BI one answers GET too. It was POST-only,
+        // which meant the URL 404/405'd the moment it was reached as a link (a new tab, an
+        // "open in new tab", a retry of the address) instead of as a form submission. POST is
+        // kept alongside it so the existing Global Reports download form keeps working unchanged.
+        Route::match(['GET', 'POST'], '/client-folders/{clientFolder}/cibi-report/export-pdf', [GeneratedReportController::class, 'exportCibiPdf'])
             ->name('client-folders.cibi-report.export-pdf');
         Route::post('/client-folders/{clientFolder}/cibi-report/export-excel', [GeneratedReportController::class, 'exportCibiExcel'])
             ->name('client-folders.cibi-report.export-excel');

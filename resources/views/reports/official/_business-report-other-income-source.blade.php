@@ -9,18 +9,25 @@
     $selected = (array) data_get($data, 'fields.income_sources', []);
     $groups = (array) ($business['schema']['income_source_groups'] ?? []);
     $businessChoices = $groups['business'] ?? [];
+    $customBusinessChoices = array_values(array_filter(
+        $businessChoices,
+        fn (array $choice) => \App\Models\CustomBusinessCategory::isCustomKey($choice['key'] ?? null),
+    ));
+    $defaultBusinessChoices = array_values(array_filter(
+        $businessChoices,
+        fn (array $choice) => ! \App\Models\CustomBusinessCategory::isCustomKey($choice['key'] ?? null),
+    ));
     /**
      * Same 4-column split as the edit form's catalog (_business-other-income-source.blade.php)
-     * so the printed layout matches what the CI actually saw and checked: Business is split
-     * across the first 3 columns (16 / 15 / remainder), matching the reference workbook's own
-     * 3-column Business layout, with Agriculture, Professional Services, Remittance, and
-     * Employment stacked into the remaining columns.
+     * so the printed layout matches what the CI actually saw and checked. Custom businesses
+     * continue the first Business column directly after STL/Lotto Outlet, while the default
+     * catalog keeps its original 16 / 15 / remainder split across the first 3 columns.
      */
     $catalogColumns = [
-        [['title' => 'Business:', 'choices' => array_slice($businessChoices, 0, 16)]],
-        [['title' => 'Business:', 'choices' => array_slice($businessChoices, 16, 15)]],
+        [['title' => 'Business:', 'choices' => array_merge(array_slice($defaultBusinessChoices, 0, 16), $customBusinessChoices)]],
+        [['title' => 'Business:', 'choices' => array_slice($defaultBusinessChoices, 16, 15)]],
         [
-            ['title' => 'Business:', 'choices' => array_slice($businessChoices, 31)],
+            ['title' => 'Business:', 'choices' => array_slice($defaultBusinessChoices, 31)],
             ['title' => 'Agriculture Production:', 'choices' => $groups['agriculture'] ?? []],
         ],
         [
@@ -33,10 +40,14 @@
 <table class="business-form-table business-profile business-section-connected{{ ($showCommonHeader ?? true) ? '' : ' business-batch-continuation-first' }}"><colgroup><col span="25" style="width:4%"></colgroup>
 <tbody>
 @if($showCommonHeader ?? true)
-<tr><th colspan="4">{{ $business['name_label'] }}:</th><td colspan="14">{{ $na($business['applicant_name']) }}</td><th colspan="4">BRANCH:</th><td colspan="3">{{ $na($business['branch']) }}</td></tr>
-<tr><th colspan="4">AMOUNT APPLIED:</th><td colspan="14">{{ $na($business['amount_applied']) }}</td><th colspan="4">ACCOUNT OFFICER:</th><td colspan="3">{{ $na($business['account_officer']) }}</td></tr>
+{{-- This report intentionally follows the original worksheet's compact two-row client block.
+     The applicant value remains the active person resolved by the shared report builder. --}}
+<tr><th colspan="4">NAME OF APPLICANT:</th><td colspan="10">{{ $na($business['applicant_name']) }}</td><th colspan="4">BRANCH:</th><td colspan="7">{{ $na($business['branch']) }}</td></tr>
+<tr><th colspan="4">AMOUNT APPLIED:</th><td colspan="10">{{ $na($business['amount_applied']) }}</td><th colspan="4">ACCOUNT OFFICER:</th><td colspan="7">{{ $na($business['account_officer']) }}</td></tr>
 @endif
-<tr class="business-section-bar"><th colspan="25">RANK ALL INCOME SOURCES THAT CLIENT DECLARED BASED ON CONRTIBUTION (1 BEING THE HIGHEST)</th></tr>
+{{-- The section bar now carries the template's own name from the shared data (the same key every
+     other template's bar uses), replacing the old ranking instruction outright. --}}
+<tr class="business-section-bar"><th colspan="25">{{ $business['section_title'] }}</th></tr>
 </tbody></table>
 <table class="business-form-table business-grid-table business-other-income-grid"><colgroup><col span="25" style="width:4%"></colgroup>
 <tbody>

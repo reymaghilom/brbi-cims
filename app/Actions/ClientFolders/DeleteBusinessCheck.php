@@ -45,7 +45,14 @@ class DeleteBusinessCheck
 
         DB::transaction(function () use ($actor, $folder, $check, &$retiredCloudAssets): void {
             $lockedCheck = $this->exactCheckQuery($folder, $check)->lockForUpdate()->firstOrFail();
-            $source = $this->exactSourceQuery($folder, $lockedCheck)->lockForUpdate()->firstOrFail();
+            // A standalone Business Check (income_source_id = null — a fully supported mode, see
+            // SaveBusinessCheck and BusinessCheckIndependentArchitectureTest) references no
+            // business at all, so there is no row to lock and no suppression marker to write. Only
+            // a linked check resolves its exact IncomeSource, and that resolution stays strict:
+            // firstOrFail() still rejects a forged/cross-person income_source_id exactly as before.
+            $source = $lockedCheck->income_source_id === null
+                ? null
+                : $this->exactSourceQuery($folder, $lockedCheck)->lockForUpdate()->firstOrFail();
 
             $checkId = $lockedCheck->id;
             $coMakerId = $lockedCheck->co_maker_id;
@@ -75,7 +82,9 @@ class DeleteBusinessCheck
             // a "Create Report" Business Check work item for a business whose check was deliberately
             // removed. It is its own marker, never the Business Report's: the Business Report keeps
             // whatever state it already had. SaveBusinessCheck clears it on the next real save.
-            $source->forceFill(['business_check_deleted_at' => now()])->save();
+            // A standalone check has no IncomeSource whose Business Check work item could ever be
+            // re-synthesised, so there is nothing to suppress and nothing is written here.
+            $source?->forceFill(['business_check_deleted_at' => now()])->save();
 
             AuditLog::create([
                 'user_id' => $actor->id,
@@ -85,7 +94,7 @@ class DeleteBusinessCheck
                 'description' => 'A Business Check was permanently deleted.',
                 'metadata' => [
                     'business_check_id' => $checkId,
-                    'income_source_id' => $source->id,
+                    'income_source_id' => $source?->id,
                     'co_maker_id' => $coMakerId,
                     'location' => $location,
                     'business_name' => $businessName,

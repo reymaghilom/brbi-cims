@@ -1103,7 +1103,7 @@ class ResidenceBusinessReportTest extends TestCase
         ]);
         $this->actingAs($ci)->get(route('client-folders.show', $folder))
             ->assertOk()
-            ->assertSee('Residence Check saved');
+            ->assertSee('Residence Check added');
 
         $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-export-pdf', $folder), [
             'residence_check_ids' => [$residenceCheck->id],
@@ -1154,12 +1154,12 @@ class ResidenceBusinessReportTest extends TestCase
         ]);
 
         $cases = [
-            [['residence_check_ids' => [$applicantResidence->id]], 'Residence Check - MICABALO, RONILO / CABIGAS', 'Residence-Micabalo'],
-            [['business_check_ids' => [$applicantBusiness->id]], 'Business Checks - MICABALO, RONILO / CABIGAS', 'Business-Micabalo'],
-            [['residence_check_ids' => [$applicantResidence->id], 'business_check_ids' => [$applicantBusiness->id]], 'Residence & Business Checks - MICABALO, RONILO / CABIGAS', 'Checks-Micabalo'],
-            [['co_maker_id' => $coMaker->id, 'residence_check_ids' => [$coMakerResidence->id]], 'Residence Check - SANTOS, MARIA: TEST', 'Residence-Santos'],
-            [['co_maker_id' => $coMaker->id, 'business_check_ids' => [$coMakerBusiness->id]], 'Business Checks - SANTOS, MARIA: TEST', 'Business-Santos'],
-            [['co_maker_id' => $coMaker->id, 'residence_check_ids' => [$coMakerResidence->id], 'business_check_ids' => [$coMakerBusiness->id]], 'Residence & Business Checks - SANTOS, MARIA: TEST', 'Checks-Santos'],
+            [['residence_check_ids' => [$applicantResidence->id]], 'Residence Check - MICABALO, RONILO / CABIGAS', 'BRBI_Residence_Micabalo'],
+            [['business_check_ids' => [$applicantBusiness->id]], 'Business Checks - MICABALO, RONILO / CABIGAS', 'BRBI_BusinessCheck_Micabalo'],
+            [['residence_check_ids' => [$applicantResidence->id], 'business_check_ids' => [$applicantBusiness->id]], 'Residence & Business Checks - MICABALO, RONILO / CABIGAS', 'BRBI_Checks_Micabalo'],
+            [['co_maker_id' => $coMaker->id, 'residence_check_ids' => [$coMakerResidence->id]], 'Residence Check - SANTOS, MARIA: TEST', 'BRBI_Residence_Santos'],
+            [['co_maker_id' => $coMaker->id, 'business_check_ids' => [$coMakerBusiness->id]], 'Business Checks - SANTOS, MARIA: TEST', 'BRBI_BusinessCheck_Santos'],
+            [['co_maker_id' => $coMaker->id, 'residence_check_ids' => [$coMakerResidence->id], 'business_check_ids' => [$coMakerBusiness->id]], 'Residence & Business Checks - SANTOS, MARIA: TEST', 'BRBI_Checks_Santos'],
         ];
 
         foreach ($cases as [$payload, $title, $filename]) {

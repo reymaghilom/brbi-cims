@@ -63,8 +63,8 @@ class RecentActivityScopingTest extends TestCase
         $this->log($ci, $folder, 'residence_check.deleted', 'residence_business_report', ['residence_check_id' => 1, 'co_maker_id' => null, 'location' => 'APPLICANT HOME']);
 
         $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
-        $this->assertStringContainsString('Residence Check saved', $content);
-        $this->assertStringContainsString('Business Check saved', $content);
+        $this->assertStringContainsString('Residence Check added', $content);
+        $this->assertStringContainsString('Business Check updated', $content);
         $this->assertStringContainsString('Residence Check removed', $content);
         $this->assertStringContainsString('APPLICANT HOME', $content);
     }
@@ -180,7 +180,7 @@ class RecentActivityScopingTest extends TestCase
         $asideEnd = strpos($content, '</aside>', $asideStart);
         $aside = substr($content, $asideStart, $asideEnd - $asideStart);
 
-        $this->assertStringNotContainsString('Residence Check saved', $aside);
+        $this->assertStringNotContainsString('Residence Check updated', $aside);
     }
 
     // --- 11: deleted names remain readable -----------------------------------------------------

@@ -62,7 +62,9 @@
                             <a href="{{ $sortLink($key) }}" class="inline-flex items-center gap-1.5 hover:text-brand-sidebar {{ $sort === $key ? 'text-brand-primary' : '' }}" data-reports-sort="{{ $key }}">{{ $label }}<span class="inline-flex flex-col text-[0.5rem] leading-[0.4rem]" aria-hidden="true"><span class="{{ $sort === $key && $direction === 'asc' ? '' : 'opacity-30' }}" data-sort-arrow="asc">▲</span><span class="{{ $sort === $key && $direction === 'desc' ? '' : 'opacity-30' }}" data-sort-arrow="desc">▼</span></span></a>
                         </th>
                     @endforeach
-                    <th scope="col"><span class="sr-only">Actions</span></th>
+                    {{-- Right-aligned to sit directly over the action controls, which the row
+                         renders justify-end in this same w-px column. --}}
+                    <th scope="col" class="text-right">Actions</th>
                 </tr>
             </thead>
             <tbody>

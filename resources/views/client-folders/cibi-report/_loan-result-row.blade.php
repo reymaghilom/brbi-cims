@@ -1,0 +1,22 @@
+{{--
+    One LOAN RESULT inside a Bank / Coop group of IV. Summary on Credit / Loan Information.
+
+    Persistence is unchanged: this is still exactly one flat `cibi_loan_records` row. The
+    institution is NOT edited here — it belongs to the group bar above (mirrored onto every
+    sibling row's hidden input by app.js), so BANK / COOP / BRANCH is never repeated per result.
+    A group with no loan result at all keeps this row in its `empty` state: each loan column
+    shows an em dash instead of its (cleared) input, while Performance & Findings stays editable
+    so a zero-result inquiry can still be encoded.
+
+    The paired controls (Granted/Maturity, Cycle/Security) carry their own micro-labels rather
+    than placeholders, so two inputs can share one cell without reading as a collision.
+--}}
+@php $prefix = "loan_records[{$index}]"; $id = data_get($row, 'id'); @endphp
+<tr data-repeater-row data-loan-result data-loan-group="{{ $groupId }}" @if($empty) data-loan-empty @endif @if(data_get($row, '_delete')) hidden @endif>
+    <td class="cibi-loan-result-cell"><span class="cibi-loan-result-badge" data-loan-result-ordinal @if($empty) hidden @endif>Loan {{ $ordinal }}</span><span class="cibi-loan-result-empty" data-loan-result-empty-label @unless($empty) hidden @endunless>No loan record added.</span></td>
+    @foreach(['original_amount'=>'Original amount','remaining_balance'=>'Remaining balance','amortization_amount'=>'Amortization amount'] as $field=>$label)<td data-loan-detail-cell><div data-loan-detail-controls @if($empty) hidden @endif><input aria-label="{{ $label }}" name="{{ $prefix }}[{{ $field }}]" value="{{ $empty ? '' : data_get($row, $field) }}" inputmode="decimal" class="ui-control cibi-loan-amount-input" data-number-format></div><span class="cibi-loan-blank" data-loan-detail-blank @unless($empty) hidden @endunless>&mdash;</span></td>@endforeach
+    <td data-loan-detail-cell><div class="cibi-loan-date-controls cibi-loan-paired-controls" data-loan-detail-controls @if($empty) hidden @endif><label class="cibi-loan-paired-field"><span class="cibi-loan-micro-label">Granted</span><input aria-label="Granted date" title="Granted Date" type="date" name="{{ $prefix }}[granted_date]" value="{{ ! $empty && data_get($row, 'granted_date') ? Illuminate\Support\Carbon::parse(data_get($row, 'granted_date'))->format('Y-m-d') : '' }}" class="ui-control cibi-compact-date-input"></label><label class="cibi-loan-paired-field"><span class="cibi-loan-micro-label">Maturity</span><input aria-label="Maturity date" title="Maturity Date" type="date" name="{{ $prefix }}[maturity_date]" value="{{ ! $empty && data_get($row, 'maturity_date') ? Illuminate\Support\Carbon::parse(data_get($row, 'maturity_date'))->format('Y-m-d') : '' }}" class="ui-control cibi-compact-date-input"></label></div><span class="cibi-loan-blank" data-loan-detail-blank @unless($empty) hidden @endunless>&mdash;</span></td>
+    <td data-loan-detail-cell><div class="cibi-loan-meta-controls cibi-loan-paired-controls" data-loan-detail-controls @if($empty) hidden @endif><label class="cibi-loan-paired-field"><span class="cibi-loan-micro-label">Cycle</span><input aria-label="Cycle number" name="{{ $prefix }}[cycle_label]" value="{{ $empty ? '' : data_get($row, 'cycle_label') }}" class="ui-control cibi-cycle-input"></label><label class="cibi-loan-paired-field"><span class="cibi-loan-micro-label">Security</span><input aria-label="Type of security" name="{{ $prefix }}[security_type]" value="{{ $empty ? '' : data_get($row, 'security_type') }}" class="ui-control cibi-security-input"></label><input type="hidden" name="{{ $prefix }}[cycle_number]" value="{{ $empty ? '' : data_get($row, 'cycle_number') }}"></div><span class="cibi-loan-blank" data-loan-detail-blank @unless($empty) hidden @endunless>&mdash;</span></td>
+    <td class="cibi-loan-findings-cell"><textarea aria-label="Payment performance and relevant findings" name="{{ $prefix }}[combined_findings]" rows="2" class="ui-control">{{ data_get($row, 'combined_findings') }}</textarea></td>
+    <td class="cibi-entry-action-cell"><input type="hidden" name="{{ $prefix }}[id]" value="{{ $id }}"><input type="hidden" name="{{ $prefix }}[_delete]" value="0" data-delete-field><button type="button" class="cibi-remove-entry-button" title="Remove this loan result" aria-label="Remove this loan result" data-loan-result-remove @if($empty) hidden @endif><x-ui.icon name="trash" size="size-4" /></button></td>
+</tr>

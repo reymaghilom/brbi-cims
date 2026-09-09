@@ -133,9 +133,14 @@ class CibiExcelExporter
         $this->value($sheet, 'E42', 'N/A');
 
         $loanColumns = ['C', 'G', 'J', 'M', 'P', 'S', 'T', 'V'];
+        $previousInstitution = null;
         foreach ($loans as $index => $loan) {
             $row = 45 + $index;
-            $this->value($sheet, 'C'.$row, $this->na($loan->institution));
+            // One Bank / Coop / Branch is written once and its further loan results sit beneath
+            // it with the institution cell left blank, matching the grouped official layout.
+            $institutionKey = mb_strtolower(trim((string) $loan->institution));
+            $this->value($sheet, 'C'.$row, $institutionKey !== '' && $institutionKey === $previousInstitution ? '' : $this->na($loan->institution));
+            $previousInstitution = $institutionKey;
             $this->value($sheet, 'G'.$row, $this->numberOrNa($loan->original_amount));
             $this->value($sheet, 'J'.$row, $this->numberOrNa($loan->remaining_balance));
             $this->value($sheet, 'M'.$row, $this->numberOrNa($loan->amortization_amount));

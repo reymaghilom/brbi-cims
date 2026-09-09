@@ -124,7 +124,9 @@ class GlobalReportsPageTest extends TestCase
 
         $this->assertFalse($draft->isCompleted);
         $this->assertSame('Pending', $draft->statusLabel());
-        $this->assertSame('Continue Report', $draft->continueLabel());
+        // A persisted but unfinished CI / BI row is still Pending, and CI / BI reads Create Report
+        // at every point before completion — the draft row itself is untouched by that wording.
+        $this->assertSame('Create Report', $draft->continueLabel());
         $this->assertNull($draft->previewAction(), 'An unfinished CI / BI report must not advertise a preview.');
         $this->assertSame(route('client-folders.cibi-report.edit', $draftFolder->id), $draft->continueUrl());
 
@@ -182,28 +184,38 @@ class GlobalReportsPageTest extends TestCase
         $this->assertStringContainsString(e(route('client-folders.show', $folder->id)), $html);
     }
 
-    public function test_a_not_started_row_offers_create_and_a_started_one_offers_continue(): void
+    public function test_every_pending_cibi_row_offers_create_whether_or_not_a_draft_row_exists(): void
     {
         $ci = User::factory()->create();
         $fresh = $this->folder($ci, 'FRESH, CLIENT');
         $started = $this->folder($ci, 'STARTED, CLIENT');
         CibiReport::factory()->create(['client_folder_id' => $started->id, 'ci_in_charge_id' => $ci->id, 'state' => RecordState::Draft]);
 
-        $create = $this->item($ci, 'cibi', $fresh);
-        $continue = $this->item($ci, 'cibi', $started);
+        $noRow = $this->item($ci, 'cibi', $fresh);
+        $draftRow = $this->item($ci, 'cibi', $started);
 
-        $this->assertSame('Create Report', $create->continueLabel());
-        $this->assertSame('Continue Report', $continue->continueLabel());
+        // CI / BI is a single save-once form, so neither Pending row is a "continue".
+        $this->assertSame('Create Report', $noRow->continueLabel());
+        $this->assertSame('Create Report', $draftRow->continueLabel());
+        // Only the icon separates them: nothing behind the row yet vs. real saved CI / BI work.
+        $this->assertSame('plus', $noRow->continueIcon());
+        $this->assertSame('edit', $draftRow->continueIcon());
+        $this->assertFalse($noRow->hasPartialData());
+        $this->assertTrue($draftRow->hasPartialData());
+        // The draft row still comes from its own persisted record — only the wording changed.
+        $this->assertNotNull($draftRow->sourceId);
+        $this->assertNull($noRow->sourceId);
         $this->assertStringNotContainsString('Start Report', $this->actingAs($ci)->get(route('reports.index'))->getContent());
 
         $html = $this->actingAs($ci)->get(route('reports.index', ['report_type' => 'cibi', 'tab' => 'pending']))->assertOk()->getContent();
+        $this->assertStringNotContainsString('Continue Report', $html, 'No CI / BI row may advertise Continue Report.');
 
         // Both share one compact outlined style — neither may look visually heavier than the other,
         // and neither is a full-size primary CTA. Scoped to the listing, since the toolbar above it
         // legitimately owns primary buttons of its own.
         $listing = substr($html, strpos($html, 'reports-table-title'));
         $this->assertSame(4, substr_count($listing, 'ui-button-secondary-compact px-2.5 text-brand-primary'), 'Two rows, each as a table row and a card.');
-        $this->assertStringNotContainsString('ui-button-primary-compact', $listing, 'Continue Report must not carry a stronger filled treatment.');
+        $this->assertStringNotContainsString('ui-button-primary-compact', $listing, 'The start action must not carry a stronger filled treatment.');
         $this->assertStringNotContainsString('ui-button-primary ', $listing);
 
         // The folder icon sits alongside both, at the same size as everywhere else.
@@ -534,11 +546,19 @@ class GlobalReportsPageTest extends TestCase
         $this->assertStringContainsString('name="person"', $html);
         $this->assertStringContainsString('Client Type', $html);
 
-        // Clear stays compact and lighter than Apply Filters, on the same baseline.
-        $this->assertStringContainsString('aria-label="Clear filters">Clear', $html);
-        $this->assertStringContainsString('class="ui-button-secondary-compact shrink-0 px-2.5"', $html);
+        // Clear Filters stays compact and lighter than Apply Filters, on the same baseline. Its
+        // visible label now names the action outright, so it no longer needs an aria-label to tell
+        // it apart from the date popover's own Clear (which drops only the two dates).
+        $this->assertStringContainsString('class="ui-button-secondary-compact shrink-0 px-2.5">Clear Filters', $html);
+        $this->assertStringNotContainsString('aria-label="Clear filters"', $html);
+        // Scoped to the toolbar control (shrink-0); the date popover keeps its own plain Clear.
+        $this->assertStringNotContainsString('shrink-0 px-2.5">Clear<', $html, 'The toolbar reset action reads Clear Filters now.');
+        $this->assertStringContainsString('class="ui-button-secondary-compact px-2.5">Clear<', $html, "The date popover's own Clear is unchanged.");
         $this->assertStringContainsString('class="ui-button-primary-compact shrink-0 px-3">Apply Filters', $html);
-        $this->assertStringNotContainsString('>Reset<', $html, 'The toolbar action reads Clear now.');
+        $this->assertStringNotContainsString('>Reset<', $html, 'The toolbar action reads Clear Filters now.');
+
+        // Same target as before: the current tab with every other filter dropped.
+        $this->assertStringContainsString(route('reports.index', ['tab' => 'all']).'" class="ui-button-secondary-compact shrink-0 px-2.5">Clear Filters', $html);
     }
 
     public function test_the_date_range_filters_survives_other_filters_and_can_be_cleared(): void
@@ -595,7 +615,8 @@ class GlobalReportsPageTest extends TestCase
         }
         $this->assertSame(5, substr_count($html, 'aria-sort='), 'Only the five data columns sort.');
         $this->assertSame(5, substr_count($html, 'data-sort-arrow="asc"'));
-        $this->assertStringContainsString('<span class="sr-only">Actions</span>', $html);
+        // The actions column carries a visible heading of its own, right-aligned over its controls.
+        $this->assertStringContainsString('<th scope="col" class="text-right">Actions</th>', $html);
 
         // The actions column, the row-number column and the retired client number never sort.
         $this->assertStringNotContainsString('data-reports-sort="actions"', $html);
@@ -1050,7 +1071,7 @@ class GlobalReportsPageTest extends TestCase
         $this->assertSame(1, substr_count($html, 'data-cibi-report-dialog'));
     }
 
-    public function test_continue_report_opens_the_same_modal_on_the_same_existing_record(): void
+    public function test_the_cibi_start_action_opens_the_same_modal_on_the_same_existing_record(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci, 'STARTED, CLIENT');
@@ -1062,9 +1083,10 @@ class GlobalReportsPageTest extends TestCase
 
         $html = $this->actingAs($ci)->get(route('reports.index', ['report_type' => 'cibi', 'search' => 'STARTED']))->assertOk()->getContent();
 
-        // The label is unchanged, and it now opens the very same shared modal Create Report uses.
-        $this->assertStringContainsString('Continue Report', $html);
-        $this->assertStringNotContainsString('Create Report', $html, 'Continuing must never be relabelled as creating.');
+        // CI / BI reads Create Report on every Pending row, and it opens the very same shared modal
+        // — the existing draft is edited in place, never duplicated (asserted by the count below).
+        $this->assertStringContainsString('Create Report', $html);
+        $this->assertStringNotContainsString('Continue Report', $html, 'CI / BI never advertises Continue Report.');
         // Two rows (Applicant and the Co-Maker), each rendered as a table row and a mobile card.
         $this->assertSame(4, substr_count($html, 'data-modal-open="cibi-report-dialog"'));
 
@@ -1081,8 +1103,8 @@ class GlobalReportsPageTest extends TestCase
         $rows = $this->items($ci, ['report_type' => 'cibi', 'search' => 'STARTED']);
         $applicantRow = $rows->firstWhere('coMakerId', null);
         $coMakerRow = $rows->firstWhere('coMakerId', $coMaker->id);
-        $this->assertSame('Continue Report', $applicantRow->continueLabel());
-        $this->assertSame('Continue Report', $coMakerRow->continueLabel());
+        $this->assertSame('Create Report', $applicantRow->continueLabel());
+        $this->assertSame('Create Report', $coMakerRow->continueLabel());
         $this->assertSame($applicantReport->id, $applicantRow->sourceId);
         $this->assertSame($coMakerReport->id, $coMakerRow->sourceId);
         $this->assertStringNotContainsString('co_maker_id', $applicantRow->continueUrl(), 'The Applicant row carries no Co-Maker.');

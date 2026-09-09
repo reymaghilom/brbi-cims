@@ -106,10 +106,6 @@
     </div>
 
     @if($cibiComplete)
-        <form id="dashboard-cibi-export-pdf-form" method="POST" action="{{ route('client-folders.cibi-report.export-pdf', $clientFolder) }}" target="_blank" hidden>
-            @csrf
-            <input type="hidden" name="co_maker_id" value="{{ $activeCoMaker?->id }}">
-        </form>
         <form id="dashboard-cibi-export-excel-form" method="POST" action="{{ route('client-folders.cibi-report.export-excel', $clientFolder) }}" hidden>
             @csrf
             <input type="hidden" name="co_maker_id" value="{{ $activeCoMaker?->id }}">

@@ -6,6 +6,7 @@ use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -89,13 +90,61 @@ class ReportWorkspaceQuery
                 ->orderByDesc('sort_date');
         }
 
-        return $query
+        $paginator = $query
             // Deterministic tiebreak, so two rows with equal sort values never swap between pages.
             ->orderBy('kind')
             ->orderBy('source_id')
             ->paginate(self::PER_PAGE)
-            ->withQueryString()
-            ->through(fn (object $row): ReportWorkItem => ReportWorkItem::fromRow($row));
+            ->withQueryString();
+
+        // Resolved once for the whole page rather than per row, so the CI / BI icon costs one extra
+        // query at most and the page still cannot regress into N+1.
+        $prefilled = $this->residencePrefilledKeys($paginator->getCollection());
+
+        return $paginator->through(fn (object $row): ReportWorkItem => ReportWorkItem::fromRow(
+            $row,
+            $row->kind === 'cibi' && in_array($this->personKey($row->client_folder_id, $row->co_maker_id), $prefilled, true),
+        ));
+    }
+
+    /**
+     * Which exact people on this page already have a Residence Check that the still-unsaved CI / BI
+     * form would runtime-prefill from. Read-only and derived per render: nothing is stored, no CI/BI
+     * row is created, and deleting the Residence Check simply drops the key on the next render.
+     *
+     * The rule is CibiReportFormData's own: the exact person's most recent Residence Check supplies
+     * the CI / BI Start Date from `ci_date`, and the Present Address from `location`. Because
+     * `residence_checks.ci_date` is NOT NULL, that latest row always contributes at least the CI
+     * Date — so "this person has a Residence Check whose ci_date or location is set" and "the latest
+     * one prefills something" are the same statement, and this stays one set-based query rather than
+     * a per-person latest-row lookup. Scoping is the usual convention: NULL co_maker_id is the
+     * Applicant, a set one is that exact Co-Maker, so one person's check can never light up another's.
+     *
+     * @param  Collection<int, object>  $rows
+     * @return list<string>
+     */
+    private function residencePrefilledKeys(Collection $rows): array
+    {
+        $folderIds = $rows->where('kind', 'cibi')->pluck('client_folder_id')->unique()->values();
+        if ($folderIds->isEmpty()) {
+            return [];
+        }
+
+        return DB::table('residence_checks')
+            ->whereIn('client_folder_id', $folderIds)
+            ->where(fn (Builder $query) => $query
+                ->whereNotNull('ci_date')
+                ->orWhere(fn (Builder $location) => $location->whereNotNull('location')->where('location', '<>', '')))
+            ->distinct()
+            ->get(['client_folder_id', 'co_maker_id'])
+            ->map(fn (object $check): string => $this->personKey($check->client_folder_id, $check->co_maker_id))
+            ->all();
+    }
+
+    /** One folder + exact person, as a single comparable key ("12:" is folder 12's Applicant). */
+    private function personKey(int|string $folderId, int|string|null $coMakerId): string
+    {
+        return $folderId.':'.($coMakerId ?? '');
     }
 
     /**

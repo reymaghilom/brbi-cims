@@ -5,7 +5,7 @@
     @elseif($attachmentCount === 1)
         <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $singleAttachment]) }}" target="_blank" rel="noopener" class="inline-flex min-h-7 items-center gap-1.5 rounded-control px-1.5 py-1 font-semibold text-brand-primary transition hover:bg-brand-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30" aria-label="View {{ $singleAttachment->file_name }}"><x-ui.icon name="attachment" size="size-4" />1 Attachment</a>
     @elseif($attachmentCount > 1)
-        <button type="button" class="inline-flex min-h-7 items-center gap-1.5 rounded-control px-1.5 py-1 font-semibold text-brand-primary transition hover:bg-brand-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30" data-modal-open="ci-proof-list-{{ $activity->id }}" aria-label="View {{ $attachmentCount }} attachments for {{ $activity->name }}"><x-ui.icon name="attachment" size="size-4" />{{ $attachmentCount }} Attachments</button>
+        <button type="button" class="inline-flex min-h-7 items-center gap-1.5 rounded-control px-1.5 py-1 font-semibold text-brand-primary transition hover:bg-brand-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/30" data-modal-open="ci-proof-list-{{ $activity->id }}" aria-label="View {{ $attachmentCount }} attachments for {{ $activity->display_name }}"><x-ui.icon name="attachment" size="size-4" />{{ $attachmentCount }} Attachments</button>
     @else
         <span class="flex items-center gap-1.5 font-semibold text-text-muted"><x-ui.icon name="attachment" size="size-4" />No Attachment</span>
     @endif

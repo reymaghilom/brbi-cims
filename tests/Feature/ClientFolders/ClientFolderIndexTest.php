@@ -274,7 +274,11 @@ class ClientFolderIndexTest extends TestCase
 
         $this->actingAs($activeCi)->get(route('client-folders.index'))
             ->assertOk()
-            ->assertSee("You'll be recorded as the creator of this folder.", false)
+            ->assertSee("You'll be listed as the creator of this folder.", false)
+            ->assertDontSee("You'll be recorded as the creator of this folder.", false)
+            // The supporting line names the signed-in CI dynamically — never a hard-coded name.
+            ->assertSee($activeCi->full_name.' · All Credit Investigators can still access and work on this folder.', false)
+            ->assertDontSee('every Credit Investigator can still open and work on it.', false)
             ->assertDontSee('name="assigned_ci_id"', false);
     }
 

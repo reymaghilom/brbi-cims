@@ -325,6 +325,57 @@ function refreshReportsWorkspace() {
     }));
 }
 
+// AUTO-UPDATE for the Residence & Business Report page's two check tables. Deliberately NOT
+// refreshReportsWorkspace(): that one drives the Reports workspace's own [data-reports-listing]
+// region (and its unfiltered KPI counts), which this page does not have.
+//
+// window.location.href is the request URL on purpose — it already carries the exact person context
+// this page is displaying (no ?co_maker_id for the Applicant, the exact ?co_maker_id for a
+// Co-Maker), so the controller resolves the same ActivePerson it resolved for the page itself and
+// the fragment can never come back holding another person's rows. Nothing about the URL, history or
+// person context changes; only [data-checks-listing] is replaced.
+function refreshChecksListing() {
+    const region = document.querySelector('[data-checks-listing]');
+    if (!region) return;
+
+    // Subtle in-flight state only (the same [data-refreshing] opacity/pointer-events treatment the
+    // Reports and CI Activities listings already use) — the current table stays visible and
+    // readable until the response actually lands.
+    region.setAttribute('aria-busy', 'true');
+    region.setAttribute('data-refreshing', 'true');
+
+    fetch(window.location.href, { headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } })
+        .then((response) => {
+            if (!response.ok) throw new Error('The check list could not be updated.');
+            return response.text();
+        })
+        .then((html) => {
+            const holder = document.createElement('template');
+            holder.innerHTML = html;
+            const next = holder.content.querySelector('[data-checks-listing]');
+            if (!next) throw new Error('The check list response was incomplete.');
+            region.replaceWith(next);
+
+            // Row menus, the row Edit triggers and every per-row <dialog> are already driven by
+            // document-level delegated listeners, so they need nothing here. These two are the only
+            // narrowly bound pieces inside the region — re-run just them against the new nodes,
+            // never a whole-app re-initialization.
+            initCheckBatchPanel();
+            next.querySelectorAll('[data-check-sort-table]').forEach(initSortableTable);
+        })
+        .catch(() => {
+            // The save itself already succeeded and was already confirmed to the user — only the
+            // refresh failed. Say exactly that, leave the page as it is, and never navigate or
+            // reload on its behalf.
+            showToast('Saved. The list could not be refreshed — reload the page to see the change.', 'error');
+        })
+        .finally(() => {
+            const live = document.querySelector('[data-checks-listing]');
+            live?.removeAttribute('aria-busy');
+            live?.removeAttribute('data-refreshing');
+        });
+}
+
 function initializeClientSearch(search) {
     const input = search.querySelector('[data-client-search-input]');
     const clear = search.querySelector('[data-client-search-clear]');
@@ -1373,15 +1424,31 @@ window.addEventListener('message', (event) => {
     const dialog = document.querySelector('[data-check-report-dialog][open]');
     if (!dialog) return;
 
-    // Reports owns an authoritative async listing/KPI refresh, so a confirmed Check save can use
-    // the same stay-on-page pattern as CI/BI and Business Report. The backend-provided canonical
-    // message is shown once in the persistent parent, then the modal closes. Error/no-change paths
-    // never post this message and therefore cannot close the modal.
+    const currentUrl = new URL(window.location.href);
+
+    // Both stay-on-page pages own an authoritative async listing refresh, so a confirmed Check save
+    // can use the same stay-on-page pattern as CI/BI and Business Report. The backend-provided
+    // canonical message is shown once in the persistent parent, then the modal closes. Error and
+    // no-change paths never post this message and therefore can never close the modal or touch a
+    // listing — only a confirmed success reaches here at all.
+    //
+    // Which region to refresh is decided from a stable DOM marker, never from the URL: the page
+    // that owns [data-checks-listing] (Residence & Business Report) refreshes that, and the Reports
+    // workspace keeps its existing refreshReportsWorkspace() untouched.
     if (dialog.matches('[data-check-report-stay]')) {
-        if (event.data.message) showToast(event.data.message, event.data.statusType || 'success');
-        refreshReportsWorkspace();
-        dialog.close();
-        return;
+        const checksListing = document.querySelector('[data-checks-listing]');
+        // Reports' listing spans every folder and person, so a save there always has somewhere to
+        // land. The checks listing represents exactly ONE folder + Applicant/Co-Maker, so a save
+        // that genuinely returns a DIFFERENT context cannot be shown by refreshing it — that case
+        // falls through to the original navigation below, unchanged.
+        const sameContext = currentUrl.pathname === returnUrl.pathname && currentUrl.search === returnUrl.search;
+        if (!checksListing || sameContext) {
+            if (event.data.message) showToast(event.data.message, event.data.statusType || 'success');
+            if (checksListing) refreshChecksListing();
+            else refreshReportsWorkspace();
+            dialog.close();
+            return;
+        }
     }
 
     dialog.dataset.checkSavedReturnUrl = returnUrl.href;
@@ -1586,10 +1653,10 @@ const repeaterRowHasData = (row, repeater) => {
 
 repeaterRemoveDialog?.querySelector('[data-repeater-remove-confirm]')?.addEventListener('click', () => {
     if (!pendingRepeaterRemoval) return;
-    const { row, repeater } = pendingRepeaterRemoval;
+    const { row, repeater, handler } = pendingRepeaterRemoval;
     pendingRepeaterRemoval = null;
     repeaterRemoveDialog.close();
-    removeRepeaterRow(row, repeater);
+    (handler || removeRepeaterRow)(row, repeater);
 });
 repeaterRemoveDialog?.addEventListener('close', () => { pendingRepeaterRemoval = null; });
 
@@ -1627,13 +1694,27 @@ document.querySelectorAll('[data-companion-ci-container]').forEach((container) =
         });
     };
 
+    /**
+     * Display only, matching CiParticipantService::compactDisplayName on the server: the primary CI
+     * and the first companion keep their full names, and every companion after that is shown by
+     * first given name alone. The full name stays on data-full-name and in the aria-label, and the
+     * submitted contributor_ids are untouched — nothing shortened is ever sent or stored.
+     */
+    const compactDisplayName = (fullName, position) => {
+        const name = (fullName ?? '').trim();
+
+        return position < 2 || name === '' ? name : name.split(' ')[0];
+    };
+
     // Renders "/ Name ×" for each companion, inline after the (always-present, separately
-    // markup'd) primary name — e.g. "REY MAGHILOM / ANTHONY YONG × / MARK DELA CRUZ ×".
+    // markup'd) primary name — e.g. "REY MAGHILOM / ANTHONY YONG × / MARK ×".
     const renderParticipants = (ids) => {
         participantList.innerHTML = '';
-        ids.forEach((id) => {
+        ids.forEach((id, index) => {
             const option = dialog.querySelector(`[data-companion-option][data-user-id="${id}"]`);
             const fullName = option?.dataset.fullName ?? '';
+            // index 0 is the first companion, i.e. the second CI on the record overall.
+            const displayName = compactDisplayName(fullName, index + 1);
             const item = document.createElement('span');
             item.className = 'flex items-center gap-1';
             item.dataset.companionParticipant = '';
@@ -1642,8 +1723,8 @@ document.querySelectorAll('[data-companion-ci-container]').forEach((container) =
             separator.setAttribute('aria-hidden', 'true');
             separator.textContent = '/';
             const name = document.createElement('span');
-            name.dataset.fullName = '';
-            name.textContent = fullName;
+            name.dataset.fullName = fullName;
+            name.textContent = displayName;
             const remove = document.createElement('button');
             remove.type = 'button';
             remove.className = 'inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-danger/40 bg-danger-soft text-[0.7rem] font-bold normal-case leading-none text-danger transition hover:border-danger hover:bg-danger hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/40';
@@ -1736,6 +1817,9 @@ document.querySelector('[data-companion-search]')?.addEventListener('input', (ev
 });
 
 const initializeBusinessRepeaters = (scope = document) => scope.querySelectorAll('[data-repeater]').forEach((repeater) => {
+    // IV. Summary on Credit / Loan Information keeps data-repeater (post-save id reassignment
+    // still walks it) but owns its own grouped add/remove wiring further down this file.
+    if (repeater.matches('[data-loan-groups]')) return;
     if (repeater.dataset.repeaterReady) return;
     repeater.dataset.repeaterReady = 'true';
     const rows = repeater.querySelector('[data-repeater-rows]');
@@ -2014,6 +2098,200 @@ const initializeCibiControls = (scope = document) => {
 };
 
 initializeCibiControls();
+
+// CI/BI IV. SUMMARY ON CREDIT / LOAN INFORMATION — one Bank / Coop / Branch group owns ZERO, ONE
+// or MANY loan results.
+//
+// Nothing about the persisted shape changes: a loan result is still exactly one flat
+// cibi_loan_records row, and a Bank/Coop with no loan found is a single row carrying only the
+// institution plus Performance & Findings (every loan-specific column stays genuinely NULL — no
+// "0" / "N/A" filler is ever invented). Grouping therefore lives entirely in the DOM:
+//
+//   * The institution is edited once, in the group bar. Its input is named for the group's FIRST
+//     row so inline validation errors still land on a visible field; one hidden mirror per extra
+//     row is regenerated on every structural change, so all rows of a group post the same value.
+//   * Indices are renumbered to DOM order after every add/remove, because Laravel reindexes the
+//     submitted array to submission (= DOM) order — dense, in-order names keep validation error
+//     keys and the post-save sort_order/id mapping pointing at the right row.
+//   * Removing the last loan result does NOT remove the institution: the row flips to its empty
+//     state (loan cells hidden and cleared, Performance & Findings still editable). Removing the
+//     whole Bank/Coop is a separate action and only ever touches that group's own rows.
+const cibiLoanSection = document.querySelector('[data-loan-groups]');
+const renumberLoanRecords = () => {
+    if (!cibiLoanSection) return;
+    let index = 0;
+    cibiLoanSection.querySelectorAll('[data-loan-group-header]').forEach((header) => {
+        const groupId = header.dataset.loanGroup;
+        const rows = [...cibiLoanSection.querySelectorAll(`[data-repeater-row][data-loan-group="${CSS.escape(groupId)}"]`)];
+        if (rows.length === 0) {
+            header.remove();
+            return;
+        }
+        const baseIndex = index;
+        rows.forEach((row) => {
+            const rowIndex = index++;
+            row.querySelectorAll('[name]').forEach((field) => {
+                field.name = field.name.replace(/^loan_records\[[^\]]*\]/, `loan_records[${rowIndex}]`);
+            });
+        });
+        const institutionInput = header.querySelector('[data-loan-institution-input]');
+        if (institutionInput) institutionInput.name = `loan_records[${baseIndex}][institution]`;
+        header.querySelector('[data-loan-institution-mirrors]')?.replaceChildren(...rows.slice(1).map((row, offset) => {
+            const mirror = document.createElement('input');
+            mirror.type = 'hidden';
+            mirror.name = `loan_records[${baseIndex + offset + 1}][institution]`;
+            mirror.value = institutionInput?.value ?? '';
+            return mirror;
+        }));
+        let ordinal = 0;
+        rows.forEach((row) => {
+            const label = row.querySelector('[data-loan-result-ordinal]');
+            // A zero-result row shows its own empty label instead of a badge, and never consumes
+            // a loan number — so Loan 1/2/3 always counts real results only.
+            if (!label || row.hidden || row.hasAttribute('data-loan-empty')) return;
+            ordinal += 1;
+            label.textContent = `Loan ${ordinal}`;
+        });
+    });
+    // IV renders no blank starter groups, so the table needs its own empty state.
+    const emptyState = cibiLoanSection.querySelector('[data-loan-empty-state]');
+    if (emptyState) emptyState.hidden = cibiLoanSection.querySelector('[data-loan-group-header]:not([hidden])') !== null;
+};
+
+if (cibiLoanSection) {
+    const loanRowsFor = (groupId) => [...cibiLoanSection.querySelectorAll(`[data-repeater-row][data-loan-group="${CSS.escape(groupId)}"]`)];
+    const loanHeaderFor = (groupId) => cibiLoanSection.querySelector(`[data-loan-group-header][data-loan-group="${CSS.escape(groupId)}"]`);
+
+    const setLoanRowEmpty = (row, empty) => {
+        row.toggleAttribute('data-loan-empty', empty);
+        row.querySelectorAll('[data-loan-detail-controls]').forEach((controls) => { controls.hidden = empty; });
+        row.querySelectorAll('[data-loan-detail-blank]').forEach((blank) => { blank.hidden = !empty; });
+        const badge = row.querySelector('[data-loan-result-ordinal]');
+        if (badge) badge.hidden = empty;
+        const emptyLabel = row.querySelector('[data-loan-result-empty-label]');
+        if (emptyLabel) emptyLabel.hidden = !empty;
+        const remove = row.querySelector('[data-loan-result-remove]');
+        if (remove) remove.hidden = empty;
+        // A Bank/Coop with no loan found must persist genuinely blank loan columns — never a
+        // stale figure left behind by the result that was just removed.
+        if (empty) row.querySelectorAll('[data-loan-detail-cell] input').forEach((field) => { field.value = ''; });
+    };
+
+    const stampGroupId = (element, groupId) => {
+        element.dataset.loanGroup = groupId;
+        element.querySelectorAll('[data-loan-group]').forEach((child) => { child.dataset.loanGroup = groupId; });
+    };
+
+    const cloneLoanResultRow = (groupId) => {
+        const template = cibiLoanSection.querySelector('[data-loan-result-template]');
+        const row = template?.content.firstElementChild?.cloneNode(true);
+        if (!row) return null;
+        stampGroupId(row, groupId);
+        return row;
+    };
+
+    const addLoanResult = (groupId) => {
+        const rows = loanRowsFor(groupId);
+        const emptyRow = rows.find((row) => row.hasAttribute('data-loan-empty'));
+        if (emptyRow) {
+            setLoanRowEmpty(emptyRow, false);
+            renumberLoanRecords();
+            emptyRow.querySelector('[data-loan-detail-controls] input')?.focus();
+            return;
+        }
+        const row = cloneLoanResultRow(groupId);
+        if (!row) return;
+        (rows[rows.length - 1] || loanHeaderFor(groupId))?.after(row);
+        initializeCibiControls(row);
+        renumberLoanRecords();
+        row.querySelector('[data-loan-detail-controls] input')?.focus();
+    };
+
+    const removeLoanResult = (row) => {
+        const groupId = row.dataset.loanGroup;
+        const visible = loanRowsFor(groupId).filter((candidate) => !candidate.hidden);
+        // The institution itself survives its last loan result — it stays encodable as a
+        // zero-result inquiry whose Performance & Findings is still required reading.
+        if (visible.length <= 1) setLoanRowEmpty(row, true);
+        else removeRepeaterRow(row, cibiLoanSection);
+        renumberLoanRecords();
+    };
+
+    const removeLoanGroup = (header) => {
+        const groupId = header.dataset.loanGroup;
+        loanRowsFor(groupId).forEach((row) => removeRepeaterRow(row, cibiLoanSection));
+        // Soft-deleted rows still have to post their _delete flag, so the bar is only detached
+        // once nothing of this group is left in the DOM.
+        if (loanRowsFor(groupId).length === 0) header.remove();
+        else header.hidden = true;
+        renumberLoanRecords();
+    };
+
+    cibiLoanSection.querySelector('[data-repeater-add]')?.addEventListener('click', () => {
+        const template = cibiLoanSection.querySelector('[data-loan-group-template]');
+        const rowsHost = cibiLoanSection.querySelector('[data-repeater-rows]');
+        const header = template?.content.firstElementChild?.cloneNode(true);
+        if (!header || !rowsHost) return;
+        const groupId = `loan-group-${Date.now()}-${rowsHost.children.length}`;
+        stampGroupId(header, groupId);
+        header.querySelectorAll('[id*="__GROUP__"], [for*="__GROUP__"]').forEach((element) => {
+            if (element.id) element.id = element.id.replaceAll('__GROUP__', groupId);
+            const forAttribute = element.getAttribute('for');
+            if (forAttribute) element.setAttribute('for', forAttribute.replaceAll('__GROUP__', groupId));
+        });
+        const row = cloneLoanResultRow(groupId);
+        if (!row) return;
+        const emptyState = rowsHost.querySelector('[data-loan-empty-state]');
+        if (emptyState) emptyState.before(header, row);
+        else rowsHost.append(header, row);
+        setLoanRowEmpty(row, true);
+        initializeCibiControls(row);
+        renumberLoanRecords();
+        header.querySelector('[data-loan-institution-input]')?.focus();
+    });
+
+    cibiLoanSection.addEventListener('input', (event) => {
+        const input = event.target.closest('[data-loan-institution-input]');
+        if (!input) return;
+        input.closest('[data-loan-group-header]')
+            ?.querySelectorAll('[data-loan-institution-mirrors] input')
+            .forEach((mirror) => { mirror.value = input.value; });
+    });
+
+    cibiLoanSection.addEventListener('click', (event) => {
+        const addButton = event.target.closest('[data-loan-add-result]');
+        if (addButton) {
+            addLoanResult(addButton.closest('[data-loan-group-header]').dataset.loanGroup);
+            return;
+        }
+        const resultButton = event.target.closest('[data-loan-result-remove]');
+        if (resultButton) {
+            const row = resultButton.closest('[data-repeater-row]');
+            if (repeaterRemoveDialog instanceof HTMLDialogElement && repeaterRowHasData(row, cibiLoanSection)) {
+                pendingRepeaterRemoval = { row, repeater: cibiLoanSection, handler: removeLoanResult };
+                repeaterRemoveDialog.showModal();
+                repeaterRemoveDialog.querySelector('[data-modal-close]')?.focus();
+                return;
+            }
+            removeLoanResult(row);
+            return;
+        }
+        const groupButton = event.target.closest('[data-loan-group-remove]');
+        if (!groupButton) return;
+        const header = groupButton.closest('[data-loan-group-header]');
+        const groupHasData = loanRowsFor(header.dataset.loanGroup).some((row) => repeaterRowHasData(row, cibiLoanSection))
+            || (header.querySelector('[data-loan-institution-input]')?.value.trim() ?? '') !== '';
+        if (repeaterRemoveDialog instanceof HTMLDialogElement && groupHasData) {
+            pendingRepeaterRemoval = { row: header, repeater: cibiLoanSection, handler: removeLoanGroup };
+            repeaterRemoveDialog.showModal();
+            repeaterRemoveDialog.querySelector('[data-modal-close]')?.focus();
+            return;
+        }
+        removeLoanGroup(header);
+    });
+
+    renumberLoanRecords();
+}
 
 document.querySelectorAll('[data-photo-sections-form]').forEach((form) => {
     const rows = form.querySelector('[data-photo-section-rows]');
@@ -2322,7 +2600,8 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
         if (expectedRevisionInput) expectedRevisionInput.value = String(payload.report.revision);
         Object.entries(payload.report.child_ids || {}).forEach(([section, ids]) => {
             const repeater = form.querySelector(`[data-repeater="${CSS.escape(section)}"]`);
-            const rows = [...(repeater?.querySelector('[data-repeater-rows]')?.children || [])];
+            const rows = [...(repeater?.querySelector('[data-repeater-rows]')?.children || [])]
+                .filter((element) => element.matches('[data-repeater-row]'));
             const rowIds = payload.report.child_row_ids?.[section];
             if (rowIds) {
                 rows.forEach((row, index) => {
@@ -2363,6 +2642,7 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
             declared: payload.report.institutions_declared,
             loans: payload.report.loan_records_found,
         };
+        renumberLoanRecords();
         Object.entries(totals).forEach(([key, value]) => {
             const target = form.querySelector(`[data-cibi-total="${key}"]`);
             if (!target) return;
@@ -2459,19 +2739,23 @@ document.addEventListener('click', (event) => {
         // Every edit trigger (header quick-edit, or a specific co-maker's tab menu) carries its
         // own record's data directly, so the form always loads the exact co-maker that was
         // clicked — never whichever one happens to be shown elsewhere on the page.
-        const { coMakerId, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix, coMakerAddress } = editTrigger.dataset;
+        const { coMakerId, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix } = editTrigger.dataset;
         if (idField) idField.value = coMakerId ?? '';
         form.elements.namedItem('first_name').value = coMakerFirstName ?? '';
         form.elements.namedItem('middle_name').value = coMakerMiddleName ?? '';
         form.elements.namedItem('last_name').value = coMakerLastName ?? '';
         form.elements.namedItem('suffix').value = coMakerSuffix ?? '';
-        form.elements.namedItem('address').value = coMakerAddress ?? '';
-        if (submit) submit.textContent = 'Update Co-Maker';
         if (title) title.textContent = 'Edit Co-Maker';
-    } else {
-        if (submit) submit.textContent = 'Save Co-Maker';
-        if (title) title.textContent = 'Add Co-Maker';
+    } else if (title) {
+        title.textContent = 'Add Co-Maker';
     }
+
+    // Only the label element is rewritten. Writing the whole button's textContent (as this did)
+    // also removed the icon sitting beside it, so the action lost its icon the moment the modal
+    // was opened. The co-maker's address is no longer part of this form at all — it stays on the
+    // record untouched, since an update that never sends the field cannot blank it.
+    const submitLabel = submit?.querySelector('[data-co-maker-submit-label]') ?? submit;
+    if (submitLabel) submitLabel.textContent = editTrigger ? 'Update Co-Maker' : 'Save Co-Maker';
 });
 
 document.addEventListener('submit', async (event) => {
@@ -3365,7 +3649,16 @@ document.addEventListener('DOMContentLoaded', () => window.initBusinessSearch())
 // hidden-forms + syncBatchForm pattern as the Business/Income Sources batch panel above, but
 // pooling two independent checkbox groups (Residence Checks, Business Checks) into one combined
 // selection so a batch output can mix records from both tables.
-(() => {
+//
+// A named initializer rather than a bare IIFE because the panel lives inside [data-checks-listing],
+// which refreshChecksListing() replaces wholesale after a confirmed Residence/Business Check save.
+// Every binding below is made against elements found at call time, so re-running this against the
+// freshly rendered panel is what keeps Select All, the batch submits and the per-row
+// Preview/PDF/Word actions working on the new rows. The old panel's listeners die with the nodes
+// they were attached to, so nothing accumulates.
+let refreshCheckBatchSelection = () => {};
+
+function initCheckBatchPanel() {
     const panel = document.querySelector('[data-check-batch-panel]');
     if (!panel) return;
 
@@ -3440,9 +3733,9 @@ document.addEventListener('DOMContentLoaded', () => window.initBusinessSearch())
         form.submit();
     };
 
-    document.addEventListener('change', (event) => {
-        if (event.target.matches('[data-residence-check-select], [data-business-check-select]')) refresh();
-    });
+    // Published for the document-level 'change' delegate registered once below — registering that
+    // listener in here instead would add a fresh duplicate on every fragment refresh.
+    refreshCheckBatchSelection = refresh;
 
     selectAllButton?.addEventListener('click', () => {
         allCheckboxes().forEach((checkbox) => { checkbox.checked = true; });
@@ -3488,8 +3781,17 @@ document.addEventListener('DOMContentLoaded', () => window.initBusinessSearch())
         submitSingle(docxForm, button.dataset.checkKind, button.dataset.checkId);
     }));
 
+    // A freshly rendered panel always starts with nothing checked, so this is also what leaves the
+    // count at 0 and the Print/Download/Delete Selected controls disabled after a refresh — never a
+    // stale count sitting above rows that no longer exist.
     refresh();
-})();
+}
+
+document.addEventListener('change', (event) => {
+    if (event.target.matches('[data-residence-check-select], [data-business-check-select]')) refreshCheckBatchSelection();
+});
+
+initCheckBatchPanel();
 
 // Business Check form: the business selector is a REFERENCE only — Business Check never creates
 // or edits a Business / Income Source. Selecting an existing business prefills that exact
@@ -4160,3 +4462,240 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
         xhr.send(new FormData(form));
     });
 });
+
+// A form marked [data-no-change-guard] refuses to submit while every editable control still
+// holds the value the server rendered: instead of issuing an update that would change nothing —
+// and would still write history — it reveals its own [data-no-change-message] and stays open.
+// Comparison is against each control's own default (the rendered value/checked/selected state),
+// so no snapshot timing is involved and a fragment loaded into a modal behaves identically.
+const NO_CHANGE_IGNORED_FIELDS = ['_token', '_method', 'co_maker_id', 'expected_updated_at', 'intent'];
+
+function noChangeGuardIsDirty(form) {
+    return [...form.elements].some((control) => {
+        if (!(control instanceof HTMLInputElement || control instanceof HTMLSelectElement || control instanceof HTMLTextAreaElement)) return false;
+        if (control.disabled || control.name === '' || NO_CHANGE_IGNORED_FIELDS.includes(control.name)) return false;
+
+        if (control instanceof HTMLSelectElement) {
+            return [...control.options].some((option) => option.selected !== option.defaultSelected);
+        }
+        if (control instanceof HTMLInputElement) {
+            if (['hidden', 'submit', 'button', 'reset'].includes(control.type)) return false;
+            if (['checkbox', 'radio'].includes(control.type)) return control.checked !== control.defaultChecked;
+            if (control.type === 'file') return (control.files?.length ?? 0) > 0;
+        }
+
+        return control.value !== control.defaultValue;
+    });
+}
+
+document.addEventListener('submit', (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || !form.matches('[data-no-change-guard]')) return;
+    const message = form.querySelector('[data-no-change-message]');
+    if (!(message instanceof HTMLElement) || noChangeGuardIsDirty(form)) return;
+
+    // Capture phase: this also stops any page-level submit handler from running.
+    event.preventDefault();
+    event.stopPropagation();
+    message.hidden = false;
+}, true);
+
+document.addEventListener('input', (event) => {
+    const form = event.target instanceof Element ? event.target.closest('[data-no-change-guard]') : null;
+    const message = form?.querySelector('[data-no-change-message]');
+    if (message instanceof HTMLElement) message.hidden = true;
+});
+
+document.addEventListener('change', (event) => {
+    const form = event.target instanceof Element ? event.target.closest('[data-no-change-guard]') : null;
+    const message = form?.querySelector('[data-no-change-message]');
+    if (message instanceof HTMLElement) message.hidden = true;
+});
+
+/**
+ * CUSTOM "OTHER BUSINESS / SOURCE OF INCOME" CHECKBOX OPTIONS — add, rename and remove.
+ *
+ * Every request goes through fetch rather than a form submit on purpose: the catalog lives inside
+ * the Business Report encoding form, so navigating away to manage an option would throw away
+ * whatever the CI has already ticked. Nothing else on the page is touched — only the one checkbox
+ * row involved is inserted, relabelled or dropped, and the report's own selections stay exactly as
+ * the CI left them.
+ *
+ * A no-op rename is answered by the server with { no_change: true } and shown through the same
+ * informational toast the rest of the app uses; the dialog stays open so the CI can correct it.
+ */
+(() => {
+    const manager = () => document.querySelector('[data-custom-business-manager]');
+    const dialogFor = (id) => document.getElementById(id);
+    const closeDialog = (id) => dialogFor(id)?.close();
+    const csrf = () => document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+
+    let editingId = null;
+    let removingId = null;
+
+    const showError = (element, message) => {
+        if (!(element instanceof HTMLElement)) return;
+        element.textContent = message;
+        element.hidden = !message;
+    };
+
+    const send = async (url, method, body) => {
+        const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': csrf() },
+            body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        return { ok: response.ok, payload };
+    };
+
+    /** The one message the server sent back for a rejected name. */
+    const firstError = (payload) => payload?.errors?.name?.[0] ?? payload?.message ?? 'Something went wrong. Please try again.';
+
+    const rowFor = (id) => document.querySelector('[data-custom-business-category="' + id + '"]');
+
+    /**
+     * Build the new row by cloning the Blade-rendered <template>, never by re-describing the markup
+     * here: that is what keeps a just-added row pixel-identical to a server-rendered one (same
+     * classes, same grid columns, same inline icon SVGs) and is why the icons render on the very
+     * first add, when there is no existing row to copy them from.
+     *
+     * Only the two placeholders that are safe as raw markup — the numeric id and the derived
+     * custom_<id> key — are substituted textually. The business name is applied through DOM APIs
+     * below, so a name can never inject HTML.
+     */
+    const appendRow = (category) => {
+        const list = document.querySelector('[data-custom-business-list]');
+        const template = document.querySelector('[data-custom-business-row-template]');
+        if (!list || !(template instanceof HTMLTemplateElement)) return;
+
+        const holder = document.createElement('div');
+        holder.innerHTML = template.innerHTML
+            .replaceAll('__OPTION_KEY__', category.optionKey)
+            .replaceAll('__CUSTOM_ID__', String(category.id))
+            .trim();
+
+        const row = holder.firstElementChild;
+        if (!(row instanceof HTMLElement)) return;
+
+        applyName(row, category.name);
+        list.append(row);
+    };
+
+    /** Write a category's name into every place the row shows it, as text and attributes only. */
+    const applyName = (row, name) => {
+        row.dataset.customBusinessName = name;
+
+        const srLabel = row.querySelector('label.sr-only');
+        if (srLabel instanceof HTMLElement) srLabel.textContent = 'Select ' + name;
+
+        const text = row.querySelector('[data-custom-business-label]');
+        if (text instanceof HTMLElement) text.textContent = name;
+
+        const checkbox = row.querySelector('[data-income-source-choice]');
+        // The stored value is the stable custom_<id> key, which a rename never changes.
+        if (checkbox instanceof HTMLInputElement) checkbox.dataset.incomeSourceLabel = name;
+
+        const edit = row.querySelector('[data-custom-business-edit]');
+        if (edit instanceof HTMLElement) {
+            edit.title = 'Edit ' + name;
+            edit.setAttribute('aria-label', edit.title);
+        }
+
+        const remove = row.querySelector('[data-custom-business-remove]');
+        if (remove instanceof HTMLElement) {
+            remove.title = 'Remove ' + name;
+            remove.setAttribute('aria-label', remove.title);
+        }
+    };
+
+    document.addEventListener('click', async (event) => {
+        if (!(event.target instanceof Element)) return;
+        const base = manager()?.dataset.customBusinessBaseUrl;
+        if (!base) return;
+
+        if (event.target.closest('[data-custom-business-add]')) {
+            const input = document.querySelector('[data-custom-business-add-name]');
+            if (input instanceof HTMLInputElement) input.value = '';
+            showError(document.querySelector('[data-custom-business-add-error]'), '');
+
+            return;
+        }
+
+        const editTrigger = event.target.closest('[data-custom-business-edit]');
+        if (editTrigger) {
+            const row = editTrigger.closest('[data-custom-business-category]');
+            editingId = row?.dataset.customBusinessCategory ?? null;
+            const input = document.querySelector('[data-custom-business-edit-name]');
+            if (input instanceof HTMLInputElement) input.value = row?.dataset.customBusinessName ?? '';
+            showError(document.querySelector('[data-custom-business-edit-error]'), '');
+            dialogFor('custom-business-edit-dialog')?.showModal();
+
+            return;
+        }
+
+        const removeTrigger = event.target.closest('[data-custom-business-remove]');
+        if (removeTrigger) {
+            const row = removeTrigger.closest('[data-custom-business-category]');
+            removingId = row?.dataset.customBusinessCategory ?? null;
+            const message = document.querySelector('[data-custom-business-remove-message]');
+            const name = row?.dataset.customBusinessName ?? '';
+            if (message instanceof HTMLElement) message.textContent = 'Remove "' + name + '" from the available business options?';
+            dialogFor('custom-business-remove-dialog')?.showModal();
+
+            return;
+        }
+
+        if (event.target.closest('[data-custom-business-add-submit]')) {
+            const input = document.querySelector('[data-custom-business-add-name]');
+            const result = await send(base, 'POST', { name: input instanceof HTMLInputElement ? input.value : '' });
+            if (!result.ok) {
+                showError(document.querySelector('[data-custom-business-add-error]'), firstError(result.payload));
+
+                return;
+            }
+            appendRow(result.payload.category);
+            closeDialog('custom-business-add-dialog');
+            showToast(result.payload.message);
+
+            return;
+        }
+
+        if (event.target.closest('[data-custom-business-edit-submit]')) {
+            if (!editingId) return;
+            const input = document.querySelector('[data-custom-business-edit-name]');
+            const result = await send(base + '/' + editingId, 'PUT', { name: input instanceof HTMLInputElement ? input.value : '' });
+            if (!result.ok) {
+                showError(document.querySelector('[data-custom-business-edit-error]'), firstError(result.payload));
+
+                return;
+            }
+            if (result.payload.no_change) {
+                // Nothing was written; the dialog stays open exactly as the CI left it.
+                showToast(result.payload.message, 'info');
+
+                return;
+            }
+            const row = rowFor(editingId);
+            if (row instanceof HTMLElement) applyName(row, result.payload.category.name);
+            closeDialog('custom-business-edit-dialog');
+            showToast(result.payload.message);
+
+            return;
+        }
+
+        if (event.target.closest('[data-custom-business-remove-submit]')) {
+            if (!removingId) return;
+            const result = await send(base + '/' + removingId, 'DELETE');
+            if (!result.ok) {
+                showToast(firstError(result.payload), 'error');
+
+                return;
+            }
+            rowFor(removingId)?.remove();
+            closeDialog('custom-business-remove-dialog');
+            showToast(result.payload.message, result.payload.deleted ? 'success' : 'info');
+        }
+    });
+})();

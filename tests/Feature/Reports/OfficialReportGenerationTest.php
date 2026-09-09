@@ -14,6 +14,7 @@ use App\Models\CoMaker;
 use App\Models\GeneratedReport;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
+use App\Models\ReportTemplate;
 use App\Models\User;
 use App\Services\Reports\Contracts\PdfGenerator;
 use App\Services\Storage\CiTeamDocumentStorage;
@@ -314,7 +315,9 @@ class OfficialReportGenerationTest extends TestCase
             ->post(route('client-folders.cibi-report.export-excel', $folder))
             ->assertOk()
             ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-            ->assertDownload('BRBI_'.$folder->folder_number.'_SAVED-CLIENT_CI-BI-Report_v7.xlsx');
+            // The download name is the short user-facing one; the stored artifact keeps its own
+            // versioned identity (asserted separately in ReportDownloadNamingTest).
+            ->assertDownload('BRBI_CIBI_SAVED-CLIENT.xlsx');
 
         $temporary = tempnam(sys_get_temp_dir(), 'xlsx-test-');
         file_put_contents($temporary, $response->streamedContent());
@@ -498,6 +501,215 @@ class OfficialReportGenerationTest extends TestCase
         $snapshot = GeneratedReport::where('status', GenerationStatus::Completed)->firstOrFail()->source_snapshot;
         $this->assertSame('SAVED CLIENT', $snapshot['client']);
         $this->assertStringNotContainsString('FORGED', json_encode($snapshot));
+    }
+
+    /**
+     * Reproduces the live 404 exactly: an environment whose reference data has not been seeded has
+     * no active CI/BI PDF ReportTemplate, and the lookup used to be firstOrFail() — a
+     * ModelNotFoundException that Laravel renders as a plain "404 Not Found", indistinguishable
+     * from a bad URL. It must now fail as the server-side configuration problem it is.
+     */
+    public function test_a_missing_report_template_is_a_server_error_not_a_404(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+        ReportTemplate::query()->where('report_type', 'cibi')->where('format', 'pdf')->update(['is_active' => false]);
+
+        try {
+            $this->withoutExceptionHandling()->actingAs($ci)
+                ->get('/client-folders/'.$folder->id.'/cibi-report/export-pdf');
+            $this->fail('An unconfigured report template must not pass silently.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('report template', $exception->getMessage());
+            $this->assertStringContainsString('ReferenceDataSeeder', $exception->getMessage());
+        }
+
+        // Through the normal handler it must never come back as "404 Not Found" — that is what
+        // made an unseeded environment look like a broken Download PDF link.
+        $status = $this->withExceptionHandling()->actingAs($ci)
+            ->get('/client-folders/'.$folder->id.'/cibi-report/export-pdf')->getStatusCode();
+        $this->assertNotSame(404, $status, 'A configuration failure must not masquerade as a missing page.');
+        $this->assertSame(500, $status);
+    }
+
+    /**
+     * The write/read invariant the download depends on: the artifact is stored through
+     * CiTeamDocumentStorage and read back from that same authoritative disk, at the exact path
+     * recorded on the row — no second disk, no path drift.
+     */
+    public function test_the_generated_artifact_is_read_back_from_the_same_storage_it_was_written_to(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+
+        $this->actingAs($ci)->get('/client-folders/'.$folder->id.'/cibi-report/export-pdf')->assertOk();
+
+        $generated = GeneratedReport::query()->where('client_folder_id', $folder->id)->latest('id')->sole();
+        $documents = app(CiTeamDocumentStorage::class);
+
+        $this->assertNotSame('', trim((string) $generated->private_file_reference), 'The row must record where the artifact went.');
+        $this->assertFalse(
+            $documents->isLegacyReportPath($generated->private_file_reference),
+            'A freshly generated report must not be classified as a legacy path, or the download would read a different disk than the one written to.',
+        );
+        $this->assertTrue(
+            $documents->disk()->exists($generated->private_file_reference),
+            'The artifact must exist on the same disk downloadResponse() reads from.',
+        );
+        $this->assertStringNotContainsString('\\', $generated->private_file_reference, 'The stored path stays forward-slashed.');
+
+        // Downloading again resolves the artifact rather than 404ing on it.
+        $this->actingAs($ci)->get('/client-folders/'.$folder->id.'/cibi-report/export-pdf')
+            ->assertOk()->assertHeader('content-type', 'application/pdf');
+    }
+
+    /**
+     * End to end, driven by the page itself: open the Client Folder, take the href the Download
+     * PDF control actually renders, and request it exactly as a browser follows a link. Nothing
+     * in this test knows the URL in advance, so it fails if the button and the router ever
+     * disagree again — which is precisely how the reported 404 happened.
+     */
+    public function test_following_the_rendered_download_pdf_link_returns_a_pdf(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+
+        $page = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+
+        // The href the CI / BI card renders for Download PDF, taken straight out of the markup.
+        $this->assertMatchesRegularExpression('/<a href="([^"]+)"[^>]*>(?:(?!<\/a>).)*Download PDF/s', $page, 'Download PDF must render as a real link.');
+        preg_match('/<a href="([^"]+)"[^>]*>(?:(?!<\/a>).)*Download PDF/s', $page, $matches);
+        $href = html_entity_decode($matches[1]);
+
+        $this->assertStringContainsString('/cibi-report/export-pdf', $href);
+
+        // Follow it the way the browser does.
+        $response = $this->actingAs($ci)->get($href);
+
+        $this->assertNotSame(404, $response->getStatusCode(), 'The rendered Download PDF link must not 404. URL: '.$href);
+        $this->assertNotSame(405, $response->getStatusCode(), 'The rendered Download PDF link must be followable. URL: '.$href);
+        $response->assertOk()->assertHeader('content-type', 'application/pdf');
+    }
+
+    /**
+     * The exact browser failure: Download PDF opened /client-folders/{id}/cibi-report/export-pdf
+     * as a link and got a "not found" page, because the route only answered POST. The request is
+     * issued here the way the browser issues it — a plain GET at that literal URL.
+     */
+    public function test_the_cibi_download_pdf_url_resolves_when_opened_as_a_link(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+
+        $response = $this->actingAs($ci)->get('/client-folders/'.$folder->id.'/cibi-report/export-pdf');
+
+        $this->assertNotSame(404, $response->getStatusCode(), 'The Download PDF URL must not 404.');
+        $this->assertNotSame(405, $response->getStatusCode(), 'The Download PDF URL must accept a link (GET).');
+        $response->assertOk()->assertHeader('content-type', 'application/pdf');
+
+        $generated = GeneratedReport::query()->where('client_folder_id', $folder->id)->latest('id')->sole();
+        $this->assertNull($generated->co_maker_id, 'A link with no person is the Applicant.');
+    }
+
+    /** A Co-Maker's PDF opens from the same link contract, carrying that one person. */
+    public function test_the_cibi_download_pdf_link_carries_the_exact_co_maker(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+        $coMaker = $folder->coMakers()->create(['full_name' => 'CO MAKER ONE']);
+        CibiReport::factory()->create([
+            'client_folder_id' => $folder->id, 'co_maker_id' => $coMaker->id, 'ci_in_charge_id' => $ci->id,
+            'start_date' => '2026-08-01', 'submitted_date' => '2026-08-02', 'branch_name' => 'Main',
+            'account_officer_name' => 'AO Name', 'ci_risk_level' => 'low', 'purpose_codes' => ['working_capital'],
+            'prepared_by_name' => 'Investigator', 'revision' => 1, 'state' => RecordState::Complete,
+        ]);
+
+        $this->actingAs($ci)
+            ->get('/client-folders/'.$folder->id.'/cibi-report/export-pdf?person=co-maker&co_maker_id='.$coMaker->id)
+            ->assertOk()->assertHeader('content-type', 'application/pdf');
+
+        $generated = GeneratedReport::query()->where('client_folder_id', $folder->id)->latest('id')->sole();
+        $this->assertSame($coMaker->id, $generated->co_maker_id);
+    }
+
+    /** Both entry points hand the user that same working link/route contract. */
+    public function test_both_download_entry_points_target_the_working_route(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+        $expected = route('client-folders.cibi-report.export-pdf', $folder);
+
+        // Client Folder → CI / BI Report → Download PDF is a real link to that URL.
+        $folderPage = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('href="'.$expected.'"', $folderPage);
+        $this->assertStringNotContainsString('dashboard-cibi-export-pdf-form', $folderPage, 'The dead hidden PDF form is gone.');
+
+        // Global Reports → completed CI / BI → Download PDF posts to the same route.
+        $reportsPage = $this->actingAs($ci)->get(route('reports.index', ['report_type' => 'cibi', 'tab' => 'completed']))->assertOk()->getContent();
+        $this->assertStringContainsString($expected, $reportsPage);
+    }
+
+    /** The PDF is prepared for whoever currently holds the signature, not the report's creator. */
+    public function test_the_pdf_uses_the_current_signatory_after_a_reassignment(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+        $newSignatory = User::factory()->create(['full_name' => 'ANTHONY B. YONG']);
+        $report = $folder->cibiReport;
+        $creator = $report->created_by;
+        $report->update(['ci_in_charge_id' => $newSignatory->id]);
+
+        $this->actingAs($ci)->get('/client-folders/'.$folder->id.'/cibi-report/export-pdf')->assertOk();
+
+        $report->refresh();
+        $this->assertSame($newSignatory->id, $report->ci_in_charge_id, 'Exporting must not rewrite the signatory.');
+        $this->assertSame($creator, $report->created_by, 'The report creator is untouched by an export.');
+    }
+
+    /**
+     * The CI/BI Download PDF path end to end, including person isolation: the one canonical POST
+     * route resolves for the Applicant and for each Co-Maker, always streams that exact person's
+     * report, and still 404s where a 404 is genuinely correct.
+     */
+    public function test_cibi_download_pdf_resolves_per_person_and_never_crosses_people(): void
+    {
+        [$ci, $folder] = $this->cibiContext();
+        $first = $folder->coMakers()->create(['full_name' => 'CO MAKER ONE']);
+        $second = $folder->coMakers()->create(['full_name' => 'CO MAKER TWO']);
+        foreach ([$first, $second] as $person) {
+            CibiReport::factory()->create([
+                'client_folder_id' => $folder->id, 'co_maker_id' => $person->id, 'ci_in_charge_id' => $ci->id,
+                'start_date' => '2026-08-01', 'submitted_date' => '2026-08-02', 'branch_name' => 'Main',
+                'account_officer_name' => 'AO Name', 'ci_risk_level' => 'low', 'purpose_codes' => ['working_capital'],
+                'prepared_by_name' => 'Investigator', 'revision' => 1, 'state' => RecordState::Complete,
+            ]);
+        }
+
+        $url = route('client-folders.cibi-report.export-pdf', $folder);
+
+        // Applicant: co_maker_id absent means the Applicant's own report, never a Co-Maker's.
+        $this->actingAs($ci)->post($url)->assertOk()->assertHeader('content-type', 'application/pdf');
+        $applicantReport = GeneratedReport::query()->where('client_folder_id', $folder->id)->latest('id')->sole();
+        $this->assertNull($applicantReport->co_maker_id);
+
+        // Each Co-Maker resolves to their own report and to no one else's.
+        foreach ([$first, $second] as $person) {
+            $this->actingAs($ci)->post($url, ['co_maker_id' => $person->id])
+                ->assertOk()->assertHeader('content-type', 'application/pdf');
+
+            $generated = GeneratedReport::query()->where('client_folder_id', $folder->id)->latest('id')->first();
+            $this->assertSame($person->id, $generated->co_maker_id, 'Co-Maker '.$person->full_name.' must get their own report.');
+        }
+
+        // A co_maker_id belonging to a different folder stays a genuine 404.
+        $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $foreign = $otherFolder->coMakers()->create(['full_name' => 'SOMEONE ELSE']);
+        $this->actingAs($ci)->post($url, ['co_maker_id' => $foreign->id])->assertNotFound();
+    }
+
+    /** An incomplete report is refused as such — not as a missing page. */
+    public function test_cibi_download_pdf_refuses_an_incomplete_report_without_pretending_it_is_missing(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        CibiReport::factory()->create([
+            'client_folder_id' => $folder->id, 'ci_in_charge_id' => $ci->id, 'state' => RecordState::Draft,
+        ]);
+
+        $this->actingAs($ci)->post(route('client-folders.cibi-report.export-pdf', $folder))->assertStatus(422);
     }
 
     private function cibiContext(): array

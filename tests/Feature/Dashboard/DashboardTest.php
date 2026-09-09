@@ -63,7 +63,7 @@ class DashboardTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.create'))
             ->assertOk()
             ->assertSee('Create Client Folder')
-            ->assertSee("You'll be recorded as the creator of this folder.", false);
+            ->assertSee("You'll be listed as the creator of this folder.", false);
     }
 
     public function test_dashboard_uses_responsive_card_markup_and_excludes_unapproved_widgets(): void

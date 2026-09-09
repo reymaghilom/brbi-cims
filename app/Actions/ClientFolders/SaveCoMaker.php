@@ -15,7 +15,7 @@ class SaveCoMaker
         private readonly SeedCiActivities $seedActivities,
     ) {}
 
-    /** @param  array{co_maker_id: ?int, first_name: string, middle_name: ?string, last_name: string, suffix: ?string, address: string}  $data */
+    /** @param  array{co_maker_id: ?int, first_name: string, middle_name: ?string, last_name: string, suffix: ?string, address?: ?string}  $data */
     public function execute(User $actor, ClientFolder $folder, array $data): CoMaker
     {
         return DB::transaction(function () use ($actor, $folder, $data): CoMaker {
@@ -37,9 +37,14 @@ class SaveCoMaker
                 'last_name' => $data['last_name'],
                 'suffix' => $data['suffix'] ?? null,
                 'full_name' => $fullName,
-                'address' => $data['address'],
                 'last_edited_by' => $actor->id,
             ];
+            // Address only moves when the request actually carried the field. The Add form no
+            // longer collects it (a new co-maker simply starts without one), and omitting the key
+            // on an edit must leave an already-saved address untouched rather than blanking it.
+            if (array_key_exists('address', $data)) {
+                $fields['address'] = $data['address'];
+            }
 
             // An id means editing one specific, already-saved co-maker (scoped to this folder by
             // SaveCoMakerRequest's validation) — never a new record, so this can never duplicate

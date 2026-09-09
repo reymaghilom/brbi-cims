@@ -61,6 +61,27 @@ class CiParticipantService
         return $this->orderedParticipants($owner)->map(fn (User $user) => $user->full_name)->implode($glue);
     }
 
+    /**
+     * ENCODING-FORM DISPLAY ONLY — never persisted, never printed on an output.
+     *
+     * The first two CIs on a record keep their full names; every CI after them is shown by first
+     * given name alone, so a long companion list stays readable in the report header while the
+     * stored users, assignments and signatories are completely untouched. The web preview, PDF and
+     * Excel all keep using fullNames() above.
+     *
+     * @param  int  $position  0 for the primary CI, then 1, 2, … for each companion in saved order.
+     */
+    public static function compactDisplayName(?string $fullName, int $position): string
+    {
+        $name = trim((string) $fullName);
+
+        if ($position < 2 || $name === '') {
+            return $name;
+        }
+
+        return (string) Str::of($name)->explode(' ')->first();
+    }
+
     /** "REY / MARK" — first token of full_name only, order preserved. */
     public function firstNames(HasCiParticipants $owner, string $glue = ' / '): string
     {

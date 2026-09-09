@@ -1351,7 +1351,7 @@ class CiActivitiesTest extends TestCase
 
         $reopenedModal = $this->get($definitionOnlyResponse->headers->get('Location'))->assertOk();
         $reopenedModal
-            ->assertSee('Barangay Certification Follow-up activity type is ready to use.')
+            ->assertSee('Activity type created successfully.')
             ->assertSee('data-ci-activity-dialog-body', false)
             ->assertSee('dialogBody.scrollTop = 0;', false)
             ->assertDontSee('You will become the Creator of this activity.');
@@ -1367,8 +1367,9 @@ class CiActivitiesTest extends TestCase
         );
         $reopenedModal
             ->assertSee('My Custom Activity Types')
-            ->assertSee('data-activity-type-remove="'.$definition->id.'"', false)
-            ->assertSee('Remove Activity Type');
+            ->assertSee('data-activity-type-option data-value="'.$definition->id.'"', false)
+            ->assertDontSee('data-activity-type-remove="'.$definition->id.'"', false)
+            ->assertDontSee('Remove Activity Type');
 
         $this->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $coMakerA->id,
@@ -1502,7 +1503,7 @@ class CiActivitiesTest extends TestCase
             ->assertSee("if (dialog.hasAttribute('data-ci-activity-validation-open'))", false);
     }
 
-    public function test_activity_type_picker_only_offers_remove_controls_for_custom_definitions(): void
+    public function test_activity_type_picker_is_selection_only_and_never_offers_management_controls(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -1521,20 +1522,16 @@ class CiActivitiesTest extends TestCase
             ->assertSee('data-activity-type-option', false)
             ->assertSee('data-value="'.$systemDefinition->id.'"', false)
             ->assertSee('data-value="'.$customDefinition->id.'"', false)
-            ->assertDontSee('data-activity-type-remove="'.$systemDefinition->id.'"', false)
-            ->assertSee('data-activity-type-remove="'.$customDefinition->id.'"', false)
             ->assertSee('data-custom-activity-type-row="'.$customDefinition->id.'"', false)
             ->assertSee('data-custom-activity-types', false)
-            ->assertSee('title="Remove Activity Type"', false)
-            ->assertSee('Delete Activity Type?')
-            ->assertSee('Supplier Follow-up</span> will be permanently deleted and can be created again later.', false)
-            ->assertSee('Delete Permanently')
-            ->assertSee('event.stopPropagation();', false)
-            ->assertSee("select.dispatchEvent(new Event('change'));", false)
-            ->assertSee('dialog.showModal();', false)
-            ->assertSee('await fetch(removalForm.action', false)
-            ->assertSee("button.closest('[data-custom-activity-type-row]')?.remove();", false)
-            ->assertSee('HTMLFormElement.prototype.submit.call(removalForm);', false);
+            ->assertSee('+ Add New Activity Type')
+            // Managing a type (remove / deactivate / delete) belongs to Activity Type Management,
+            // never to this picker.
+            ->assertDontSee('data-activity-type-remove=', false)
+            ->assertDontSee('title="Remove Activity Type"', false)
+            ->assertDontSee('id="remove-activity-definition-'.$customDefinition->id.'"', false)
+            ->assertDontSee('await fetch(removalForm.action', false)
+            ->assertDontSee("button.closest('[data-custom-activity-type-row]')?.remove();", false);
 
         $deletedDefinitionId = $customDefinition->id;
         $this->delete(route('client-folders.activity-definitions.deactivate', [$folder, $customDefinition]), [
@@ -1613,10 +1610,13 @@ class CiActivitiesTest extends TestCase
             ],
         ]);
 
+        // Removing/deactivating a type is no longer offered inside the Add Activity picker; it
+        // lives in Activity Type Management, where the used type is listed with its usage count.
         $confirmation = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk();
         $confirmation
-            ->assertSee('Remove Activity Type?')
-            ->assertSee('Barangay Verification</span> has existing activity history. It will be removed from future selection, but historical records will be preserved.', false);
+            ->assertDontSee('Remove Activity Type?')
+            ->assertSee('data-activity-type-id="'.$customDefinition->id.'"', false)
+            ->assertSee('data-activity-type-usage="1"', false);
 
         $response = $this->delete(
             route('client-folders.activity-definitions.deactivate', [$folder, $customDefinition]),

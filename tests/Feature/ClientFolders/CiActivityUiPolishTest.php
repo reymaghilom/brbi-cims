@@ -37,9 +37,13 @@ class CiActivityUiPolishTest extends TestCase
         $this->assertStringContainsString('data-bank-target-remove-dialog', $content);
         $this->assertStringContainsString('data-bank-target-remove-confirm', $content);
         $this->assertStringContainsString('data-bank-target-remove-cancel', $content);
-        $this->assertStringContainsString('Remove this Bank / Coop entry?', $content);
+        $this->assertStringContainsString('Remove this Bank / Coop record?', $content);
         $this->assertStringContainsString('This row already contains information. Removing it will discard the data entered in this row.', $content);
-        $this->assertStringContainsString('>Remove Entry<', $content);
+        $this->assertStringNotContainsString('Remove this Bank / Coop entry?', $content);
+        // The Asset Check twin of this dialog is deliberately left as it is.
+        $this->assertStringContainsString('data-asset-target-remove-confirm>Remove Entry</button>', $content);
+        $this->assertMatchesRegularExpression('/data-bank-target-remove-cancel><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $content);
+        $this->assertMatchesRegularExpression('/class="ui-button-danger" data-bank-target-remove-confirm><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Remove Record<\/button>/s', $content);
     }
 
     public function test_bank_target_remove_warning_dialog_uses_secondary_cancel_and_danger_confirm_styling(): void
@@ -723,7 +727,10 @@ class CiActivityUiPolishTest extends TestCase
 
         $this->assertStringContainsString(route('client-folders.activities.bank-targets.destroy', [$folder, $activity, $activity->bankTargets->sole()]), $deleteDialog);
         $this->assertMatchesRegularExpression('/data-modal-close class="ui-button-secondary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $deleteDialog);
-        $this->assertMatchesRegularExpression('/class="ui-button-danger"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Delete Target<\/button>/s', $deleteDialog);
+        $this->assertStringContainsString('Remove Bank / Coop Record?', $deleteDialog);
+        $this->assertMatchesRegularExpression('/class="ui-button-danger"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Delete Record<\/button>/s', $deleteDialog);
+        $this->assertStringNotContainsString('Delete Bank / Coop Target?', $deleteDialog);
+        $this->assertStringNotContainsString('Delete Target</button>', $deleteDialog);
     }
 
     public function test_the_bank_coop_target_edit_form_offers_iconed_cancel_and_save_changes(): void

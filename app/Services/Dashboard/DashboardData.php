@@ -48,7 +48,7 @@ class DashboardData
 
     private const WORK_LIST_LIMIT = 6;
 
-    private const RECENT_ACTIVITY_LIMIT = 5;
+    private const RECENT_ACTIVITY_LIMIT = 3;
 
     public function for(User $user, ?string $trendRange = null): array
     {
@@ -60,6 +60,7 @@ class DashboardData
         $folderIds = $folders->pluck('id');
 
         $workload = $this->workload($folders, $folderIds, $now);
+        $recentActivity = $this->recentActivity($folderIds, $timezone);
 
         return [
             'greeting' => $this->greeting($now),
@@ -71,7 +72,8 @@ class DashboardData
             'trendRanges' => self::TREND_RANGES,
             'activityProgress' => $this->activityProgress($folderIds),
             'workToday' => $this->workToday($user, $folderIds, $now),
-            'recentActivity' => $this->recentActivity($folderIds, $timezone),
+            'recentActivity' => $recentActivity['events'],
+            'recentActivityHasMore' => $recentActivity['hasMore'],
         ];
     }
 
@@ -360,28 +362,40 @@ class DashboardData
      * The existing AuditLog, scoped to the same folders, rendered through the audit vocabulary
      * ClientFolderOverview already owns — this deliberately does not introduce a second history.
      *
+     * Reads exactly one row more than the panel shows: that single extra row is what tells the view
+     * whether a "View All" is warranted, so the dashboard never loads the whole audit trail (nor
+     * runs a second COUNT over it) just to answer "is there a sixth?".
+     *
      * @param  Collection<int, int>  $folderIds
+     * @return array{events: array<int, array{label: string, icon: string, client: string, user: ?string, at: ?CarbonImmutable}>, hasMore: bool}
      */
     private function recentActivity(Collection $folderIds, string $timezone): array
     {
-        return AuditLog::query()
+        $events = AuditLog::query()
             ->whereIn('client_folder_id', $folderIds)
             ->with(['clientFolder:id,display_name', 'user:id,full_name'])
             ->latest('created_at')
             ->latest('id')
-            ->limit(self::RECENT_ACTIVITY_LIMIT)
-            ->get(['id', 'user_id', 'client_folder_id', 'action', 'created_at'])
-            ->map(function (AuditLog $event) use ($timezone): array {
-                $definition = ClientFolderOverview::activityLabel($event->action);
+            ->limit(self::RECENT_ACTIVITY_LIMIT + 1)
+            ->get(['id', 'user_id', 'client_folder_id', 'action', 'created_at']);
 
-                return [
-                    'label' => $definition['label'],
-                    'icon' => $definition['icon'],
-                    'client' => $event->clientFolder?->display_name ?? 'Unnamed client',
-                    'user' => $event->user?->full_name,
-                    'at' => $event->created_at?->timezone($timezone),
-                ];
-            })
-            ->all();
+        return [
+            'events' => $events
+                ->take(self::RECENT_ACTIVITY_LIMIT)
+                ->map(function (AuditLog $event) use ($timezone): array {
+                    $definition = ClientFolderOverview::activityLabel($event->action);
+
+                    return [
+                        'label' => $definition['label'],
+                        'icon' => $definition['icon'],
+                        'client' => $event->clientFolder?->display_name ?? 'Unnamed client',
+                        'user' => $event->user?->full_name,
+                        'at' => $event->created_at?->timezone($timezone),
+                    ];
+                })
+                ->values()
+                ->all(),
+            'hasMore' => $events->count() > self::RECENT_ACTIVITY_LIMIT,
+        ];
     }
 }

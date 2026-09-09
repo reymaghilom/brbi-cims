@@ -437,18 +437,21 @@ class CibiReportTest extends TestCase
         $this->assertStringContainsString('name="personal_snapshot[name]" type="text"  value="Santos, Maria"', $content);
     }
 
-    public function test_new_applicant_cibi_starts_with_three_default_rows_in_every_repeater_without_persisting_anything(): void
+    public function test_new_applicant_cibi_starts_with_its_default_starter_rows_without_persisting_anything(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
 
         $content = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
 
-        foreach (['bank_accounts', 'loan_records'] as $section) {
-            $this->assertSame(3, $this->countRepeaterRows($content, $section), $section);
-        }
+        $this->assertSame(3, $this->countRepeaterRows($content, 'bank_accounts'));
         // V. Income Sources Validation starts with just 1 blank starter row, not 3.
         $this->assertSame(1, $this->countRepeaterRows($content, 'income_summaries'));
+        // IV. Summary on Credit / Loan Information pads NOTHING: a row there belongs to a real
+        // Bank/Coop group, so a brand-new form offers its empty state and "Add Bank / Coop"
+        // instead of blank institutions the encoder would have to clean up.
+        $this->assertSame(0, $this->countRepeaterRows($content, 'loan_records'));
+        $this->assertStringContainsString('No bank or cooperative added yet.', $content);
 
         // Opening the brand-new form must never persist a report or any child rows — the starter
         // rows are display-only defaults, dropped on save unless the encoder actually fills one in.
@@ -469,10 +472,9 @@ class CibiReportTest extends TestCase
             ->get(route('client-folders.cibi-report.edit', $folder).'?person=co-maker&co_maker_id='.$target->id)
             ->assertOk()->getContent();
 
-        foreach (['bank_accounts', 'loan_records'] as $section) {
-            $this->assertSame(3, $this->countRepeaterRows($content, $section), $section);
-        }
+        $this->assertSame(3, $this->countRepeaterRows($content, 'bank_accounts'));
         $this->assertSame(1, $this->countRepeaterRows($content, 'income_summaries'));
+        $this->assertSame(0, $this->countRepeaterRows($content, 'loan_records'));
         $this->assertDatabaseCount('cibi_reports', 0);
 
         // A saved Applicant report with 1 real bank row must never bleed into, or be affected by,
@@ -537,6 +539,10 @@ class CibiReportTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        // IV renders only real Bank/Coop groups, so this section needs one saved institution
+        // before it has a row whose findings textarea can be measured against the others.
+        CibiReport::factory()->create(['client_folder_id' => $folder->id, 'ci_in_charge_id' => $ci->id])
+            ->loanRecords()->create(['institution' => 'Compact Height Coop', 'sort_order' => 1]);
 
         $content = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
 

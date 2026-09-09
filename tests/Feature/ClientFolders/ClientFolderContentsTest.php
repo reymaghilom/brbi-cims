@@ -499,7 +499,7 @@ class ClientFolderContentsTest extends TestCase
             ->get(route('client-folders.show', $folder).'?person=co-maker&co_maker_id='.$coMaker->id)
             ->assertOk();
 
-        $response->assertSee('Residence Check saved')->assertDontSee('CI/BI updated');
+        $response->assertSee('Residence Check updated')->assertDontSee('CI/BI updated');
     }
 
     public function test_another_co_makers_activity_never_leaks_into_the_selected_co_maker(): void

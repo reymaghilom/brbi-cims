@@ -3,7 +3,6 @@
 namespace App\Actions\ClientFolders;
 
 use App\Enums\ClientFolderStatus;
-use App\Enums\UserRole;
 use App\Models\AuditLog;
 use App\Models\ClientFolder;
 use App\Models\User;
@@ -22,7 +21,7 @@ class CreateClientFolder
     public function execute(User $actor, array $data): ClientFolder
     {
         return DB::transaction(function () use ($actor, $data): ClientFolder {
-            $assignedCiId = $actor->role === UserRole::CreditInvestigator
+            $assignedCiId = $actor->role->worksAsCreditInvestigator()
                 ? $actor->id
                 : (filled($data['assigned_ci_id'] ?? null) ? (int) $data['assigned_ci_id'] : null);
 

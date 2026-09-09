@@ -12,7 +12,7 @@
         ['label' => 'Active Client Folders', 'value' => $summary['assigned'], 'icon' => 'folder', 'tone' => 'brand',
             'hint' => $summary['assigned'] === 0 ? 'No client folders available yet' : 'Client folders available for investigation'],
         ['label' => 'In Progress', 'value' => $summary['in_progress'], 'icon' => 'clock', 'tone' => 'amber',
-            'hint' => $summary['in_progress'] === 0 ? 'Nothing in progress' : 'Investigations already underway'],
+            'hint' => $summary['in_progress'] === 0 ? 'Nothing in progress' : 'Ongoing Investigations'],
         // This KPI counts client folders (each folder once, however many overdue activities it
         // holds), so the hint describes folders rather than activities.
         ['label' => 'Needs Attention', 'value' => $summary['needs_attention'], 'icon' => 'warning', 'tone' => 'danger',
@@ -222,24 +222,36 @@
                     <span class="grid size-8 shrink-0 place-items-center rounded-control bg-brand-soft text-brand-primary" aria-hidden="true"><x-ui.icon name="clock" size="size-4" /></span>
                     <h3 id="recent-activity-title" class="font-bold text-text-main">Recent Activity</h3>
                 </div>
-                <a href="{{ route('client-folders.index') }}" class="ui-button-secondary-compact shrink-0">View All</a>
             </div>
 
             @if($recentActivity === [])
                 <x-ui.empty-state class="mt-4" title="No recent activity" description="Actions on your assigned clients appear here." icon="clock" />
             @else
-                <ol class="mt-4 space-y-4">
+                {{-- Same timeline the Client Folder's own Recent Activity uses (see
+                     client-folders/partials/recent-activity-body.blade.php): one dot node per entry,
+                     joined by a dashed connector that is deliberately not drawn on the last item, so
+                     the line stops at the final activity instead of trailing past it. --}}
+                <ol class="relative mt-6 space-y-0">
                     @foreach($recentActivity as $event)
-                        <li class="flex gap-3">
-                            <span class="grid size-8 shrink-0 place-items-center rounded-control bg-surface-muted text-text-muted" aria-hidden="true"><x-ui.icon :name="$event['icon']" size="size-4" /></span>
-                            <div class="min-w-0 flex-1">
+                        <li class="relative grid grid-cols-[1rem_1fr] gap-3 pb-6 last:pb-0">
+                            @unless($loop->last)<span class="absolute bottom-0 left-[0.4375rem] top-4 border-l border-dashed border-ui-border-strong" aria-hidden="true"></span>@endunless
+                            <span class="relative z-10 mt-1 size-3.5 rounded-full border-2 border-white bg-brand-primary shadow-sm" aria-hidden="true"></span>
+                            <div class="min-w-0">
                                 <p class="text-sm font-bold leading-5 text-text-main">{{ $event['label'] }}</p>
-                                <p class="truncate text-xs text-text-muted">{{ $event['client'] }}@if($event['user']) · {{ $event['user'] }}@endif</p>
+                                <p class="mt-1 break-words text-xs leading-5 text-text-muted">{{ $event['client'] }}</p>
+                                {{-- Actor, then the activity's own persisted timestamp in the display
+                                     timezone, in the project's existing "M j, Y · g:i A" format. --}}
+                                <p class="mt-1 text-xs leading-5 text-text-muted">{{ $event['user'] ?? '—' }}<br>{{ $event['at']?->format('M j, Y · g:i A') }}</p>
                             </div>
-                            <p class="shrink-0 text-xs text-text-subtle">{{ $event['at']?->diffForHumans(['short' => true]) }}</p>
                         </li>
                     @endforeach
                 </ol>
+
+                @if($recentActivityHasMore)
+                    <div class="mt-5 border-t border-ui-border pt-4">
+                        <a href="{{ route('client-folders.index') }}" class="block w-full text-center text-sm font-bold text-brand-primary hover:underline">View All</a>
+                    </div>
+                @endif
             @endif
         </article>
     </section>

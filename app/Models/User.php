@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -29,6 +30,23 @@ class User extends Authenticatable
             'auth_session_version' => 'integer',
             'password' => 'hashed',
         ];
+    }
+
+    /**
+     * Active users eligible to be a CIBI report's Prepared By / signatory, alphabetically.
+     *
+     * One row per user by construction — a single table filter, no joins — so the dropdown
+     * cannot list anyone twice. Excluding the report's current signatory is left to the caller,
+     * which already does it per report.
+     *
+     * @param  Builder<User>  $query
+     * @return Builder<User>
+     */
+    public function scopeEligibleCibiSignatories(Builder $query): Builder
+    {
+        return $query->whereIn('role', UserRole::cibiSignatoryRoles())
+            ->where('status', UserStatus::Active)
+            ->orderBy('full_name');
     }
 
     public function assignedClientFolders(): HasMany

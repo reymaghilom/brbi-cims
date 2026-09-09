@@ -39,7 +39,7 @@ class ClientFolder extends Model
      */
     public function scopeAccessibleToTrashed(Builder $query, User $user): Builder
     {
-        if ($user->role === UserRole::CreditInvestigator) {
+        if ($user->role->worksAsCreditInvestigator()) {
             $query->where($query->qualifyColumn('assigned_ci_id'), $user->id);
         }
 
@@ -57,7 +57,7 @@ class ClientFolder extends Model
             return true;
         }
 
-        if ($user->role !== UserRole::CreditInvestigator) {
+        if (! $user->role->worksAsCreditInvestigator()) {
             return false;
         }
 

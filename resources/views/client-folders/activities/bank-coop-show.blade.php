@@ -177,12 +177,13 @@
             </x-ui.confirmation-dialog>
         @endif
         <dialog id="edit-bank-target-{{ $target->id }}" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45">
-            <form method="POST" action="{{ route('client-folders.activities.bank-targets.update', [$clientFolder, $activity, $target]) }}" class="flex max-h-[calc(100dvh-2rem)] flex-col" data-bank-target-form data-bank-target-edit-form="{{ $target->id }}">
+            <form method="POST" action="{{ route('client-folders.activities.bank-targets.update', [$clientFolder, $activity, $target]) }}" class="flex max-h-[calc(100dvh-2rem)] flex-col" data-bank-target-form data-bank-target-edit-form="{{ $target->id }}" data-no-change-guard>
                 @csrf
                 @method('PUT')
                 <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
                 <div class="flex items-start justify-between gap-4 border-b border-ui-border px-5 py-4 sm:px-6"><div><h2 class="text-lg font-bold text-brand-sidebar">Edit Bank / Coop</h2><p class="mt-1 truncate text-sm text-text-muted">{{ $target->institution_name }}</p></div><button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close"><x-ui.icon name="close" size="size-5" /></button></div>
                 <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+                    <p class="mb-4 flex items-start gap-1.5 rounded-control border border-progress/30 bg-progress-soft px-3 py-2 text-sm font-semibold text-progress" data-no-change-message role="status" aria-live="polite" hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected. Nothing needs to be updated.</p>
                     <div class="grid gap-4 sm:grid-cols-2">
                         <div><label for="inquiry-type-{{ $target->id }}" class="ui-label">Inquiry Type</label><select id="inquiry-type-{{ $target->id }}" name="inquiry_type" class="ui-control" required data-bank-target-detail-inquiry-type>@foreach(App\Models\CiActivityBankTarget::INQUIRY_TYPES as $value => $label)<option value="{{ $value }}" @selected($target->inquiry_type === $value)>{{ $label }}</option>@endforeach</select></div>
                         <div><label for="institution-name-{{ $target->id }}" class="ui-label">Bank / Coop Name</label><input id="institution-name-{{ $target->id }}" name="institution_name" value="{{ $target->institution_name }}" class="ui-control" maxlength="255" required></div>
@@ -196,7 +197,7 @@
             </form>
         </dialog>
 
-        <x-ui.confirmation-dialog id="delete-bank-target-{{ $target->id }}" title="Delete Bank / Coop Target?" :action="route('client-folders.activities.bank-targets.destroy', [$clientFolder, $activity, $target])" method="DELETE" confirm-label="Delete Target" cancel-icon="close" confirm-icon="trash" destructive>
+        <x-ui.confirmation-dialog id="delete-bank-target-{{ $target->id }}" title="Remove Bank / Coop Record?" :action="route('client-folders.activities.bank-targets.destroy', [$clientFolder, $activity, $target])" method="DELETE" confirm-label="Delete Record" cancel-icon="close" confirm-icon="trash" destructive>
             <p><span class="font-semibold text-text-main">{{ $target->institution_name }}</span> will be deleted from this Bank / Coop Check. The parent activity will remain.</p>
             <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
         </x-ui.confirmation-dialog>

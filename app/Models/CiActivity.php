@@ -42,6 +42,21 @@ class CiActivity extends Model
         return $this->belongsTo(ActivityDefinition::class, 'activity_definition_id');
     }
 
+    /**
+     * The Activity Type name to display. `ci_activities.name` is a creation-time snapshot; for a
+     * user-created (custom) type the reusable ActivityDefinition stays authoritative, so renaming
+     * it surfaces on every linked record — Pending, Scheduled or Completed alike — without
+     * rewriting a single CiActivity row. Canonical activities keep their own stored name, which
+     * may legitimately differ per row (e.g. "Applicant Barangay Check"), and are never renameable
+     * anyway. Every display path eager-loads `definition`.
+     */
+    public function getDisplayNameAttribute(): string
+    {
+        $definition = $this->definition;
+
+        return $definition?->isCustom() ? $definition->name : $this->name;
+    }
+
     public function updater(): BelongsTo
     {
         return $this->belongsTo(User::class, 'updated_by');

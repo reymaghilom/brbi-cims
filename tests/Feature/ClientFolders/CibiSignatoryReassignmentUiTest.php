@@ -3,6 +3,7 @@
 namespace Tests\Feature\ClientFolders;
 
 use App\Enums\RecordState;
+use App\Enums\UserStatus;
 use App\Models\AuditLog;
 use App\Models\CibiReport;
 use App\Models\ClientFolder;
@@ -69,6 +70,40 @@ class CibiSignatoryReassignmentUiTest extends TestCase
         $select = substr($content, $selectStart, $selectEnd - $selectStart);
         $this->assertStringNotContainsString('>'.$ci->full_name.'<', $select);
         $this->assertStringContainsString('>OTHER ACTIVE CI<', $select);
+    }
+
+    /** The modal's presentation: exact helper wording, a read-only current signatory, icon actions. */
+    public function test_modal_presentation_uses_the_current_wording_and_icon_actions(): void
+    {
+        [$admin, $ci, $folder, $report] = $this->context();
+
+        $content = $this->actingAs($admin)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        $dialogStart = strpos($content, 'id="cibi-reassign-signatory-dialog"');
+        $dialogEnd = strpos($content, 'id="cibi-reassign-signatory-dialog-confirm"', $dialogStart);
+        $dialog = substr($content, $dialogStart, $dialogEnd - $dialogStart);
+
+        $this->assertStringContainsString(
+            'The report creator and audit history will remain unchanged. The selected CI will be assigned as the official Prepared By / Signatory.',
+            $dialog,
+        );
+        foreach (['previous audit history', 'will become the new official', 'The original report creator', 'will be designated as the official'] as $retired) {
+            $this->assertStringNotContainsString($retired, $content, 'Retired helper wording must be gone.');
+        }
+
+        // The current signatory stays a read-only value block — no editable control writes it, and
+        // its element still holds only the name, which app.js copies into the confirmation dialog.
+        $this->assertMatchesRegularExpression('/data-cibi-reassign-current[^>]*>'.preg_quote($ci->full_name, '/').'</', $dialog);
+        $this->assertStringNotContainsString('name="ci_in_charge_id"', $dialog);
+
+        // Both footer actions keep their existing classes/hooks and now carry an icon.
+        $cancel = substr($dialog, strpos($dialog, 'data-modal-close class="ui-button-secondary"'), 600);
+        $this->assertStringContainsString('<svg', $cancel);
+        $this->assertStringContainsString('Cancel', $cancel);
+
+        $primary = substr($dialog, strpos($dialog, 'data-cibi-reassign-continue="cibi-reassign-signatory-dialog-form"'), 600);
+        $this->assertStringContainsString('<svg', $primary);
+        $this->assertStringContainsString('Reassign Signatory', $primary);
+        $this->assertStringContainsString('class="ui-button-primary"', $dialog);
     }
 
     public function test_modal_does_not_show_a_report_for_section_but_still_targets_the_applicant_report(): void
@@ -151,23 +186,167 @@ class CibiSignatoryReassignmentUiTest extends TestCase
         ])->assertSessionHasErrors('reason');
     }
 
-    public function test_only_an_active_credit_investigator_may_be_selected(): void
+    public function test_only_an_active_eligible_signatory_may_be_selected(): void
     {
         [$admin, $ci, $folder, $report] = $this->context();
-        $inactiveCi = User::factory()->create(['status' => \App\Enums\UserStatus::Disabled]);
-        $administratorAsTarget = User::factory()->administrator()->create();
+        $ineligible = [
+            'inactive Credit Investigator' => User::factory()->create(['status' => UserStatus::Disabled]),
+            'inactive Senior Credit Investigator' => User::factory()->seniorCreditInvestigator()->create(['status' => UserStatus::Disabled]),
+            'Administrator' => User::factory()->administrator()->create(),
+        ];
 
-        $this->actingAs($admin)->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
-            'new_signatory_id' => $inactiveCi->id,
-            'reason' => 'Attempted reassignment to inactive CI.',
-        ])->assertSessionHasErrors('new_signatory_id');
-
-        $this->actingAs($admin)->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
-            'new_signatory_id' => $administratorAsTarget->id,
-            'reason' => 'Attempted reassignment to an administrator.',
-        ])->assertSessionHasErrors('new_signatory_id');
+        foreach ($ineligible as $description => $target) {
+            $this->actingAs($admin)->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
+                'new_signatory_id' => $target->id,
+                'reason' => 'Attempted reassignment to an '.$description.'.',
+            ])->assertSessionHasErrors('new_signatory_id');
+        }
 
         $this->assertSame($ci->id, $report->fresh()->ci_in_charge_id);
+    }
+
+    /**
+     * Eligibility to *be* a signatory is its own rule: both Credit Investigator grades, active
+     * only, one row per user, and never an Administrator.
+     */
+    public function test_the_dropdown_lists_active_ci_and_senior_ci_once_each_and_no_one_else(): void
+    {
+        [$admin, $ci, $folder, $report] = $this->context();
+        $senior = User::factory()->seniorCreditInvestigator()->create(['full_name' => 'ACTIVE SENIOR CI']);
+        User::factory()->create(['full_name' => 'ACTIVE CI']);
+        User::factory()->create(['full_name' => 'INACTIVE CI', 'status' => UserStatus::Disabled]);
+        User::factory()->seniorCreditInvestigator()->create(['full_name' => 'INACTIVE SENIOR CI', 'status' => UserStatus::Disabled]);
+        User::factory()->administrator()->create(['full_name' => 'ANOTHER ADMIN']);
+
+        // Both roles allowed to reassign get the same populated list.
+        foreach ([$admin, $senior] as $viewer) {
+            $select = $this->signatoryOptions($viewer, $folder);
+
+            foreach (['ACTIVE CI', 'ACTIVE SENIOR CI'] as $eligible) {
+                $this->assertSame(1, substr_count($select, '>'.$eligible.'<'), $eligible.' must appear exactly once.');
+            }
+            foreach (['INACTIVE CI', 'INACTIVE SENIOR CI', 'ANOTHER ADMIN', $ci->full_name] as $excluded) {
+                $this->assertStringNotContainsString('>'.$excluded.'<', $select, $excluded.' must not be selectable.');
+            }
+        }
+    }
+
+    /**
+     * The bug this guards: Add Co-Maker used to reopen itself after a rejected signatory
+     * reassignment, because its data-open-on-error flag was keyed off $errors->any() — any
+     * failed POST that redirected back to this page popped it open. Each dialog now answers
+     * only for its own fields.
+     */
+    public function test_a_rejected_reassignment_reopens_its_own_dialog_and_never_add_co_maker(): void
+    {
+        [$admin, $ci, $folder, $report] = $this->context();
+        $newSignatory = User::factory()->create();
+
+        $page = $this->actingAs($admin)
+            ->from(route('client-folders.show', $folder))
+            ->followingRedirects()
+            ->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
+                'new_signatory_id' => $newSignatory->id,
+                'reason' => '   ',
+            ])->assertOk()->getContent();
+
+        $this->assertSame('false', $this->dialogOpenOnError($page, 'co-maker-dialog'), 'Add Co-Maker must stay closed.');
+        $this->assertSame('true', $this->dialogOpenOnError($page, 'cibi-reassign-signatory-dialog'), 'The reassign dialog must show its own error.');
+        $this->assertStringContainsString('Please provide a reason for reassignment.', $page);
+        $this->assertSame($ci->id, $report->fresh()->ci_in_charge_id);
+    }
+
+    public function test_a_successful_reassignment_leaves_every_dialog_closed_and_shows_the_new_signatory(): void
+    {
+        [$admin, $ci, $folder, $report] = $this->context();
+        $newSignatory = User::factory()->seniorCreditInvestigator()->create(['full_name' => 'ANTHONY B. YONG']);
+
+        $page = $this->actingAs($admin)
+            ->from(route('client-folders.show', $folder))
+            ->followingRedirects()
+            ->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
+                'new_signatory_id' => $newSignatory->id,
+                'reason' => 'On leave',
+            ])->assertOk()->getContent();
+
+        // Canonical success toast, no dialog reopened by the redirect that carries it.
+        $this->assertStringContainsString('ANTHONY B. YONG is now the official Prepared By / Signatory.', $page);
+        $this->assertSame('false', $this->dialogOpenOnError($page, 'co-maker-dialog'));
+        $this->assertSame('false', $this->dialogOpenOnError($page, 'cibi-reassign-signatory-dialog'));
+
+        // The signatory presentation is current on the page the user is returned to — no manual reload.
+        $this->assertSame($newSignatory->id, $report->fresh()->ci_in_charge_id);
+        $this->assertMatchesRegularExpression('/data-cibi-reassign-current[^>]*>ANTHONY B\. YONG</', $page);
+        // The dropdown follows the new state: the new signatory is now the current one and drops
+        // out of the options, and the person they replaced becomes selectable again.
+        $options = $this->signatoryOptions($admin, $folder);
+        $this->assertStringNotContainsString('>ANTHONY B. YONG<', $options);
+        $this->assertStringContainsString('>'.$ci->full_name.'<', $options);
+    }
+
+    public function test_add_co_maker_still_opens_from_its_own_trigger_and_from_its_own_errors(): void
+    {
+        [$admin, $ci, $folder, $report] = $this->context();
+
+        // The explicit "+ Add Co-Maker" control still targets that dialog.
+        $page = $this->actingAs($admin)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('data-modal-open="co-maker-dialog" data-co-maker-add-trigger', $page);
+
+        // And the dialog still reopens for its own rejected submission.
+        $afterCoMakerError = $this->actingAs($admin)
+            ->from(route('client-folders.show', $folder))
+            ->followingRedirects()
+            ->post(route('client-folders.co-maker.store', $folder), ['first_name' => 'JUAN', 'last_name' => '', 'address' => ''])
+            ->assertOk()->getContent();
+
+        $this->assertSame('true', $this->dialogOpenOnError($afterCoMakerError, 'co-maker-dialog'));
+        $this->assertSame('false', $this->dialogOpenOnError($afterCoMakerError, 'cibi-reassign-signatory-dialog'));
+    }
+
+    public function test_short_reasons_are_accepted_and_empty_ones_are_not(): void
+    {
+        [$admin, $ci, $folder, $report] = $this->context();
+
+        foreach (['', '   ', "\n\t "] as $blank) {
+            $this->actingAs($admin)->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
+                'new_signatory_id' => User::factory()->create()->id,
+                'reason' => $blank,
+            ])->assertSessionHasErrors('reason');
+        }
+
+        foreach (['On leave', 'Schedule conflict', 'Field assignment', 'Unavailable today'] as $reason) {
+            [$admin, $ci, $folder, $report] = $this->context();
+            $target = User::factory()->create();
+
+            $this->actingAs($admin)->post(route('client-folders.cibi-report.reassign-signatory', [$folder, $report]), [
+                'new_signatory_id' => $target->id,
+                'reason' => $reason,
+            ])->assertSessionHasNoErrors();
+
+            $this->assertSame($target->id, $report->fresh()->ci_in_charge_id, $reason.' must be an acceptable reason.');
+            $this->assertDatabaseHas('audit_logs', ['action' => 'cibi_report.signatory_reassigned', 'client_folder_id' => $folder->id]);
+        }
+    }
+
+    /** The rendered data-open-on-error flag of one dialog on the page. */
+    private function dialogOpenOnError(string $page, string $dialogId): string
+    {
+        $start = strpos($page, 'id="'.$dialogId.'"');
+        $this->assertNotFalse($start, $dialogId.' must be rendered on the page.');
+        $tag = substr($page, $start, strpos($page, '>', $start) - $start);
+        $this->assertMatchesRegularExpression('/data-open-on-error="(true|false)"/', $tag, $dialogId.' must declare its own auto-open flag.');
+        preg_match('/data-open-on-error="(true|false)"/', $tag, $matches);
+
+        return $matches[1];
+    }
+
+    private function signatoryOptions(User $viewer, ClientFolder $folder): string
+    {
+        $content = $this->actingAs($viewer)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        $start = strpos($content, 'name="new_signatory_id"');
+        $this->assertNotFalse($start, 'The signatory select must be rendered for '.$viewer->role->value.'.');
+
+        return substr($content, $start, strpos($content, '</select>', $start) - $start);
     }
 
     public function test_current_signatory_cannot_be_selected_as_replacement_backend(): void

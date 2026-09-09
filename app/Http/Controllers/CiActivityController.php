@@ -38,6 +38,13 @@ use Illuminate\View\View;
 
 class CiActivityController extends Controller
 {
+    /**
+     * One-shot confirmation shown in the Add Activity modal right after a custom Activity Type
+     * is created. Deliberately name-free: it belongs to that single creation event, never to
+     * whichever Activity Type the user selects next.
+     */
+    public const ACTIVITY_TYPE_CREATED_MESSAGE = 'Activity type created successfully.';
+
     public function index(
         ClientFolder $clientFolder,
         BankInstitutionPrefill $prefill,
@@ -117,13 +124,19 @@ class CiActivityController extends Controller
         $historyEvents = AuditLog::query()
             ->where('client_folder_id', $clientFolder->id)
             ->where(function ($query): void {
-                $query->where('module', 'ci_activities')->orWhere('action', 'media.uploaded');
+                $query
+                    ->whereIn('module', ['ci_activities', 'activity_definitions'])
+                    ->orWhere('action', 'media.uploaded');
             })
             ->with('user:id,full_name')
             ->latest('created_at')
             ->latest('id')
             ->get()
             ->filter(function (AuditLog $event) use ($activePerson, $proofMediaIds): bool {
+                if ($event->module === 'activity_definitions') {
+                    return true;
+                }
+
                 $metadata = (array) $event->metadata;
                 if ($event->action === 'media.uploaded') {
                     return $proofMediaIds->contains((int) data_get($metadata, 'media_reference_id'));
@@ -158,6 +171,25 @@ class CiActivityController extends Controller
                 })
                 ->orderBy('sort_order')
                 ->get(),
+            // Activity Type Management list: the canonical/system types (always protected and
+            // active) plus every user-created type, active or not, with an authoritative usage
+            // count taken from the ActivityDefinition -> CiActivity relationship itself.
+            'manageableDefinitions' => ActivityDefinition::query()
+                ->select(['id', 'name', 'code', 'is_active', 'sort_order'])
+                ->withCount('activities')
+                ->where(function ($query): void {
+                    $query
+                        ->whereIn('code', [
+                            ActivityDefinition::BARANGAY_CHECK_CODE,
+                            ActivityDefinition::NEIGHBOR_CHECK_CODE,
+                            ActivityDefinition::ASSET_CHECK_CODE,
+                            ActivityDefinition::BANK_COOP_CHECK_CODE,
+                        ])
+                        ->orWhere('code', 'like', ActivityDefinition::CUSTOM_CODE_PREFIX.'%');
+                })
+                ->orderBy('sort_order')
+                ->orderBy('name')
+                ->get(),
             'counts' => $counts,
             'filter' => $filter,
             'history' => $history,
@@ -180,7 +212,7 @@ class CiActivityController extends Controller
                 'activity_definition_id' => $definition->id,
                 'status' => ActivityStatus::Pending->value,
             ];
-            $message = $definition->name.' activity type is ready to use.';
+            $message = self::ACTIVITY_TYPE_CREATED_MESSAGE;
 
             if ($request->expectsJson()) {
                 $request->session()->flashInput($oldInput);
@@ -294,6 +326,34 @@ class CiActivityController extends Controller
             'creator:id,full_name',
         ]);
         abort_unless(ActivityDefinition::isMandatoryDefaultCode($ciActivity->definition->code), 404);
+
+        return view('client-folders.activities.default-check-show', [
+            'clientFolder' => $clientFolder,
+            'activity' => $ciActivity,
+            'statuses' => ActivityStatus::cases(),
+            'activePerson' => $activePerson,
+        ]);
+    }
+
+    /**
+     * User-created (custom) activity types reuse the Barangay / Neighbor Check editing
+     * experience: the same compact Status / Schedule / Time / Short Remarks form, opened
+     * from the activities table in the shared edit modal.
+     */
+    public function showCustomCheck(ClientFolder $clientFolder, CiActivity $ciActivity): View
+    {
+        Gate::authorize('view', $clientFolder);
+        Gate::authorize('update', $ciActivity);
+        $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
+        ActivePersonResolver::assertOwnedBy($ciActivity, $activePerson);
+        abort_unless($ciActivity->client_folder_id === $clientFolder->id, 404);
+
+        $ciActivity->load([
+            'definition:id,name,code',
+            'updater:id,full_name',
+            'creator:id,full_name',
+        ]);
+        abort_unless($ciActivity->definition?->isCustom() ?? false, 404);
 
         return view('client-folders.activities.default-check-show', [
             'clientFolder' => $clientFolder,

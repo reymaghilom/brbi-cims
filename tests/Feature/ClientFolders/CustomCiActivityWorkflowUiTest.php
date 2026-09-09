@@ -22,7 +22,7 @@ class CustomCiActivityWorkflowUiTest extends TestCase
         $this->seed(ReferenceDataSeeder::class);
     }
 
-    public function test_custom_row_uses_one_native_checkbox_and_an_open_delete_menu_only(): void
+    public function test_custom_row_menu_offers_only_iconed_edit_and_delete(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
@@ -31,80 +31,134 @@ class CustomCiActivityWorkflowUiTest extends TestCase
         $content = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
         $row = $this->activityRow($content, $activity);
 
-        $this->assertMatchesRegularExpression('/<input[^>]*type="checkbox"[^>]*class="[^"]*size-5[^"]*"[^>]*data-ci-activity-completion="'.$activity->id.'"[^>]*data-completion-kind="custom"[^>]*>/s', $row);
-        $this->assertStringContainsString('data-ci-activity-status-badge="'.$activity->id.'"', $row);
-        $this->assertStringContainsString('>Pending</span>', $row);
         $this->assertSame(1, substr_count($row, 'aria-label="Actions for '.$activity->name.'"'));
         $this->assertSame(2, substr_count($row, 'role="menuitem"'));
-        $this->assertMatchesRegularExpression('/data-custom-activity-open="'.$activity->id.'"[^>]*><svg[^>]*>.*?<\/svg>\s*Open<\/button>/s', $row);
+        $this->assertMatchesRegularExpression('/data-default-check-open="'.$activity->id.'"[^>]*><svg[^>]*>.*?<\/svg>\s*Edit<\/button>/s', $row);
+        $this->assertStringContainsString('data-default-check-url="'.e(route('client-folders.activities.custom-check.show', [$folder, $activity])).'"', $row);
         $this->assertMatchesRegularExpression('/data-modal-open="delete-activity-'.$activity->id.'"[^>]*><svg[^>]*>.*?<\/svg>\s*Delete<\/button>/s', $row);
+        $this->assertStringNotContainsString('>Open</button>', $row);
         $this->assertStringNotContainsString('Schedule / Reschedule', $row);
-        $this->assertStringNotContainsString('title="Complete"', $row);
         $this->assertStringNotContainsString('View notes', $row);
         $this->assertStringNotContainsString('Manage proof', $row);
         $this->assertStringNotContainsString('Delete Activity', $row);
     }
 
-    public function test_open_uses_the_scoped_modal_source_with_existing_custom_data_and_creates_nothing(): void
+    public function test_edit_modal_title_uses_the_actual_custom_activity_name_with_an_edit_icon(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
-        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'ALPHA MAKER', 'first_name' => 'Alpha', 'last_name' => 'Maker']);
-        $activity = $this->customActivity($folder, $ci, $coMaker, 'Custom Employer Visit', [
-            'status' => ActivityStatus::Scheduled,
-            'scheduled_at' => now()->addDay()->startOfHour(),
-            'scheduled_has_time' => true,
-            'remarks' => 'Verify employment tenure.',
-            'supporting_reference' => 'EMP-REF-42',
-        ]);
-        $params = [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id];
+        $activity = $this->customActivity($folder, $ci, null, 'Credit Verification');
 
-        $index = $this->actingAs($ci)->get(route('client-folders.activities.index', $params))->assertOk();
-        $index
-            ->assertSee('data-custom-activity-modal', false)
-            ->assertSee('data-custom-activity-open="'.$activity->id.'"', false)
-            ->assertSee('data-custom-activity-url="'.e(route('client-folders.activities.edit', [$folder, $activity, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id])).'"', false);
-        $this->assertStringNotContainsString('<a href="'.route('client-folders.activities.edit', [$folder, $activity, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]).'"', $this->activityRow($index->getContent(), $activity));
+        $content = $this->actingAs($ci)
+            ->get(route('client-folders.activities.custom-check.show', [$folder, $activity]))
+            ->assertOk()
+            ->getContent();
 
-        $before = CiActivity::query()->count();
-        $detail = $this->get(route('client-folders.activities.edit', [$folder, $activity, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]))->assertOk();
-        $detail
-            ->assertSee('data-custom-activity-modal-source', false)
-            ->assertSee('data-custom-activity-id="'.$activity->id.'"', false)
-            ->assertSee('data-custom-activity-context="Co-Maker: ALPHA MAKER"', false)
-            ->assertSee('Custom Employer Visit')
-            ->assertSee('Verify employment tenure.')
-            ->assertSee('EMP-REF-42')
-            ->assertSee('Notes Timeline')
-            ->assertSee('Supporting Proof')
-            ->assertSee('Schedule / Follow-up Date');
-        $this->assertSame($before, CiActivity::query()->count());
+        $this->assertMatchesRegularExpression('/<h2 id="default-check-title"[^>]*><svg[^>]*>.*?<\/svg>\s*<span[^>]*>Edit Credit Verification<\/span><\/h2>/s', $content);
+        $this->assertStringNotContainsString('Edit New Activity', $content);
     }
 
-    public function test_custom_checkbox_completion_persists_and_reloads_in_sync_with_status(): void
+    public function test_edit_modal_exposes_status_schedule_time_and_short_remarks_with_barangay_actions(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
-        $activity = $this->customActivity($folder, $ci, null, 'Custom Reference Call');
+        $activity = $this->customActivity($folder, $ci, null, 'Employment Verification', [
+            'status' => ActivityStatus::Scheduled,
+            'scheduled_at' => now()->addDay()->setTime(14, 30),
+            'scheduled_has_time' => true,
+            'remarks' => 'Verify employment tenure.',
+        ]);
 
-        $pendingRow = $this->activityRow($this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->getContent(), $activity);
-        $this->assertDoesNotMatchRegularExpression('/data-ci-activity-completion="'.$activity->id.'"[^>]*\schecked(?:\s|=)/', $pendingRow);
+        $content = $this->actingAs($ci)
+            ->get(route('client-folders.activities.custom-check.show', [$folder, $activity]))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertStringContainsString('action="'.e(route('client-folders.activities.update', [$folder, $activity])).'"', $content);
+        $this->assertStringContainsString('>Status</label>', $content);
+        $this->assertStringContainsString('<select id="default-check-status-'.$activity->id.'" name="status"', $content);
+        $this->assertStringContainsString('Schedule / Follow-up Date', $content);
+        $this->assertStringContainsString('<input id="default-check-date-'.$activity->id.'" name="scheduled_at" type="date"', $content);
+        $this->assertStringContainsString('<input id="default-check-time-'.$activity->id.'" name="scheduled_time" type="time"', $content);
+        $this->assertStringContainsString('Short Remarks', $content);
+        $this->assertStringContainsString('name="remarks"', $content);
+        $this->assertStringContainsString('Verify employment tenure.', $content);
+        $this->assertMatchesRegularExpression('/data-default-check-cancel><svg[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $content);
+        $this->assertMatchesRegularExpression('/data-default-check-submit><svg[^>]*>.*?<\/svg>\s*Save Changes<\/button>/s', $content);
+    }
+
+    public function test_saving_changes_updates_the_same_custom_activity_without_creating_another(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
+        $activity = $this->customActivity($folder, $ci, null, 'Credit Verification');
+        $definitionCount = ActivityDefinition::query()->count();
+        $activityCount = CiActivity::query()->count();
+        $scheduledDate = now()->addDays(3)->format('Y-m-d');
+
+        $this->actingAs($ci)->putJson(route('client-folders.activities.update', [$folder, $activity]), [
+            'co_maker_id' => null,
+            'expected_updated_at' => $activity->updated_at->toISOString(),
+            'status' => ActivityStatus::Scheduled->value,
+            'scheduled_at' => $scheduledDate,
+            'scheduled_time' => '09:45',
+            'remarks' => 'Coordinate with the employer HR desk.',
+            'intent' => 'return',
+        ])->assertOk();
+
+        $this->assertSame($activityCount, CiActivity::query()->count());
+        $this->assertSame($definitionCount, ActivityDefinition::query()->count());
+        $fresh = $activity->fresh();
+        $this->assertSame(ActivityStatus::Scheduled, $fresh->status);
+        $this->assertNull($fresh->co_maker_id);
+        $this->assertSame('Coordinate with the employer HR desk.', $fresh->remarks);
+        $this->assertSame(
+            $scheduledDate.' 09:45',
+            $fresh->scheduled_at->timezone(config('cims.display_timezone'))->format('Y-m-d H:i')
+        );
+
+        $reloaded = $this->get(route('client-folders.activities.custom-check.show', [$folder, $activity]))->assertOk()->getContent();
+        $this->assertStringContainsString('value="'.$scheduledDate.'"', $reloaded);
+        $this->assertStringContainsString('value="09:45"', $reloaded);
+        $this->assertStringContainsString('Coordinate with the employer HR desk.', $reloaded);
+    }
+
+    public function test_completed_custom_activity_uses_the_same_green_checkmark_as_barangay_check(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
+        $barangay = $this->activityForDefinition(
+            $folder,
+            $ci,
+            ActivityDefinition::query()->where('code', ActivityDefinition::BARANGAY_CHECK_CODE)->firstOrFail(),
+            null,
+            'Barangay reference'
+        );
+        $activity = $this->customActivity($folder, $ci, null, 'Credit Verification');
+
+        $pending = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
+        $pendingRow = $this->activityRow($pending, $activity);
+        $this->assertStringContainsString('class="ci-completion-checkbox"', $pendingRow);
+        $this->assertStringContainsString('class="ci-completion-checkbox"', $this->activityRow($pending, $barangay));
+        $this->assertDoesNotMatchRegularExpression('/data-ci-activity-completion="'.$activity->id.'"[^>]*\schecked(?:\s|=|>)/s', $pendingRow);
+        $this->assertStringContainsString('>Pending</span>', $pendingRow);
 
         $this->putJson(route('client-folders.activities.update', [$folder, $activity]), [
             'co_maker_id' => null,
-            'expected_updated_at' => $activity->updated_at->toISOString(),
-            'status' => 'completed',
+            'expected_updated_at' => $activity->fresh()->updated_at->toISOString(),
+            'status' => ActivityStatus::Completed->value,
             'intent' => 'return',
-        ])->assertOk()->assertJson(['updated' => true]);
+        ])->assertOk();
 
         $this->assertSame(ActivityStatus::Completed, $activity->fresh()->status);
         $completedRow = $this->activityRow($this->get(route('client-folders.activities.index', $folder))->assertOk()->getContent(), $activity);
+        $this->assertStringContainsString('class="ci-completion-checkbox"', $completedRow);
         $this->assertMatchesRegularExpression('/data-ci-activity-completion="'.$activity->id.'"[^>]*checked[^>]*disabled/s', $completedRow);
         $this->assertStringContainsString('>Completed</span>', $completedRow);
-        $this->assertStringNotContainsString('title="Complete"', $completedRow);
+        $this->assertStringContainsString('Credit Verification', $completedRow);
     }
 
-    public function test_custom_open_completion_and_delete_remain_exact_person_scoped(): void
+    public function test_custom_edit_and_delete_remain_exact_person_scoped(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
@@ -116,8 +170,12 @@ class CustomCiActivityWorkflowUiTest extends TestCase
         $activityB = $this->activityForDefinition($folder, $ci, $definition, $coMakerB, 'CO-MAKER B ONLY');
         $this->actingAs($ci);
 
-        $this->get(route('client-folders.activities.edit', [$folder, $activityA]))->assertNotFound();
-        $this->get(route('client-folders.activities.edit', [$folder, $activityA, 'person' => 'co-maker', 'co_maker_id' => $coMakerB->id]))->assertNotFound();
+        $this->get(route('client-folders.activities.custom-check.show', [$folder, $activityA]))->assertNotFound();
+        $this->get(route('client-folders.activities.custom-check.show', [$folder, $activityA, 'person' => 'co-maker', 'co_maker_id' => $coMakerB->id]))->assertNotFound();
+        $this->get(route('client-folders.activities.custom-check.show', [$folder, $activityA, 'person' => 'co-maker', 'co_maker_id' => $coMakerA->id]))
+            ->assertOk()
+            ->assertSee('Co-Maker: ALPHA MAKER');
+
         $this->put(route('client-folders.activities.update', [$folder, $activityA]), ['co_maker_id' => $coMakerB->id, 'status' => 'completed'])->assertForbidden();
         $this->assertSame(ActivityStatus::Pending, $activityA->fresh()->status);
 
@@ -126,11 +184,48 @@ class CustomCiActivityWorkflowUiTest extends TestCase
         $this->assertSame(ActivityStatus::Pending, $activityA->fresh()->status);
         $this->assertSame(ActivityStatus::Pending, $activityB->fresh()->status);
 
+        $this->put(route('client-folders.activities.update', [$folder, $activityA]), ['co_maker_id' => $coMakerA->id, 'status' => 'completed'])->assertRedirect();
+        $this->assertSame(ActivityStatus::Completed, $activityA->fresh()->status);
+        $this->assertSame(ActivityStatus::Pending, $activityB->fresh()->status);
+
         $this->delete(route('client-folders.activities.destroy', [$folder, $activityA]), ['co_maker_id' => $coMakerB->id])->assertNotFound();
         $this->delete(route('client-folders.activities.destroy', [$folder, $activityA]), ['co_maker_id' => $coMakerA->id])->assertRedirect();
         $this->assertDatabaseMissing('ci_activities', ['id' => $activityA->id]);
         $this->assertDatabaseHas('ci_activities', ['id' => $applicant->id]);
         $this->assertDatabaseHas('ci_activities', ['id' => $activityB->id]);
+    }
+
+    public function test_custom_check_route_rejects_canonical_activity_types(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
+        $barangay = $this->activityForDefinition(
+            $folder,
+            $ci,
+            ActivityDefinition::query()->where('code', ActivityDefinition::BARANGAY_CHECK_CODE)->firstOrFail(),
+            null,
+            'Barangay reference'
+        );
+
+        $this->actingAs($ci)->get(route('client-folders.activities.custom-check.show', [$folder, $barangay]))->assertNotFound();
+        $this->get(route('client-folders.activities.default-check.show', [$folder, $barangay]))->assertOk();
+    }
+
+    public function test_completion_modal_uses_iconed_cancel_edit_and_complete_actions(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'created_by' => $ci->id]);
+        $this->customActivity($folder, $ci, null, 'Credit Verification');
+
+        $content = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
+        $start = strpos($content, 'data-quick-complete-modal');
+        $this->assertNotFalse($start);
+        $dialog = substr($content, $start, strpos($content, '</dialog>', $start) - $start);
+
+        $this->assertMatchesRegularExpression('/<svg[^>]*>.*?<\/svg>\s*Complete this activity\?/s', $dialog);
+        $this->assertMatchesRegularExpression('/data-quick-complete-cancel><svg[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $dialog);
+        $this->assertMatchesRegularExpression('/data-quick-complete-edit><svg[^>]*>.*?<\/svg>\s*Edit<\/button>/s', $dialog);
+        $this->assertMatchesRegularExpression('/data-quick-complete-confirm><svg[^>]*>.*?<\/svg>/s', $dialog);
     }
 
     public function test_custom_delete_dialog_uses_iconed_cancel_and_delete_for_the_exact_activity(): void

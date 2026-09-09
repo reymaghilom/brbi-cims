@@ -35,7 +35,7 @@
         $scheduledTodayItems = collect();
         $scheduledTodayNotifications = collect();
         $scheduledTodayUnreadCount = 0;
-        if ($currentUser->role === App\Enums\UserRole::CreditInvestigator) {
+        if ($currentUser->role->worksAsCreditInvestigator()) {
             $scheduledTodayFeed = App\Services\Notifications\ScheduledTodayNotificationFeed::build($currentUser);
             $scheduledTodayItems = $scheduledTodayFeed->items;
             $scheduledTodayNotifications = $scheduledTodayFeed->notificationsByKey;
@@ -97,7 +97,7 @@
                     <p class="min-w-0 text-sm font-semibold leading-5 tracking-[-0.01em] sm:text-base lg:text-[1.05rem]">{{ $greeting }}, {{ $currentUser->full_name }}</p>
                 </div>
                 <div class="flex shrink-0 items-center gap-1 sm:gap-2">
-                    @if($currentUser->role === App\Enums\UserRole::CreditInvestigator)
+                    @if($currentUser->role->worksAsCreditInvestigator())
                         <x-ui.context-menu label="Scheduled Today" class="shrink-0 [&>summary]:focus-visible:outline-none [&>summary]:focus-visible:ring-2 [&>summary]:focus-visible:ring-brand-primary/30 [&>summary]:focus-visible:ring-offset-2">
                             <x-slot:trigger>
                                 <span class="relative grid size-9 place-items-center rounded-full text-brand-sidebar/70 transition hover:bg-brand-soft hover:text-brand-primary group-open:bg-brand-soft group-open:text-brand-primary" data-scheduled-today-bell data-scheduled-today-feed-url="{{ route('notifications.ci-activities.feed') }}">

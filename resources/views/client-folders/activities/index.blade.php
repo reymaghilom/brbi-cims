@@ -31,7 +31,7 @@
         $builtInActivityDefinitions = $definitions->reject->isCustom();
         $customActivityDefinitions = $definitions->filter->isCustom();
         $activityModalStatus = session('status');
-        $activityTypeCreated = is_string($activityModalStatus) && str_ends_with($activityModalStatus, ' activity type is ready to use.');
+        $activityTypeCreated = $activityModalStatus === App\Http\Controllers\CiActivityController::ACTIVITY_TYPE_CREATED_MESSAGE;
         $activityModalHasErrors = $errors->getBag('default')->any();
         $activityModalShouldOpen = $activityModalHasErrors || session('ci_activity_modal_open');
         $activityModalSuccess = $activityTypeCreated ? $activityModalStatus : null;
@@ -178,6 +178,7 @@
                 <div class="flex min-w-0 items-start gap-3"><span class="mt-0.5 text-brand-primary"><x-ui.icon name="activity" size="size-6" /></span><div><h2 id="ci-activities-title" class="text-xl font-bold tracking-tight text-brand-sidebar sm:text-2xl">CI Activities</h2><p class="mt-1 max-w-3xl text-sm leading-6 text-text-muted">Track pending, scheduled, follow-up, and completed investigation activities with proof of submission.</p></div></div>
                 <div class="flex shrink-0 items-center justify-end gap-2">
                     <button type="button" class="ui-button-secondary-compact shrink-0" title="Show Panel" aria-label="Show Panel" aria-controls="activity-history-panel" aria-expanded="false" data-ci-history-show hidden><x-ui.icon name="eye" size="size-3.5" />Show Panel</button>
+                    <button type="button" class="ui-button-secondary-compact shrink-0" data-modal-open="activity-type-management"><x-ui.icon name="settings" size="size-3.5" />Activity Types</button>
                     <button type="button" class="ui-button-primary-compact shrink-0" data-ci-activity-dialog-open><x-ui.icon name="plus" size="size-3.5" />Add Activity</button>
                 </div>
             </div>
@@ -210,7 +211,7 @@
                                 <th scope="col" class="{{ $sortKey === 'activity' ? 'px-4' : 'px-3' }} py-3" aria-sort="none" data-ci-sort-header="{{ $sortKey }}"><button type="button" class="inline-flex items-center gap-1.5 hover:text-brand-sidebar" data-ci-sort="{{ $sortKey }}">{{ $sortLabel }}<span class="inline-flex flex-col text-[0.5rem] leading-[0.4rem]" aria-hidden="true"><span class="opacity-30" data-sort-arrow="asc">▲</span><span class="opacity-30" data-sort-arrow="desc">▼</span></span></button></th>
                             @endforeach
                             <th scope="col" class="px-3 py-3">Proof / Submission</th>
-                            @foreach(['creator' => 'Creator', 'updated' => 'Last Updated'] as $sortKey => $sortLabel)
+                            @foreach(['creator' => 'Created By', 'updated' => 'Last Updated'] as $sortKey => $sortLabel)
                                 <th scope="col" class="px-3 py-3" aria-sort="none" data-ci-sort-header="{{ $sortKey }}"><button type="button" class="inline-flex items-center gap-1.5 hover:text-brand-sidebar" data-ci-sort="{{ $sortKey }}">{{ $sortLabel }}<span class="inline-flex flex-col text-[0.5rem] leading-[0.4rem]" aria-hidden="true"><span class="opacity-30" data-sort-arrow="asc">▲</span><span class="opacity-30" data-sort-arrow="desc">▼</span></span></button></th>
                             @endforeach
                             <th scope="col" class="px-3 py-3 text-center">Actions</th>
@@ -256,21 +257,21 @@
                                     ? $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y').' · '.($activity->scheduled_has_time ? $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time')
                                     : ($activity->visit_date ? $activity->visit_date->format('M j, Y').' · Completed visit' : null);
                             @endphp
-                            <tr id="activity-{{ $activity->id }}" class="align-middle transition hover:bg-surface-subtle/70" data-ci-activity-row data-ci-activity-id="{{ $activity->id }}" data-status="{{ $activity->status->value }}" data-scheduled-today="{{ $scheduledToday ? 'true' : 'false' }}" data-sort-activity="{{ Str::lower($activity->name) }}" data-sort-status="{{ Str::lower($activity->status->label()) }}" data-sort-schedule="{{ $activitySchedule?->timestamp ?? 0 }}" data-sort-creator="{{ Str::lower($activity->creator?->full_name ?? 'System-created') }}" data-sort-updated="{{ $activity->updated_at->timestamp }}" @if(! $visibleActivityIds->contains($activity->id)) hidden @endif>
+                            <tr id="activity-{{ $activity->id }}" class="align-middle transition hover:bg-surface-subtle/70" data-ci-activity-row data-ci-activity-id="{{ $activity->id }}" data-status="{{ $activity->status->value }}" data-scheduled-today="{{ $scheduledToday ? 'true' : 'false' }}" data-sort-activity="{{ Str::lower($activity->display_name) }}" data-sort-status="{{ Str::lower($activity->status->label()) }}" data-sort-schedule="{{ $activitySchedule?->timestamp ?? 0 }}" data-sort-creator="{{ Str::lower($activity->creator?->full_name ?? 'System-created') }}" data-sort-updated="{{ $activity->updated_at->timestamp }}" @if(! $visibleActivityIds->contains($activity->id)) hidden @endif>
                                 <td class="px-4 py-3">
                                     <div class="flex min-w-0 items-start gap-2.5">
                                         @if($hasQuickCompletion)
-                                            <label class="mt-0.5 inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-control has-[:disabled]:cursor-default" title="{{ $completionIsChecked ? $activity->name.' completed' : (in_array($completionKind, ['default', 'custom'], true) ? 'Mark '.$activity->name.' as completed' : 'Open '.$activity->name.' tracker to complete remaining targets') }}">
+                                            <label class="mt-0.5 inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-control has-[:disabled]:cursor-default" title="{{ $completionIsChecked ? $activity->display_name.' completed' : (in_array($completionKind, ['default', 'custom'], true) ? 'Mark '.$activity->display_name.' as completed' : 'Open '.$activity->display_name.' tracker to complete remaining targets') }}">
                                                 <input
                                                     type="checkbox"
-                                                    class="{{ $isCustomActivity ? 'size-5 shrink-0 rounded border-ui-border-strong text-success focus:ring-success focus:ring-offset-2 disabled:cursor-default disabled:opacity-100' : 'ci-completion-checkbox' }}"
-                                                    aria-label="{{ $completionIsChecked ? $activity->name.' completed' : (in_array($completionKind, ['default', 'custom'], true) ? 'Mark '.$activity->name.' as completed' : 'Open '.$activity->name.' tracker to complete remaining targets') }}"
+                                                    class="ci-completion-checkbox"
+                                                    aria-label="{{ $completionIsChecked ? $activity->display_name.' completed' : (in_array($completionKind, ['default', 'custom'], true) ? 'Mark '.$activity->display_name.' as completed' : 'Open '.$activity->display_name.' tracker to complete remaining targets') }}"
                                                     data-ci-activity-completion="{{ $activity->id }}"
                                                     data-completion-kind="{{ $completionKind }}"
                                                     @if($isDefaultCheck || $isCustomActivity)
-                                                        data-completion-name="{{ $activity->name }}"
+                                                        data-completion-name="{{ $activity->display_name }}"
                                                         data-completion-update-url="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}"
-                                                        data-completion-tracker-url="{{ $isCustomActivity ? route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) : route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}"
+                                                        data-completion-tracker-url="{{ $isCustomActivity ? route('client-folders.activities.custom-check.show', [$clientFolder, $activity] + $personParams) : route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}"
                                                         data-completion-expected-updated-at="{{ $activity->updated_at->toISOString() }}"
                                                         data-completion-co-maker-id="{{ $activePerson?->id }}"
                                                         data-completion-status-label="{{ $activity->status->label() }}"
@@ -283,7 +284,7 @@
                                             </label>
                                         @endif
                                         <div class="min-w-0">
-                                            <p class="break-words font-bold text-text-main">{{ $activity->name }}</p>
+                                            <p class="break-words font-bold text-text-main" data-ci-activity-name="{{ $activity->id }}">{{ $activity->display_name }}</p>
                                             @if($isBankCoopCheck)
                                                 <p class="mt-0.5 max-w-52 break-words text-xs text-text-muted" data-bank-coop-progress="{{ $activity->id }}">{{ $activity->bank_targets_count }} {{ str('institution')->plural($activity->bank_targets_count) }} · {{ $activity->completed_bank_targets_count }} completed</p>
                                             @elseif($isAssetCheck)
@@ -301,22 +302,22 @@
                                 <td class="px-3 py-3" data-submission-cell="{{ $activity->id }}">
                                     @include('client-folders.activities.partials.submission-cell', ['activity' => $activity, 'clientFolder' => $clientFolder, 'attachmentCount' => $attachmentCount, 'singleAttachment' => $singleAttachment, 'singleAttachmentIsPreviewable' => $singleAttachmentIsPreviewable])
                                 </td>
-                                <td class="px-3 py-3 text-xs leading-5"><span class="block max-w-36 truncate font-semibold text-text-main">{{ $activity->creator?->full_name ?? 'System-created' }}</span><span class="text-text-muted">Locked creator</span></td>
+                                <td class="px-3 py-3 text-xs leading-5"><span class="block max-w-36 truncate font-semibold text-text-main">{{ $activity->creator?->full_name ?? 'System-created' }}</span></td>
                                 <td class="px-3 py-3 text-xs leading-5 text-text-muted" data-ci-activity-updated-cell="{{ $activity->id }}"><span class="block font-semibold text-text-main">{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('g:i A') }}@if($activity->updater) · {{ $activity->updater->full_name }}@endif</td>
                                 <td class="px-3 py-3">
                                     <div class="flex items-center justify-center gap-1">
                                         @if(! $isDefaultCheck && ! $isBankCoopCheck && ! $isAssetCheck && ! $isCustomActivity)
-                                            <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Update {{ $activity->name }}" title="Update"><x-ui.icon name="edit" size="size-4" /></a>
-                                            <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#schedule" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Schedule or reschedule {{ $activity->name }}" title="Schedule / Reschedule"><x-ui.icon name="calendar" size="size-4" /></a>
-                                            @if($activity->status !== App\Enums\ActivityStatus::Completed)<form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}">@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at->toISOString() }}"><input type="hidden" name="status" value="completed"><input type="hidden" name="intent" value="return"><button type="submit" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Complete {{ $activity->name }}" title="Complete"><x-ui.icon name="check-circle" size="size-4" /></button></form>@endif
+                                            <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Update {{ $activity->display_name }}" title="Update"><x-ui.icon name="edit" size="size-4" /></a>
+                                            <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#schedule" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Schedule or reschedule {{ $activity->display_name }}" title="Schedule / Reschedule"><x-ui.icon name="calendar" size="size-4" /></a>
+                                            @if($activity->status !== App\Enums\ActivityStatus::Completed)<form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}">@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at->toISOString() }}"><input type="hidden" name="status" value="completed"><input type="hidden" name="intent" value="return"><button type="submit" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Complete {{ $activity->display_name }}" title="Complete"><x-ui.icon name="check-circle" size="size-4" /></button></form>@endif
                                         @endif
                                         @if($isDefaultCheck)
                                             {{-- Barangay / Neighbor Check has exactly one row action (Edit) — a 3-dot menu
                                                  just to hold a single item would be an extra click for no reason, so it's
                                                  shown directly instead. --}}
-                                            <button type="button" class="ui-button-secondary-compact" data-default-check-open="{{ $activity->id }}" data-default-check-url="{{ route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}" aria-label="Edit {{ $activity->name }}"><x-ui.icon name="edit" size="size-3.5" />Edit</button>
+                                            <button type="button" class="ui-button-secondary-compact" data-default-check-open="{{ $activity->id }}" data-default-check-url="{{ route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}" aria-label="Edit {{ $activity->display_name }}"><x-ui.icon name="edit" size="size-3.5" />Edit</button>
                                         @else
-                                            <x-ui.context-menu :label="'Actions for '.$activity->name">
+                                            <x-ui.context-menu :label="'Actions for '.$activity->display_name">
                                                 <x-slot:trigger><span class="ui-dots-trigger !size-8"><x-ui.icon name="more-vertical" size="size-4" /></span></x-slot:trigger>
                                                 @if($isBankCoopCheck)
                                                     <button type="button" role="menuitem" class="client-folder-menu-item" data-bank-coop-open="{{ $activity->id }}" data-bank-coop-url="{{ route('client-folders.activities.bank-coop.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="folder" size="size-4" class="text-text-muted" />Open</button>
@@ -327,7 +328,7 @@
                                                     <div class="my-1 border-t border-ui-border"></div>
                                                     <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
                                                 @elseif($isCustomActivity)
-                                                    <button type="button" role="menuitem" class="client-folder-menu-item" data-custom-activity-open="{{ $activity->id }}" data-custom-activity-url="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="folder" size="size-4" class="text-text-muted" />Open</button>
+                                                    <button type="button" role="menuitem" class="client-folder-menu-item" data-default-check-open="{{ $activity->id }}" data-default-check-url="{{ route('client-folders.activities.custom-check.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="edit" size="size-4" class="text-text-muted" />Edit</button>
                                                     <div class="my-1 border-t border-ui-border"></div>
                                                     <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
                                                 @else
@@ -381,19 +382,6 @@
                 </div>
             </dialog>
 
-            <dialog id="custom-activity-tracker-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-5xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-custom-activity-modal aria-labelledby="custom-activity-tracker-title">
-                <div class="flex max-h-[calc(100dvh-2rem)] flex-col">
-                    <div class="relative flex shrink-0 items-start justify-between gap-3 border-b border-ui-border px-5 py-4 sm:px-6">
-                        <div class="min-w-0 pr-10">
-                            <h2 id="custom-activity-tracker-title" class="flex items-center gap-2 break-words text-lg font-bold text-brand-sidebar"><x-ui.icon name="activity" size="size-5" class="shrink-0 text-brand-primary" /><span data-custom-activity-modal-title>Custom Activity</span></h2>
-                            <p class="mt-1 break-words text-sm text-text-muted" data-custom-activity-modal-context>Loading exact activity context&hellip;</p>
-                        </div>
-                        <button type="button" class="ui-icon-button absolute right-3 top-3" data-custom-activity-modal-close aria-label="Close custom activity"><x-ui.icon name="close" size="size-5" /></button>
-                    </div>
-                    <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-subtle/40 p-3 sm:p-4" data-custom-activity-modal-body><div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading custom activity&hellip;</div></div>
-                </div>
-            </dialog>
-
             <dialog id="quick-complete-activity-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-quick-complete-modal aria-labelledby="quick-complete-activity-title">
                 <div class="border-b border-ui-border px-5 py-4">
                     <h2 id="quick-complete-activity-title" class="break-words text-lg font-bold text-brand-sidebar" data-quick-complete-title></h2>
@@ -411,7 +399,7 @@
                     <p class="text-xs text-text-muted">The schedule and time will be cleared. Completion will be recorded in Recent Activity under the actual user confirming this action.</p>
                     <p class="rounded-control border border-danger/25 bg-danger-soft px-3 py-2 font-semibold text-danger" role="alert" data-quick-complete-error hidden></p>
                 </div>
-                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-edit>Edit</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-quick-complete-confirm><x-ui.icon name="check" size="size-4" /><span data-quick-complete-confirm-label>Mark as Completed</span></button></div>
+                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-edit><x-ui.icon name="edit" size="size-4" />Edit</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-quick-complete-confirm><x-ui.icon name="check" size="size-4" /><span data-quick-complete-confirm-label>Mark as Completed</span></button></div>
             </dialog>
 
             <dialog id="remove-submission-proof-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-remove-submission-proof-modal aria-labelledby="remove-submission-proof-title">
@@ -428,8 +416,8 @@
                     $activityProof = $activity->mediaReferences;
                 @endphp
                 @if($activityProof->count() > 1)
-                    <x-ui.modal id="ci-proof-list-{{ $activity->id }}" title="Attachments ({{ $activityProof->count() }})" description="Proof files linked to {{ $activity->name }} only." size="max-w-lg" data-ci-proof-list data-ci-activity-id="{{ $activity->id }}">
-                        <ul class="divide-y divide-ui-border" aria-label="Proof attachments for {{ $activity->name }}">
+                    <x-ui.modal id="ci-proof-list-{{ $activity->id }}" title="Attachments ({{ $activityProof->count() }})" description="Proof files linked to {{ $activity->display_name }} only." size="max-w-lg" data-ci-proof-list data-ci-activity-id="{{ $activity->id }}">
+                        <ul class="divide-y divide-ui-border" aria-label="Proof attachments for {{ $activity->display_name }}">
                             @foreach($activityProof as $proof)
                                 @php
                                     $proofIsPreviewable = Str::startsWith($proof->mime_type, 'image/') || Str::startsWith($proof->mime_type, 'video/');
@@ -475,7 +463,7 @@
                                         <h2 id="submission-dialog-title-{{ $activity->id }}" class="text-lg font-bold text-brand-sidebar">{{ $activity->submitted_at ? 'View / Update Submission' : 'Mark as Submitted' }}</h2>
                                         @if($activity->submitted_at)<span class="inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 text-[0.6875rem] font-bold text-success"><x-ui.icon name="check-circle" size="size-3.5" />Submitted</span>@endif
                                     </div>
-                                    <p class="mt-1.5 truncate text-sm font-bold text-text-main">{{ $activity->name }}</p>
+                                    <p class="mt-1.5 truncate text-sm font-bold text-text-main">{{ $activity->display_name }}</p>
                                     <p class="mt-0.5 text-xs leading-5 text-text-muted">{{ $activePerson?->full_name ?? $clientFolder->display_name }} <span aria-hidden="true">&middot;</span> {{ $activePerson ? 'Co-Maker' : 'Applicant' }}</p>
                                 </div>
                                 <button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close submission dialog"><x-ui.icon name="close" size="size-5" /></button>
@@ -532,7 +520,7 @@
                         </x-slot:formFields>
                     </x-ui.confirmation-dialog>
                 @unless($activity->isMandatoryDefault())
-                    <x-ui.confirmation-dialog id="delete-activity-{{ $activity->id }}" :title="'Permanently delete '.$activity->name.'?'" :action="route('client-folders.activities.destroy', [$clientFolder, $activity])" method="DELETE" :confirm-label="$activity->definition?->isCustom() ? 'Delete' : 'Permanently Delete'" :cancel-icon="$activity->definition?->isCustom() ? 'close' : null" :confirm-icon="$activity->definition?->isCustom() ? 'trash' : null" destructive>
+                    <x-ui.confirmation-dialog id="delete-activity-{{ $activity->id }}" :title="'Permanently delete '.$activity->display_name.'?'" :action="route('client-folders.activities.destroy', [$clientFolder, $activity])" method="DELETE" :confirm-label="$activity->definition?->isCustom() ? 'Delete' : 'Permanently Delete'" :cancel-icon="$activity->definition?->isCustom() ? 'close' : null" :confirm-icon="$activity->definition?->isCustom() ? 'trash' : null" destructive>
                         <p>This action cannot be undone.</p>
                         <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
                     </x-ui.confirmation-dialog>
@@ -580,6 +568,121 @@
         </div>
     </dialog>
 
+    {{-- Activity Type Management — edits the reusable ActivityDefinition, never a CI Activity
+         instance. System (canonical) types are listed read-only; only custom types are manageable,
+         and the server enforces that independently of what this markup shows. --}}
+    <dialog id="activity-type-management" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-4xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-activity-type-manager aria-labelledby="activity-type-management-title" data-activity-type-update-url="{{ route('client-folders.activity-definitions.update', [$clientFolder, '__ID__']) }}" data-activity-type-activation-url="{{ route('client-folders.activity-definitions.activation', [$clientFolder, '__ID__']) }}" data-activity-type-delete-url="{{ route('client-folders.activity-definitions.destroy', [$clientFolder, '__ID__']) }}" data-activity-type-index-url="{{ route('client-folders.activities.index', [$clientFolder] + $personParams) }}" data-activity-type-co-maker-id="{{ $activePerson?->id }}">
+        <div class="flex max-h-[calc(100dvh-2rem)] flex-col">
+            <div class="relative flex shrink-0 items-start justify-between gap-3 border-b border-ui-border px-5 py-4 sm:px-6">
+                <div class="min-w-0 pr-10">
+                    <h2 id="activity-type-management-title" class="flex items-center gap-2 break-words text-lg font-bold text-brand-sidebar"><x-ui.icon name="settings" size="size-5" class="shrink-0 text-brand-primary" />Activity Type Management</h2>
+                    <p class="mt-1 break-words text-sm text-text-muted">Manage custom activity types. Activate, deactivate, or delete activity types as needed.</p>
+                </div>
+                <button type="button" class="ui-icon-button absolute right-3 top-3" data-modal-close aria-label="Close activity type management"><x-ui.icon name="close" size="size-5" /></button>
+            </div>
+
+            <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6" data-activity-type-manager-body>
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div class="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Activity type status">
+                        @foreach(['all' => 'All', 'active' => 'Active', 'inactive' => 'Inactive'] as $tabKey => $tabLabel)
+                            <button type="button" role="tab" class="relative flex min-h-10 shrink-0 items-center gap-2 rounded-control px-3 py-2 text-sm font-semibold text-text-muted transition hover:bg-surface-muted hover:text-brand-sidebar data-[active=true]:bg-brand-soft data-[active=true]:text-brand-primary" data-activity-type-tab="{{ $tabKey }}" data-active="{{ $tabKey === 'all' ? 'true' : 'false' }}" aria-selected="{{ $tabKey === 'all' ? 'true' : 'false' }}">{{ $tabLabel }} <span class="rounded-full bg-surface-muted px-2 py-0.5 text-xs font-bold" data-activity-type-tab-count="{{ $tabKey }}">0</span></button>
+                        @endforeach
+                    </div>
+                    <button type="button" class="ui-button-primary-compact shrink-0" data-activity-type-add><x-ui.icon name="plus" size="size-3.5" />Add Activity Type</button>
+                </div>
+
+                <div class="mt-3">
+                    <label for="activity-type-search" class="sr-only">Search activity types</label>
+                    <input id="activity-type-search" type="search" class="ui-control" placeholder="Search activity types..." autocomplete="off" data-activity-type-search>
+                </div>
+
+                <div class="mt-4 overflow-x-auto rounded-card border border-ui-border">
+                    <table class="w-full min-w-[44rem] border-collapse text-left text-sm">
+                        <thead class="bg-surface-subtle text-xs font-bold uppercase tracking-wide text-text-muted">
+                            <tr>
+                                <th scope="col" class="px-4 py-3">Activity Type</th>
+                                <th scope="col" class="px-3 py-3">Type</th>
+                                <th scope="col" class="px-3 py-3">Status</th>
+                                <th scope="col" class="px-3 py-3">Used In Activities</th>
+                                <th scope="col" class="px-3 py-3 text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-ui-border bg-surface" data-activity-type-rows>
+                            @foreach($manageableDefinitions as $definition)
+                                @php
+                                    $isSystemType = ! $definition->isCustom();
+                                    $usageCount = $definition->activities_count;
+                                @endphp
+                                <tr class="align-middle transition hover:bg-surface-subtle/70" data-activity-type-row data-activity-type-id="{{ $definition->id }}" data-activity-type-name="{{ $definition->name }}" data-activity-type-kind="{{ $isSystemType ? 'system' : 'custom' }}" data-activity-type-state="{{ $definition->is_active ? 'active' : 'inactive' }}" data-activity-type-usage="{{ $usageCount }}">
+                                    <td class="px-4 py-3"><span class="block break-words font-bold text-text-main">{{ $definition->name }}</span></td>
+                                    <td class="px-3 py-3"><span @class(['inline-flex rounded-full px-2.5 py-1 text-xs font-bold', 'bg-surface-muted text-text-muted' => $isSystemType, 'bg-brand-soft text-brand-primary' => ! $isSystemType])>{{ $isSystemType ? 'System' : 'Custom' }}</span></td>
+                                    <td class="px-3 py-3"><span @class(['inline-flex rounded-full px-2.5 py-1 text-xs font-bold', 'bg-success-soft text-success' => $definition->is_active, 'bg-surface-muted text-text-muted' => ! $definition->is_active])>{{ $definition->is_active ? 'Active' : 'Inactive' }}</span></td>
+                                    <td class="px-3 py-3 text-sm font-semibold text-text-main">{{ $usageCount }}</td>
+                                    <td class="px-3 py-3">
+                                        <div class="flex items-center justify-center">
+                                            @if($isSystemType)
+                                                <span class="text-sm text-text-muted" title="System activity types cannot be edited, deactivated, or deleted">&mdash;</span>
+                                            @else
+                                                <x-ui.context-menu :label="'Actions for '.$definition->name">
+                                                    <x-slot:trigger><span class="ui-dots-trigger !size-8"><x-ui.icon name="more-vertical" size="size-4" /></span></x-slot:trigger>
+                                                    <button type="button" role="menuitem" class="client-folder-menu-item" data-activity-type-edit><x-ui.icon name="edit" size="size-4" class="text-text-muted" />Edit</button>
+                                                    @if($definition->is_active)
+                                                        <button type="button" role="menuitem" class="client-folder-menu-item" data-activity-type-deactivate><x-ui.icon name="eye-off" size="size-4" class="text-text-muted" />Deactivate</button>
+                                                    @else
+                                                        <button type="button" role="menuitem" class="client-folder-menu-item" data-activity-type-activate><x-ui.icon name="check-circle" size="size-4" class="text-success" />Activate</button>
+                                                    @endif
+                                                    @if($usageCount === 0)
+                                                        <div class="my-1 border-t border-ui-border"></div>
+                                                        <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-activity-type-delete><x-ui.icon name="trash" size="size-4" />Delete Permanently</button>
+                                                    @endif
+                                                </x-ui.context-menu>
+                                            @endif
+                                        </div>
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+
+                <p class="mt-4 rounded-control border border-ui-border bg-surface-subtle px-3.5 py-3 text-sm font-semibold text-text-muted" data-activity-type-empty hidden>No activity types match this filter.</p>
+                <p class="mt-3 flex items-start gap-1.5 rounded-control border border-danger/25 bg-danger-soft px-3.5 py-3 text-sm font-semibold text-danger" role="alert" data-activity-type-error hidden><x-ui.icon name="warning" size="size-4" class="mt-0.5 shrink-0" /><span data-activity-type-error-message></span></p>
+
+                <div class="mt-4 space-y-1.5 rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted">
+                    <p class="text-sm font-semibold text-text-main">Note</p>
+                    <p>&bull; System activity types (Barangay Check, Neighbor Check, Asset Check, Bank/Coop Check) cannot be deleted or deactivated.</p>
+                    <p>&bull; Only custom activity types can be activated or deactivated. Deactivating one keeps every existing CI Activity record.</p>
+                    <p>&bull; Permanent deletion is available only when a custom activity type has not been used in any CI Activities.</p>
+                </div>
+            </div>
+
+            <div class="flex shrink-0 flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-modal-close><x-ui.icon name="close" size="size-4" />Close</button></div>
+        </div>
+
+        <dialog class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-activity-type-confirm aria-labelledby="activity-type-confirm-title">
+            <div class="border-b border-ui-border px-5 py-4"><h2 id="activity-type-confirm-title" class="flex items-center gap-2 text-lg font-bold text-brand-sidebar"><x-ui.icon name="eye-off" size="size-5" class="shrink-0 text-text-muted" data-activity-type-confirm-icon-deactivate /><x-ui.icon name="check-circle" size="size-5" class="shrink-0 text-success" data-activity-type-confirm-icon-activate hidden /><x-ui.icon name="trash" size="size-5" class="shrink-0 text-danger" data-activity-type-confirm-icon-delete hidden /><span data-activity-type-confirm-title>Deactivate Activity Type?</span></h2></div>
+            <div class="space-y-2 px-5 py-5 text-sm leading-6 text-text-muted"><p class="font-semibold text-text-main" data-activity-type-confirm-name></p><p data-activity-type-confirm-message></p><p class="rounded-control border border-danger/25 bg-danger-soft px-3 py-2 font-semibold text-danger" role="alert" data-activity-type-confirm-error hidden></p></div>
+            <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end">
+                <button type="button" class="ui-button-secondary" data-activity-type-confirm-cancel><x-ui.icon name="close" size="size-4" />Cancel</button>
+                <button type="button" class="ui-button-primary" data-activity-type-confirm-accept data-variant="primary"><x-ui.icon name="eye-off" size="size-4" data-activity-type-accept-icon-deactivate /><x-ui.icon name="check" size="size-4" data-activity-type-accept-icon-activate hidden /><x-ui.icon name="trash" size="size-4" data-activity-type-accept-icon-delete hidden /><span data-activity-type-confirm-accept-label>Deactivate</span></button>
+            </div>
+        </dialog>
+
+        <dialog class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-activity-type-edit-dialog aria-labelledby="activity-type-edit-title">
+            <form data-activity-type-edit-form novalidate>
+                <div class="border-b border-ui-border px-5 py-4"><h2 id="activity-type-edit-title" class="flex items-center gap-2 break-words text-lg font-bold text-brand-sidebar"><x-ui.icon name="edit" size="size-5" class="shrink-0 text-brand-primary" /><span data-activity-type-edit-title>Edit Activity Type</span></h2></div>
+                <div class="px-5 py-5">
+                    <label for="activity-type-edit-name" class="ui-label">Activity Type Name</label>
+                    <input id="activity-type-edit-name" type="text" class="ui-control" maxlength="255" autocomplete="off" required data-activity-type-edit-name>
+                    <p class="ui-help">This renames the reusable activity type only. Existing CI Activities keep their own records.</p>
+                    <p class="mt-2 flex items-start gap-1.5 rounded-control border border-progress/30 bg-progress-soft px-3 py-2 text-sm font-semibold text-progress" data-activity-type-edit-no-changes role="status" aria-live="polite" hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected. Nothing needs to be updated.</p>
+                    <p class="mt-2 rounded-control border border-danger/25 bg-danger-soft px-3 py-2 text-sm font-semibold text-danger" role="alert" data-activity-type-edit-error hidden></p>
+                </div>
+                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-activity-type-edit-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary"><x-ui.icon name="check" size="size-4" />Save Changes</button></div>
+            </form>
+        </dialog>
+    </dialog>
+
     <dialog class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-ci-activity-dialog @if($activityModalShouldOpen) open data-ci-activity-initial-open @endif @if($activityModalHasErrors) data-ci-activity-validation-open data-modal-state="open" @endif>
         <form method="POST" action="{{ route('client-folders.activities.store', $clientFolder) }}" enctype="multipart/form-data" class="flex max-h-[calc(100dvh-2rem)] flex-col" data-ci-activity-create-form novalidate>
             @csrf
@@ -620,10 +723,7 @@
                                     @php
                                         $alreadyAdded = $existingDefinitionIds->contains($definition->id);
                                     @endphp
-                                    <div class="flex min-w-0 items-center" role="presentation" data-custom-activity-type-row="{{ $definition->id }}">
-                                        <button type="button" class="flex min-h-10 min-w-0 flex-1 items-center px-3 py-2 text-left text-sm font-normal leading-5 transition hover:bg-surface-subtle focus:bg-surface-subtle focus:outline-none aria-selected:bg-brand-soft aria-selected:text-brand-primary disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60" role="option" data-activity-type-option data-value="{{ $definition->id }}" data-code="{{ $definition->code }}" data-label="{{ $definition->name }}" aria-selected="{{ (string) $selectedActivityDefinitionId === (string) $definition->id ? 'true' : 'false' }}" @disabled($alreadyAdded)><span class="min-w-0 flex-1 truncate">{{ $definition->name }}</span>@if($alreadyAdded)<span class="shrink-0 pl-3 text-xs font-normal">Already Added</span>@endif</button>
-                                        <button type="button" class="mr-1 grid size-9 shrink-0 place-items-center rounded-control text-base font-bold text-danger transition hover:bg-danger-soft focus:bg-danger-soft focus:outline-none focus:ring-2 focus:ring-danger/30" title="Remove Activity Type" aria-label="Remove {{ $definition->name }} activity type" data-activity-type-remove="{{ $definition->id }}" data-activity-type-remove-dialog="remove-activity-definition-{{ $definition->id }}"><span aria-hidden="true">&minus;</span></button>
-                                    </div>
+                                    <div class="flex min-w-0 items-center" role="presentation" data-custom-activity-type-row="{{ $definition->id }}"><button type="button" class="flex min-h-10 w-full min-w-0 items-center px-3 py-2 text-left text-sm font-normal leading-5 transition hover:bg-surface-subtle focus:bg-surface-subtle focus:outline-none aria-selected:bg-brand-soft aria-selected:text-brand-primary disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60" role="option" data-activity-type-option data-value="{{ $definition->id }}" data-code="{{ $definition->code }}" data-label="{{ $definition->name }}" aria-selected="{{ (string) $selectedActivityDefinitionId === (string) $definition->id ? 'true' : 'false' }}" @disabled($alreadyAdded)><span class="min-w-0 flex-1 truncate">{{ $definition->name }}</span>@if($alreadyAdded)<span class="shrink-0 pl-3 text-xs font-normal">Already Added</span>@endif</button></div>
                                 @endforeach
                                 </div>
                             @endif
@@ -733,9 +833,9 @@
     </dialog>
 
     <dialog id="bank-target-remove-dialog" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-bank-target-remove-dialog aria-labelledby="bank-target-remove-title">
-        <div class="border-b border-ui-border px-5 py-4"><h2 id="bank-target-remove-title" class="text-lg font-bold text-brand-sidebar">Remove this Bank / Coop entry?</h2></div>
+        <div class="border-b border-ui-border px-5 py-4"><h2 id="bank-target-remove-title" class="text-lg font-bold text-brand-sidebar">Remove this Bank / Coop record?</h2></div>
         <div class="px-5 py-5 text-sm leading-6 text-text-muted">This row already contains information. Removing it will discard the data entered in this row.</div>
-        <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-bank-target-remove-cancel>Cancel</button><button type="button" class="ui-button-danger" data-bank-target-remove-confirm>Remove Entry</button></div>
+        <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-bank-target-remove-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-danger" data-bank-target-remove-confirm><x-ui.icon name="trash" size="size-4" />Remove Record</button></div>
     </dialog>
 
     <dialog id="asset-target-remove-dialog" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-asset-target-remove-dialog aria-labelledby="asset-target-remove-title">
@@ -744,33 +844,19 @@
         <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-asset-target-remove-cancel>Cancel</button><button type="button" class="ui-button-danger" data-asset-target-remove-confirm>Remove Entry</button></div>
     </dialog>
 
-    @foreach($customActivityDefinitions as $definition)
-        <x-ui.confirmation-dialog
-            id="remove-activity-definition-{{ $definition->id }}"
-            :title="$definition->activities_count === 0 ? 'Delete Activity Type?' : 'Remove Activity Type?'"
-            :action="route('client-folders.activity-definitions.deactivate', [$clientFolder, $definition])"
-            method="DELETE"
-            :confirm-label="$definition->activities_count === 0 ? 'Delete Permanently' : 'Remove'"
-            :destructive="$definition->activities_count === 0"
-        >
-            @if($definition->activities_count === 0)
-                <p><span class="font-semibold text-text-main">{{ $definition->name }}</span> will be permanently deleted and can be created again later.</p>
-            @else
-                <p><span class="font-semibold text-text-main">{{ $definition->name }}</span> has existing activity history. It will be removed from future selection, but historical records will be preserved.</p>
-            @endif
-            <x-slot:formFields>
-                <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
-                <input type="hidden" name="status" value="{{ $filter }}">
-                <input type="hidden" name="selected_activity_definition_id" value="" data-activity-type-current-selection>
-            </x-slot:formFields>
-        </x-ui.confirmation-dialog>
-    @endforeach
 
     <script>
         // Inserts already-persisted, server-rendered history entries (newest first) at the
         // top of the Activity History list. This never issues a request of its own — callers
         // pass the `history` HTML that already came back on the SAME mutation response, so
         // there is no second history fetch and no client-fabricated entry.
+        // The Activity Type creation confirmation belongs to that one creation event: it is
+        // dismissed the moment the user selects a different Activity Type, and never survives a
+        // modal session, so reopening Add Activity never shows stale feedback.
+        function dismissActivityTypeSuccess() {
+            document.querySelector('[data-ci-activity-success]')?.remove();
+        }
+
         function insertCiActivityHistoryEntries(entryHtmlList) {
             if (! Array.isArray(entryHtmlList) || entryHtmlList.length === 0) return;
             const container = document.querySelector('[data-ci-activity-history]');
@@ -846,6 +932,7 @@
 
                 const finishClose = () => {
                     closeTimer = null;
+                    dismissActivityTypeSuccess();
                     if (dialog.open) dialog.close();
                     delete dialog.dataset.modalState;
                     openButton.focus();
@@ -1007,8 +1094,7 @@
             const trigger = document.querySelector('[data-activity-type-trigger]');
             const optionsPanel = document.querySelector('[data-activity-type-options]');
             const selectionLabel = document.querySelector('[data-activity-type-label]');
-            const options = [...document.querySelectorAll('[data-activity-type-option]')];
-            const removeButtons = [...document.querySelectorAll('[data-activity-type-remove]')];
+            let options = [...document.querySelectorAll('[data-activity-type-option]')];
             const fields = document.querySelector('[data-new-activity-type-fields]');
             const input = document.querySelector('[data-new-activity-type-input]');
             const standardFields = [...document.querySelectorAll('[data-standard-activity-field]')];
@@ -1442,6 +1528,7 @@
             };
 
             select.addEventListener('change', syncNewActivityType);
+            select.addEventListener('change', dismissActivityTypeSuccess);
             bankTargetAdd.addEventListener('click', addBankTargetRow);
             assetTargetAdd.addEventListener('click', addAssetTargetRow);
             trigger.addEventListener('click', () => {
@@ -1453,7 +1540,8 @@
                 event.preventDefault();
                 openActivityTypeOptions(event.key === 'ArrowUp');
             });
-            options.forEach((option) => option.addEventListener('click', () => chooseActivityType(option)));
+            const bindActivityTypeOption = (option) => option.addEventListener('click', () => chooseActivityType(option));
+            options.forEach(bindActivityTypeOption);
             optionsPanel.addEventListener('keydown', (event) => {
                 if (event.key === 'Escape') {
                     event.preventDefault();
@@ -1473,59 +1561,26 @@
                         : (current + (event.key === 'ArrowDown' ? 1 : -1) + available.length) % available.length;
                 available[next]?.focus();
             });
-            removeButtons.forEach((button) => {
-                const dialog = document.getElementById(button.dataset.activityTypeRemoveDialog ?? '');
-                const removalForm = dialog?.querySelector('form');
-                if (!(dialog instanceof HTMLDialogElement) || !(removalForm instanceof HTMLFormElement)) return;
 
-                button.addEventListener('click', (event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    closeActivityTypeOptions();
-                    const currentSelection = dialog.querySelector('[data-activity-type-current-selection]');
-                    if (currentSelection instanceof HTMLInputElement) currentSelection.value = select.value;
-                    if (! dialog.open) dialog.showModal();
-                });
+            // Activity Type Management edits the authoritative ActivityDefinition rows; this
+            // re-renders the Add Activity type list from that same server render so an activated
+            // type becomes selectable, and a deactivated/deleted one stops being selectable,
+            // without reloading the CI Activities page.
+            document.addEventListener('ci-activity-types-changed', (event) => {
+                const page = event.detail?.page;
+                if (!(page instanceof Document)) return;
+                const freshPanel = page.querySelector('[data-activity-type-options]');
+                if (!(freshPanel instanceof HTMLElement)) return;
+                const previousValue = select.value;
 
-                removalForm.addEventListener('submit', async (event) => {
-                    event.preventDefault();
-                    if (removalForm.dataset.submitting === 'true') return;
-                    removalForm.dataset.submitting = 'true';
-                    const confirmButton = removalForm.querySelector('[type="submit"]');
-                    if (confirmButton instanceof HTMLButtonElement) {
-                        confirmButton.disabled = true;
-                        confirmButton.setAttribute('aria-busy', 'true');
-                    }
+                optionsPanel.innerHTML = freshPanel.innerHTML;
+                options = [...optionsPanel.querySelectorAll('[data-activity-type-option]')];
+                options.forEach(bindActivityTypeOption);
 
-                    try {
-                        const response = await fetch(removalForm.action, {
-                            method: removalForm.method,
-                            body: new FormData(removalForm),
-                            credentials: 'same-origin',
-                            headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'text/html' },
-                        });
-                        if (! response.ok) throw new Error('Activity Type removal failed.');
-
-                        const updatedPage = new DOMParser().parseFromString(await response.text(), 'text/html');
-                        const definitionId = button.dataset.activityTypeRemove ?? '';
-                        if (! updatedPage.querySelector('[data-ci-activity-dialog]')
-                            || updatedPage.querySelector(`[data-activity-type-remove="${definitionId}"]`)) {
-                            throw new Error('Removed Activity Type is still selectable.');
-                        }
-
-                        dialog.close();
-                        button.closest('[data-custom-activity-type-row]')?.remove();
-                        const customGroup = optionsPanel.querySelector('[data-custom-activity-types]');
-                        if (customGroup && ! customGroup.querySelector('[data-activity-type-remove]')) customGroup.remove();
-                        dialog.remove();
-
-                        if (select.value === definitionId || addingNewActivityType()) resetActivityType();
-                        else syncNewActivityType();
-                        trigger.focus();
-                    } catch (error) {
-                        HTMLFormElement.prototype.submit.call(removalForm);
-                    }
-                });
+                const stillSelectable = options.find((option) => option.dataset.value === previousValue && ! option.disabled);
+                if (stillSelectable) chooseActivityType(stillSelectable);
+                else if (previousValue !== '') resetActivityType();
+                closeActivityTypeOptions();
             });
             document.addEventListener('click', (event) => {
                 if (! selector.contains(event.target)) closeActivityTypeOptions();
@@ -1777,148 +1832,279 @@
         });
 
         document.addEventListener('DOMContentLoaded', () => {
-            const modal = document.querySelector('[data-custom-activity-modal]');
-            const body = modal?.querySelector('[data-custom-activity-modal-body]');
-            const title = modal?.querySelector('[data-custom-activity-modal-title]');
-            const context = modal?.querySelector('[data-custom-activity-modal-context]');
-            if (!(modal instanceof HTMLDialogElement) || !(body instanceof HTMLElement) || !(title instanceof HTMLElement) || !(context instanceof HTMLElement)) return;
+            const manager = document.querySelector('[data-activity-type-manager]');
+            const rowsBody = manager?.querySelector('[data-activity-type-rows]');
+            const search = manager?.querySelector('[data-activity-type-search]');
+            const empty = manager?.querySelector('[data-activity-type-empty]');
+            const error = manager?.querySelector('[data-activity-type-error]');
+            const errorMessage = manager?.querySelector('[data-activity-type-error-message]');
+            const confirmDialog = manager?.querySelector('[data-activity-type-confirm]');
+            const editDialog = manager?.querySelector('[data-activity-type-edit-dialog]');
+            const editForm = manager?.querySelector('[data-activity-type-edit-form]');
+            const editName = manager?.querySelector('[data-activity-type-edit-name]');
+            if (!(manager instanceof HTMLDialogElement)
+                || !(rowsBody instanceof HTMLElement)
+                || !(search instanceof HTMLInputElement)
+                || !(empty instanceof HTMLElement)
+                || !(confirmDialog instanceof HTMLDialogElement)
+                || !(editDialog instanceof HTMLDialogElement)
+                || !(editForm instanceof HTMLFormElement)
+                || !(editName instanceof HTMLInputElement)) return;
 
-            const loadingMarkup = '<div class="grid min-h-40 place-items-center rounded-card border border-ui-border bg-surface p-6 text-sm font-semibold text-text-muted" role="status">Loading custom activity&hellip;</div>';
-            let currentUrl = '';
-            let currentActivityId = '';
-            let currentOpener = null;
+            const tabs = [...manager.querySelectorAll('[data-activity-type-tab]')];
+            const confirmTitle = confirmDialog.querySelector('[data-activity-type-confirm-title]');
+            const confirmName = confirmDialog.querySelector('[data-activity-type-confirm-name]');
+            const confirmMessage = confirmDialog.querySelector('[data-activity-type-confirm-message]');
+            const confirmError = confirmDialog.querySelector('[data-activity-type-confirm-error]');
+            const confirmAccept = confirmDialog.querySelector('[data-activity-type-confirm-accept]');
+            const confirmAcceptLabel = confirmDialog.querySelector('[data-activity-type-confirm-accept-label]');
+            const editTitle = editDialog.querySelector('[data-activity-type-edit-title]');
+            const editError = editDialog.querySelector('[data-activity-type-edit-error]');
+            const editNoChanges = editDialog.querySelector('[data-activity-type-edit-no-changes]');
+            if (!(confirmAccept instanceof HTMLButtonElement)) return;
 
-            const statusClasses = {
-                pending: ['bg-progress-soft', 'text-progress'],
-                scheduled: ['bg-brand-soft', 'text-brand-primary'],
-                follow_up: ['bg-[#fff0e7]', 'text-[#c85b12]'],
-                completed: ['bg-success-soft', 'text-success'],
+            const csrfToken = () => document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+            const coMakerId = manager.dataset.activityTypeCoMakerId ?? '';
+            const urlFor = (template, id) => (template ?? '').replace('__ID__', id);
+
+            const intents = {
+                deactivate: {
+                    title: 'Deactivate Activity Type?',
+                    message: 'Existing CI Activity records will remain. This activity type will no longer be available for creating new activities.',
+                    // Shown instead once the type already backs at least one CI Activity.
+                    usedMessage: 'This activity type is already in use. It will be removed from future selection, while all existing records will be preserved.',
+                    accept: 'Deactivate',
+                    acceptClass: 'ui-button-primary',
+                },
+                activate: {
+                    title: 'Activate Activity Type?',
+                    message: 'This activity type will become available again for new CI Activities. No existing record is changed.',
+                    accept: 'Activate',
+                    acceptClass: 'ui-button-primary',
+                },
+                delete: {
+                    title: 'Delete Activity Type Permanently?',
+                    message: 'This activity type has not been used in any CI Activities. This action cannot be undone.',
+                    accept: 'Delete Permanently',
+                    acceptClass: 'ui-button-danger',
+                },
             };
 
-            const synchronizeTable = (source) => {
-                const activityId = source.dataset.customActivityId ?? '';
-                const status = source.dataset.customActivityStatus ?? 'pending';
-                const badge = document.querySelector(`[data-ci-activity-status-badge="${activityId}"]`);
-                const row = badge?.closest('[data-ci-activity-row]');
-                const checkbox = document.querySelector(`[data-ci-activity-completion="${activityId}"]`);
-                const scheduleCell = document.querySelector(`[data-ci-activity-schedule-cell="${activityId}"]`);
-                const updatedCell = document.querySelector(`[data-ci-activity-updated-cell="${activityId}"]`);
+            let activeIntent = null;
+            let activeRow = null;
 
-                if (badge instanceof HTMLElement) {
-                    Object.values(statusClasses).flat().forEach((className) => badge.classList.remove(className));
-                    (statusClasses[status] ?? statusClasses.pending).forEach((className) => badge.classList.add(className));
-                    badge.textContent = source.dataset.customActivityStatusLabel ?? 'Pending';
-                }
-                if (checkbox instanceof HTMLInputElement) {
-                    const completed = status === 'completed';
-                    checkbox.checked = completed;
-                    checkbox.disabled = completed;
-                    checkbox.dataset.completionExpectedUpdatedAt = source.dataset.customActivityUpdatedIso ?? checkbox.dataset.completionExpectedUpdatedAt;
-                }
-                if (scheduleCell instanceof HTMLElement) {
-                    const schedule = source.dataset.customActivitySchedule ?? '—';
-                    scheduleCell.replaceChildren();
-                    if (schedule === '—') {
-                        scheduleCell.textContent = '—';
-                    } else {
-                        const date = document.createElement('span');
-                        date.className = 'block font-semibold text-text-main';
-                        date.textContent = schedule;
-                        scheduleCell.append(date, document.createTextNode(source.dataset.customActivityScheduleTime ?? ''));
-                    }
-                }
-                if (updatedCell instanceof HTMLElement) {
-                    const date = document.createElement('span');
-                    date.className = 'block font-semibold text-text-main';
-                    date.textContent = source.dataset.customActivityUpdatedDate ?? '';
-                    updatedCell.replaceChildren(date, document.createTextNode(source.dataset.customActivityUpdatedDetail ?? ''));
-                }
-                if (row instanceof HTMLTableRowElement) {
-                    row.dataset.status = status;
-                    row.dataset.sortStatus = (source.dataset.customActivityStatusLabel ?? status).toLocaleLowerCase();
-                    row.dataset.sortUpdated = source.dataset.customActivityUpdatedTimestamp ?? row.dataset.sortUpdated;
-                }
+            const showError = (message) => {
+                if (!(error instanceof HTMLElement) || !(errorMessage instanceof HTMLElement)) return;
+                errorMessage.textContent = message;
+                error.hidden = false;
             };
+            const clearError = () => { if (error instanceof HTMLElement) error.hidden = true; };
 
-            const bindSource = (source) => {
-                title.textContent = source.dataset.customActivityName ?? 'Custom Activity';
-                context.textContent = source.dataset.customActivityContext ?? '';
-                source.querySelector('[data-custom-activity-cancel]')?.addEventListener('click', () => modal.close());
+            const currentRows = () => [...rowsBody.querySelectorAll('[data-activity-type-row]')];
 
-                const status = source.querySelector('[data-ci-edit-status] select[name="status"]');
-                const schedule = source.querySelector('[data-ci-edit-schedule]');
-                const scheduleTime = source.querySelector('[data-ci-edit-schedule-time]');
-                const help = source.querySelector('[data-ci-edit-schedule-help]');
-                if (status instanceof HTMLSelectElement && schedule instanceof HTMLInputElement && scheduleTime instanceof HTMLInputElement) {
-                    const syncScheduleAvailability = () => {
-                        const enabled = ['scheduled', 'follow_up'].includes(status.value);
-                        if (! enabled) { schedule.value = ''; scheduleTime.value = ''; }
-                        schedule.disabled = ! enabled;
-                        scheduleTime.disabled = ! enabled;
-                        schedule.required = status.value === 'scheduled';
-                        schedule.setAttribute('aria-disabled', enabled ? 'false' : 'true');
-                        scheduleTime.setAttribute('aria-disabled', enabled ? 'false' : 'true');
-                        if (help instanceof HTMLElement) help.textContent = enabled
-                            ? 'Without a time, the creator is reminded at 8:00 AM on the selected date.'
-                            : 'Available when the status is Scheduled or For Follow-up.';
-                    };
-                    status.addEventListener('change', syncScheduleAvailability);
-                    syncScheduleAvailability();
-                }
-
-                source.querySelectorAll('[data-ci-proof-replace-input]').forEach((input) => {
-                    input.addEventListener('change', () => {
-                        if (!(input instanceof HTMLInputElement) || ! input.files?.length) return;
-                        const form = input.closest('[data-ci-proof-replace-form]');
-                        if (form instanceof HTMLFormElement) form.requestSubmit();
-                    });
+            const applyFilters = () => {
+                const term = search.value.trim().toLocaleLowerCase();
+                const activeTab = tabs.find((tab) => tab.dataset.active === 'true')?.dataset.activityTypeTab ?? 'all';
+                const rows = currentRows();
+                const counts = { all: rows.length, active: 0, inactive: 0 };
+                rows.forEach((row) => {
+                    const state = row.dataset.activityTypeState ?? 'active';
+                    counts[state] = (counts[state] ?? 0) + 1;
                 });
-                synchronizeTable(source);
+                tabs.forEach((tab) => {
+                    const key = tab.dataset.activityTypeTab ?? 'all';
+                    const badge = manager.querySelector(`[data-activity-type-tab-count="${key}"]`);
+                    if (badge instanceof HTMLElement) badge.textContent = String(counts[key] ?? 0);
+                });
+
+                let visible = 0;
+                rows.forEach((row) => {
+                    const matchesTab = activeTab === 'all' || (row.dataset.activityTypeState ?? '') === activeTab;
+                    const matchesTerm = term === '' || (row.dataset.activityTypeName ?? '').toLocaleLowerCase().includes(term);
+                    const show = matchesTab && matchesTerm;
+                    row.hidden = ! show;
+                    if (show) visible += 1;
+                });
+                empty.hidden = visible > 0;
             };
 
-            const loadActivity = async (url, activityId) => {
-                body.innerHTML = loadingMarkup;
-                const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } });
-                if (! response.ok) throw new Error('Unable to load this custom activity.');
-                const page = new DOMParser().parseFromString(await response.text(), 'text/html');
-                const source = page.querySelector('[data-custom-activity-modal-source]');
-                if (!(source instanceof HTMLElement) || source.dataset.customActivityId !== activityId) throw new Error('The requested custom activity context could not be verified.');
-                body.replaceChildren(source);
-                bindSource(source);
-            };
-
-            document.querySelectorAll('[data-custom-activity-open]').forEach((opener) => opener.addEventListener('click', async () => {
-                currentUrl = opener.dataset.customActivityUrl ?? '';
-                currentActivityId = opener.dataset.customActivityOpen ?? '';
-                currentOpener = opener;
-                context.textContent = 'Loading exact activity context…';
-                if (! modal.open) modal.showModal();
-                try {
-                    await loadActivity(currentUrl, currentActivityId);
-                } catch (error) {
-                    body.innerHTML = `<div class="rounded-card border border-danger/25 bg-danger-soft p-5 text-sm font-semibold text-danger">${error instanceof Error ? error.message : 'Unable to load this custom activity.'}</div>`;
-                }
+            tabs.forEach((tab) => tab.addEventListener('click', () => {
+                tabs.forEach((candidate) => {
+                    const selected = candidate === tab;
+                    candidate.dataset.active = selected ? 'true' : 'false';
+                    candidate.setAttribute('aria-selected', selected ? 'true' : 'false');
+                });
+                applyFilters();
             }));
+            search.addEventListener('input', applyFilters);
+            applyFilters();
 
-            document.addEventListener('ci-custom-activity-refresh-request', async (event) => {
-                const url = String(event.detail?.url ?? '');
-                const activityId = String(event.detail?.activityId ?? '');
-                if (url === '' || activityId === '') return;
-                const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } });
-                if (! response.ok) return;
+            // Re-reads the authoritative server render: the management table, the Add Activity
+            // type list and its removal dialogs all come from the same response.
+            const refreshFromServer = async () => {
+                const response = await fetch(manager.dataset.activityTypeIndexUrl ?? '', {
+                    credentials: 'same-origin',
+                    headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' },
+                });
+                if (! response.ok) throw new Error('The activity types could not be refreshed. Please reload the page.');
                 const page = new DOMParser().parseFromString(await response.text(), 'text/html');
-                const source = page.querySelector('[data-custom-activity-modal-source]');
-                if (source instanceof HTMLElement && source.dataset.customActivityId === activityId) synchronizeTable(source);
+                const freshRows = page.querySelector('[data-activity-type-rows]');
+                if (freshRows instanceof HTMLElement) rowsBody.innerHTML = freshRows.innerHTML;
+                applyFilters();
+
+                // A renamed Activity Type must show its new name on the activities already listed
+                // behind this modal. Only the rendered name text is copied across — every row
+                // keeps its own element, and with it its existing bindings and state.
+                page.querySelectorAll('[data-ci-activity-name]').forEach((freshName) => {
+                    const activityId = freshName.dataset.ciActivityName ?? '';
+                    const currentName = document.querySelector(`[data-ci-activity-name="${activityId}"]`);
+                    if (currentName instanceof HTMLElement) currentName.textContent = freshName.textContent;
+                    const checkbox = document.querySelector(`[data-ci-activity-completion="${activityId}"]`);
+                    const freshCheckbox = page.querySelector(`[data-ci-activity-completion="${activityId}"]`);
+                    if (checkbox instanceof HTMLInputElement && freshCheckbox instanceof HTMLInputElement && freshCheckbox.dataset.completionName) {
+                        checkbox.dataset.completionName = freshCheckbox.dataset.completionName;
+                    }
+                });
+                document.dispatchEvent(new CustomEvent('ci-activity-types-changed', { detail: { page } }));
+            };
+
+            const submitAction = async (url, method, body) => {
+                const formData = new FormData();
+                formData.set('_token', csrfToken());
+                if (method !== 'POST') formData.set('_method', method);
+                formData.set('co_maker_id', coMakerId);
+                Object.entries(body ?? {}).forEach(([key, value]) => formData.set(key, value));
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'same-origin',
+                    headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (! response.ok) {
+                    const validation = Object.values(payload.errors ?? {}).flat().find((message) => typeof message === 'string');
+                    throw new Error(validation ?? payload.message ?? 'This activity type could not be updated.');
+                }
+                // Server-rendered Activity History entries for this exact mutation.
+                insertCiActivityHistoryEntries(payload.history);
+                return payload;
+            };
+
+            rowsBody.addEventListener('click', (event) => {
+                const trigger = event.target.closest('[data-activity-type-edit], [data-activity-type-activate], [data-activity-type-deactivate], [data-activity-type-delete]');
+                const row = trigger?.closest('[data-activity-type-row]');
+                if (!(trigger instanceof HTMLElement) || !(row instanceof HTMLElement)) return;
+                clearError();
+                activeRow = row;
+                const name = row.dataset.activityTypeName ?? 'this activity type';
+
+                if (trigger.matches('[data-activity-type-edit]')) {
+                    if (editTitle instanceof HTMLElement) editTitle.textContent = `Edit ${name}`;
+                    if (editError instanceof HTMLElement) editError.hidden = true;
+                    if (editNoChanges instanceof HTMLElement) editNoChanges.hidden = true;
+                    editName.value = name;
+                    editDialog.showModal();
+                    editName.focus();
+                    return;
+                }
+
+                activeIntent = trigger.matches('[data-activity-type-activate]')
+                    ? 'activate'
+                    : (trigger.matches('[data-activity-type-deactivate]') ? 'deactivate' : 'delete');
+                const intent = intents[activeIntent];
+                if (confirmTitle instanceof HTMLElement) confirmTitle.textContent = intent.title;
+                if (confirmName instanceof HTMLElement) confirmName.textContent = name;
+                const isInUse = Number(row.dataset.activityTypeUsage ?? '0') > 0;
+                if (confirmMessage instanceof HTMLElement) confirmMessage.textContent = (isInUse && intent.usedMessage) ? intent.usedMessage : intent.message;
+                if (confirmError instanceof HTMLElement) confirmError.hidden = true;
+                if (confirmAcceptLabel instanceof HTMLElement) confirmAcceptLabel.textContent = intent.accept;
+                confirmAccept.className = `${intent.acceptClass}`;
+                confirmAccept.disabled = false;
+                ['deactivate', 'activate', 'delete'].forEach((key) => {
+                    const titleIcon = confirmDialog.querySelector(`[data-activity-type-confirm-icon-${key}]`);
+                    const acceptIcon = confirmDialog.querySelector(`[data-activity-type-accept-icon-${key}]`);
+                    if (titleIcon instanceof SVGElement) titleIcon.toggleAttribute('hidden', key !== activeIntent);
+                    if (acceptIcon instanceof SVGElement) acceptIcon.toggleAttribute('hidden', key !== activeIntent);
+                });
+                confirmDialog.showModal();
             });
 
-            modal.querySelectorAll('[data-custom-activity-modal-close]').forEach((button) => button.addEventListener('click', () => modal.close()));
-            modal.addEventListener('click', (event) => { if (event.target === modal) modal.close(); });
-            modal.addEventListener('close', () => {
-                body.innerHTML = loadingMarkup;
-                currentUrl = '';
-                currentActivityId = '';
-                currentOpener?.focus();
-                currentOpener = null;
+            confirmDialog.querySelector('[data-activity-type-confirm-cancel]')?.addEventListener('click', () => confirmDialog.close());
+            confirmAccept.addEventListener('click', async () => {
+                if (!(activeRow instanceof HTMLElement) || activeIntent === null) return;
+                const id = activeRow.dataset.activityTypeId ?? '';
+                confirmAccept.disabled = true;
+                confirmAccept.setAttribute('aria-busy', 'true');
+                try {
+                    if (activeIntent === 'delete') {
+                        await submitAction(urlFor(manager.dataset.activityTypeDeleteUrl, id), 'DELETE');
+                    } else {
+                        await submitAction(urlFor(manager.dataset.activityTypeActivationUrl, id), 'PATCH', {
+                            is_active: activeIntent === 'activate' ? '1' : '0',
+                        });
+                    }
+                    await refreshFromServer();
+                    confirmDialog.close();
+                } catch (requestError) {
+                    if (confirmError instanceof HTMLElement) {
+                        confirmError.textContent = requestError instanceof Error ? requestError.message : 'This activity type could not be updated.';
+                        confirmError.hidden = false;
+                    }
+                } finally {
+                    confirmAccept.disabled = false;
+                    confirmAccept.removeAttribute('aria-busy');
+                }
+            });
+
+            editDialog.querySelector('[data-activity-type-edit-cancel]')?.addEventListener('click', () => editDialog.close());
+            editName.addEventListener('input', () => {
+                if (editNoChanges instanceof HTMLElement) editNoChanges.hidden = true;
+            });
+            editForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                if (!(activeRow instanceof HTMLElement)) return;
+                const name = editName.value.trim();
+                // Nothing meaningful changed: never issue an update that would only add noise to
+                // Recent Activity. The dialog stays open so the user can keep editing.
+                if (name === (activeRow.dataset.activityTypeName ?? '')) {
+                    if (editNoChanges instanceof HTMLElement) editNoChanges.hidden = false;
+                    return;
+                }
+                if (name === '') {
+                    if (editError instanceof HTMLElement) {
+                        editError.textContent = 'Please enter an Activity Type name.';
+                        editError.hidden = false;
+                    }
+                    return;
+                }
+                try {
+                    await submitAction(urlFor(manager.dataset.activityTypeUpdateUrl, activeRow.dataset.activityTypeId ?? ''), 'PUT', { name });
+                    await refreshFromServer();
+                    editDialog.close();
+                } catch (requestError) {
+                    if (editError instanceof HTMLElement) {
+                        editError.textContent = requestError instanceof Error ? requestError.message : 'This activity type could not be updated.';
+                        editError.hidden = false;
+                    }
+                }
+            });
+
+            // Creation stays on the single authoritative Add Activity Type flow — this only opens
+            // it, never duplicates it.
+            manager.querySelector('[data-activity-type-add]')?.addEventListener('click', () => {
+                manager.close();
+                // Split exactly like the dialog module's own lookup: the page must expose a
+                // single literal Add Activity trigger attribute, and this only reuses it.
+                document.querySelector('[data-ci-activity-dialog-' + 'open]')?.click();
+                document.querySelector('[data-activity-type-option][data-value="{{ App\Models\ActivityDefinition::NEW_TYPE_VALUE }}"]')?.click();
+                document.querySelector('[data-new-activity-type-input]')?.focus();
+            });
+
+            manager.addEventListener('close', () => {
+                clearError();
+                activeRow = null;
+                activeIntent = null;
             });
         });
 
@@ -1983,11 +2169,8 @@
             cancel.addEventListener('click', () => modal.close());
             editButton.addEventListener('click', () => {
                 const activityId = pendingCheckbox?.dataset.ciActivityCompletion ?? '';
-                const isCustom = pendingCheckbox?.dataset.completionKind === 'custom';
                 modal.close();
-                const opener = document.querySelector(isCustom
-                    ? `[data-custom-activity-open="${activityId}"]`
-                    : `[data-default-check-open="${activityId}"]`);
+                const opener = document.querySelector(`[data-default-check-open="${activityId}"]`);
                 if (opener instanceof HTMLElement) opener.click();
             });
             modal.addEventListener('close', () => {
@@ -2027,10 +2210,7 @@
                     }
 
                     checkbox.checked = true;
-                    const refreshEvent = checkbox.dataset.completionKind === 'custom'
-                        ? 'ci-custom-activity-refresh-request'
-                        : 'ci-default-check-refresh-request';
-                    document.dispatchEvent(new CustomEvent(refreshEvent, {
+                    document.dispatchEvent(new CustomEvent('ci-default-check-refresh-request', {
                         detail: { activityId: checkbox.dataset.ciActivityCompletion ?? '', url: trackerUrl },
                     }));
                     insertCiActivityHistoryEntries(payload.history);

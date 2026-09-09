@@ -129,8 +129,8 @@
                             <td class="px-3 py-3">
                                 {{-- Display wording only: this row is already the "explicitly saved Business Report" branch of
                                      the list (see IncomeSourceController::dedicatedSources()'s $requireReport) — the
-                                     label reads Complete, the state behind it is untouched. --}}
-                                <span class="inline-flex items-center rounded-full bg-success-soft px-2 py-0.5 text-xs font-bold text-success">Complete</span>
+                                     label reads Completed, the state behind it is untouched. --}}
+                                <span class="inline-flex items-center rounded-full bg-success-soft px-2 py-0.5 text-xs font-bold text-success">Completed</span>
                             </td>
                             <td class="px-3 py-3">
                                 <div class="flex items-center justify-center gap-1">

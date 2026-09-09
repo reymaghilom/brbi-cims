@@ -20,12 +20,17 @@ class ReassignCibiSignatoryRequest extends FormRequest
             'new_signatory_id' => [
                 'required',
                 'integer',
+                // Same eligibility the dropdown is built from, enforced here so a crafted
+                // request cannot name an Administrator, a disabled user, or any other role.
                 Rule::exists('users', 'id')->where(fn ($query) => $query
-                    ->where('role', UserRole::CreditInvestigator->value)
+                    ->whereIn('role', UserRole::cibiSignatoryRoles())
                     ->where('status', UserStatus::Active->value)),
                 Rule::notIn([$this->route('cibiReport')->ci_in_charge_id]),
             ],
-            'reason' => ['required', 'string', 'min:10', 'max:2000'],
+            // Short reasons are the normal case here ("On leave", "Schedule conflict"), so the
+            // rule only insists on some real text — Laravel's TrimStrings makes a whitespace-only
+            // submission an empty string, which 'required' then rejects.
+            'reason' => ['required', 'string', 'max:2000'],
         ];
     }
 
@@ -33,6 +38,7 @@ class ReassignCibiSignatoryRequest extends FormRequest
     {
         return [
             'new_signatory_id.not_in' => 'Choose a different Credit Investigator than the current signatory.',
+            'reason.required' => 'Please provide a reason for reassignment.',
         ];
     }
 }

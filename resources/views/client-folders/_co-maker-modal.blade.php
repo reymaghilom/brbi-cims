@@ -4,7 +4,11 @@
     description="Add or update a co-maker linked to this client folder. A client folder can have more than one."
     size="max-w-2xl"
     data-co-maker-modal
-    data-open-on-error="{{ $errors->any() ? 'true' : 'false' }}"
+    {{-- Only this form's own errors may reopen this dialog. Keyed off $errors->any(), every
+         other failed POST that redirects back to this page (a rejected signatory reassignment,
+         for one) popped Add Co-Maker open on top of the folder the user was actually looking at.
+         Scoped the same way the folder-rename dialog already scopes its own flag. --}}
+    data-open-on-error="{{ $errors->hasAny(['co_maker_id', 'last_name', 'first_name', 'middle_name', 'suffix']) ? 'true' : 'false' }}"
 >
     <form id="co-maker-form" method="POST" action="{{ route('client-folders.co-maker.store', $clientFolder) }}" data-co-maker-form novalidate>
         @csrf
@@ -30,16 +34,11 @@
                 <input id="co-maker-suffix" name="suffix" class="ui-control" maxlength="30" placeholder="JR., SR., III" value="{{ old('suffix') }}" aria-describedby="co-maker-suffix-error">
                 <p id="co-maker-suffix-error" class="mt-2 text-sm font-semibold text-danger" role="alert" data-co-maker-error-for="suffix" @if(! $errors->has('suffix')) hidden @endif>{{ $errors->first('suffix') }}</p>
             </div>
-            <div class="sm:col-span-2">
-                <label for="co-maker-address" class="ui-label">Address <span class="text-danger" aria-hidden="true">*</span></label>
-                <textarea id="co-maker-address" name="address" class="ui-control" rows="3" required maxlength="2000" placeholder="House No./Street, Barangay, City/Municipality, Province" autocomplete="street-address" aria-describedby="co-maker-address-error">{{ old('address') }}</textarea>
-                <p id="co-maker-address-error" class="mt-2 text-sm font-semibold text-danger" role="alert" data-co-maker-error-for="address" @if(! $errors->has('address')) hidden @endif>{{ $errors->first('address') }}</p>
-            </div>
         </div>
     </form>
 
     <x-slot:footer>
         <button type="button" data-modal-close class="ui-button-secondary"><x-ui.icon name="close" size="size-4" />Cancel</button>
-        <button type="submit" form="co-maker-form" class="ui-button-primary" data-co-maker-submit><x-ui.icon name="check" size="size-4" />{{ old('co_maker_id') ? 'Update Co-Maker' : 'Save Co-Maker' }}</button>
+        <button type="submit" form="co-maker-form" class="ui-button-primary" data-co-maker-submit><x-ui.icon name="check" size="size-4" /><span data-co-maker-submit-label>{{ old('co_maker_id') ? 'Update Co-Maker' : 'Save Co-Maker' }}</span></button>
     </x-slot:footer>
 </x-ui.modal>
