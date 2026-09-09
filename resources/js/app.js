@@ -1249,7 +1249,14 @@ window.addEventListener('message', (event) => {
 
     refreshReportsWorkspace();
 
-    dialog.close();
+    // Where the dialog goes next depends on WHO opened it, read from that caller's own dialog
+    // dataset rather than guessed from the URL. The Reports workspace (the only caller that sets
+    // it) refreshes its list behind the dialog, so closing returns the user to the row they were
+    // working through. A dialog opened from a Client Folder stays OPEN instead: everything behind
+    // it — the CI/BI module card, folder progress, Recent Activity — has just been swapped from
+    // this same authoritative payload with no reload, so the encoder can keep reading the report
+    // they just saved.
+    if (dialog.matches('[data-cibi-report-close-on-save]')) dialog.close();
 });
 
 // AUTO-UPDATE for the Business / Income Sources page: applies an authoritative refresh payload
@@ -1626,6 +1633,30 @@ document.querySelectorAll('dialog').forEach((dialog) => {
 const repeaterRemoveDialog = document.querySelector('[data-repeater-remove-dialog]');
 let pendingRepeaterRemoval = null;
 
+// The remove confirmation is ONE shared dialog, so every opener states what it is removing rather
+// than inheriting whatever the previous opener left behind. Defaults below are the generic
+// repeater wording (Bank accounts, Income sources); IV's Bank/Coop and Loan actions override them.
+// Every lookup is optional — the Business Report page reuses this dialog without the extra hooks.
+const REPEATER_REMOVE_DEFAULTS = {
+    title: 'Remove this entry?',
+    message: 'This row already contains information. Are you sure you want to remove it?',
+    note: 'The entry will be removed when the CI / BI report is saved.',
+    confirmLabel: 'Remove',
+    confirmIcon: 'trash',
+};
+
+const setRepeaterRemoveDialogContent = (content = {}) => {
+    if (!repeaterRemoveDialog) return;
+    const { title, message, note, confirmLabel, confirmIcon } = { ...REPEATER_REMOVE_DEFAULTS, ...content };
+    document.getElementById(repeaterRemoveDialog.getAttribute('aria-labelledby') || '')?.replaceChildren(title);
+    document.getElementById(repeaterRemoveDialog.getAttribute('aria-describedby') || '')?.replaceChildren(message);
+    repeaterRemoveDialog.querySelector('[data-repeater-remove-note]')?.replaceChildren(note);
+    repeaterRemoveDialog.querySelector('[data-repeater-remove-confirm-label]')?.replaceChildren(confirmLabel);
+    repeaterRemoveDialog.querySelectorAll('[data-repeater-remove-confirm-icon]').forEach((icon) => {
+        icon.hidden = icon.dataset.repeaterRemoveConfirmIcon !== confirmIcon;
+    });
+};
+
 const removeRepeaterRow = (row, repeater) => {
     const id = row.querySelector('input[name$="[id]"]')?.value;
     if (id) {
@@ -1852,6 +1883,7 @@ const initializeBusinessRepeaters = (scope = document) => scope.querySelectorAll
         if (!row) return;
         if (repeaterRemoveDialog instanceof HTMLDialogElement && repeaterRowHasData(row, repeater)) {
             pendingRepeaterRemoval = { row, repeater };
+            setRepeaterRemoveDialogContent();
             repeaterRemoveDialog.showModal();
             repeaterRemoveDialog.querySelector('[data-modal-close]')?.focus();
             return;
@@ -2116,82 +2148,82 @@ initializeCibiControls();
 //   * Removing the last loan result does NOT remove the institution: the row flips to its empty
 //     state (loan cells hidden and cleared, Performance & Findings still editable). Removing the
 //     whole Bank/Coop is a separate action and only ever touches that group's own rows.
+// CI/BI IV. SUMMARY ON CREDIT / LOAN INFORMATION — a flat, Excel-style table.
+//
+// One Bank/Coop occupies one row per loan result, and a single row when it has no loan result at
+// all. Nothing about the persisted shape changes: a row is still exactly one flat
+// cibi_loan_records row, and a zero-result Bank/Coop is a row carrying only the institution plus
+// Performance & Findings (every loan column stays genuinely NULL — no "0" / "N/A" filler).
+//
+//   * Every row owns a real institution input, so whichever row is edited or removed, no row can
+//     ever post a blank institution. Only the FIRST row of a consecutive run shows that control —
+//     the rest hide it, so the name is printed once per run exactly like the official sheet, and
+//     app.js mirrors the visible value onto every sibling in the run.
+//   * Indices are renumbered to DOM order after every structural change, because Laravel reindexes
+//     the submitted array to submission (= DOM) order — dense, in-order names keep validation error
+//     keys and the post-save sort_order/id mapping pointing at the right row.
+//   * Removing the last loan result does NOT remove the institution: the row flips to its empty
+//     state (loan cells cleared, showing an em dash) with Performance & Findings still editable.
+//     Removing the whole Bank/Coop is a separate action and only ever touches its own run.
 const cibiLoanSection = document.querySelector('[data-loan-groups]');
+const loanRowsIn = (scope) => [...scope.querySelectorAll('[data-repeater-row][data-loan-group]')];
 const renumberLoanRecords = () => {
     if (!cibiLoanSection) return;
-    let index = 0;
-    cibiLoanSection.querySelectorAll('[data-loan-group-header]').forEach((header) => {
-        const groupId = header.dataset.loanGroup;
-        const rows = [...cibiLoanSection.querySelectorAll(`[data-repeater-row][data-loan-group="${CSS.escape(groupId)}"]`)];
-        if (rows.length === 0) {
-            header.remove();
-            return;
-        }
-        const baseIndex = index;
-        rows.forEach((row) => {
-            const rowIndex = index++;
-            row.querySelectorAll('[name]').forEach((field) => {
-                field.name = field.name.replace(/^loan_records\[[^\]]*\]/, `loan_records[${rowIndex}]`);
-            });
+    const rows = loanRowsIn(cibiLoanSection);
+    const runs = new Map();
+    rows.forEach((row, index) => {
+        row.querySelectorAll('[name]').forEach((field) => {
+            field.name = field.name.replace(/^loan_records\[[^\]]*\]/, `loan_records[${index}]`);
         });
-        const institutionInput = header.querySelector('[data-loan-institution-input]');
-        if (institutionInput) institutionInput.name = `loan_records[${baseIndex}][institution]`;
-        header.querySelector('[data-loan-institution-mirrors]')?.replaceChildren(...rows.slice(1).map((row, offset) => {
-            const mirror = document.createElement('input');
-            mirror.type = 'hidden';
-            mirror.name = `loan_records[${baseIndex + offset + 1}][institution]`;
-            mirror.value = institutionInput?.value ?? '';
-            return mirror;
-        }));
-        let ordinal = 0;
-        rows.forEach((row) => {
-            const label = row.querySelector('[data-loan-result-ordinal]');
-            // A zero-result row shows its own empty label instead of a badge, and never consumes
-            // a loan number — so Loan 1/2/3 always counts real results only.
-            if (!label || row.hidden || row.hasAttribute('data-loan-empty')) return;
-            ordinal += 1;
-            label.textContent = `Loan ${ordinal}`;
+        const groupId = row.dataset.loanGroup;
+        if (!runs.has(groupId)) runs.set(groupId, []);
+        runs.get(groupId).push(row);
+    });
+
+    runs.forEach((runRows) => {
+        // The institution is printed on the run's first row only; every other row keeps its own
+        // input (so it still posts) but hides it, leaving a blank cell like the Excel sheet.
+        const visible = runRows.filter((row) => !row.hidden);
+        const leader = visible[0] || runRows[0];
+        const leaderValue = leader?.querySelector('[data-loan-institution-input]')?.value ?? '';
+        runRows.forEach((row) => {
+            const controls = row.querySelector('[data-loan-institution-controls]');
+            if (controls) controls.hidden = row !== leader;
+            const input = row.querySelector('[data-loan-institution-input]');
+            if (input && row !== leader) input.value = leaderValue;
         });
     });
-    // IV renders no blank starter groups, so the table needs its own empty state.
+
+    // The table renders no blank starter rows, so it needs its own empty state.
     const emptyState = cibiLoanSection.querySelector('[data-loan-empty-state]');
-    if (emptyState) emptyState.hidden = cibiLoanSection.querySelector('[data-loan-group-header]:not([hidden])') !== null;
+    if (emptyState) emptyState.hidden = rows.some((row) => !row.hidden);
 };
 
 if (cibiLoanSection) {
-    const loanRowsFor = (groupId) => [...cibiLoanSection.querySelectorAll(`[data-repeater-row][data-loan-group="${CSS.escape(groupId)}"]`)];
-    const loanHeaderFor = (groupId) => cibiLoanSection.querySelector(`[data-loan-group-header][data-loan-group="${CSS.escape(groupId)}"]`);
+    const loanRowsFor = (groupId) => loanRowsIn(cibiLoanSection).filter((row) => row.dataset.loanGroup === groupId);
 
     const setLoanRowEmpty = (row, empty) => {
         row.toggleAttribute('data-loan-empty', empty);
         row.querySelectorAll('[data-loan-detail-controls]').forEach((controls) => { controls.hidden = empty; });
         row.querySelectorAll('[data-loan-detail-blank]').forEach((blank) => { blank.hidden = !empty; });
-        const badge = row.querySelector('[data-loan-result-ordinal]');
-        if (badge) badge.hidden = empty;
-        const emptyLabel = row.querySelector('[data-loan-result-empty-label]');
-        if (emptyLabel) emptyLabel.hidden = !empty;
         const remove = row.querySelector('[data-loan-result-remove]');
         if (remove) remove.hidden = empty;
         // A Bank/Coop with no loan found must persist genuinely blank loan columns — never a
         // stale figure left behind by the result that was just removed.
-        if (empty) row.querySelectorAll('[data-loan-detail-cell] input').forEach((field) => { field.value = ''; });
+        if (empty) row.querySelectorAll('[data-loan-detail-controls] input').forEach((field) => { field.value = ''; });
     };
 
-    const stampGroupId = (element, groupId) => {
-        element.dataset.loanGroup = groupId;
-        element.querySelectorAll('[data-loan-group]').forEach((child) => { child.dataset.loanGroup = groupId; });
-    };
-
-    const cloneLoanResultRow = (groupId) => {
+    const cloneLoanRow = (groupId) => {
         const template = cibiLoanSection.querySelector('[data-loan-result-template]');
         const row = template?.content.firstElementChild?.cloneNode(true);
         if (!row) return null;
-        stampGroupId(row, groupId);
+        row.dataset.loanGroup = groupId;
         return row;
     };
 
     const addLoanResult = (groupId) => {
         const rows = loanRowsFor(groupId);
+        // A zero-result Bank/Coop already has its row — the first loan simply fills it in.
         const emptyRow = rows.find((row) => row.hasAttribute('data-loan-empty'));
         if (emptyRow) {
             setLoanRowEmpty(emptyRow, false);
@@ -2199,17 +2231,16 @@ if (cibiLoanSection) {
             emptyRow.querySelector('[data-loan-detail-controls] input')?.focus();
             return;
         }
-        const row = cloneLoanResultRow(groupId);
+        const row = cloneLoanRow(groupId);
         if (!row) return;
-        (rows[rows.length - 1] || loanHeaderFor(groupId))?.after(row);
+        rows[rows.length - 1]?.after(row);
         initializeCibiControls(row);
         renumberLoanRecords();
         row.querySelector('[data-loan-detail-controls] input')?.focus();
     };
 
     const removeLoanResult = (row) => {
-        const groupId = row.dataset.loanGroup;
-        const visible = loanRowsFor(groupId).filter((candidate) => !candidate.hidden);
+        const visible = loanRowsFor(row.dataset.loanGroup).filter((candidate) => !candidate.hidden);
         // The institution itself survives its last loan result — it stays encodable as a
         // zero-result inquiry whose Performance & Findings is still required reading.
         if (visible.length <= 1) setLoanRowEmpty(row, true);
@@ -2217,58 +2248,57 @@ if (cibiLoanSection) {
         renumberLoanRecords();
     };
 
-    const removeLoanGroup = (header) => {
-        const groupId = header.dataset.loanGroup;
-        loanRowsFor(groupId).forEach((row) => removeRepeaterRow(row, cibiLoanSection));
-        // Soft-deleted rows still have to post their _delete flag, so the bar is only detached
-        // once nothing of this group is left in the DOM.
-        if (loanRowsFor(groupId).length === 0) header.remove();
-        else header.hidden = true;
+    const removeLoanGroup = (row) => {
+        loanRowsFor(row.dataset.loanGroup).forEach((groupRow) => removeRepeaterRow(groupRow, cibiLoanSection));
         renumberLoanRecords();
     };
 
     cibiLoanSection.querySelector('[data-repeater-add]')?.addEventListener('click', () => {
-        const template = cibiLoanSection.querySelector('[data-loan-group-template]');
         const rowsHost = cibiLoanSection.querySelector('[data-repeater-rows]');
-        const header = template?.content.firstElementChild?.cloneNode(true);
-        if (!header || !rowsHost) return;
-        const groupId = `loan-group-${Date.now()}-${rowsHost.children.length}`;
-        stampGroupId(header, groupId);
-        header.querySelectorAll('[id*="__GROUP__"], [for*="__GROUP__"]').forEach((element) => {
-            if (element.id) element.id = element.id.replaceAll('__GROUP__', groupId);
-            const forAttribute = element.getAttribute('for');
-            if (forAttribute) element.setAttribute('for', forAttribute.replaceAll('__GROUP__', groupId));
-        });
-        const row = cloneLoanResultRow(groupId);
-        if (!row) return;
+        const row = cloneLoanRow(`loan-group-${Date.now()}-${rowsHost?.children.length ?? 0}`);
+        if (!row || !rowsHost) return;
         const emptyState = rowsHost.querySelector('[data-loan-empty-state]');
-        if (emptyState) emptyState.before(header, row);
-        else rowsHost.append(header, row);
+        if (emptyState) emptyState.before(row);
+        else rowsHost.append(row);
+        // A brand-new Bank/Coop starts as a zero-result inquiry: name it, encode findings, and
+        // add loan results only if the inquiry actually turned any up.
         setLoanRowEmpty(row, true);
         initializeCibiControls(row);
         renumberLoanRecords();
-        header.querySelector('[data-loan-institution-input]')?.focus();
+        row.querySelector('[data-loan-institution-input]')?.focus();
     });
 
     cibiLoanSection.addEventListener('input', (event) => {
         const input = event.target.closest('[data-loan-institution-input]');
         if (!input) return;
-        input.closest('[data-loan-group-header]')
-            ?.querySelectorAll('[data-loan-institution-mirrors] input')
-            .forEach((mirror) => { mirror.value = input.value; });
+        const row = input.closest('[data-repeater-row]');
+        loanRowsFor(row?.dataset.loanGroup).forEach((sibling) => {
+            if (sibling === row) return;
+            const mirror = sibling.querySelector('[data-loan-institution-input]');
+            if (mirror) mirror.value = input.value;
+        });
     });
 
     cibiLoanSection.addEventListener('click', (event) => {
-        const addButton = event.target.closest('[data-loan-add-result]');
-        if (addButton) {
-            addLoanResult(addButton.closest('[data-loan-group-header]').dataset.loanGroup);
+        const row = event.target.closest('[data-repeater-row]');
+        if (!row) return;
+
+        if (event.target.closest('[data-loan-add-result]')) {
+            addLoanResult(row.dataset.loanGroup);
             return;
         }
+
         const resultButton = event.target.closest('[data-loan-result-remove]');
         if (resultButton) {
-            const row = resultButton.closest('[data-repeater-row]');
             if (repeaterRemoveDialog instanceof HTMLDialogElement && repeaterRowHasData(row, cibiLoanSection)) {
                 pendingRepeaterRemoval = { row, repeater: cibiLoanSection, handler: removeLoanResult };
+                setRepeaterRemoveDialogContent({
+                    title: 'Remove Loan?',
+                    message: 'This loan contains information. Are you sure you want to remove it?',
+                    note: 'This change will be applied when you save the CI / BI report.',
+                    confirmLabel: 'Remove Loan',
+                    confirmIcon: 'trash',
+                });
                 repeaterRemoveDialog.showModal();
                 repeaterRemoveDialog.querySelector('[data-modal-close]')?.focus();
                 return;
@@ -2276,18 +2306,23 @@ if (cibiLoanSection) {
             removeLoanResult(row);
             return;
         }
-        const groupButton = event.target.closest('[data-loan-group-remove]');
-        if (!groupButton) return;
-        const header = groupButton.closest('[data-loan-group-header]');
-        const groupHasData = loanRowsFor(header.dataset.loanGroup).some((row) => repeaterRowHasData(row, cibiLoanSection))
-            || (header.querySelector('[data-loan-institution-input]')?.value.trim() ?? '') !== '';
+
+        if (!event.target.closest('[data-loan-group-remove]')) return;
+        const groupHasData = loanRowsFor(row.dataset.loanGroup).some((groupRow) => repeaterRowHasData(groupRow, cibiLoanSection));
         if (repeaterRemoveDialog instanceof HTMLDialogElement && groupHasData) {
-            pendingRepeaterRemoval = { row: header, repeater: cibiLoanSection, handler: removeLoanGroup };
+            pendingRepeaterRemoval = { row, repeater: cibiLoanSection, handler: removeLoanGroup };
+            setRepeaterRemoveDialogContent({
+                title: 'Remove Bank / Coop?',
+                message: 'This entry contains information. Are you sure you want to remove this Bank / Coop and its loan details?',
+                note: 'This change will be applied when you save the CI / BI report.',
+                confirmLabel: 'Remove Bank / Coop',
+                confirmIcon: 'close',
+            });
             repeaterRemoveDialog.showModal();
             repeaterRemoveDialog.querySelector('[data-modal-close]')?.focus();
             return;
         }
-        removeLoanGroup(header);
+        removeLoanGroup(row);
     });
 
     renumberLoanRecords();
@@ -2630,13 +2665,11 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
         });
         const outputActions = form.querySelector('[data-cibi-output-actions]');
         if (outputActions && payload.report.state === 'complete') outputActions.hidden = false;
-        const submitButton = form.querySelector('[data-cibi-submit]');
-        // Only the label text is swapped — replacing the whole button's children would drop the
-        // save icon rendered beside it.
-        const submitLabel = submitButton?.querySelector('[data-cibi-submit-text]');
-        if (submitLabel) submitLabel.textContent = payload.report.submit_label || 'Update CIBI Report';
-        else submitButton?.replaceChildren(payload.report.submit_label || 'Update CIBI Report');
-        if (submitButton) submitButton.dataset.cibiSubmitMode = 'update';
+        // The submit button deliberately keeps the wording it opened with for the whole session.
+        // A dialog that stays open after saving would otherwise flip "Save CIBI Report" into
+        // "Update CIBI Report" under the encoder's cursor the instant the record existed; the
+        // server already renders the correct Save/Update wording the next time the form is
+        // opened, which is the only moment that state actually changes for the user.
         const totals = {
             checked: payload.report.institutions_checked,
             declared: payload.report.institutions_declared,

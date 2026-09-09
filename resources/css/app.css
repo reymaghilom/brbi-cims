@@ -255,6 +255,16 @@
     .cibi-excel-metadata .ui-label { margin: 0; }
     .cibi-encoding-page .ui-control,
     .cibi-encoding-page .cibi-readonly-field { min-height: 1.9rem; border: 0; border-bottom: 1px solid #d8d3c6; border-radius: 0; background: transparent; padding: .25rem .15rem; color: #26303c; font-size: .78rem; font-weight: 400; line-height: 1.3; letter-spacing: 0; box-shadow: none; }
+    /* The CI/BI body is a ledger: its controls are bottom-ruled on purpose. The top information
+       block (CI In-Charge, Start Date, Date Submitted, Branch, Account Officer, Amount Applied)
+       is an ordinary form, so those controls take the project's standard bordered box — same
+       border token, radius and focus ring as every other form control in BRBI-CIMS — instead of
+       a stray underline. Scoped to the header grid so no other CI/BI section is redesigned. */
+    .cibi-encoding-page .cibi-excel-metadata .ui-control,
+    .cibi-encoding-page .cibi-excel-metadata .cibi-readonly-field { min-height: 2rem; border: 1px solid var(--color-ui-border); border-radius: .25rem; background: var(--color-surface); padding: .25rem .45rem; }
+    .cibi-encoding-page .cibi-excel-metadata .cibi-readonly-field { background: var(--color-surface-muted); }
+    .cibi-encoding-page .cibi-excel-metadata .ui-control:hover { border-color: var(--color-ui-border-strong); }
+    .cibi-encoding-page .cibi-excel-metadata .ui-control:focus { border-color: var(--color-brand-primary); box-shadow: 0 0 0 1px var(--color-brand-primary); }
     .cibi-encoding-page .ui-control:hover { border-bottom-color: #9ca3af; }
     .cibi-encoding-page .ui-control:focus { border-bottom-color: var(--color-brand-primary); outline: 0; box-shadow: 0 1px 0 var(--color-brand-primary); }
     .cibi-encoding-page textarea.ui-control { min-height: 3.2rem; border: 1px solid #d8d3c6; border-radius: .2rem; padding: .42rem .5rem; resize: vertical; }
@@ -308,61 +318,58 @@
     .cibi-adb-controls .cibi-compact-financial-input::placeholder { color: #737373; opacity: 1; }
     .cibi-encoding-paper .cibi-entry-table .cibi-compact-financial-input { width: 7rem; max-width: 100%; flex: 0 1 7rem; }
     .cibi-encoding-paper .cibi-entry-table .cibi-adb-choice-line .cibi-compact-financial-input { width: 6.5rem; min-width: 4.5rem; max-width: 6.5rem; flex: 0 1 6.5rem; }
-    .cibi-loan-entry-table { width: 100%; min-width: 60rem; table-layout: fixed; }
-    /* The LOAN RESULT column only has to identify its row, so it is the narrowest column here and
-       the width it gives up goes to Performance & Findings, which is the one people actually
-       write in. */
-    .cibi-loan-entry-table th:nth-child(1) { width: 6.25rem; }
+    .cibi-loan-entry-table { width: 100%; min-width: 62rem; table-layout: fixed; }
+    .cibi-loan-entry-table th:nth-child(1) { width: 15%; }
     .cibi-loan-entry-table th:nth-child(2),
     .cibi-loan-entry-table th:nth-child(3),
-    .cibi-loan-entry-table th:nth-child(4) { width: 9%; }
+    .cibi-loan-entry-table th:nth-child(4) { width: 8.5%; }
+    /* Granted/Maturity and Cycle/Security each hold two controls side by side, so these two
+       columns are sized to fit both on ONE line — the table keeps its min-width and scrolls
+       horizontally rather than wrapping a control onto a second line and doubling row height. */
     .cibi-loan-entry-table th:nth-child(5) { width: 16.5%; }
-    .cibi-loan-entry-table th:nth-child(6) { width: 15%; }
+    .cibi-loan-entry-table th:nth-child(6) { width: 14.5%; }
     .cibi-loan-entry-table th:nth-child(7) { width: auto; }
     .cibi-loan-entry-table th:nth-child(8) { width: 2.6rem; }
     .cibi-loan-entry-table th,
     .cibi-loan-entry-table td { padding-inline: .3rem; }
-    .cibi-encoding-paper .cibi-loan-entry-table td { padding-block: .3rem; vertical-align: top; }
-    /* Two controls share one cell (Granted/Maturity, Cycle/Security). Stacking them under their
-       own micro-labels reads far better at this density than squeezing them side by side, and it
-       lets each input take the cell's full usable width. */
-    .cibi-loan-paired-controls { display: flex; min-width: 0; flex-direction: column; align-items: stretch; gap: .2rem; white-space: normal; }
-    .cibi-loan-paired-field { display: flex; min-width: 0; align-items: center; gap: .3rem; }
-    .cibi-loan-micro-label { flex: 0 0 3.25rem; color: var(--color-text-muted); font-size: .58rem; font-weight: 600; letter-spacing: .04em; line-height: 1.2; text-transform: uppercase; }
+    /* IV. Summary on Credit / Loan Information is a flat Excel-style grid: one row per loan
+       result, uniform row height, no group cards or banded headers. Every row is ONE compact
+       horizontal line — minimal block padding, controls centered, nothing allowed to wrap. */
+    .cibi-encoding-paper .cibi-loan-entry-table td { padding-block: .18rem; vertical-align: middle; }
+    /* Two controls share one cell (Granted/Maturity, Cycle/Security) side by side. They are
+       identified by title/aria-label (and a placeholder where the input type allows one) instead
+       of stacked labels, which would make every row twice as tall. */
+    .cibi-loan-paired-controls { display: flex; min-width: 0; flex-direction: row; align-items: center; gap: .22rem; white-space: nowrap; }
+    /* The institution is printed on the first row of each consecutive run only; the runs below it
+       keep a blank cell, so the column reads exactly like the official sheet. Its per-group
+       actions sit inline beside it so the row never grows a second line. */
+    .cibi-loan-institution-controls { display: flex; min-width: 0; align-items: center; gap: .2rem; }
+    .cibi-encoding-paper .cibi-entry-table .cibi-loan-institution-input { width: auto; min-width: 0; flex: 1 1 auto; font-weight: 600; }
+    .cibi-loan-institution-actions { display: inline-flex; flex: 0 0 auto; align-items: center; gap: .12rem; }
+    .cibi-loan-icon-button { display: inline-grid; width: 1.35rem; height: 1.35rem; place-items: center; border: 1px solid transparent; border-radius: .2rem; background: transparent; color: var(--color-text-muted); transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease; }
+    .cibi-loan-icon-button:hover { border-color: var(--color-brand-primary); background: var(--color-brand-soft); color: var(--color-brand-primary); }
+    .cibi-loan-icon-button:focus-visible { outline: 2px solid var(--color-brand-primary); outline-offset: 1px; }
+    /* Both destructive actions reuse the section's existing .cibi-remove-entry-button (the same
+       subtle-red treatment as III and V) — no one-off red is introduced here. Only the box is
+       tightened, because this table's rows are denser than the other sections'. They are told
+       apart by icon and by their own title/aria-label ("Remove Bank / Coop" beside the
+       institution, "Remove Loan" in the action column). */
+    .cibi-loan-entry-table .cibi-remove-entry-button { width: 1.6rem; height: 1.6rem; flex: 0 0 auto; }
+    .cibi-loan-entry-table .cibi-remove-entry-button:focus-visible { outline-offset: 1px; }
     .cibi-encoding-paper .cibi-entry-table .cibi-loan-amount-input { width: 100%; max-width: 100%; text-align: right; }
-    .cibi-encoding-paper .cibi-entry-table .cibi-compact-date-input,
-    .cibi-encoding-paper .cibi-entry-table .cibi-cycle-input,
-    .cibi-encoding-paper .cibi-entry-table .cibi-security-input { width: auto; min-width: 0; flex: 1 1 auto; }
-    .cibi-loan-findings-cell { min-width: 12rem; }
-    /* IV. Summary on Credit / Loan Information — one Bank/Coop group header owns 0..N loan-result
-       rows beneath it, so the institution is encoded once instead of retyped per loan. Reuses the
-       section's existing paper/table tokens; only the grouping chrome is new. The header carries
-       the only strong rules in this table, so the eye reads institution-then-results rather than
-       one flat grid of equally weighted borders. */
-    .cibi-loan-group-row > .cibi-loan-group-cell { border-color: #c2b9a2; border-top: 2px solid #b8ae95; border-bottom-width: 1px; background: #ece5d2; padding: .34rem .5rem !important; }
-    .cibi-entry-table tbody tr:first-child > .cibi-loan-group-cell { border-top-width: 0; }
-    .cibi-loan-group-bar { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .3rem .55rem; }
-    .cibi-loan-group-label { flex: 0 0 auto; color: var(--color-brand-sidebar); font-size: .625rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-    /* Tinted rather than plain white, so the institution field reads as part of the group header
-       band instead of a large input floating on top of it. */
-    .cibi-encoding-paper .cibi-entry-table .cibi-loan-group-input { width: 20rem; min-width: 0; max-width: 100%; flex: 1 1 11rem; border: 1px solid #c2b9a2; background: #fbf8f0; font-size: .74rem; font-weight: 600; }
-    .cibi-encoding-paper .cibi-entry-table .cibi-loan-group-input::placeholder { color: #8a8271; font-weight: 400; }
-    .cibi-loan-group-actions { display: inline-flex; flex: 0 0 auto; align-items: center; gap: .3rem; margin-inline-start: auto; }
-    .cibi-loan-inline-button { display: inline-flex; min-height: 1.65rem; align-items: center; gap: .2rem; border: 1px solid #c2b9a2; border-radius: .2rem; background: #fbf8f0; padding: .12rem .45rem; color: var(--color-brand-sidebar); font-size: .66rem; font-weight: 600; letter-spacing: .01em; white-space: nowrap; transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease; }
-    .cibi-loan-inline-button:hover { border-color: var(--color-brand-primary); background: var(--color-brand-soft); color: var(--color-brand-primary); }
-    .cibi-loan-inline-button:focus-visible { outline: 2px solid var(--color-brand-primary); outline-offset: 1px; }
-    /* Removal is secondary to the data: neutral until hovered/focused, where it turns danger.
-       Scoped to this table so the other CI/BI sections keep their existing button treatment. */
-    .cibi-loan-entry-table .cibi-remove-entry-button { width: 1.65rem; height: 1.65rem; border-color: #c9c2ae; color: var(--color-text-muted); }
-    .cibi-loan-entry-table .cibi-remove-entry-button:hover,
-    .cibi-loan-entry-table .cibi-remove-entry-button:focus-visible { border-color: rgb(185 45 45 / .45); background: var(--color-danger-soft); color: var(--color-danger); }
-    .cibi-loan-result-cell { vertical-align: middle !important; }
-    .cibi-loan-result-badge { display: inline-block; border-radius: .18rem; background: #e6e0cf; padding: .1rem .35rem; color: var(--color-brand-sidebar); font-size: .6rem; font-weight: 700; letter-spacing: .045em; text-transform: uppercase; white-space: nowrap; }
-    .cibi-loan-result-empty { display: block; color: var(--color-text-muted); font-size: .66rem; font-style: italic; line-height: 1.3; }
-    .cibi-loan-blank { display: block; color: var(--color-text-muted); font-size: .78rem; line-height: 1.9; text-align: center; }
+    .cibi-encoding-paper .cibi-entry-table .cibi-compact-date-input { width: auto; min-width: 0; flex: 1 1 6.6rem; }
+    .cibi-encoding-paper .cibi-entry-table .cibi-cycle-input { width: auto; min-width: 0; flex: 0 1 3.9rem; }
+    .cibi-encoding-paper .cibi-entry-table .cibi-security-input { width: auto; min-width: 0; flex: 1 1 5.5rem; }
+    /* Findings keeps its 2-row height so Sections III, IV and V stay visually uniform (it is the
+       tallest control in the row, and therefore what sets the row height). */
+    .cibi-loan-findings-cell { min-width: 11rem; }
+    .cibi-encoding-paper .cibi-loan-entry-table textarea.ui-control { min-height: 2.35rem; resize: vertical; }
+    .cibi-loan-blank { display: block; color: var(--color-text-muted); font-size: .78rem; line-height: 1.6rem; text-align: center; }
     .cibi-loan-empty-state-row > td { color: var(--color-text-muted); font-size: .7rem; font-style: italic; text-align: center; }
     .cibi-encoding-paper .cibi-loan-entry-table .cibi-loan-empty-state-row > td { padding-block: .7rem; }
-    .cibi-loan-group-add { display: flex; justify-content: flex-start; border-top: 1px solid #e4dece; margin: 0 .85rem; padding: .6rem 0 .75rem; }
+    /* No rule above this action — the table wrapper's own bottom margin already provides the
+       separation, so plain whitespace keeps "Add Bank / Coop" attached to the table it extends. */
+    .cibi-loan-group-add { display: flex; justify-content: flex-start; margin: 0 .85rem; padding: 0 0 .9rem; }
     .cibi-loan-group-add > button { display: inline-flex; align-items: center; gap: .25rem; }
     .cibi-income-entry-table { width: 100%; min-width: 48rem; table-layout: fixed; }
     .cibi-income-entry-table th:nth-child(1) { width: 27%; }

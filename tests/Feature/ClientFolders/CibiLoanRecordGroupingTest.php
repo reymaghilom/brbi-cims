@@ -41,13 +41,19 @@ class CibiLoanRecordGroupingTest extends TestCase
         $content = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
         $section = $this->loanSection($content);
 
-        // A Bank/Coop group is a real institution, so none are invented up front.
-        $this->assertSame(0, substr_count($section, 'data-loan-group-header'));
+        // A row is a real institution, so none are invented up front.
         $this->assertSame(0, substr_count($section, '<tr data-repeater-row'));
+        $this->assertSame(0, substr_count($section, 'data-loan-institution-input'));
         $this->assertStringContainsString('No bank or cooperative added yet.', $section);
         // …and exactly one action creates one, rendered below the table rather than in the header.
         $this->assertStringNotContainsString('data-repeater-add', $section);
         $this->assertSame(1, substr_count($content, 'cibi-loan-group-add'));
+
+        // The Bank / Coop field names the domain it actually serves, and says so in the same
+        // breath as the branch it also stores (cibi_loan_records has no separate branch column).
+        $this->assertStringContainsString('aria-label="Bank / Coop / Branch" title="Bank / Coop / Branch"', $content);
+        $this->assertStringContainsString('placeholder="Enter bank/coop name"', $content);
+        $this->assertStringNotContainsString('placeholder="Institution name"', $content);
     }
 
     public function test_a_saved_bank_coop_renders_as_exactly_one_group_with_no_blank_companions(): void
@@ -59,15 +65,189 @@ class CibiLoanRecordGroupingTest extends TestCase
 
         $section = $this->loanSection($this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent());
 
-        $this->assertSame(1, substr_count($section, 'data-loan-group-header'));
         $this->assertSame(1, substr_count($section, '<tr data-repeater-row'));
-        $this->assertSame(1, substr_count($section, 'Bank / Coop / Branch'));
-        $this->assertStringContainsString('>Loan 1</span>', $section);
+        $this->assertSame(1, substr_count($section, '<th scope="col">Bank / Coop / Branch</th>'));
+        $this->assertSame(1, substr_count($section, 'data-loan-institution-input'));
+        $this->assertStringContainsString('value="ABC Cooperative"', $section);
         // The result row must fill exactly the 8 declared columns — a miscounted cell silently
         // shears the whole grouped grid out of alignment.
         $this->assertSame(8, substr_count($section, '<th scope="col"'));
         $resultRow = substr($section, strpos($section, '<tr data-repeater-row'));
         $this->assertSame(8, substr_count(substr($resultRow, 0, strpos($resultRow, '</tr>')), '<td'));
+    }
+
+    public function test_a_loan_result_stays_one_compact_line_with_its_paired_controls_side_by_side(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $payload = $this->payload();
+        $payload['loan_records'] = [$this->loanRow('ABC Cooperative', 'Salary Loan', '100,000')];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+        $section = $this->loanSection($this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent());
+        $resultRow = substr($section, strpos($section, '<tr data-repeater-row'));
+        $resultRow = substr($resultRow, 0, strpos($resultRow, '</tr>'));
+
+        // Granted/Maturity and Cycle/Security each keep BOTH controls inside one cell, laid out
+        // in a row — stacked labels would double the height of every result row in the table.
+        $this->assertSame(2, substr_count($resultRow, 'cibi-loan-paired-controls'));
+        $this->assertSame(1, substr_count($resultRow, 'cibi-loan-institution-controls'));
+        $this->assertStringContainsString('cibi-loan-date-controls cibi-loan-paired-controls', $resultRow);
+        $this->assertStringContainsString('cibi-loan-meta-controls cibi-loan-paired-controls', $resultRow);
+        $this->assertStringNotContainsString('cibi-loan-micro-label', $resultRow);
+        $this->assertStringNotContainsString('cibi-loan-paired-field', $resultRow);
+
+        // Both dates live in the same wrapper, as do cycle and security.
+        $dates = substr($resultRow, strpos($resultRow, 'cibi-loan-date-controls'));
+        $this->assertStringContainsString('[granted_date]', substr($dates, 0, strpos($dates, '</div>')));
+        $this->assertStringContainsString('[maturity_date]', substr($dates, 0, strpos($dates, '</div>')));
+        $meta = substr($resultRow, strpos($resultRow, 'cibi-loan-meta-controls'));
+        $this->assertStringContainsString('[cycle_label]', substr($meta, 0, strpos($meta, '</div>')));
+        $this->assertStringContainsString('[security_type]', substr($meta, 0, strpos($meta, '</div>')));
+    }
+
+    public function test_the_group_and_row_remove_actions_are_icon_only_but_still_individually_named(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $payload = $this->payload();
+        $payload['loan_records'] = [
+            $this->loanRow('ABC Cooperative', 'Salary Loan', '100,000'),
+            $this->loanRow('ABC Cooperative', 'Emergency Loan', '20,000'),
+            ['institution' => 'Zero Result Bank', 'combined_findings' => 'No existing loan record found during verification.'],
+        ];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+        $section = $this->loanSection($this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent());
+
+        // Both actions are icon-only — no visible wording widens the column or grows the row —
+        // but each still names itself through its own title and aria-label.
+        $this->assertStringContainsString('title="Remove Bank / Coop" aria-label="Remove Bank / Coop" data-loan-group-remove', $section);
+        $this->assertStringContainsString('title="Remove Loan" aria-label="Remove Loan" data-loan-result-remove', $section);
+        $this->assertStringNotContainsString('Remove Bank / Coop</button>', $section);
+        $this->assertStringNotContainsString('Remove Loan</button>', $section);
+
+        // …and they carry DIFFERENT icons, so removing one loan can't be mistaken for removing the
+        // whole institution: an X for the group, a trash can for the single loan row.
+        $closePath = 'm6 6 12 12M18 6 6 18';
+        $trashPath = 'M4.5 7h15M9 3.5h6L16 7H8l1-3.5Z';
+        $groupButton = $this->buttonMarkup($section, 'data-loan-group-remove');
+        $loanButton = $this->buttonMarkup($section, 'data-loan-result-remove');
+        $this->assertStringContainsString($closePath, $groupButton);
+        $this->assertStringNotContainsString($trashPath, $groupButton);
+        $this->assertStringContainsString($trashPath, $loanButton);
+        $this->assertStringNotContainsString($closePath, $loanButton);
+
+        // Both controls are rendered per row, but "Remove Bank / Coop" rides inside the
+        // institution wrapper — which only the FIRST row of each run shows. Two runs here
+        // (ABC Cooperative x2 rows, Zero Result Bank x1), so exactly one wrapper is hidden and
+        // exactly two "Remove Bank / Coop" buttons are actually visible.
+        $this->assertSame(3, substr_count($section, 'data-loan-group-remove'));
+        $this->assertSame(3, substr_count($section, 'data-loan-result-remove'));
+        $this->assertSame(1, preg_match_all('/data-loan-institution-controls\s+hidden/', $section));
+
+        // …but the zero-result row's "Remove Loan" is hidden, because it has no loan to remove.
+        $rows = explode('<tr data-repeater-row', $section);
+        $zeroResultRow = collect($rows)->first(fn (string $row): bool => str_contains($row, 'Zero Result Bank'));
+        $this->assertNotNull($zeroResultRow);
+        $this->assertSame(1, preg_match_all('/data-loan-result-remove\s+hidden/', $zeroResultRow));
+        $this->assertStringContainsString('aria-label="Remove Bank / Coop"', $zeroResultRow);
+        // Its findings stay editable regardless.
+        $this->assertStringContainsString('No existing loan record found during verification.</textarea>', $zeroResultRow);
+    }
+
+    public function test_the_remove_confirmation_dialog_states_exactly_what_is_being_removed(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $payload = $this->payload();
+        $payload['loan_records'] = [$this->loanRow('ABC Cooperative', 'Salary Loan', '100,000')];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+        $page = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+
+        // The one shared dialog carries the hooks app.js rewrites per action, plus both confirm
+        // icons (trash for a loan, circled X for a whole Bank / Coop) ready to be toggled.
+        $this->assertStringContainsString('data-repeater-remove-note', $page);
+        $this->assertStringContainsString('data-repeater-remove-confirm-label', $page);
+        $this->assertStringContainsString('data-repeater-remove-confirm-icon="trash"', $page);
+        $this->assertStringContainsString('data-repeater-remove-confirm-icon="close"', $page);
+        // Cancel is icon + text, never icon-only.
+        $this->assertMatchesRegularExpression('/data-modal-close><svg.+?<\/svg>\s*Cancel<\/button>/s', $page);
+
+        // The exact per-action wording lives in the bundled handler — pin every required string so
+        // none of it can drift. (Swapping itself is browser behaviour and is NOT asserted here.)
+        $js = file_get_contents(resource_path('js/app.js'));
+        foreach ([
+            "title: 'Remove Bank / Coop?'",
+            "message: 'This entry contains information. Are you sure you want to remove this Bank / Coop and its loan details?'",
+            "confirmLabel: 'Remove Bank / Coop'",
+            "confirmIcon: 'close'",
+            "title: 'Remove Loan?'",
+            "message: 'This loan contains information. Are you sure you want to remove it?'",
+            "confirmLabel: 'Remove Loan'",
+            "note: 'This change will be applied when you save the CI / BI report.'",
+        ] as $required) {
+            $this->assertStringContainsString($required, $js);
+        }
+        // Both loan actions set the dialog before opening it, so wording can never go stale.
+        $this->assertSame(3, substr_count($js, 'setRepeaterRemoveDialogContent('));
+    }
+
+    public function test_both_loan_table_remove_actions_reuse_the_sections_existing_destructive_button(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $payload = $this->payload();
+        $payload['loan_records'] = [$this->loanRow('ABC Cooperative', 'Salary Loan', '100,000')];
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+        $section = $this->loanSection($this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent());
+
+        // Both actions use the SAME subtle-red destructive button III and V already use — no
+        // one-off class, so no second red is introduced for this table.
+        $this->assertStringContainsString('class="cibi-remove-entry-button" title="Remove Bank / Coop"', $section);
+        $this->assertStringContainsString('class="cibi-remove-entry-button" title="Remove Loan"', $section);
+        $this->assertStringNotContainsString('cibi-loan-remove-button', $section);
+    }
+
+    public function test_the_cibi_dialog_closes_after_save_only_for_the_caller_that_asks_to(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+
+        // A Client Folder opens the dialog without the flag — it stays open after a save so the
+        // encoder can keep reading the report behind the freshly refreshed module card.
+        $folderPage = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('data-cibi-report-dialog', $folderPage);
+        $this->assertStringNotContainsString('data-cibi-report-close-on-save', $folderPage);
+
+        // The Reports workspace sets it, so its dialog auto-closes back to the list.
+        $reportsPage = $this->actingAs($ci)->get(route('reports.index'))->assertOk()->getContent();
+        $this->assertStringContainsString('data-cibi-report-close-on-save', $reportsPage);
+        $this->assertStringContainsString('data-cibi-report-stay', $reportsPage);
+
+        // The close is gated on that caller flag, and the in-session Save→Update relabel is gone.
+        $js = file_get_contents(resource_path('js/app.js'));
+        $this->assertStringContainsString("if (dialog.matches('[data-cibi-report-close-on-save]')) dialog.close();", $js);
+        $this->assertStringNotContainsString('submit_label', $js);
+    }
+
+    public function test_the_cibi_header_fields_use_the_standard_bordered_control_not_a_bare_underline(): void
+    {
+        [$ci, $folder] = $this->folder();
+
+        $page = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
+
+        // All six top-information controls live in the header grid the new styling targets, and
+        // their names / required flags / read-only nature are untouched by the restyle.
+        $this->assertStringContainsString('cibi-excel-metadata', $page);
+        $this->assertStringContainsString('cibi-readonly-field', $page);
+        foreach (['branch_name', 'start_date', 'account_officer_name', 'submitted_date', 'amount_applied'] as $field) {
+            $this->assertStringContainsString('name="'.$field.'"', $page);
+        }
+
+        $css = file_get_contents(resource_path('css/app.css'));
+        $this->assertStringContainsString('.cibi-encoding-page .cibi-excel-metadata .ui-control,', $css);
+        $this->assertStringContainsString('.cibi-encoding-page .cibi-excel-metadata .cibi-readonly-field { min-height: 2rem; border: 1px solid var(--color-ui-border);', $css);
+        // The ledger underline is still the body's style — only the header opts out of it.
+        $this->assertStringContainsString('.cibi-encoding-page .ui-control:hover { border-bottom-color: #9ca3af; }', $css);
     }
 
     public function test_a_zero_result_group_shows_em_dashes_for_loan_columns_and_keeps_findings_editable(): void
@@ -80,7 +260,7 @@ class CibiLoanRecordGroupingTest extends TestCase
         $section = $this->loanSection($this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent());
 
         $this->assertStringContainsString('data-loan-empty', $section);
-        $this->assertStringContainsString('No loan record added.', $section);
+        $this->assertStringContainsString('value="ABC Cooperative"', $section);
         // Five loan columns collapse to an em dash; Performance & Findings never does.
         $this->assertSame(5, substr_count($section, 'cibi-loan-blank'));
         $this->assertStringContainsString('No existing loan record found during verification.</textarea>', $section);
@@ -136,15 +316,23 @@ class CibiLoanRecordGroupingTest extends TestCase
         $this->assertSame(3, $report->loanRecords()->count());
         $this->assertSame(['ABC Cooperative'], $report->loanRecords()->pluck('institution')->unique()->values()->all());
 
-        // Three loan results under ONE institution must never render as three separate Bank/Coop
-        // groups — one group bar, three loan-result rows beneath it.
+        // Three loan results under ONE institution render as three consecutive flat rows — never
+        // as three separate Bank/Coop entries.
         $content = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent();
         $section = $this->loanSection($content);
-        $this->assertSame(1, substr_count($section, 'data-loan-group-header'));
         $this->assertSame(3, substr_count($section, '<tr data-repeater-row'));
-        $this->assertSame(1, substr_count($section, 'ABC Cooperative'));
+        $this->assertSame(3, substr_count($section, 'data-loan-institution-input'));
+        // Every row still POSTS the institution, so no row can ever save it blank…
+        $this->assertSame(3, substr_count($section, 'value="ABC Cooperative"'));
+        // …but only the FIRST row SHOWS it; the other two hide the control, exactly like the
+        // official Excel sheet's blank continuation cells.
+        $this->assertSame(2, preg_match_all('/data-loan-institution-controls\s+hidden/', $section));
         $this->assertStringContainsString('data-loan-add-result', $section);
         $this->assertStringContainsString('data-loan-result-remove', $section);
+        // The add action is named tersely enough to read at a glance in a compact row.
+        $this->assertStringContainsString('title="Add Another Loan" aria-label="Add Another Loan" data-loan-add-result', $section);
+        $this->assertStringNotContainsString('Add another loan result', $section);
+        $this->assertStringNotContainsString('Add Another Loan Result', $section);
         $this->assertStringContainsString('data-repeater-add', $content);
         $this->assertStringContainsString('Add Bank / Coop', $content);
     }
@@ -215,12 +403,11 @@ class CibiLoanRecordGroupingTest extends TestCase
         $this->assertNull($loan->original_amount);
         $this->assertNull($loan->security_type);
 
-        // …and it comes back as a zero-result group: the institution appears exactly once, in its
-        // empty state, alongside the blank starter groups this section has always padded up to.
+        // …and it comes back as a single zero-result row that still carries the institution.
         $section = $this->loanSection($this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()->getContent());
-        $this->assertSame(1, substr_count($section, 'ABC Cooperative'));
+        $this->assertSame(1, substr_count($section, '<tr data-repeater-row'));
         $this->assertStringContainsString('data-loan-empty', $section);
-        $this->assertStringContainsString('No loan record added.', $section);
+        $this->assertStringContainsString('value="ABC Cooperative"', $section);
         $this->assertStringNotContainsString('value="100,000"', $section);
     }
 
@@ -383,6 +570,15 @@ class CibiLoanRecordGroupingTest extends TestCase
             'cycle_number' => 2, 'cycle_label' => '2nd Cycle', 'security_type' => $security,
             'combined_findings' => 'Satisfactory / no adverse findings',
         ];
+    }
+
+    private function buttonMarkup(string $section, string $hook): string
+    {
+        $start = strrpos(substr($section, 0, strpos($section, $hook)), '<button');
+        $this->assertNotFalse($start, "No button carries: $hook");
+        $end = strpos($section, '</button>', $start);
+
+        return substr($section, $start, $end - $start);
     }
 
     private function loanSection(string $content): string

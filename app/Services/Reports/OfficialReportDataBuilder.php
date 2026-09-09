@@ -77,7 +77,12 @@ class OfficialReportDataBuilder
     /** @return array<string, mixed> */
     private function cibi(ClientFolder $folder, ?CoMaker $activePerson = null): array
     {
-        $report = $folder->cibiReport()->where('co_maker_id', $activePerson?->id)->with(['investigator:id,full_name', 'bankAccounts', 'loanRecords', 'creditChecks', 'incomeSourceSummaries', 'legalFindings'])->first();
+        // IV's loan rows are ordered by sort_order (the authoritative saved row order) rather than
+        // left to incidental id order, which can drift from it once rows are added or removed
+        // across saves. This one ordering feeds all three official outputs built here — the
+        // Web Preview/PDF table and the DOCX 'Loan Records' section. CibiExcelExporter already
+        // orders its own query the same way.
+        $report = $folder->cibiReport()->where('co_maker_id', $activePerson?->id)->with(['investigator:id,full_name', 'bankAccounts', 'loanRecords' => fn ($query) => $query->orderBy('sort_order')->orderBy('id'), 'creditChecks', 'incomeSourceSummaries', 'legalFindings'])->first();
         abort_if($report === null, 422, 'Save the CI / BI report before generating an official output.');
         abort_unless($report->state === RecordState::Complete, 422, 'Complete the CI / BI report before generating an official output.');
         $personName = $activePerson?->full_name ?? $folder->display_name;

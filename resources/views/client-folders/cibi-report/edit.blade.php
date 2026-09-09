@@ -44,8 +44,10 @@
     </form>
 
     <x-ui.modal id="cibi-remove-entry-dialog" title="Remove this entry?" description="This row already contains information. Are you sure you want to remove it?" size="max-w-md" data-repeater-remove-dialog>
-        <p class="text-sm text-text-muted">The entry will be removed when the CI / BI report is saved.</p>
-        <x-slot:footer><button type="button" class="ui-button-secondary" data-modal-close>Cancel</button><button type="button" class="ui-button-danger" data-repeater-remove-confirm>Remove</button></x-slot:footer>
+        {{-- Title/description/note/confirm wording are rewritten per action by app.js (Bank / Coop
+             vs Loan); these are the generic defaults the other CI/BI repeaters still use. --}}
+        <p class="text-sm text-text-muted" data-repeater-remove-note>The entry will be removed when the CI / BI report is saved.</p>
+        <x-slot:footer><button type="button" class="ui-button-secondary" data-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-danger" data-repeater-remove-confirm><span data-repeater-remove-confirm-icon="trash"><x-ui.icon name="trash" size="size-4" /></span><span data-repeater-remove-confirm-icon="close" hidden><x-ui.icon name="close" size="size-4" /></span><span data-repeater-remove-confirm-label>Remove</span></button></x-slot:footer>
     </x-ui.modal>
 
 @endsection

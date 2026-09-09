@@ -27,7 +27,11 @@ class CibiReportFormData
             'cibiReport.investigator:id,full_name',
             'cibiReport.creator:id,full_name',
             'cibiReport.bankAccounts',
-            'cibiReport.loanRecords',
+            // IV. replays each Bank/Coop's loan rows in the order they were saved. sort_order is the
+            // submitted row order, and id order can drift from it once rows are added or removed
+            // across saves — so ordering explicitly (as CibiExcelExporter already does) is what
+            // guarantees Loan 1/2/3 come back in the same order they went in.
+            'cibiReport.loanRecords' => fn ($query) => $query->orderBy('sort_order')->orderBy('id'),
             'cibiReport.creditChecks',
             'cibiReport.incomeSourceSummaries',
             'cibiReport.legalFindings',

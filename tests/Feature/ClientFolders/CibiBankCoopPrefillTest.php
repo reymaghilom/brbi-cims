@@ -177,8 +177,10 @@ class CibiBankCoopPrefillTest extends TestCase
         $page = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder));
 
         $page->assertOk()
-            ->assertSee('data-cibi-bank-prefill-note="bank_accounts"', false)
-            ->assertSee('data-cibi-bank-prefill-note="loan_records"', false)
+            // The prefilled rows themselves are the whole signal now — the informational banner
+            // that used to announce them was removed, and must not come back.
+            ->assertDontSee('data-cibi-bank-prefill-note', false)
+            ->assertDontSee('prefilled from Bank / Coop Check')
             ->assertSee('name="bank_accounts[0][institution]" value="MCCB"', false)
             ->assertSee('name="bank_accounts[0][branch]" value="Manticao Branch"', false)
             ->assertDontSee('name="bank_accounts[1][institution]" value="FICCO"', false)
@@ -243,8 +245,8 @@ class CibiBankCoopPrefillTest extends TestCase
             ->assertSee('name="bank_accounts[0][institution]" value="Manual Draft Bank"', false)
             ->assertSee('name="bank_accounts[0][branch]" value="Manual Draft Branch"', false)
             ->assertSee('name="loan_records[0][institution]" value="Manual Draft Loan"', false)
-            ->assertDontSee('data-cibi-bank-prefill-note="bank_accounts"', false)
-            ->assertDontSee('data-cibi-bank-prefill-note="loan_records"', false)
+            ->assertDontSee('data-cibi-bank-prefill-note', false)
+            ->assertDontSee('prefilled from Bank / Coop Check')
             ->assertDontSee('value="Source Target"', false);
     }
 
