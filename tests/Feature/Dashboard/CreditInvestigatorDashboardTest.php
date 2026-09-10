@@ -49,6 +49,25 @@ class CreditInvestigatorDashboardTest extends TestCase
             $response->assertSee($section);
         }
 
+        // Quick Actions keeps its subtitle, its three shortcuts and their original destinations.
+        $response->assertSee('Common tasks to help you get started')
+            ->assertSee('New Client Folder')
+            ->assertSee('Open Pending CI')
+            ->assertSee('View Reports')
+            ->assertSee(route('client-folders.index'), false)
+            ->assertSee(route('ci-activities.index'), false)
+            ->assertSee(route('reports.index'), false);
+
+        $response->assertSee('Stay focused. Every investigation helps build better decisions.')
+            ->assertDontSee('Stay focused. Every investigation builds a safer community.')
+            ->assertDontSee('Stay focused. Every investigation supports sound and responsible decisions.');
+
+        // Recent Activity and CI Activity Progress keep their own natural layout: they sit in
+        // different rows at their original spans, with nothing forcing them to equal height.
+        $response->assertSee('xl:col-span-3" aria-labelledby="progress-title"', false)
+            ->assertSee('xl:col-span-4" aria-labelledby="recent-activity-title"', false)
+            ->assertDontSee('dashboard-progress-title', false);
+
         // The date is rendered in the display timezone; the time-of-day greeting stays in the
         // shared app header (covered by GlobalLayoutTest) rather than being duplicated here.
         $response->assertSee(now(config('cims.display_timezone'))->format('l, F j, Y'));
@@ -163,6 +182,37 @@ class CreditInvestigatorDashboardTest extends TestCase
             DashboardData::DEFAULT_TREND_RANGE,
             $this->actingAs($ci)->get(route('home', ['range' => 'forever']))->assertOk()->viewData('trendRange'),
         );
+    }
+
+    public function test_every_trend_range_is_pre_rendered_so_switching_needs_no_request(): void
+    {
+        $ci = User::factory()->create();
+        $this->folder($ci, 'TODAY, CLIENT', ClientFolderStatus::Completed)->update(['completed_at' => now()]);
+
+        $response = $this->actingAs($ci)->get(route('home'))->assertOk();
+
+        // All three ranges arrive with the first response, so app.js switches by showing an
+        // already-rendered chart instead of firing a request and painting a loading state.
+        $trends = $response->viewData('trends');
+        $this->assertSame(['7d', '30d', '12m'], array_keys($trends));
+        $this->assertCount(7, $trends['7d']['points']);
+        $this->assertCount(30, $trends['30d']['points']);
+        $this->assertCount(12, $trends['12m']['points']);
+
+        // The default range stays the visible one; the other two ship hidden, ready to swap in.
+        foreach (['7d', '30d', '12m'] as $range) {
+            $response->assertSee('data-trend-panel="'.$range.'"', false)
+                ->assertSee('data-trend-tab="'.$range.'"', false);
+        }
+        $response->assertSee('data-trend-panel="30d" hidden', false)
+            ->assertSee('data-trend-panel="12m" hidden', false)
+            ->assertSee('data-trend-tabs', false);
+
+        // The three labels and the active-tab styling are unchanged.
+        foreach (['7 Days', '30 Days', '12 Months'] as $label) {
+            $response->assertSee($label);
+        }
+        $this->assertSame(DashboardData::DEFAULT_TREND_RANGE, $response->viewData('trendRange'));
     }
 
     public function test_activity_progress_percentages_use_the_applicable_denominator(): void

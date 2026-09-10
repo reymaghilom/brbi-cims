@@ -9,8 +9,8 @@ use App\Models\IncomeSource;
 use App\Models\User;
 use App\Services\ClientFolders\IncomeSourcesCompletionEvaluator;
 use App\Services\ClientFolders\ResidenceBusinessCheckCompletionEvaluator;
+use App\Services\Media\BusinessCheckMediaCleanup;
 use App\Services\Media\ClientMediaUploader;
-use App\Services\Media\PrivateMediaStorage;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -32,7 +32,7 @@ class DeleteBusinessCheck
         private readonly ResidenceBusinessCheckCompletionEvaluator $completion,
         private readonly IncomeSourcesCompletionEvaluator $incomeCompletion,
         private readonly ClientProgressService $progress,
-        private readonly PrivateMediaStorage $storage,
+        private readonly BusinessCheckMediaCleanup $mediaCleanup,
         private readonly ClientMediaUploader $mediaUploader,
     ) {}
 
@@ -59,21 +59,7 @@ class DeleteBusinessCheck
             $location = $lockedCheck->location;
             $businessName = $lockedCheck->business_name;
 
-            $photos = $lockedCheck->photos()->get(['path', 'thumbnail_path', 'cloud_public_id', 'cloud_resource_type', 'cloud_delivery_type']);
-            $localPaths = $photos->flatMap(fn ($photo) => [$photo->path, $photo->thumbnail_path])->all();
-            foreach ($photos as $photo) {
-                if ($photo->isCloud()) {
-                    $retiredCloudAssets[] = ['public_id' => $photo->cloud_public_id, 'resource_type' => $photo->cloud_resource_type, 'delivery_type' => $photo->cloud_delivery_type];
-                }
-            }
-            if ($lockedCheck->hasMapScreenshot()) {
-                $localPaths[] = $lockedCheck->map_screenshot_path;
-                $localPaths[] = $lockedCheck->map_screenshot_thumbnail_path;
-                if ($lockedCheck->hasCloudMapScreenshot()) {
-                    $retiredCloudAssets[] = ['public_id' => $lockedCheck->map_screenshot_cloud_public_id, 'resource_type' => $lockedCheck->map_screenshot_cloud_resource_type, 'delivery_type' => $lockedCheck->map_screenshot_cloud_delivery_type];
-                }
-            }
-            $this->storage->deleteStoredFiles($localPaths);
+            $retiredCloudAssets = $this->mediaCleanup->purgeLocalFilesAndCollectCloudAssets($lockedCheck);
 
             $lockedCheck->delete();
 

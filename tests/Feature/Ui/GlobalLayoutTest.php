@@ -40,7 +40,9 @@ class GlobalLayoutTest extends TestCase
             ->assertDontSee('Photos &amp; Videos', false)
             ->assertDontSee('Telegram History')
             ->assertDontSee('Google Drive')
-            ->assertSee('Recycle Bin');
+            ->assertDontSee('Recycle Bin')
+            ->assertDontSee('Integrations &amp; records', false)
+            ->assertDontSee('Integrations & records');
     }
 
     public function test_sidebar_restores_previous_branding_and_refines_copyright_footer_without_the_user_card(): void
@@ -522,7 +524,7 @@ class GlobalLayoutTest extends TestCase
         $this->assertStringContainsString('event.preventDefault()', $javascript);
         $this->assertStringContainsString("'[data-folder-browser-layout]'", $javascript);
         $this->assertStringContainsString("'[data-folder-browser-artifacts]'", $javascript);
-        $this->assertStringContainsString("'[data-folder-create-form], [data-folder-rename-form], [data-folder-recycle-form]'", $javascript);
+        $this->assertStringContainsString("'[data-folder-create-form], [data-folder-rename-form], [data-folder-delete-form]'", $javascript);
         $this->assertStringContainsString("Accept: 'application/json'", $javascript);
         $this->assertStringContainsString('resetFolderPreview(browser)', $javascript);
         $this->assertStringContainsString('window.history.replaceState', $javascript);
@@ -631,7 +633,7 @@ class GlobalLayoutTest extends TestCase
             'form/textarea', 'form/choice-group', 'form/validation-message', 'ui/sticky-form-toolbar', 'ui/modal',
             'ui/confirmation-dialog', 'ui/toast', 'ui/context-menu', 'ui/tabs', 'ui/accordion', 'ui/loading-state',
             'ui/retry-state', 'ui/activity-checklist-item', 'ui/note-timeline', 'ui/media-card',
-            'ui/integration-status-badge', 'ui/missing-items-summary', 'ui/report-preview-toolbar', 'ui/recycle-bin-item',
+            'ui/integration-status-badge', 'ui/missing-items-summary', 'ui/report-preview-toolbar',
         ];
 
         foreach ($components as $component) {

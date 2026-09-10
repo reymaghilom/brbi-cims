@@ -255,16 +255,15 @@ class IncomeSourceController extends Controller
         $personParams = ActivePersonResolver::queryParams($incomeSource->co_maker_id ? $clientFolder->coMakers()->find($incomeSource->co_maker_id) : null);
         $delete->execute(request()->user(), $clientFolder, $incomeSource);
 
-        return redirect()->route('client-folders.income-sources.manage', [$clientFolder] + $personParams)->with('status', 'Business Report and linked Business Check moved to the Recycle Bin.');
+        return redirect()->route('client-folders.income-sources.manage', [$clientFolder] + $personParams)->with('status', 'Business and linked Business Report and Business Check permanently deleted.');
     }
 
     /**
      * Permanent, independent counterpart to destroy() above — used only by the dedicated-business
      * "Business / Income Sources" list, where a row always has a real BusinessReport. This never
-     * soft-deletes and never touches the linked Business Check or the IncomeSource itself unless
-     * the IncomeSource is left truly orphaned (see DeleteBusinessReport /
-     * DeleteIncomeSourceIfOrphaned) — the old paired Recycle-Bin behavior above remains exactly as
-     * it was for every other IncomeSource type.
+     * touches the linked Business Check or the IncomeSource itself unless the IncomeSource is left
+     * truly orphaned (see DeleteBusinessReport / DeleteIncomeSourceIfOrphaned), whereas destroy()
+     * above removes the whole business — IncomeSource, Report and Check together.
      */
     public function destroyBusinessReport(ClientFolder $clientFolder, IncomeSource $incomeSource, DeleteBusinessReport $delete): RedirectResponse|JsonResponse
     {

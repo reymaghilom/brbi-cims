@@ -19,10 +19,10 @@ use App\Http\Controllers\CibiReportController;
 use App\Http\Controllers\CibiSignatoryReassignmentController;
 use App\Http\Controllers\ClientFolderAccessController;
 use App\Http\Controllers\ClientFolderController;
+use App\Http\Controllers\ClientFolderDeleteController;
 use App\Http\Controllers\ClientFolderLiveSearchController;
 use App\Http\Controllers\ClientFolderModulePlaceholderController;
 use App\Http\Controllers\ClientFolderNameController;
-use App\Http\Controllers\ClientFolderRecycleController;
 use App\Http\Controllers\ClientFolderSuggestionController;
 use App\Http\Controllers\ClientInformationController;
 use App\Http\Controllers\CoMakerController;
@@ -33,10 +33,6 @@ use App\Http\Controllers\GeneratedReportController;
 use App\Http\Controllers\GlobalCiActivityController;
 use App\Http\Controllers\IncomeSourceController;
 use App\Http\Controllers\MediaReferenceController;
-use App\Http\Controllers\RecycleBinBusinessRestoreController;
-use App\Http\Controllers\RecycleBinController;
-use App\Http\Controllers\RecycleBinPurgeController;
-use App\Http\Controllers\RecycleBinRestoreController;
 use App\Http\Controllers\ReportClientSuggestionController;
 use App\Http\Controllers\ReportsController;
 use App\Http\Controllers\ResidenceBusinessCheckReportController;
@@ -69,17 +65,6 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::get('/reports/client-suggestions', ReportClientSuggestionController::class)
             ->middleware('throttle:60,1')
             ->name('reports.client-suggestions');
-        Route::get('/recycle-bin', RecycleBinController::class)->name('recycle-bin.index');
-        Route::patch('/recycle-bin/businesses/{incomeSource}/restore', [RecycleBinBusinessRestoreController::class, 'update'])
-            ->withTrashed()
-            ->name('recycle-bin.businesses.restore');
-        Route::patch('/recycle-bin/{clientFolder}/restore', [RecycleBinRestoreController::class, 'update'])
-            ->withTrashed()
-            ->name('recycle-bin.restore');
-        Route::delete('/recycle-bin/{clientFolder}', [RecycleBinPurgeController::class, 'destroy'])
-            ->withTrashed()
-            ->name('recycle-bin.destroy');
-
         Route::get('/client-folders', [ClientFolderAccessController::class, 'index'])->name('client-folders.index');
         Route::get('/client-folders/live-search', ClientFolderLiveSearchController::class)
             ->middleware('throttle:120,1')
@@ -91,7 +76,7 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::post('/client-folders', [ClientFolderController::class, 'store'])->name('client-folders.store');
         Route::get('/client-folders/{clientFolder}/edit-name', [ClientFolderNameController::class, 'edit'])->name('client-folders.edit-name');
         Route::patch('/client-folders/{clientFolder}/name', [ClientFolderNameController::class, 'update'])->name('client-folders.update-name');
-        Route::delete('/client-folders/{clientFolder}', [ClientFolderRecycleController::class, 'destroy'])->name('client-folders.destroy');
+        Route::delete('/client-folders/{clientFolder}', [ClientFolderDeleteController::class, 'destroy'])->name('client-folders.destroy');
         Route::get('/client-folders/{clientFolder}/client-information', [ClientInformationController::class, 'edit'])
             ->name('client-folders.client-information.edit');
         Route::put('/client-folders/{clientFolder}/client-information', [ClientInformationController::class, 'update'])

@@ -682,7 +682,7 @@ document.addEventListener('click', (event) => {
 document.querySelectorAll('[data-client-search]').forEach(initializeClientSearch);
 
 document.addEventListener('submit', async (event) => {
-    const form = event.target.closest('[data-folder-create-form], [data-folder-rename-form], [data-folder-recycle-form]');
+    const form = event.target.closest('[data-folder-create-form], [data-folder-rename-form], [data-folder-delete-form]');
     if (!form) return;
     event.preventDefault();
 
@@ -4758,5 +4758,57 @@ document.addEventListener('change', (event) => {
             closeDialog('custom-business-remove-dialog');
             showToast(result.payload.message, result.payload.deleted ? 'success' : 'info');
         }
+    });
+})();
+
+
+/**
+ * CI Completion Trend range tabs (7 Days / 30 Days / 12 Months).
+ *
+ * All three ranges are already rendered server-side on the initial dashboard load (see
+ * DashboardData::for()'s `trends`), so switching range is a pure show/hide of a pre-rendered chart:
+ * no request, no loading state, no flicker. The tabs stay ordinary links to the same `range` GET
+ * parameter the controller already honours, so without JS — or on a middle/modifier click — they
+ * still navigate exactly as before; this only intercepts the plain left-click.
+ */
+(() => {
+    const tabs = document.querySelector('[data-trend-tabs]');
+    if (!tabs) return;
+
+    const ACTIVE = ['bg-brand-primary', 'text-white', 'shadow-sm'];
+    const IDLE = ['text-text-muted', 'hover:bg-surface', 'hover:text-brand-primary'];
+
+    tabs.addEventListener('click', (event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        const tab = event.target.closest('[data-trend-tab]');
+        if (!tab) return;
+
+        const range = tab.dataset.trendTab;
+        const panels = document.querySelectorAll('[data-trend-panel]');
+        const selected = document.querySelector(`[data-trend-panel="${range}"]`);
+        // Nothing pre-rendered for this range: leave the link alone and let it navigate.
+        if (!selected || panels.length === 0) return;
+        event.preventDefault();
+
+        panels.forEach((panel) => {
+            panel.hidden = panel !== selected;
+        });
+
+        tabs.querySelectorAll('[data-trend-tab]').forEach((other) => {
+            const isActive = other === tab;
+            other.classList.remove(...(isActive ? IDLE : ACTIVE));
+            other.classList.add(...(isActive ? ACTIVE : IDLE));
+            if (isActive) {
+                other.setAttribute('aria-current', 'true');
+            } else {
+                other.removeAttribute('aria-current');
+            }
+        });
+
+        // Keep the address bar honest so a refresh or a shared link reopens the same range,
+        // without navigating away from the already-rendered page.
+        const url = new URL(window.location.href);
+        url.searchParams.set('range', range);
+        window.history.replaceState({}, '', url);
     });
 })();

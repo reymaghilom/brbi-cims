@@ -26,23 +26,9 @@ class ClientFolder extends Model
     /**
      * All active (non-trashed) folders are a shared CI team workspace: any known-role user
      * may see them, so this is a no-op passthrough kept for its existing call sites.
-     * Trashed/recycled folders keep the original restrictive behavior — see scopeAccessibleToTrashed().
      */
     public function scopeAccessibleTo(Builder $query, User $user): Builder
     {
-        return $query;
-    }
-
-    /**
-     * Restrictive listing scope used only for trashed/recycled folders (recycle bin), which
-     * intentionally did not adopt the shared-workspace access model.
-     */
-    public function scopeAccessibleToTrashed(Builder $query, User $user): Builder
-    {
-        if ($user->role->worksAsCreditInvestigator()) {
-            $query->where($query->qualifyColumn('assigned_ci_id'), $user->id);
-        }
-
         return $query;
     }
 

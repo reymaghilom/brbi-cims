@@ -2,7 +2,7 @@
     $folderBrowserAction = $folderBrowserAction ?? route('home');
     $folderBrowserContext = $folderBrowserContext ?? (request()->routeIs('home') ? 'dashboard' : 'client_folders');
     // Batched once for the whole listed page (not per folder) to keep the query count constant.
-    // Dashboard Folder History shows ONLY the folder's own created/renamed lifecycle — recycle,
+    // Dashboard Folder History shows ONLY the folder's own created/renamed lifecycle — delete,
     // restore, permanent-delete, and every child-record module action (CI/BI, business reports,
     // photo uploads, etc.) are excluded here even though their audit rows remain untouched in
     // the database and still surface in the Admin Audit Log / Client Folder Contents' own
@@ -175,8 +175,8 @@
                                     @can('update', $clientFolder)
                                         <button type="button" id="folder-rename-{{ $clientFolder->id }}" role="menuitem" class="client-folder-menu-item" data-modal-open="folder-rename-dialog-{{ $clientFolder->id }}"><x-ui.icon name="edit" size="size-4" />Rename</button>
                                     @endcan
-                                    @can('delete', $clientFolder)
-                                        <button type="button" id="dashboard-recycle-{{ $clientFolder->id }}" role="menuitem" class="client-folder-menu-item text-danger hover:bg-danger-soft" data-modal-open="dashboard-recycle-dialog-{{ $clientFolder->id }}"><x-ui.icon name="trash" size="size-4" />Move to Recycle Bin</button>
+                                    @can('forceDelete', $clientFolder)
+                                        <button type="button" id="dashboard-delete-{{ $clientFolder->id }}" role="menuitem" class="client-folder-menu-item text-danger hover:bg-danger-soft" data-modal-open="dashboard-delete-dialog-{{ $clientFolder->id }}"><x-ui.icon name="trash" size="size-4" />Delete Permanently</button>
                                     @endcan
                                 </div>
                             </div>
@@ -308,16 +308,16 @@
             </x-ui.modal>
         @endcan
 
-        @can('delete', $clientFolder)
-            <x-ui.modal id="dashboard-recycle-dialog-{{ $clientFolder->id }}" title="Move to Recycle Bin" size="max-w-md">
-                <p class="text-sm leading-6 text-text-muted">Are you sure you want to move <strong class="font-semibold text-text-main" data-folder-name-for="{{ $clientFolder->id }}">&ldquo;{{ $clientFolder->display_name }}&rdquo;</strong> to the Recycle Bin?</p>
-                <p class="mt-3 text-sm leading-6 text-text-muted">The folder can be restored according to the existing authorization rules.</p>
+        @can('forceDelete', $clientFolder)
+            <x-ui.modal id="dashboard-delete-dialog-{{ $clientFolder->id }}" title="Delete Client Folder Permanently?" size="max-w-md">
+                <p class="text-sm leading-6 text-text-muted">Are you sure you want to permanently delete <strong class="font-semibold text-text-main" data-folder-name-for="{{ $clientFolder->id }}">&ldquo;{{ $clientFolder->display_name }}&rdquo;</strong>?</p>
+                <p class="mt-3 text-sm leading-6 text-text-muted">This client folder and its owned records will be permanently deleted and cannot be restored.</p>
                 <x-slot:footer>
                     <button type="button" data-modal-close class="ui-button-secondary">Cancel</button>
-                    <form method="POST" action="{{ route('client-folders.destroy', $clientFolder) }}" data-folder-recycle-form data-folder-id="{{ $clientFolder->id }}" data-folder-status="{{ $clientFolder->status->value }}">
+                    <form method="POST" action="{{ route('client-folders.destroy', $clientFolder) }}" data-folder-delete-form data-folder-id="{{ $clientFolder->id }}" data-folder-status="{{ $clientFolder->status->value }}">
                         @csrf
                         @method('DELETE')
-                        <button class="ui-button-danger">Move to Recycle Bin</button>
+                        <button class="ui-button-danger">Delete Permanently</button>
                     </form>
                 </x-slot:footer>
             </x-ui.modal>

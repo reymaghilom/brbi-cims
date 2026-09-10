@@ -28,7 +28,7 @@ use Illuminate\Support\Collection;
  *   TEAM WORKSPACE, using exactly the scope the Client Folders page uses: ClientFolder::accessibleTo(),
  *   a passthrough for active folders because any Credit Investigator may work on any active folder
  *   (see ClientFolder::isAccessibleBy()). Trashed folders are excluded by the model's own soft-delete
- *   scope, matching that page's stricter recycle-bin rule. This is why the Dashboard's folder total
+ *   scope, exactly as that page does. This is why the Dashboard's folder total
  *   and the Client Folders page total agree.
  * - "My Work Today" is the one PERSONAL section: it answers "what do I need to work on", so it uses
  *   the responsibility rule the app already owns - `creator_id`, the same field the scheduled-today
@@ -61,13 +61,21 @@ class DashboardData
 
         $workload = $this->workload($folders, $folderIds, $now);
         $recentActivity = $this->recentActivity($folderIds, $timezone);
+        $trends = collect(self::TREND_RANGES)
+            ->map(fn (string $label, string $key): array => $this->trend($user, $key, $now, $timezone))
+            ->all();
 
         return [
             'greeting' => $this->greeting($now),
             'today' => $now,
             'summary' => $this->summary($user, $folders, $folderIds, $workload, $now, $timezone),
             'workload' => $workload,
-            'trend' => $this->trend($user, $trendRange, $now, $timezone),
+            // Every range is computed up front so the CI Completion Trend card can switch between
+            // 7 Days / 30 Days / 12 Months instantly on the client, with no second request and no
+            // loading state. Each entry is produced by the exact same trend() call the single-range
+            // version used, so the calculation and labels per range are unchanged.
+            'trends' => $trends,
+            'trend' => $trends[$trendRange],
             'trendRange' => $trendRange,
             'trendRanges' => self::TREND_RANGES,
             'activityProgress' => $this->activityProgress($folderIds),

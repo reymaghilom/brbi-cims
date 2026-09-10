@@ -54,7 +54,7 @@
             <p class="flex items-center gap-2 text-sm font-bold text-text-main sm:justify-end">
                 <x-ui.icon name="calendar" size="size-4" class="text-text-muted" />{{ $today->format('l, F j, Y') }}
             </p>
-            <p class="mt-1 text-xs text-text-subtle">Stay focused. Every investigation builds a safer community.</p>
+            <p class="mt-1 text-xs text-text-subtle">Stay focused. Every investigation helps build better decisions.</p>
         </div>
     </section>
 
@@ -90,11 +90,14 @@
                         <p class="text-xs text-text-muted">Number of completed investigations</p>
                     </div>
                 </div>
-                {{-- Plain links: the range is a GET parameter the controller re-reads, so the chart
-                     stays server-rendered and needs no client-side state. --}}
-                <div class="flex shrink-0 gap-1 rounded-control bg-surface-muted p-1" role="group" aria-label="Trend range">
+                {{-- Every range is rendered up front (see DashboardData::for()'s `trends`), so
+                     app.js switches ranges by simply showing the matching pre-rendered chart —
+                     instantly, with no request and no loading state. These stay real links to the
+                     same GET parameter the controller already re-reads, so without JS they still
+                     work exactly as before; app.js only intercepts the click. --}}
+                <div class="flex shrink-0 gap-1 rounded-control bg-surface-muted p-1" role="group" aria-label="Trend range" data-trend-tabs>
                     @foreach($trendRanges as $key => $label)
-                        <a href="{{ route('home', ['range' => $key]) }}"
+                        <a href="{{ route('home', ['range' => $key]) }}" data-trend-tab="{{ $key }}"
                             @class([
                                 'min-h-8 rounded-control px-3 py-1.5 text-xs font-semibold transition',
                                 'bg-brand-primary text-white shadow-sm' => $trendRange === $key,
@@ -104,7 +107,11 @@
                     @endforeach
                 </div>
             </div>
-            @include('dashboard._trend-chart')
+            @foreach($trends as $key => $rangeTrend)
+                <div data-trend-panel="{{ $key }}"@unless($trendRange === $key) hidden @endunless>
+                    @include('dashboard._trend-chart', ['trend' => $rangeTrend])
+                </div>
+            @endforeach
         </article>
 
         <article class="ui-card p-4 sm:p-5 xl:col-span-3" aria-labelledby="workload-title">

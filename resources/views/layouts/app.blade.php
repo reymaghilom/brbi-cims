@@ -66,12 +66,6 @@
                     <x-ui.sidebar-link :href="route('reports.index')" icon="report" :active="request()->routeIs('reports.*')">Reports</x-ui.sidebar-link>
                 </div>
             </div>
-            <div>
-                <p class="ui-sidebar-section-label mb-2 px-3 text-[0.68rem] font-bold uppercase tracking-[0.18em] text-white/45">Integrations &amp; records</p>
-                <div class="space-y-1">
-                    <x-ui.sidebar-link :href="route('recycle-bin.index')" icon="trash" :active="request()->routeIs('recycle-bin.*')">Recycle Bin</x-ui.sidebar-link>
-                </div>
-            </div>
             @can('viewAny', App\Models\User::class)
                 <div>
                     <p class="ui-sidebar-section-label mb-2 px-3 text-[0.68rem] font-bold uppercase tracking-[0.18em] text-white/45">Administration</p>

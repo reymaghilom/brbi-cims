@@ -24,7 +24,7 @@ class PurgeClientFolder
                 'client_folder_id' => $folder->id,
                 'action' => 'client_folder.permanently_deleted',
                 'module' => 'client_folders',
-                'description' => 'A recycled client folder was permanently deleted.',
+                'description' => 'A client folder was permanently deleted.',
                 'metadata' => [
                     'folder_id' => $folder->id,
                     'folder_number' => $folder->folder_number,

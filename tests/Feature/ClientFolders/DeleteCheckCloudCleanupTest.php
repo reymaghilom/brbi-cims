@@ -3,8 +3,10 @@
 namespace Tests\Feature\ClientFolders;
 
 use App\Actions\ClientFolders\DeleteBusinessCheck;
+use App\Actions\ClientFolders\DeleteIncomeSource;
 use App\Actions\ClientFolders\DeleteResidenceCheck;
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
@@ -162,6 +164,102 @@ class DeleteCheckCloudCleanupTest extends TestCase
         $this->assertDatabaseHas('residence_check_photos', ['id' => $photo->id]);
     }
 
+    // --- whole business (IncomeSource) permanent delete -------------------------------------
+    //
+    // Deleting a whole business removes its linked Business Check too, so it must retire exactly
+    // the same owned media the dedicated DeleteBusinessCheck path does - the shared
+    // BusinessCheckMediaCleanup guarantees that. The cascades remove the photo/group ROWS; only
+    // this cleanup removes the local files and the Cloudinary originals behind them.
+
+    public function test_whole_business_delete_retires_the_linked_business_checks_cloud_photos_and_map_screenshot(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $source = $this->businessSource($folder, 'Sari-Sari Store', 'Poblacion, San Miguel, Bulacan');
+        $check = $folder->businessChecks()->create([
+            'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan', 'ci_user_id' => $ci->id,
+            'map_screenshot_file_name' => 'map.jpg', 'map_screenshot_cloud_public_id' => 'BRBI-CIMS/business/map-screenshots/whole-1',
+            'map_screenshot_cloud_resource_type' => 'image', 'map_screenshot_cloud_delivery_type' => 'authenticated',
+        ]);
+        $defaultGroup = $check->photoGroups()->create(['sort_order' => 0]);
+        $secondGroup = $check->photoGroups()->create(['caption' => 'Second group', 'sort_order' => 1]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/business/photos/whole-default-1') + ['category' => 'business', 'business_check_photo_group_id' => $defaultGroup->id]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/business/photos/whole-group2-1') + ['category' => 'business', 'business_check_photo_group_id' => $secondGroup->id]);
+        $check->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/business/photos/whole-competitor-1') + ['category' => 'competitor']);
+        $report = $source->businessReport()->firstOrFail();
+
+        $cloud = $this->mock(CloudinaryMediaStorage::class);
+        foreach (['BRBI-CIMS/business/photos/whole-default-1', 'BRBI-CIMS/business/photos/whole-group2-1', 'BRBI-CIMS/business/photos/whole-competitor-1'] as $publicId) {
+            $cloud->shouldReceive('destroy')->once()->with($publicId, 'image', 'authenticated');
+        }
+        $cloud->shouldReceive('destroy')->once()->with('BRBI-CIMS/business/map-screenshots/whole-1', 'image', 'authenticated');
+
+        app(DeleteIncomeSource::class)->execute($ci, $folder, $source);
+
+        // All three rows are permanently gone - no soft-deleted IncomeSource is left behind.
+        $this->assertDatabaseMissing('income_sources', ['id' => $source->id]);
+        $this->assertDatabaseMissing('business_reports', ['id' => $report->id]);
+        $this->assertDatabaseMissing('business_checks', ['id' => $check->id]);
+        $this->assertDatabaseCount('business_check_photos', 0);
+        $this->assertDatabaseCount('business_check_photo_groups', 0);
+
+        // One parent-level lifecycle event, not a second standalone Business Check event just
+        // because its cleanup helper was reused.
+        $this->assertDatabaseHas('audit_logs', ['action' => 'income_source.deleted', 'client_folder_id' => $folder->id]);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'business_check.deleted', 'client_folder_id' => $folder->id]);
+    }
+
+    public function test_whole_business_delete_never_touches_another_businesss_media_or_records(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $sourceA = $this->businessSource($folder, 'Business A', 'Address A');
+        $sourceB = $this->businessSource($folder, 'Business B', 'Address B');
+        $checkA = $folder->businessChecks()->create(['income_source_id' => $sourceA->id, 'ci_date' => now()->toDateString(), 'location' => 'Address A', 'ci_user_id' => $ci->id]);
+        $checkB = $folder->businessChecks()->create(['income_source_id' => $sourceB->id, 'ci_date' => now()->toDateString(), 'location' => 'Address B', 'ci_user_id' => $ci->id]);
+        $checkA->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/business/photos/whole-a-1') + ['category' => 'business']);
+        $photoB = $checkB->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/business/photos/whole-b-1') + ['category' => 'business']);
+
+        // Only Business A's asset may be destroyed; a stray call for B would fail this mock.
+        $cloud = $this->mock(CloudinaryMediaStorage::class);
+        $cloud->shouldReceive('destroy')->once()->with('BRBI-CIMS/business/photos/whole-a-1', 'image', 'authenticated');
+
+        app(DeleteIncomeSource::class)->execute($ci, $folder, $sourceA);
+
+        $this->assertDatabaseMissing('income_sources', ['id' => $sourceA->id]);
+        $this->assertDatabaseMissing('business_checks', ['id' => $checkA->id]);
+        $this->assertDatabaseHas('income_sources', ['id' => $sourceB->id, 'deleted_at' => null]);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $sourceB->id]);
+        $this->assertDatabaseHas('business_checks', ['id' => $checkB->id, 'income_source_id' => $sourceB->id]);
+        $this->assertDatabaseHas('business_check_photos', ['id' => $photoB->id, 'cloud_public_id' => 'BRBI-CIMS/business/photos/whole-b-1']);
+    }
+
+    public function test_whole_business_delete_is_scoped_to_one_person_and_leaves_the_other_intact(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER ONE']);
+        $applicantSource = $this->businessSource($folder, 'Applicant Store', 'Applicant Address');
+        $coMakerSource = $this->businessSource($folder, 'Co-Maker Store', 'Co-Maker Address', $coMaker->id);
+        $applicantCheck = $folder->businessChecks()->create(['income_source_id' => $applicantSource->id, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'ci_user_id' => $ci->id]);
+        $coMakerCheck = $folder->businessChecks()->create(['income_source_id' => $coMakerSource->id, 'co_maker_id' => $coMaker->id, 'ci_date' => now()->toDateString(), 'location' => 'Co-Maker Address', 'ci_user_id' => $ci->id]);
+        $applicantCheck->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/business/photos/applicant-1') + ['category' => 'business']);
+        $coMakerPhoto = $coMakerCheck->photos()->create($this->cloudPhotoRow($ci->id, 'BRBI-CIMS/business/photos/co-maker-1') + ['category' => 'business']);
+
+        $cloud = $this->mock(CloudinaryMediaStorage::class);
+        $cloud->shouldReceive('destroy')->once()->with('BRBI-CIMS/business/photos/applicant-1', 'image', 'authenticated');
+
+        app(DeleteIncomeSource::class)->execute($ci, $folder, $applicantSource);
+
+        // Applicant (co_maker_id NULL) removed; the exact co-maker's business survives whole.
+        $this->assertDatabaseMissing('income_sources', ['id' => $applicantSource->id]);
+        $this->assertDatabaseMissing('business_checks', ['id' => $applicantCheck->id]);
+        $this->assertDatabaseHas('income_sources', ['id' => $coMakerSource->id, 'co_maker_id' => $coMaker->id, 'deleted_at' => null]);
+        $this->assertDatabaseHas('business_reports', ['income_source_id' => $coMakerSource->id]);
+        $this->assertDatabaseHas('business_checks', ['id' => $coMakerCheck->id, 'co_maker_id' => $coMaker->id]);
+        $this->assertDatabaseHas('business_check_photos', ['id' => $coMakerPhoto->id, 'cloud_public_id' => 'BRBI-CIMS/business/photos/co-maker-1']);
+    }
+
     /** Common cloud-photo fields shared by both business_check_photos and residence_check_photos — `category` only exists on the former, so it's added separately at each business call site instead of baked in here. */
     private function cloudPhotoRow(int $uploadedBy, string $publicId): array
     {
@@ -181,10 +279,10 @@ class DeleteCheckCloudCleanupTest extends TestCase
         return $folder;
     }
 
-    private function businessSource(ClientFolder $folder, string $name, string $address): IncomeSource
+    private function businessSource(ClientFolder $folder, string $name, string $address, ?int $coMakerId = null): IncomeSource
     {
         $template = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
-        $source = $folder->incomeSources()->create(['income_source_template_id' => $template->id, 'template_type' => $template->template_type, 'template_version' => $template->version, 'source_name' => $name, 'business_name' => $name]);
+        $source = $folder->incomeSources()->create(['income_source_template_id' => $template->id, 'template_type' => $template->template_type, 'template_version' => $template->version, 'source_name' => $name, 'business_name' => $name, 'co_maker_id' => $coMakerId]);
         $source->businessReport()->create(['business_name' => $name, 'main_business_address' => $address, 'report_category' => 'retail_grocery_water_refilling']);
         // Represents a genuinely, explicitly saved Business Report (revision > 1) rather than a
         // Check-first draft shell — these tests are about Business Check hard-delete leaving the

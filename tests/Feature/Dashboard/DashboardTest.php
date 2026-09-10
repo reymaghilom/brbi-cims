@@ -350,17 +350,27 @@ class DashboardTest extends TestCase
             ->assertSee(route('client-folders.show', $own), false)
             ->assertDontSee(route('client-folders.edit-name', $own), false)
             ->assertSee(route('client-folders.update-name', $own), false)
-            ->assertSee(route('client-folders.destroy', $own), false)
             ->assertSee(route('client-folders.show', $other), false)
             ->assertSee('data-modal-open="folder-rename-dialog-'.$own->id.'"', false)
             ->assertSee('id="folder-rename-dialog-'.$own->id.'"', false)
-            ->assertSee('data-modal-open="dashboard-recycle-dialog-'.$own->id.'"', false)
-            ->assertSee('id="dashboard-recycle-dialog-'.$own->id.'"', false)
             ->assertSee('aria-haspopup="menu"', false)
             ->assertSeeText('Open')
-            ->assertSee('Move to Recycle Bin');
+            // Deleting is permanent and administrator-only, so a CI gets no delete affordance at
+            // all — neither the menu entry nor its dialog is rendered, and that is enforced again
+            // server-side by ClientFolderDeleteController (see ClientFolderLifecycleTest). The
+            // destroy URI itself is not asserted on: DELETE and the GET show route share
+            // /client-folders/{id}, so its presence says nothing either way.
+            ->assertDontSee('dashboard-delete-dialog-'.$own->id, false)
+            ->assertDontSee('Delete Permanently');
 
         $this->assertGreaterThanOrEqual(3, substr_count($response->getContent(), route('client-folders.show', $own)));
+
+        $this->actingAs(User::factory()->administrator()->create())->get(route('client-folders.index'))
+            ->assertOk()
+            ->assertSee('data-modal-open="dashboard-delete-dialog-'.$own->id.'"', false)
+            ->assertSee('id="dashboard-delete-dialog-'.$own->id.'"', false)
+            ->assertSee('Delete Client Folder Permanently?')
+            ->assertSee('Delete Permanently');
     }
 
     public function test_dashboard_rejects_invalid_folder_browser_filters(): void

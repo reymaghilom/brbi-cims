@@ -35,7 +35,7 @@ class RetiredIntegrationSurfacesTest extends TestCase
             ->assertSee('Client Folders')
             ->assertSee('CI Activities')
             ->assertSee('Reports')
-            ->assertSee('Recycle Bin');
+            ->assertDontSee('Recycle Bin');
 
         foreach (['telegram-history', 'google-drive'] as $path) {
             $this->actingAs($ci)->get('/'.$path)->assertNotFound();

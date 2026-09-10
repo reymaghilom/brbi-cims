@@ -257,7 +257,7 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertStringContainsString("dispatchEvent(new CustomEvent('folder-browser:refresh'))", $renameSuccessSource);
     }
 
-    public function test_other_ci_can_open_rename_and_recycle_a_folder_assigned_to_another_ci(): void
+    public function test_other_ci_can_open_and_rename_a_folder_assigned_to_another_ci_but_cannot_delete_it(): void
     {
         $assigned = User::factory()->create();
         $other = User::factory()->create();
@@ -267,121 +267,88 @@ class ClientFolderLifecycleTest extends TestCase
         $this->actingAs($other)->patch(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED BY OTHER CI'])->assertRedirect();
         $this->assertSame('RENAMED BY OTHER CI', $folder->fresh()->display_name);
 
-        $this->actingAs($other)->delete(route('client-folders.destroy', $folder))->assertRedirect();
-        $this->assertTrue($folder->fresh()->trashed());
+        // Deleting a folder is permanent now that there is no Recycle Bin, so it is gated by the
+        // stricter 'forceDelete' ability (administrators only) rather than the shared-workspace
+        // 'delete' ability that still lets any CI open and rename the same folder.
+        $this->actingAs($other)->delete(route('client-folders.destroy', $folder))->assertForbidden();
+        $this->assertNotNull(ClientFolder::find($folder->id));
     }
 
-    public function test_assigned_ci_can_recycle_folder_while_children_and_audit_history_remain(): void
+    public function test_assigned_ci_cannot_delete_folder_and_its_children_and_history_survive(): void
     {
         $investigator = User::factory()->create();
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $investigator->id, 'display_name' => 'RECYCLE CLIENT']);
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $investigator->id, 'display_name' => 'KEPT CLIENT']);
         $information = ClientInformation::factory()->create(['client_folder_id' => $folder->id]);
 
-        $this->actingAs($investigator)->delete(route('client-folders.destroy', $folder))
-            ->assertRedirect(route('client-folders.index'));
+        $this->actingAs($investigator)->delete(route('client-folders.destroy', $folder))->assertForbidden();
 
-        $recycled = ClientFolder::withTrashed()->findOrFail($folder->id);
-        $this->assertTrue($recycled->trashed());
-        $this->assertSame($investigator->id, $recycled->deleted_by);
+        $this->assertFalse(ClientFolder::withTrashed()->findOrFail($folder->id)->trashed());
         $this->assertDatabaseHas('client_information', ['id' => $information->id, 'client_folder_id' => $folder->id]);
-        $this->assertDatabaseHas('audit_logs', ['action' => 'client_folder.recycled', 'client_folder_id' => $folder->id]);
-        $this->actingAs($investigator)->get(route('client-folders.index'))->assertDontSee('RECYCLE CLIENT');
-        $this->actingAs($investigator)->get(route('home'))->assertDontSee('RECYCLE CLIENT');
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.recycled', 'client_folder_id' => $folder->id]);
+        $this->actingAs($investigator)->get(route('client-folders.index'))->assertSee('KEPT CLIENT');
     }
 
-    public function test_administrator_can_recycle_any_active_folder(): void
+    public function test_administrator_permanently_deletes_an_active_folder_with_its_owned_records(): void
     {
         $administrator = User::factory()->administrator()->create();
         $investigator = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $investigator->id]);
+        $information = ClientInformation::factory()->create(['client_folder_id' => $folder->id]);
+        $number = $folder->folder_number;
 
         $this->actingAs($administrator)->delete(route('client-folders.destroy', $folder))
             ->assertRedirect(route('client-folders.index'));
 
-        $this->assertTrue(ClientFolder::withTrashed()->findOrFail($folder->id)->trashed());
-    }
-
-    public function test_recycle_bin_is_policy_scoped_and_ci_has_no_restore_or_purge_actions(): void
-    {
-        $administrator = User::factory()->administrator()->create();
-        $ci = User::factory()->create();
-        $otherCi = User::factory()->create();
-        $own = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'OWN RECYCLED']);
-        $other = ClientFolder::factory()->create(['assigned_ci_id' => $otherCi->id, 'display_name' => 'OTHER RECYCLED']);
-        $own->delete();
-        $other->delete();
-
-        $this->actingAs($ci)->get(route('recycle-bin.index'))
-            ->assertOk()
-            ->assertSee('OWN RECYCLED')
-            ->assertDontSee('OTHER RECYCLED')
-            ->assertDontSee('Restore folder')
-            ->assertDontSee('Delete permanently');
-
-        $this->actingAs($administrator)->get(route('recycle-bin.index'))
-            ->assertSee('OWN RECYCLED')
-            ->assertSee('OTHER RECYCLED')
-            ->assertSee('Restore folder')
-            ->assertSee('Delete permanently');
-    }
-
-    public function test_only_administrator_can_restore_and_original_identity_is_preserved(): void
-    {
-        $administrator = User::factory()->administrator()->create();
-        $ci = User::factory()->create();
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'progress_percent' => 60]);
-        $id = $folder->id;
-        $number = $folder->folder_number;
-        $folder->delete();
-
-        $this->actingAs($ci)->patch(route('recycle-bin.restore', $folder))->assertForbidden();
-        $this->actingAs($administrator)->patch(route('recycle-bin.restore', $folder))
-            ->assertRedirect(route('client-folders.show', $folder));
-
-        $restored = ClientFolder::findOrFail($id);
-        $this->assertSame($id, $restored->id);
-        $this->assertSame($number, $restored->folder_number);
-        $this->assertSame('60.00', $restored->progress_percent);
-        $this->assertNull($restored->deleted_by);
-        $this->assertDatabaseHas('audit_logs', ['action' => 'client_folder.restored', 'client_folder_id' => $id]);
-    }
-
-    public function test_permanent_delete_is_admin_only_requires_typed_confirmation_and_only_accepts_recycled_folder(): void
-    {
-        $administrator = User::factory()->administrator()->create();
-        $ci = User::factory()->create();
-        $active = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $recycled = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $information = ClientInformation::factory()->create(['client_folder_id' => $recycled->id]);
-        $recycled->delete();
-
-        $this->actingAs($ci)->delete(route('recycle-bin.destroy', $recycled), ['confirmation' => $recycled->folder_number])->assertForbidden();
-        $this->actingAs($administrator)->delete(route('recycle-bin.destroy', $recycled), ['confirmation' => 'wrong'])->assertSessionHasErrors('confirmation');
-        $this->actingAs($administrator)->delete(route('recycle-bin.destroy', $active), ['confirmation' => $active->folder_number])->assertNotFound();
-        $this->actingAs($administrator)->delete(route('recycle-bin.destroy', $recycled), ['confirmation' => $recycled->folder_number])
-            ->assertRedirect(route('recycle-bin.index'));
-
-        $this->assertNull(ClientFolder::withTrashed()->find($recycled->id));
+        // Permanent: the row is gone outright, never parked as an unreachable soft-deleted record.
+        $this->assertNull(ClientFolder::withTrashed()->find($folder->id));
         $this->assertDatabaseMissing('client_information', ['id' => $information->id]);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.recycled']);
+
+        // The audit row itself survives the folder it describes (client_folder_id nulls out).
         $audit = AuditLog::where('action', 'client_folder.permanently_deleted')->sole();
         $this->assertNull($audit->client_folder_id);
-        $this->assertSame($recycled->folder_number, $audit->metadata['folder_number']);
+        $this->assertSame($number, $audit->metadata['folder_number']);
     }
 
-    public function test_permanent_delete_is_safely_deferred_when_external_cleanup_is_required(): void
+    public function test_deleting_a_folder_over_ajax_reports_permanent_deletion_without_navigation(): void
+    {
+        $administrator = User::factory()->administrator()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => User::factory()->create()->id]);
+
+        $this->actingAs($administrator)
+            ->deleteJson(route('client-folders.destroy', $folder))
+            ->assertOk()
+            ->assertJsonPath('message', 'Client folder permanently deleted.')
+            ->assertHeaderMissing('Location');
+
+        $this->assertNull(ClientFolder::withTrashed()->find($folder->id));
+    }
+
+    public function test_permanent_delete_is_safely_blocked_when_external_cleanup_is_required(): void
     {
         $administrator = User::factory()->administrator()->create();
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         MediaReference::factory()->create(['client_folder_id' => $folder->id, 'uploaded_by' => $ci->id]);
-        $folder->delete();
 
-        $this->actingAs($administrator)->from(route('recycle-bin.index'))
-            ->delete(route('recycle-bin.destroy', $folder), ['confirmation' => $folder->folder_number])
-            ->assertRedirect(route('recycle-bin.index'))
+        $this->actingAs($administrator)->from(route('client-folders.index'))
+            ->delete(route('client-folders.destroy', $folder))
+            ->assertRedirect(route('client-folders.index'))
             ->assertSessionHasErrors('confirmation');
 
-        $this->assertNotNull(ClientFolder::withTrashed()->find($folder->id));
+        // Blocked, never silently force-deleted and never left half-removed.
+        $this->assertNotNull(ClientFolder::find($folder->id));
         $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.permanently_deleted', 'client_folder_id' => $folder->id]);
+    }
+
+    public function test_the_recycle_bin_feature_is_completely_gone(): void
+    {
+        $administrator = User::factory()->administrator()->create();
+
+        $names = collect(app('router')->getRoutes())->map(fn ($route): string => (string) $route->getName().' '.$route->uri());
+        $this->assertFalse($names->contains(fn (string $route): bool => str_contains($route, 'recycle')));
+
+        $this->actingAs($administrator)->get('/recycle-bin')->assertNotFound();
+        $this->actingAs($administrator)->get(route('home'))->assertOk()->assertDontSee('Recycle Bin');
     }
 }

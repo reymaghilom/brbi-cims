@@ -116,18 +116,18 @@ class FolderBrowserInteractionTest extends TestCase
         $this->assertSame($assignedCi->id, ClientFolder::sole()->assigned_ci_id);
     }
 
-    public function test_ajax_recycle_reuses_soft_delete_action_and_returns_without_navigation(): void
+    public function test_ajax_delete_permanently_removes_the_folder_and_returns_without_navigation(): void
     {
-        $ci = User::factory()->create();
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $administrator = User::factory()->administrator()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => User::factory()->create()->id]);
 
-        $this->actingAs($ci)
+        $this->actingAs($administrator)
             ->deleteJson(route('client-folders.destroy', $folder))
             ->assertOk()
-            ->assertJsonPath('message', 'Client folder moved to the Recycle Bin.')
+            ->assertJsonPath('message', 'Client folder permanently deleted.')
             ->assertHeaderMissing('Location');
 
-        $this->assertTrue(ClientFolder::withTrashed()->findOrFail($folder->id)->trashed());
+        $this->assertNull(ClientFolder::withTrashed()->find($folder->id));
     }
 
     public function test_the_search_box_offers_an_accessible_autosuggest_beside_the_live_grid(): void
@@ -224,8 +224,12 @@ class FolderBrowserInteractionTest extends TestCase
         $this->actingAs($otherCi)
             ->patchJson(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED BY OTHER CI'])
             ->assertOk();
+
+        // Delete is the one folder action the shared workspace does NOT open up: it is permanent
+        // (no Recycle Bin) and stays administrator-only, enforced server-side.
         $this->actingAs($otherCi)
             ->deleteJson(route('client-folders.destroy', $folder))
-            ->assertOk();
+            ->assertForbidden();
+        $this->assertNotNull(ClientFolder::find($folder->id));
     }
 }

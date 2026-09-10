@@ -49,7 +49,6 @@
 
     <div class="mt-8 space-y-4">
         <x-ui.report-preview-toolbar :preview-url="route('home')" />
-        <x-ui.recycle-bin-item title="SAMPLE CLIENT" number="BRBI-CI-2026-00999" deleted-at="Aug 8, 2026" :restore-action="route('home')" />
         <x-ui.toast type="warning" message="Sample flash notification." />
         <x-ui.empty-state title="Empty state example" description="Use this pattern when a module has no records." />
     </div>

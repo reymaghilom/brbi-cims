@@ -238,7 +238,7 @@ class ClientFolderContentsTest extends TestCase
             ->assertDontSee('Required-item checklist')
             ->assertDontSee('Open module')
             ->assertDontSee('Safe folder history')
-            ->assertDontSee('Move to Recycle Bin')
+            ->assertDontSee('Delete Permanently')
             ->assertDontSee('Rename Folder')
             ->assertDontSee(route('client-folders.edit-name', $folder), false)
             ->assertDontSee('recycle-detail-dialog', false);

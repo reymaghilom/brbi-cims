@@ -42,11 +42,9 @@ class RecentActivityAccountabilityTest extends TestCase
         $unrelatedSource = $this->business($folder, null, 'UNAFFECTED STORE');
 
         $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]));
-        $this->assertSoftDeleted('income_sources', [
-            'id' => $source->id,
-            'client_folder_id' => $folder->id,
-            'co_maker_id' => null,
-        ]);
+        // Permanently removed — the name below is recovered from the audit metadata, not from a
+        // lingering soft-deleted row (there is no Recycle Bin to reach one from any more).
+        $this->assertDatabaseMissing('income_sources', ['id' => $source->id]);
         $this->assertDatabaseHas('income_sources', [
             'id' => $unrelatedSource->id,
             'client_folder_id' => $folder->id,
