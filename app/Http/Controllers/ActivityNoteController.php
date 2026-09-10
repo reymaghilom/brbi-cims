@@ -13,8 +13,10 @@ class ActivityNoteController extends Controller
 {
     public function store(StoreActivityNoteRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, AddActivityNote $add): RedirectResponse
     {
+        $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, $request);
+        ActivePersonResolver::assertOwnedBy($ciActivity, $activePerson);
         $add->execute($request->user(), $clientFolder, $ciActivity, $request->validated());
-        $personParams = ActivePersonResolver::queryParams($ciActivity->co_maker_id ? $clientFolder->coMakers()->find($ciActivity->co_maker_id) : null);
+        $personParams = ActivePersonResolver::queryParams($activePerson);
 
         return redirect()
             ->route('client-folders.activities.edit', [$clientFolder, $ciActivity] + $personParams)

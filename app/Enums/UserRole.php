@@ -45,6 +45,12 @@ enum UserRole: string
      */
     public static function cibiSignatoryRoles(): array
     {
+        return self::creditInvestigatorRoles();
+    }
+
+    /** @return array<int, string> */
+    public static function creditInvestigatorRoles(): array
+    {
         return [self::CreditInvestigator->value, self::SeniorCreditInvestigator->value];
     }
 

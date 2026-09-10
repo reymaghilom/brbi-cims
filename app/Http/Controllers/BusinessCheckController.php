@@ -49,8 +49,10 @@ class BusinessCheckController extends Controller
 
     public function updateContributors(UpdateBusinessCheckContributorsRequest $request, ClientFolder $clientFolder, BusinessCheck $businessCheck, UpdateBusinessCheckContributors $update): RedirectResponse
     {
+        $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, $request);
+        ActivePersonResolver::assertOwnedBy($businessCheck, $activePerson);
         $update->execute($request->user(), $clientFolder, $businessCheck, $request->validated('contributor_ids', []));
-        $personParams = ActivePersonResolver::queryParams(ActivePersonResolver::resolveFromQuery($clientFolder, $request));
+        $personParams = ActivePersonResolver::queryParams($activePerson);
 
         return redirect()->route('client-folders.business-checks.edit', [$clientFolder, $businessCheck] + $personParams)->with('status', 'Contributors updated successfully.');
     }
@@ -110,6 +112,7 @@ class BusinessCheckController extends Controller
     public function photo(ClientFolder $clientFolder, BusinessCheck $businessCheck, BusinessCheckPhoto $photo, CloudinaryMediaStorage $cloud): Response
     {
         Gate::authorize('view', $clientFolder);
+        ActivePersonResolver::assertOwnedBy($businessCheck, ActivePersonResolver::resolveFromQuery($clientFolder, request()));
         $wantsThumbnail = request()->boolean('thumbnail');
 
         if ($photo->isCloud()) {
@@ -140,6 +143,7 @@ class BusinessCheckController extends Controller
     public function mapScreenshot(ClientFolder $clientFolder, BusinessCheck $businessCheck, CloudinaryMediaStorage $cloud): Response
     {
         Gate::authorize('view', $clientFolder);
+        ActivePersonResolver::assertOwnedBy($businessCheck, ActivePersonResolver::resolveFromQuery($clientFolder, request()));
         $wantsThumbnail = request()->boolean('thumbnail');
 
         if ($businessCheck->hasCloudMapScreenshot()) {
@@ -169,6 +173,7 @@ class BusinessCheckController extends Controller
     private function form(ClientFolder $clientFolder, ?BusinessCheck $businessCheck): View
     {
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
+        $personParams = ActivePersonResolver::queryParams($activePerson);
         $personName = $activePerson?->full_name ?? $clientFolder->display_name;
         $requestedCreateIncomeSourceId = ! $businessCheck && request()->has('income_source_id')
             ? request()->integer('income_source_id')
@@ -257,7 +262,7 @@ class BusinessCheckController extends Controller
 
         $mapPhotos = fn (string $category) => $photos->filter(fn (BusinessCheckPhoto $photo) => $photo->category?->value === $category)->map(fn (BusinessCheckPhoto $photo) => [
             'id' => $photo->id,
-            'url' => route('client-folders.business-checks.photo', [$clientFolder, $businessCheck, $photo, 'thumbnail' => 1]),
+            'url' => route('client-folders.business-checks.photo', [$clientFolder, $businessCheck, $photo] + $personParams + ['thumbnail' => 1]),
             'caption' => $photo->caption,
             'uploaded_by' => $photo->uploader?->full_name,
             'uploaded_at' => $photo->created_at?->timezone(config('cims.display_timezone'))->format('M j, Y g:i A'),
@@ -271,7 +276,7 @@ class BusinessCheckController extends Controller
         // only ever creates a real row for it the next time this check is actually saved.
         $mapGroupPhoto = fn (BusinessCheckPhoto $photo) => [
             'id' => $photo->id,
-            'url' => route('client-folders.business-checks.photo', [$clientFolder, $businessCheck, $photo, 'thumbnail' => 1]),
+            'url' => route('client-folders.business-checks.photo', [$clientFolder, $businessCheck, $photo] + $personParams + ['thumbnail' => 1]),
             'uploaded_by' => $photo->uploader?->full_name,
             'uploaded_at' => $photo->created_at?->timezone(config('cims.display_timezone'))->format('M j, Y g:i A'),
         ];
@@ -290,7 +295,7 @@ class BusinessCheckController extends Controller
         }
 
         $mapScreenshot = $businessCheck?->hasMapScreenshot() ? [
-            'url' => route('client-folders.business-checks.map-screenshot', [$clientFolder, $businessCheck]),
+            'url' => route('client-folders.business-checks.map-screenshot', [$clientFolder, $businessCheck] + $personParams),
             'uploaded_by' => $businessCheck->mapScreenshotUploader?->full_name,
         ] : null;
 
@@ -325,7 +330,7 @@ class BusinessCheckController extends Controller
             // The primary CI is never a valid companion choice — excluded here entirely (not
             // just disabled in the UI) so the modal's candidate list can never even present them.
             'activeCreditInvestigators' => User::query()
-                ->where('role', UserRole::CreditInvestigator)
+                ->whereIn('role', UserRole::creditInvestigatorRoles())
                 ->where('status', UserStatus::Active)
                 ->where('id', '!=', $primaryCiId)
                 ->orderBy('full_name')

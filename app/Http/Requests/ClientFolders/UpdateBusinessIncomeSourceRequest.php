@@ -2,9 +2,8 @@
 
 namespace App\Http\Requests\ClientFolders;
 
-use App\Enums\UserRole;
-use App\Enums\UserStatus;
 use App\Models\IncomeSourceTemplate;
+use App\Rules\CiContributorRule;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CiParticipantService;
 use Illuminate\Foundation\Http\FormRequest;
@@ -51,9 +50,7 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             'contributor_ids.*' => [
                 'integer',
                 'distinct',
-                Rule::exists('users', 'id')->where(fn ($query) => $query
-                    ->where('role', UserRole::CreditInvestigator->value)
-                    ->where('status', UserStatus::Active->value)),
+                CiContributorRule::exists($this->route('incomeSource')?->contributors()->pluck('users.id') ?? []),
             ],
             'intent' => ['required', Rule::in(['stay', 'return', 'complete'])],
             'source_name' => [Rule::requiredIf(! $this->preservesMissingSourceField('source_name')), 'nullable', 'string', 'max:255'], 'business_name' => [Rule::requiredIf(! $this->preservesMissingReportField('business_name')), 'nullable', 'string', 'max:255'],

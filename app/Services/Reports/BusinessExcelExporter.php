@@ -165,10 +165,14 @@ class BusinessExcelExporter
         }
 
         $masterSheet = $master->getSheet(0);
+        // The official report frame ends at AA. Reference workbooks retain legacy cells and
+        // column formats through BY; copying those into appended rows is what produced the
+        // broken, partial vertical rule when Other Business was the master sheet.
+        $this->clearWorksheetPastReportEdge($masterSheet);
         // Every append grows the sheet past whatever print area the first business's own
         // buildBook() call originally set for itself alone — recomputed once here so the whole
         // combined batch, not just business 1, is what actually prints/exports.
-        $masterSheet->getPageSetup()->setPrintArea('A1:'.$masterSheet->getHighestColumn().$masterSheet->getHighestRow());
+        $masterSheet->getPageSetup()->setPrintArea('A1:AA'.$masterSheet->getHighestRow());
         $master->setActiveSheetIndex(0);
         $master->getProperties()
             ->setCreator('Binhi Rural Bank Inc.')
@@ -194,7 +198,10 @@ class BusinessExcelExporter
             return;
         }
 
-        $highestColumnIndex = Coordinate::columnIndexFromString($source->getHighestColumn());
+        $highestColumnIndex = min(
+            Coordinate::columnIndexFromString('AA'),
+            Coordinate::columnIndexFromString($source->getHighestColumn()),
+        );
         $previousLastRow = $master->getHighestRow();
         $rowOffset = ($previousLastRow + 1) - $sourceStartRow;
 
@@ -239,7 +246,7 @@ class BusinessExcelExporter
         // template's title bar), falling back to its own leftmost/rightmost populated cell when
         // it isn't.
         $targetFirstRow = $sourceStartRow + $rowOffset;
-        $reportRightColumn = Coordinate::columnIndexFromString($master->getHighestColumn());
+        $reportRightColumn = Coordinate::columnIndexFromString('AA');
         [$titleLeftColumn, $titleRightColumn] = $this->rowColumnBounds($source, $sourceStartRow, $highestColumnIndex);
 
         if ($previousLastRow >= 1) {
@@ -297,6 +304,34 @@ class BusinessExcelExporter
         }
 
         return [$left ?? 1, $right ?? $fallbackRightColumn];
+    }
+
+    /** Remove legacy reference-workbook cells/formats beyond the official B:AA report frame. */
+    private function clearWorksheetPastReportEdge(Worksheet $sheet): void
+    {
+        $rightEdge = Coordinate::columnIndexFromString('AA');
+        $isPastEdge = static function (string $coordinate) use ($rightEdge): bool {
+            [$column] = Coordinate::coordinateFromString($coordinate);
+
+            return Coordinate::columnIndexFromString($column) > $rightEdge;
+        };
+
+        foreach ($sheet->getMergeCells() as $mergeRange) {
+            if ($isPastEdge(explode(':', $mergeRange)[0])) {
+                $sheet->unmergeCells($mergeRange);
+            }
+        }
+        foreach ($sheet->getCellCollection()->getCoordinates() as $coordinate) {
+            if ($isPastEdge($coordinate)) {
+                $sheet->getCellCollection()->delete($coordinate);
+            }
+        }
+        foreach ($sheet->getColumnDimensions() as $columnDimension) {
+            $column = (string) $columnDimension->getColumnIndex();
+            if ($column !== '' && Coordinate::columnIndexFromString($column) > $rightEdge) {
+                $columnDimension->setXfIndex(0);
+            }
+        }
     }
 
     /**

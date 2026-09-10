@@ -67,8 +67,9 @@ class CiActivityProofViewingTest extends TestCase
         $folder = $this->folder($ci);
         $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Proof Co-Maker']);
         $activity = $this->activity($folder, $ci, $coMaker->id);
+        $personParams = ['person' => 'co-maker', 'co_maker_id' => $coMaker->id];
 
-        $this->actingAs($ci)->post(route('client-folders.activities.proof.store', [$folder, $activity]), [
+        $this->actingAs($ci)->post(route('client-folders.activities.proof.store', [$folder, $activity] + $personParams), [
             'photos' => [UploadedFile::fake()->image('CoMakerProof.jpg', 400, 300)],
         ])->assertSessionHasNoErrors();
 
@@ -80,7 +81,7 @@ class CiActivityProofViewingTest extends TestCase
         $this->assertStringNotContainsString($documents->ciActivityProofDirectory($folder).'/', $media->temporary_local_path);
 
         $this->actingAs($ci)
-            ->get(route('client-folders.activities.proof.content', [$folder, $activity, $media]))
+            ->get(route('client-folders.activities.proof.content', [$folder, $activity, $media] + $personParams))
             ->assertOk()
             ->assertHeader('Content-Type', 'image/jpeg');
     }
@@ -146,7 +147,8 @@ class CiActivityProofViewingTest extends TestCase
         $secondActivity = $this->activity($folder, $ci, $second->id);
 
         foreach ([$applicantActivity, $firstActivity, $secondActivity] as $activity) {
-            $this->actingAs($ci)->post(route('client-folders.activities.proof.store', [$folder, $activity]), [
+            $personParams = $activity->co_maker_id ? ['person' => 'co-maker', 'co_maker_id' => $activity->co_maker_id] : [];
+            $this->actingAs($ci)->post(route('client-folders.activities.proof.store', [$folder, $activity] + $personParams), [
                 'photos' => [UploadedFile::fake()->image('Proof.jpg', 300, 200)],
             ])->assertSessionHasNoErrors();
         }
@@ -154,6 +156,10 @@ class CiActivityProofViewingTest extends TestCase
         $applicantProof = $applicantActivity->mediaReferences()->sole();
         $firstProof = $firstActivity->mediaReferences()->sole();
         $secondProof = $secondActivity->mediaReferences()->sole();
+
+        $this->actingAs($ci)->get(route('client-folders.activities.proof.content', [$folder, $firstActivity, $firstProof]))->assertNotFound();
+        $this->actingAs($ci)->get(route('client-folders.activities.proof.content', [$folder, $firstActivity, $firstProof, 'person' => 'co-maker', 'co_maker_id' => $second->id]))->assertNotFound();
+        $this->actingAs($ci)->get(route('client-folders.activities.proof.content', [$folder, $firstActivity, $firstProof, 'person' => 'co-maker', 'co_maker_id' => $first->id]))->assertOk();
 
         // Applicant context cannot open a Co-Maker's proof, and neither Co-Maker can open the other's.
         $this->actingAs($ci)->get(route('client-folders.activities.proof.content', [$folder, $applicantActivity, $firstProof]))->assertNotFound();

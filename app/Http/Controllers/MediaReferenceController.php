@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\CiActivity;
 use App\Models\ClientFolder;
 use App\Models\MediaReference;
+use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
@@ -17,6 +18,7 @@ class MediaReferenceController extends Controller
     public function activityContent(ClientFolder $clientFolder, CiActivity $ciActivity, MediaReference $mediaReference): StreamedResponse|RedirectResponse
     {
         Gate::authorize('view', $mediaReference);
+        ActivePersonResolver::assertOwnedBy($ciActivity, ActivePersonResolver::resolveFromQuery($clientFolder, request()));
         abort_unless($ciActivity->client_folder_id === $clientFolder->id, 404);
         abort_unless($mediaReference->client_folder_id === $clientFolder->id, 404);
         abort_unless($mediaReference->co_maker_id === $ciActivity->co_maker_id, 404);

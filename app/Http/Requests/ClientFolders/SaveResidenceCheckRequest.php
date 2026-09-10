@@ -2,10 +2,9 @@
 
 namespace App\Http\Requests\ClientFolders;
 
-use App\Enums\UserRole;
-use App\Enums\UserStatus;
 use App\Http\Requests\ClientFolders\Concerns\ValidatesCheckPhotoUploads;
 use App\Models\ResidenceCheck;
+use App\Rules\CiContributorRule;
 use App\Services\ClientFolders\ActivePersonResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\UploadedFile;
@@ -51,9 +50,7 @@ class SaveResidenceCheckRequest extends FormRequest
             'contributor_ids.*' => [
                 'integer',
                 'distinct',
-                Rule::exists('users', 'id')->where(fn ($query) => $query
-                    ->where('role', UserRole::CreditInvestigator->value)
-                    ->where('status', UserStatus::Active->value)),
+                CiContributorRule::exists($this->existingCheck()?->contributors()->pluck('users.id') ?? []),
             ],
         ] + $this->photoUploadRules('photos');
     }

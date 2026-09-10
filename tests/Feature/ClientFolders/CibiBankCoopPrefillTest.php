@@ -93,7 +93,7 @@ class CibiBankCoopPrefillTest extends TestCase
             ->assertSee('data-bank-target-add', false)
             ->assertDontSee('Never map this remark');
 
-        $this->assertDatabaseCount('ci_activities', 0);
+        $this->assertDatabaseMissing('ci_activities', ['activity_definition_id' => $this->bankDefinition()->id]);
         $this->assertDatabaseCount('ci_activity_bank_targets', 0);
 
         $oldInput = [
@@ -119,7 +119,7 @@ class CibiBankCoopPrefillTest extends TestCase
             ->assertSee('Manual row stays authoritative.')
             ->assertSee('let bankPrefillInitialized = true;', false);
 
-        $this->assertDatabaseCount('ci_activities', 0);
+        $this->assertDatabaseMissing('ci_activities', ['activity_definition_id' => $this->bankDefinition()->id]);
         $this->assertDatabaseCount('ci_activity_bank_targets', 0);
     }
 

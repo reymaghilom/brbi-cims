@@ -6,8 +6,10 @@ use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
+use App\Services\ClientFolders\ActivePersonResolver;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Tests\TestCase;
 
@@ -35,7 +37,8 @@ class BusinessBatchExportTest extends TestCase
             ->assertSee('data-business-batch-pdf-submit', false)
             ->assertSee('data-business-batch-excel-submit', false)
             ->assertSee('data-business-selected-count', false)
-            ->assertSee('Print Selected')
+            ->assertSee('Preview Selected')
+            ->assertDontSee('Print Selected')
             ->assertSee('Download Selected')
             ->assertSee('data-business-sort-table', false)
             ->assertDontSee('Print Summary')
@@ -332,6 +335,135 @@ class BusinessBatchExportTest extends TestCase
         $this->assertSame(1, substr_count($coMakerHtml, 'class="business-batch-item"'));
     }
 
+    public function test_per_row_excel_download_preserves_exact_applicant_and_co_maker_source_context(): void
+    {
+        [$ci, $folder, $applicant] = $this->createSource('leasing_non_agricultural');
+        $coMakerA = $folder->coMakers()->create(['full_name' => 'CO MAKER ALPHA']);
+        $coMakerB = $folder->coMakers()->create(['full_name' => 'CO MAKER BRAVO']);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_non_agricultural')->firstOrFail();
+        $makeCoMakerSource = function (CoMaker $coMaker, string $businessName) use ($ci, $folder, $template) {
+            $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), [
+                'co_maker_id' => $coMaker->id,
+                'income_source_template_id' => $template->id,
+                'source_name' => $businessName,
+                'business_name' => $businessName,
+                'main_business_address' => $businessName.' ADDRESS',
+                'start_date' => '2026-01-01',
+                'year_established' => 2015,
+            ])->assertSessionHasNoErrors();
+
+            return $folder->incomeSources()->where('co_maker_id', $coMaker->id)->latest('id')->firstOrFail();
+        };
+        $sourceA = $makeCoMakerSource($coMakerA, 'ALPHA DISTINCT BUSINESS');
+        $sourceB = $makeCoMakerSource($coMakerB, 'BRAVO DISTINCT BUSINESS');
+        $applicant->businessReport->update(['report_remarks' => 'APPLICANT XLSX MARKER']);
+        $sourceA->businessReport->update(['report_remarks' => 'CO MAKER A XLSX MARKER']);
+        $sourceB->businessReport->update(['report_remarks' => 'CO MAKER B XLSX MARKER']);
+
+        $coMakerAParams = ActivePersonResolver::queryParams($coMakerA);
+        $this->actingAs($ci)->get(route('client-folders.income-sources.manage', [$folder] + $coMakerAParams))
+            ->assertOk()
+            ->assertSee(route('client-folders.income-sources.export-excel', [$folder, $sourceA] + $coMakerAParams))
+            ->assertSee('Preview Selected')
+            ->assertDontSee('Print Selected');
+        $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))
+            ->assertOk()->assertSee('Preview Selected')->assertDontSee('Print Selected');
+
+        $downloads = [
+            [$applicant, [], 'APPLICANT XLSX MARKER', ['CO MAKER A XLSX MARKER', 'CO MAKER B XLSX MARKER']],
+            [$sourceA, ['co_maker_id' => $coMakerA->id], 'CO MAKER A XLSX MARKER', ['APPLICANT XLSX MARKER', 'CO MAKER B XLSX MARKER']],
+            [$sourceB, ['co_maker_id' => $coMakerB->id], 'CO MAKER B XLSX MARKER', ['APPLICANT XLSX MARKER', 'CO MAKER A XLSX MARKER']],
+        ];
+        foreach ($downloads as [$source, $person, $expected, $forbidden]) {
+            $response = $this->actingAs($ci)->post(route('client-folders.income-sources.export-excel', [$folder, $source]), $person)->assertOk();
+            $response->assertHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            $values = $this->xlsxCellValues($response->streamedContent());
+            $this->assertContains($expected, $values);
+            foreach ($forbidden as $marker) {
+                $this->assertNotContains($marker, $values);
+            }
+        }
+
+        $this->actingAs($ci)->post(route('client-folders.income-sources.export-excel', [$folder, $sourceA]), ['co_maker_id' => $coMakerB->id])->assertNotFound();
+        $this->actingAs($ci)->post(route('client-folders.income-sources.export-excel', [$folder, $sourceB]), ['co_maker_id' => $coMakerA->id])->assertNotFound();
+    }
+
+    public function test_actual_xlsx_keeps_section_boundaries_intact_for_every_other_business_position(): void
+    {
+        $cases = [
+            'other only' => ['other_business_source_of_income'],
+            'other then corn' => ['other_business_source_of_income', 'farming_corn'],
+            'other then leasing' => ['other_business_source_of_income', 'leasing_non_agricultural'],
+            'corn then other' => ['farming_corn', 'other_business_source_of_income'],
+            'corn other leasing' => ['farming_corn', 'other_business_source_of_income', 'leasing_non_agricultural'],
+            'other corn leasing' => ['other_business_source_of_income', 'farming_corn', 'leasing_non_agricultural'],
+        ];
+
+        foreach ($cases as $case => $templateTypes) {
+            $ci = User::factory()->create();
+            $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+            $sources = [];
+            foreach ($templateTypes as $index => $templateType) {
+                [, , $source] = $this->createSource($templateType, $ci, $folder);
+                $source->businessReport->update(['report_remarks' => "{$case} marker {$index}"]);
+                $sources[] = $source;
+            }
+
+            $response = $this->actingAs($ci)->post(
+                route('client-folders.income-sources.batch-export-excel', $folder),
+                ['income_source_ids' => collect($sources)->pluck('id')->all()],
+            )->assertOk();
+
+            $path = tempnam(sys_get_temp_dir(), 'brbi-border-matrix-');
+            file_put_contents($path, $response->streamedContent());
+            try {
+                $book = IOFactory::load($path);
+                $this->assertSame(1, $book->getSheetCount(), $case);
+                $sheet = $book->getSheet(0);
+                $escapedCells = [];
+                foreach ($sheet->getCellCollection()->getCoordinates() as $coordinate) {
+                    [$column] = Coordinate::coordinateFromString($coordinate);
+                    if (Coordinate::columnIndexFromString($column) > 27) {
+                        $escapedCells[] = $coordinate;
+                    }
+                }
+                $this->assertSame([], $escapedCells, "Cells escaped the official AA edge: {$case}");
+                $styledOverflowColumns = collect($sheet->getColumnDimensions())
+                    ->filter(fn ($dimension): bool => Coordinate::columnIndexFromString($dimension->getColumnIndex()) > 27 && $dimension->getXfIndex() !== 0)
+                    ->keys()->values()->all();
+                $this->assertSame([], $styledOverflowColumns, "Column-level border/style escaped the official AA edge: {$case}");
+                $this->assertMatchesRegularExpression('/\$?AA\$?\d+$/', $sheet->getPageSetup()->getPrintArea(), "Print area escaped the official edge: {$case}");
+                $markerRows = [];
+                foreach (array_keys($sources) as $index) {
+                    $markerRows[] = $this->findExactCellRow($sheet, "{$case} marker {$index}");
+                }
+                $this->assertSame($markerRows, collect($markerRows)->sort()->values()->all(), "Selected order changed: {$case}");
+
+                foreach (array_slice($sources, 1, null, true) as $index => $source) {
+                    $titleRow = collect($sheet->getMergeCells())
+                        ->map(function (string $range): int {
+                            [, $row] = Coordinate::coordinateFromString(explode(':', $range)[0]);
+
+                            return (int) $row;
+                        })
+                        ->filter(fn (int $row): bool => $row > $markerRows[$index - 1] && $row < $markerRows[$index])
+                        ->min();
+                    $this->assertNotNull($titleRow, "No appended section merge found at boundary: {$case}");
+                    [$left, $right] = $this->mergeBoundsForRow($sheet, $titleRow);
+                    $this->assertGreaterThan($left, $right, "Appended title merge was clipped: {$case}");
+                    $this->assertNotNull($sheet->getCell([$left, $titleRow])->getValue(), "Appended title anchor was lost: {$case}");
+                }
+
+                foreach ($sheet->getMergeCells() as $range) {
+                    $this->assertMatchesRegularExpression('/^[A-Z]+\d+:[A-Z]+\d+$/', $range, "Invalid merge in {$case}");
+                }
+                $book->disconnectWorksheets();
+            } finally {
+                @unlink($path);
+            }
+        }
+    }
+
     public function test_another_ci_can_batch_export_a_folder_they_are_not_assigned_to(): void
     {
         [$ci, $folder, $truck] = $this->createSource('leasing_truck_equipment');
@@ -348,15 +480,72 @@ class BusinessBatchExportTest extends TestCase
         $ci ??= User::factory()->create();
         $folder ??= ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $template = IncomeSourceTemplate::where('template_type', $templateType)->firstOrFail();
-        $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), [
+        $payload = [
             'income_source_template_id' => $template->id,
             'source_name' => 'Income Source',
             'business_name' => 'Sample Business',
             'main_business_address' => 'Main Street',
             'start_date' => '2026-01-01',
             'year_established' => 2015,
-        ]);
+        ];
+        if ($templateType === 'other_business_source_of_income') {
+            $payload['report_remarks'] = 'Other business remarks';
+            $payload['template_data'] = ['fields' => ['income_sources' => ['Other income source']]];
+        }
+        $this->actingAs($ci)->post(route('client-folders.income-sources.store', $folder), $payload)->assertSessionHasNoErrors();
 
         return [$ci, $folder, $folder->incomeSources()->latest('id')->firstOrFail()];
+    }
+
+    private function findExactCellRow($sheet, string $value): int
+    {
+        foreach ($sheet->getRowIterator() as $row) {
+            foreach ($row->getCellIterator() as $cell) {
+                if ($cell->getValue() === $value) {
+                    return $row->getRowIndex();
+                }
+            }
+        }
+
+        $this->fail("Cell value not found: {$value}");
+    }
+
+    /** @return array<int, mixed> */
+    private function xlsxCellValues(string $bytes): array
+    {
+        $path = tempnam(sys_get_temp_dir(), 'brbi-person-xlsx-');
+        file_put_contents($path, $bytes);
+        try {
+            $book = IOFactory::load($path);
+            $values = [];
+            foreach ($book->getSheet(0)->getRowIterator() as $row) {
+                foreach ($row->getCellIterator() as $cell) {
+                    $values[] = $cell->getValue();
+                }
+            }
+            $book->disconnectWorksheets();
+
+            return $values;
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    /** @return array{0: int, 1: int} */
+    private function mergeBoundsForRow($sheet, int $row): array
+    {
+        foreach ($sheet->getMergeCells() as $range) {
+            [$start, $end] = explode(':', $range);
+            [$startColumn, $startRow] = Coordinate::coordinateFromString($start);
+            [$endColumn] = Coordinate::coordinateFromString($end);
+            if ((int) $startRow === $row) {
+                return [
+                    Coordinate::columnIndexFromString($startColumn),
+                    Coordinate::columnIndexFromString($endColumn),
+                ];
+            }
+        }
+
+        $this->fail("No title merge found on row {$row}");
     }
 }

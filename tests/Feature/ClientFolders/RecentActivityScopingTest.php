@@ -3,14 +3,13 @@
 namespace Tests\Feature\ClientFolders;
 
 use App\Enums\RecordState;
-use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\CibiReport;
-use App\Models\CiActivity;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class RecentActivityScopingTest extends TestCase
@@ -39,7 +38,7 @@ class RecentActivityScopingTest extends TestCase
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $this->log($ci, $folder, 'income_source.created', 'income_sources', ['income_source_id' => 1, 'co_maker_id' => null, 'display_name' => 'ABC STORE ADDED']);
-        $this->log($ci, $folder, 'business_report.updated', 'income_sources', ['income_source_id' => 1, 'co_maker_id' => null, 'display_name' => 'ABC STORE']);
+        $this->log($ci, $folder, 'general_income_source_report.updated', 'income_sources', ['income_source_id' => 1, 'co_maker_id' => null, 'display_name' => 'ABC STORE']);
         $this->log($ci, $folder, 'income_source.deleted', 'income_sources', ['income_source_id' => 1, 'co_maker_id' => null, 'display_name' => 'ABC STORE']);
 
         $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
@@ -210,7 +209,7 @@ class RecentActivityScopingTest extends TestCase
         // timestamps), now forced to a UTC session via config/database.php — the raw value is
         // genuine UTC, matching every other timestamp in this app. 15:05 UTC -> 23:05 Manila
         // (+8, no day rollover) proves AuditLog::createdAt() converts it correctly exactly once.
-        \Illuminate\Support\Facades\DB::table('audit_logs')->where('id', $log->id)->update(['created_at' => '2026-08-23 15:05:00']);
+        DB::table('audit_logs')->where('id', $log->id)->update(['created_at' => '2026-08-23 15:05:00']);
 
         $this->actingAs($ci)->get(route('client-folders.show', $folder))
             ->assertOk()
@@ -228,7 +227,7 @@ class RecentActivityScopingTest extends TestCase
         // 19:21 UTC on Aug 23 -> 03:21 Manila on Aug 24 (+8, rolling into the next calendar day) —
         // deliberately chosen so a leftover "treat raw value as already Manila" bug (no shift) or
         // a double-conversion bug (+16 hours) would both produce a visibly wrong date/time here.
-        \Illuminate\Support\Facades\DB::table('audit_logs')->where('id', $log->id)->update(['created_at' => '2026-08-23 19:21:00']);
+        DB::table('audit_logs')->where('id', $log->id)->update(['created_at' => '2026-08-23 19:21:00']);
 
         $this->actingAs($ci)->get(route('client-folders.show', $folder))
             ->assertOk()

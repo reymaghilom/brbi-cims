@@ -12,6 +12,7 @@ use App\Models\CoMaker;
 use App\Models\CustomBusinessCategory;
 use App\Models\IncomeSource;
 use App\Models\ResidenceCheck;
+use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CiParticipantService;
 use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Support\Collection;
@@ -427,7 +428,7 @@ class OfficialReportDataBuilder
             'media_type' => 'photo',
             'image_path' => $photo->isCloud() ? null : $this->safeMediaPath($photo->path ?: $photo->thumbnail_path),
             'cloud' => $this->cloudDescriptor($photo->isCloud(), $photo->cloud_public_id, $photo->cloud_resource_type, $photo->cloud_delivery_type),
-            'web_url' => route('client-folders.residence-checks.photo', [$check->client_folder_id, $check->id, $photo->id]),
+            'web_url' => route('client-folders.residence-checks.photo', [$check->client_folder_id, $check->id, $photo->id] + ActivePersonResolver::queryParamsForId($check->co_maker_id)),
         ])->all();
 
         return [
@@ -470,7 +471,7 @@ class OfficialReportDataBuilder
         return [
             'image_path' => $check->hasCloudMapScreenshot() ? null : $this->safeMediaPath($check->map_screenshot_path ?: $check->map_screenshot_thumbnail_path),
             'cloud' => $this->cloudDescriptor($check->hasCloudMapScreenshot(), $check->map_screenshot_cloud_public_id, $check->map_screenshot_cloud_resource_type, $check->map_screenshot_cloud_delivery_type),
-            'web_url' => route('client-folders.residence-checks.map-screenshot', [$check->client_folder_id, $check->id]),
+            'web_url' => route('client-folders.residence-checks.map-screenshot', [$check->client_folder_id, $check->id] + ActivePersonResolver::queryParamsForId($check->co_maker_id)),
         ];
     }
 
@@ -498,7 +499,7 @@ class OfficialReportDataBuilder
             // Check's own photo mapping — so a Cloudinary-backed photo still renders large there
             // instead of falling through to a null local $image_path (PDF/DOCX always use
             // $image_path directly and never consult this).
-            'web_url' => route('client-folders.business-checks.photo', [$check->client_folder_id, $check->id, $photo->id]),
+            'web_url' => route('client-folders.business-checks.photo', [$check->client_folder_id, $check->id, $photo->id] + ActivePersonResolver::queryParamsForId($check->co_maker_id)),
         ];
 
         $groupedPhotoIds = [];
@@ -598,7 +599,7 @@ class OfficialReportDataBuilder
         return [
             'image_path' => $check->hasCloudMapScreenshot() ? null : $this->safeMediaPath($check->map_screenshot_path ?: $check->map_screenshot_thumbnail_path),
             'cloud' => $this->cloudDescriptor($check->hasCloudMapScreenshot(), $check->map_screenshot_cloud_public_id, $check->map_screenshot_cloud_resource_type, $check->map_screenshot_cloud_delivery_type),
-            'web_url' => route('client-folders.business-checks.map-screenshot', [$check->client_folder_id, $check->id]),
+            'web_url' => route('client-folders.business-checks.map-screenshot', [$check->client_folder_id, $check->id] + ActivePersonResolver::queryParamsForId($check->co_maker_id)),
         ];
     }
 

@@ -63,7 +63,7 @@ class CiActivityHistoryAutoUpdateTest extends TestCase
         // (payload.history for the JSON endpoints, or the parsed `<template data-ci-new-history>`
         // already present in the bank/asset tracker's own render response) — never a fetch whose
         // only purpose is history.
-        $this->assertSame(6, substr_count($content, 'insertCiActivityHistoryEntries(payload.history)'), 'quick-complete + save-changes + 3 proof handlers + submission');
+        $this->assertSame(7, substr_count($content, 'insertCiActivityHistoryEntries(payload.history)'), 'quick-complete + save-changes + 4 proof handlers + submission');
         $this->assertSame(2, substr_count($content, 'insertCiActivityHistoryEntries([...newHistoryTemplate.content.children]'), 'bank + asset tracker renders');
     }
 

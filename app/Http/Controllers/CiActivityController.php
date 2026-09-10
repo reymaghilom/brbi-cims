@@ -391,6 +391,7 @@ class CiActivityController extends Controller
         ReplaceCiActivityProof $replace,
         EvidenceStorageRecorder $storage,
     ): RedirectResponse|JsonResponse {
+        ActivePersonResolver::assertOwnedBy($ciActivity, ActivePersonResolver::resolveFromQuery($clientFolder, $request));
         $watermark = CiActivityHistoryFeed::watermark();
         $storage->reset();
         $replace->execute($request->user(), $clientFolder, $ciActivity, $mediaReference, $request->file('attachment'));
@@ -421,6 +422,7 @@ class CiActivityController extends Controller
         AddCiActivityProofPhotos $addPhotos,
         EvidenceStorageRecorder $storage,
     ): RedirectResponse|JsonResponse {
+        ActivePersonResolver::assertOwnedBy($ciActivity, ActivePersonResolver::resolveFromQuery($clientFolder, $request));
         $watermark = CiActivityHistoryFeed::watermark();
         $storage->reset();
         $photos = $request->file('photos', []);
@@ -454,6 +456,7 @@ class CiActivityController extends Controller
     ): RedirectResponse|JsonResponse {
         Gate::authorize('update', $clientFolder);
         Gate::authorize('update', $ciActivity);
+        ActivePersonResolver::assertOwnedBy($ciActivity, ActivePersonResolver::resolveFromQuery($clientFolder, $request));
         abort_unless($ciActivity->client_folder_id === $clientFolder->id, 404);
         abort_unless($mediaReference->client_folder_id === $clientFolder->id, 404);
         abort_unless($mediaReference->co_maker_id === $ciActivity->co_maker_id, 404);
@@ -528,6 +531,7 @@ class CiActivityController extends Controller
                 'cell' => view('client-folders.activities.partials.submission-cell', [
                     'activity' => $ciActivity,
                     'clientFolder' => $clientFolder,
+                    'personParams' => $personParams,
                     'attachmentCount' => $attachmentCount,
                     'singleAttachment' => $singleAttachment,
                     'singleAttachmentIsPreviewable' => $singleAttachmentIsPreviewable,

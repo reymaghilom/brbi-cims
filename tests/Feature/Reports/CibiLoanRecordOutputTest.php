@@ -153,19 +153,19 @@ class CibiLoanRecordOutputTest extends TestCase
 
         $sheet = $this->workbook($folder);
 
-        // Row 45 onwards is the official template's Credit / Loan block.
-        $this->assertSame('FICCO', (string) $sheet->getCell('C45')->getValue());
-        $this->assertSame('TO BE FOLLOW', (string) $sheet->getCell('V45')->getValue());
-        $this->assertSame('N/A', (string) $sheet->getCell('G45')->getValue());
+        $loanStartRow = $this->rowContaining($sheet, 'IV. SUMMARY ON CREDIT/LOAN INFORMATION') + 2;
+        $this->assertSame('FICCO', (string) $sheet->getCell('C'.$loanStartRow)->getValue());
+        $this->assertSame('TO BE FOLLOW', (string) $sheet->getCell('V'.$loanStartRow)->getValue());
+        $this->assertSame('', (string) $sheet->getCell('G'.$loanStartRow)->getValue());
 
         // MCCB and OIC each print once, with their second loan on the next consecutive row.
         $this->assertSame(['FICCO', 'MCCB', '', 'OIC', ''], array_map(
             fn (int $row): string => (string) $sheet->getCell('C'.$row)->getValue(),
-            [45, 46, 47, 48, 49],
+            range($loanStartRow, $loanStartRow + 4),
         ));
         $this->assertSame([11000.0, 12000.0, 21000.0, 22000.0], array_map(
             fn (int $row): float => (float) $sheet->getCell('G'.$row)->getValue(),
-            [46, 47, 48, 49],
+            range($loanStartRow + 1, $loanStartRow + 4),
         ));
     }
 
@@ -185,7 +185,8 @@ class CibiLoanRecordOutputTest extends TestCase
             $builder = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi, null, $person);
             $encoded = json_encode($builder['cibi']['loan_records'], JSON_THROW_ON_ERROR);
             $excel = $this->workbook($folder, $person);
-            $excelInstitutions = implode('|', array_map(fn (int $row): string => (string) $excel->getCell('C'.$row)->getValue(), [45, 46, 47]));
+            $loanStartRow = $this->rowContaining($excel, 'IV. SUMMARY ON CREDIT/LOAN INFORMATION') + 2;
+            $excelInstitutions = implode('|', array_map(fn (int $row): string => (string) $excel->getCell('C'.$row)->getValue(), range($loanStartRow, $loanStartRow + 2)));
 
             $this->assertStringContainsString($institution, $encoded);
             $this->assertStringContainsString($institution, $excelInstitutions);
@@ -210,7 +211,9 @@ class CibiLoanRecordOutputTest extends TestCase
 
         // Five saved rows across three institutions must not have re-derived any of the three.
         $this->assertSame(['checked' => 9, 'declared' => 4, 'loans' => 7], $totals);
-        $this->assertSame(7, (int) $this->workbook($folder)->getCell('H54')->getValue());
+        $sheet = $this->workbook($folder);
+        $totalRow = $this->rowContaining($sheet, 'TOTAL # OF LOAN RECORDS FOUND');
+        $this->assertSame(7, (int) $sheet->getCell('H'.$totalRow)->getValue());
     }
 
     /** @return array{0: User, 1: ClientFolder} */
@@ -254,6 +257,19 @@ class CibiLoanRecordOutputTest extends TestCase
         unlink($temporary);
 
         return $sheet;
+    }
+
+    private function rowContaining($sheet, string $text): int
+    {
+        foreach ($sheet->getRowIterator() as $row) {
+            foreach ($row->getCellIterator() as $cell) {
+                if (str_contains((string) $cell->getValue(), $text)) {
+                    return $row->getRowIndex();
+                }
+            }
+        }
+
+        $this->fail("Could not find workbook row containing: {$text}");
     }
 
     private function docxDocumentXml(GeneratedReport $report): string

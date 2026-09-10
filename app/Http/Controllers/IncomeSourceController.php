@@ -503,7 +503,7 @@ class IncomeSourceController extends Controller
         // The primary CI is never a valid companion choice — excluded here entirely (not just
         // disabled in the UI) so the modal's candidate list can never even present them.
         $activeCreditInvestigators = User::query()
-            ->where('role', UserRole::CreditInvestigator)
+            ->whereIn('role', UserRole::creditInvestigatorRoles())
             ->where('status', UserStatus::Active)
             ->where('id', '!=', $primaryCiId)
             ->orderBy('full_name')

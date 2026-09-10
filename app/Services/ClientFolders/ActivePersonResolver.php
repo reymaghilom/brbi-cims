@@ -44,7 +44,13 @@ class ActivePersonResolver
     /** Query-string fragment that carries the active person forward across links/redirects. */
     public static function queryParams(?CoMaker $activePerson): array
     {
-        return $activePerson ? ['person' => 'co-maker', 'co_maker_id' => $activePerson->id] : [];
+        return self::queryParamsForId($activePerson?->id);
+    }
+
+    /** Query-string fragment for an already-authoritative person-owned record. */
+    public static function queryParamsForId(mixed $coMakerId): array
+    {
+        return filled($coMakerId) ? ['person' => 'co-maker', 'co_maker_id' => (int) $coMakerId] : [];
     }
 
     /** Aborts 404 if an existing record does not belong to the resolved active person. */

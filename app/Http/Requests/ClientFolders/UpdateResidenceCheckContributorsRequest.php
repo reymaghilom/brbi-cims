@@ -2,10 +2,8 @@
 
 namespace App\Http\Requests\ClientFolders;
 
-use App\Enums\UserRole;
-use App\Enums\UserStatus;
+use App\Rules\CiContributorRule;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 class UpdateResidenceCheckContributorsRequest extends FormRequest
 {
@@ -21,9 +19,7 @@ class UpdateResidenceCheckContributorsRequest extends FormRequest
             'contributor_ids.*' => [
                 'integer',
                 'distinct',
-                Rule::exists('users', 'id')->where(fn ($query) => $query
-                    ->where('role', UserRole::CreditInvestigator->value)
-                    ->where('status', UserStatus::Active->value)),
+                CiContributorRule::exists($this->route('residenceCheck')->contributors()->pluck('users.id')),
             ],
         ];
     }

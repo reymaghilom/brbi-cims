@@ -52,8 +52,10 @@ class ResidenceCheckController extends Controller
 
     public function updateContributors(UpdateResidenceCheckContributorsRequest $request, ClientFolder $clientFolder, ResidenceCheck $residenceCheck, UpdateResidenceCheckContributors $update): RedirectResponse
     {
+        $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, $request);
+        ActivePersonResolver::assertOwnedBy($residenceCheck, $activePerson);
         $update->execute($request->user(), $clientFolder, $residenceCheck, $request->validated('contributor_ids', []));
-        $personParams = ActivePersonResolver::queryParams(ActivePersonResolver::resolveFromQuery($clientFolder, $request));
+        $personParams = ActivePersonResolver::queryParams($activePerson);
 
         return redirect()->route('client-folders.residence-checks.edit', [$clientFolder, $residenceCheck] + $personParams)->with('status', 'Contributors updated successfully.');
     }
@@ -173,6 +175,7 @@ class ResidenceCheckController extends Controller
     public function photo(ClientFolder $clientFolder, ResidenceCheck $residenceCheck, ResidenceCheckPhoto $photo, CloudinaryMediaStorage $cloud): Response
     {
         Gate::authorize('view', $clientFolder);
+        ActivePersonResolver::assertOwnedBy($residenceCheck, ActivePersonResolver::resolveFromQuery($clientFolder, request()));
         $wantsThumbnail = request()->boolean('thumbnail');
 
         if ($photo->isCloud()) {
@@ -203,6 +206,7 @@ class ResidenceCheckController extends Controller
     public function mapScreenshot(ClientFolder $clientFolder, ResidenceCheck $residenceCheck, CloudinaryMediaStorage $cloud): Response
     {
         Gate::authorize('view', $clientFolder);
+        ActivePersonResolver::assertOwnedBy($residenceCheck, ActivePersonResolver::resolveFromQuery($clientFolder, request()));
         $wantsThumbnail = request()->boolean('thumbnail');
 
         if ($residenceCheck->hasCloudMapScreenshot()) {
@@ -232,6 +236,7 @@ class ResidenceCheckController extends Controller
     private function form(ClientFolder $clientFolder, ?ResidenceCheck $residenceCheck, CloudinaryMediaStorage $cloud): View
     {
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
+        $personParams = ActivePersonResolver::queryParams($activePerson);
         $personName = $activePerson?->full_name ?? $clientFolder->display_name;
         $personLabel = $activePerson ? 'Co-Maker Name' : 'Applicant Name';
         $resolvedAddress = PersonAddressResolver::resolve($clientFolder, $activePerson);
@@ -251,14 +256,14 @@ class ResidenceCheckController extends Controller
 
         $existingPhotos = ($residenceCheck?->photos ?? collect())->map(fn (ResidenceCheckPhoto $photo) => [
             'id' => $photo->id,
-            'url' => route('client-folders.residence-checks.photo', [$clientFolder, $residenceCheck, $photo, 'thumbnail' => 1]),
+            'url' => route('client-folders.residence-checks.photo', [$clientFolder, $residenceCheck, $photo] + $personParams + ['thumbnail' => 1]),
             'caption' => $photo->caption,
             'uploaded_by' => $photo->uploader?->full_name,
             'uploaded_at' => $photo->created_at?->timezone(config('cims.display_timezone'))->format('M j, Y g:i A'),
         ])->all();
 
         $mapScreenshot = $residenceCheck?->hasMapScreenshot() ? [
-            'url' => route('client-folders.residence-checks.map-screenshot', [$clientFolder, $residenceCheck]),
+            'url' => route('client-folders.residence-checks.map-screenshot', [$clientFolder, $residenceCheck] + $personParams),
             'uploaded_by' => $residenceCheck->mapScreenshotUploader?->full_name,
         ] : null;
 
@@ -293,7 +298,7 @@ class ResidenceCheckController extends Controller
             // The primary CI is never a valid companion choice — excluded here entirely (not just
             // disabled in the UI) so the modal's candidate list can never even present them.
             'activeCreditInvestigators' => User::query()
-                ->where('role', UserRole::CreditInvestigator)
+                ->whereIn('role', UserRole::creditInvestigatorRoles())
                 ->where('status', UserStatus::Active)
                 ->where('id', '!=', $primaryCiId)
                 ->orderBy('full_name')

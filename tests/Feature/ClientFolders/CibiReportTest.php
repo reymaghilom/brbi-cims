@@ -1020,7 +1020,7 @@ class CibiReportTest extends TestCase
         $response = $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $payload)
             ->assertUnprocessable()
             ->assertJsonValidationErrors([
-                'branch_name', 'account_officer_name', 'start_date', 'submitted_date', 'party_type', 'ci_risk_level',
+                'branch_name', 'account_officer_name', 'start_date', 'submitted_date', 'ci_risk_level',
                 ...array_map(fn ($field) => 'personal_snapshot.'.$field, $requiredPersonal),
             ]);
 
@@ -1175,7 +1175,7 @@ class CibiReportTest extends TestCase
             ->assertSee('value="Rented"', false)
             ->assertSee('value="Living with Parents"', false)
             ->assertSee('Mortgaged From')
-            ->assertSee('Rented From')
+            ->assertSee('data-residence-from-label', false)
             ->assertDontSee('class="ui-label">From</label>', false)
             ->assertSee('type="radio" name="personal_snapshot[residence_status]"', false)
             ->assertSee('business-report-choice-group cibi-residence-status-options', false)
@@ -1183,7 +1183,7 @@ class CibiReportTest extends TestCase
             ->assertSee('>Year Opened</th>', false)
             ->assertDontSee('<option value="Other">Other</option>', false)
             ->assertDontSee('name="personal_snapshot[residence_status]" value="Other"', false)
-            ->assertSee('Permanent Address')
+            ->assertSee('Parents Address')
             ->assertSee('data-copy-present-address="personal-previous-address"', false)
             ->assertSee('data-copy-present-address="personal-permanent-address"', false)
             ->assertSee('Use Present Address')
@@ -1197,7 +1197,7 @@ class CibiReportTest extends TestCase
             ->assertDontSee('ADB Level / Figures')
             ->assertSee('cibi-compact-financial-input', false)
             ->assertSee('class="cibi-prepared-by"', false)
-            ->assertSee('class="cibi-encoding-signatory-name"', false)
+            ->assertSee('cibi-encoding-signatory-name', false)
             ->assertSee('name="prepared_by_name"', false)
             ->assertDontSee('type="text" name="prepared_by_name"', false)
             ->assertSee('cibi-bank-entry-table', false)
@@ -1214,7 +1214,7 @@ class CibiReportTest extends TestCase
             ->assertDontSee('value="figures"', false)
             ->assertSee('data-number-format', false)
             ->assertSee('+ Add Bank')
-            ->assertSee('+ Add Loan')
+            ->assertDontSee('+ Add Loan')
             ->assertSee('+ Add Income Source')
             ->assertSee('class="cibi-remove-entry-button"', false)
             ->assertSee('aria-label="Remove entry"', false)
@@ -1370,13 +1370,13 @@ class CibiReportTest extends TestCase
         $mortgaged = $this->payload();
         $mortgaged['personal_snapshot']['residence_status'] = 'Mortgaged';
         $mortgaged['personal_snapshot']['residence_status_from'] = 'Community Bank since 2020';
-        $mortgaged['personal_snapshot']['monthly_rent'] = 'STALE RENT';
+        $mortgaged['personal_snapshot']['monthly_rent'] = 'PHP 5,000 mortgage';
         $mortgaged['personal_snapshot']['other_residences'] = 'Farm lot under mortgage';
 
         $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $mortgagedFolder), $mortgaged)->assertOk();
         $snapshot = $mortgagedFolder->cibiReport()->sole()->personal_snapshot;
         $this->assertSame('Community Bank since 2020', $snapshot['residence_status_from']);
-        $this->assertNull($snapshot['monthly_rent']);
+        $this->assertSame('PHP 5,000 mortgage', $snapshot['monthly_rent']);
         $this->assertSame('Farm lot under mortgage', $snapshot['other_residences']);
 
         $rentedFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);

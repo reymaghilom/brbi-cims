@@ -146,7 +146,7 @@ class GeneratedReportController extends Controller
         );
     }
 
-    /** "Print Selected" — a combined, print-ready HTML preview for however many businesses were checked, in the order they were checked. */
+    /** "Preview Selected" — a combined, print-ready HTML preview for however many businesses were checked, in the order they were checked. */
     public function batchPreview(BatchBusinessReportRequest $request, ClientFolder $clientFolder, OfficialReportDataBuilder $builder): View
     {
         $sources = $request->resolveSources();

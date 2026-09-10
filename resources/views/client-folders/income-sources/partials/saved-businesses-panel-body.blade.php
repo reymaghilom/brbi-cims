@@ -21,7 +21,7 @@
             </div>
             @if($businesses->isNotEmpty())
                 <div class="flex flex-wrap items-center justify-end gap-2">
-                    <button type="button" class="ui-button-primary-compact" data-business-print-selected disabled><x-ui.icon name="printer" size="size-3.5" />Print Selected</button>
+                    <button type="button" class="ui-button-primary-compact" data-business-print-selected disabled><x-ui.icon name="printer" size="size-3.5" />Preview Selected</button>
                     <x-ui.context-menu label="Download selected business reports">
                         <x-slot:trigger>
                             <span class="ui-button-secondary-compact pointer-events-none opacity-55" data-business-download-selected-trigger aria-disabled="true" tabindex="-1"><x-ui.icon name="download" size="size-3.5" />Download Selected<x-ui.icon name="chevron-down" size="size-3.5" /></span>
@@ -154,7 +154,7 @@
     </div>
 
     @foreach($businesses as $business)
-        <form id="business-{{ $business->id }}-export-excel-form" method="POST" action="{{ route('client-folders.income-sources.export-excel', [$clientFolder, $business]) }}" hidden>
+        <form id="business-{{ $business->id }}-export-excel-form" method="POST" action="{{ route('client-folders.income-sources.export-excel', [$clientFolder, $business] + $personParams) }}" hidden>
             @csrf
         </form>
         <x-ui.confirmation-dialog id="delete-business-{{ $business->id }}" title="Permanently Delete Business Report?" :action="route('client-folders.income-sources.business-report.destroy', [$clientFolder, $business] + $personParams)" method="DELETE" confirm-label="Delete Permanently" destructive data-business-delete-form>

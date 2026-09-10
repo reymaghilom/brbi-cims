@@ -428,7 +428,7 @@
                                     @if($proofIsPreviewable)
                                         <button type="button" class="ui-button-secondary-compact shrink-0" data-modal-open="ci-proof-preview-{{ $activity->id }}-{{ $proof->id }}" aria-label="View {{ $proof->file_name }}">View</button>
                                     @else
-                                        <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof]) }}" target="_blank" rel="noopener" class="ui-button-secondary-compact shrink-0" aria-label="View {{ $proof->file_name }}">View</a>
+                                        <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof] + $personParams) }}" target="_blank" rel="noopener" class="ui-button-secondary-compact shrink-0" aria-label="View {{ $proof->file_name }}">View</a>
                                     @endif
                                 </li>
                             @endforeach
@@ -442,9 +442,9 @@
                         <x-ui.modal id="ci-proof-preview-{{ $activity->id }}-{{ $proof->id }}" :title="$proof->file_name" size="max-w-4xl" data-ci-proof-preview data-ci-activity-id="{{ $activity->id }}" data-media-id="{{ $proof->id }}">
                             <div class="overflow-hidden rounded-card bg-brand-sidebar/5">
                                 @if(Str::startsWith($proof->mime_type, 'image/'))
-                                    <img src="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof]) }}" alt="{{ $proof->file_name }}" loading="lazy" class="mx-auto max-h-[65vh] w-auto max-w-full object-contain">
+                                    <img src="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof] + $personParams) }}" alt="{{ $proof->file_name }}" loading="lazy" class="mx-auto max-h-[65vh] w-auto max-w-full object-contain">
                                 @else
-                                    <video controls preload="none" class="mx-auto max-h-[65vh] w-full bg-black" aria-label="{{ $proof->file_name }}"><source src="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof]) }}" type="{{ $proof->mime_type }}">Your browser does not support this video format.</video>
+                                    <video controls preload="none" class="mx-auto max-h-[65vh] w-full bg-black" aria-label="{{ $proof->file_name }}"><source src="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof] + $personParams) }}" type="{{ $proof->mime_type }}">Your browser does not support this video format.</video>
                                 @endif
                             </div>
                             <x-slot:footer><button type="button" data-modal-close class="ui-button-primary">Close</button></x-slot:footer>
@@ -483,11 +483,11 @@
                                                 <li class="p-2.5 text-xs">
                                                     <p class="break-words font-semibold text-text-main">{{ $media->file_name }}</p>
                                                     <div class="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
-                                                        <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $media]) }}" target="_blank" rel="noopener" class="font-semibold text-brand-primary hover:underline">View</a>
+                                                        <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $media] + $personParams) }}" target="_blank" rel="noopener" class="font-semibold text-brand-primary hover:underline">View</a>
                                                         <span aria-hidden="true">&middot;</span>
-                                                        <label class="cursor-pointer font-semibold text-brand-primary hover:underline">Replace<input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" data-ci-submission-replace-proof="{{ $activity->id }}" data-ci-submission-replace-proof-url="{{ route('client-folders.activities.proof.replace', [$clientFolder, $activity, $media]) }}"></label>
+                                                        <label class="cursor-pointer font-semibold text-brand-primary hover:underline">Replace<input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" data-ci-submission-replace-proof="{{ $activity->id }}" data-ci-submission-replace-proof-url="{{ route('client-folders.activities.proof.replace', [$clientFolder, $activity, $media] + $personParams) }}"></label>
                                                         <span aria-hidden="true">&middot;</span>
-                                                        <button type="button" class="font-semibold text-danger hover:underline" data-ci-submission-remove-proof="{{ $activity->id }}" data-ci-submission-remove-proof-url="{{ route('client-folders.activities.proof.destroy', [$clientFolder, $activity, $media]) }}">Remove</button>
+                                                        <button type="button" class="font-semibold text-danger hover:underline" data-ci-submission-remove-proof="{{ $activity->id }}" data-ci-submission-remove-proof-url="{{ route('client-folders.activities.proof.destroy', [$clientFolder, $activity, $media] + $personParams) }}">Remove</button>
                                                     </div>
                                                 </li>
                                             @endforeach
@@ -495,7 +495,7 @@
                                     @endif
                                     @if($submissionProofCount < 5)
                                         <label class="ui-button-secondary-compact mt-3 w-fit cursor-pointer" for="submission-proof-add-{{ $activity->id }}"><x-ui.icon name="upload" size="size-3.5" />Add Photos</label>
-                                        <input id="submission-proof-add-{{ $activity->id }}" type="file" accept="image/jpeg,image/png,image/webp" multiple class="sr-only" data-ci-submission-add-proof="{{ $activity->id }}" data-ci-submission-add-proof-url="{{ route('client-folders.activities.proof.store', [$clientFolder, $activity]) }}">
+                                        <input id="submission-proof-add-{{ $activity->id }}" type="file" accept="image/jpeg,image/png,image/webp" multiple class="sr-only" data-ci-submission-add-proof="{{ $activity->id }}" data-ci-submission-add-proof-url="{{ route('client-folders.activities.proof.store', [$clientFolder, $activity] + $personParams) }}">
                                     @else
                                         <p class="mt-3 text-xs font-semibold text-text-muted">5 / 5 attachments — Maximum reached</p>
                                     @endif

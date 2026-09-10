@@ -78,7 +78,7 @@
             <section class="ui-panel p-5 sm:p-6" aria-labelledby="notes-title">
                 <h2 id="notes-title" class="ui-section-title">Notes Timeline</h2>
                 <div class="mt-5"><x-ui.note-timeline :notes="$activity->notes->map(fn ($note) => ['author' => $note->author->full_name, 'date' => $note->created_at->timezone(config('cims.display_timezone'))->format('M j, Y g:i A'), 'text' => $note->note.($note->follow_up_needed ? ' — Follow-up needed' : '')])->all()" /></div>
-                <form method="POST" action="{{ route('client-folders.activities.notes.store', [$clientFolder, $activity]) }}" class="mt-6 border-t border-ui-border pt-5">@csrf<x-form.textarea name="note" label="Add Note" rows="4" required help="Notes are append-only and retain their author and timestamp." /><label class="mt-3 flex min-h-11 cursor-pointer items-center gap-3 text-sm font-semibold"><input type="hidden" name="follow_up_needed" value="0"><input type="checkbox" name="follow_up_needed" value="1" @checked(old('follow_up_needed')) class="size-4 rounded border-ui-border-strong text-brand-primary focus:ring-brand-primary">Follow-up needed</label><button type="submit" class="ui-button-primary mt-4 w-full sm:w-auto">Add Note</button></form>
+                <form method="POST" action="{{ route('client-folders.activities.notes.store', [$clientFolder, $activity] + $personParams) }}" class="mt-6 border-t border-ui-border pt-5">@csrf<x-form.textarea name="note" label="Add Note" rows="4" required help="Notes are append-only and retain their author and timestamp." /><label class="mt-3 flex min-h-11 cursor-pointer items-center gap-3 text-sm font-semibold"><input type="hidden" name="follow_up_needed" value="0"><input type="checkbox" name="follow_up_needed" value="1" @checked(old('follow_up_needed')) class="size-4 rounded border-ui-border-strong text-brand-primary focus:ring-brand-primary">Follow-up needed</label><button type="submit" class="ui-button-primary mt-4 w-full sm:w-auto">Add Note</button></form>
             </section>
 
             <section class="ui-panel p-5 sm:p-6" aria-labelledby="media-title">
@@ -93,9 +93,9 @@
                                 <p class="break-words font-semibold">{{ $media->pivot->label ?: $media->file_name }}</p>
                                 <p class="mt-1 text-xs text-text-muted">{{ str($media->media_type->value)->title() }} · {{ str($media->category->value)->replace('_', ' ')->title() }}</p>
                                 <div class="mt-3 flex flex-wrap gap-2">
-                                    <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $media]) }}" target="_blank" rel="noopener" class="ui-button-secondary-compact"><x-ui.icon name="eye" size="size-3.5" />View</a>
+                                    <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $media] + $personParams) }}" target="_blank" rel="noopener" class="ui-button-secondary-compact"><x-ui.icon name="eye" size="size-3.5" />View</a>
                                     @if($activity->status === App\Enums\ActivityStatus::Completed)
-                                        <form method="POST" action="{{ route('client-folders.activities.proof.replace', [$clientFolder, $activity, $media]) }}" enctype="multipart/form-data" data-ci-proof-replace-form>
+                                        <form method="POST" action="{{ route('client-folders.activities.proof.replace', [$clientFolder, $activity, $media] + $personParams) }}" enctype="multipart/form-data" data-ci-proof-replace-form>
                                             @csrf
                                             @method('PUT')
                                             <input id="replace-proof-{{ $media->id }}" name="attachment" type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" data-ci-proof-replace-input>
@@ -111,7 +111,7 @@
                     </ul>
 
                     @foreach($activity->mediaReferences as $media)
-                        <x-ui.confirmation-dialog id="remove-proof-{{ $media->id }}" title="Remove Proof Attachment?" :action="route('client-folders.activities.proof.destroy', [$clientFolder, $activity, $media])" method="DELETE" confirm-label="Remove Attachment" destructive>
+                        <x-ui.confirmation-dialog id="remove-proof-{{ $media->id }}" title="Remove Proof Attachment?" :action="route('client-folders.activities.proof.destroy', [$clientFolder, $activity, $media] + $personParams)" method="DELETE" confirm-label="Remove Attachment" destructive>
                             <p><span class="font-semibold text-text-main">{{ $media->file_name }}</span> will be removed from this activity. If it is not referenced elsewhere, its stored file will also be retired.</p>
                         </x-ui.confirmation-dialog>
                     @endforeach
@@ -119,7 +119,7 @@
 
                 @if($activity->status === App\Enums\ActivityStatus::Completed)
                     @if($activity->media_references_count < 5)
-                        <form method="POST" action="{{ route('client-folders.activities.proof.store', [$clientFolder, $activity]) }}" enctype="multipart/form-data" class="mt-4" data-ci-add-photos-form>
+                        <form method="POST" action="{{ route('client-folders.activities.proof.store', [$clientFolder, $activity] + $personParams) }}" enctype="multipart/form-data" class="mt-4" data-ci-add-photos-form>
                             @csrf
                             <label for="add-proof-photos" class="ui-label">Add Photos <span class="font-normal text-text-muted">(optional)</span></label>
                             <input id="add-proof-photos" name="photos[]" type="file" accept="image/jpeg,image/png,image/webp" multiple class="ui-control !py-1.5 text-sm" data-ci-add-photos-input>
