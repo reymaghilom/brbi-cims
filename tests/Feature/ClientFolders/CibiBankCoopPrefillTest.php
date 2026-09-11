@@ -294,6 +294,274 @@ class CibiBankCoopPrefillTest extends TestCase
             ->assertDontSee('Other Folder CIBI');
     }
 
+    public function test_distinct_bank_and_loan_institutions_each_prefill_once_and_existing_targets_are_never_repeated(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $report = $this->reportFor($folder, $ci);
+        // Two Bank / Financial rows and three Credit / Loan rows, no institution shared: five targets.
+        $this->bankAccount($report, 'BPI', 'PUERTO', 1);
+        $this->bankAccount($report, 'LANDBANK', 'PUERTO', 2);
+        $this->loan($report, 'MCCB', 1);
+        $this->loan($report, 'OIC', 2);
+        $this->loan($report, 'FICCO', 3);
+        $prefill = app(BankInstitutionPrefill::class);
+
+        $this->assertSame(
+            [['bank_coop_check', 'BPI'], ['bank_coop_check', 'LANDBANK'], ['loan_inquiry', 'MCCB'], ['loan_inquiry', 'OIC'], ['loan_inquiry', 'FICCO']],
+            array_map(fn (array $candidate): array => [$candidate['inquiry_type'], $candidate['institution_name']], $prefill->bankTargetsFromCibi($folder, null)),
+        );
+
+        // Four already exist (one typed with different case/spacing): only the missing one is suggested.
+        $activity = $this->bankActivity($folder, $ci);
+        $this->target($activity, $ci, '  landbank ', 'puerto');
+        foreach (['MCCB', 'OIC', 'FICCO'] as $loan) {
+            $this->target($activity, $ci, $loan, null, CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY);
+        }
+        $remaining = $prefill->bankTargetsFromCibi($folder, null, $activity->bankTargets()->get());
+        $this->assertSame(['BPI'], array_column($remaining, 'institution_name'));
+
+        // Once it exists too, prefilling again suggests nothing.
+        $this->target($activity, $ci, 'BPI', 'PUERTO');
+        $this->assertSame([], $prefill->bankTargetsFromCibi($folder, null, $activity->bankTargets()->get()));
+        $this->assertSame(5, $activity->bankTargets()->count());
+
+        // Four distinct institutions give exactly four candidates.
+        $report->bankAccounts()->where('institution', 'BPI')->delete();
+        $this->assertCount(4, $prefill->bankTargetsFromCibi($folder, null));
+    }
+
+    public function test_add_activity_saves_completed_prefilled_rows_and_their_remarks_together_with_an_added_row(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $row = fn (string $type, string $name, ?string $branch, ActivityStatus $status, ?string $remarks = null): array => [
+            'inquiry_type' => $type, 'institution_name' => $name, 'branch_location' => $branch,
+            'status' => $status->value, 'scheduled_at' => '', 'scheduled_time' => '', 'remarks' => $remarks,
+        ];
+
+        $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
+            'activity_definition_id' => $this->bankDefinition()->id,
+            'create_new_activity_type' => false,
+            'bank_targets' => [
+                0 => $row(CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK, 'BPI', 'PUERTO', ActivityStatus::Completed, 'Verified with branch.'),
+                1 => $row(CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK, 'LANDBANK', 'PUERTO', ActivityStatus::Pending),
+                2 => $row(CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY, 'MCCB', null, ActivityStatus::Completed, 'No arrears.'),
+                // The row added with "Add Another Bank / Coop" after the statuses above were changed.
+                5 => $row(CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK, 'Manual Coop', null, ActivityStatus::Pending),
+            ],
+        ])->assertSessionHasNoErrors();
+
+        $activity = $folder->activities()->sole();
+        $targets = $activity->bankTargets()->get()->keyBy('institution_name');
+        $this->assertCount(4, $targets);
+        $this->assertSame(ActivityStatus::Completed, $targets['BPI']->status);
+        $this->assertSame('Verified with branch.', $targets['BPI']->remarks);
+        $this->assertSame(ActivityStatus::Completed, $targets['MCCB']->status);
+        $this->assertSame('No arrears.', $targets['MCCB']->remarks);
+        $this->assertSame(ActivityStatus::Pending, $targets['Manual Coop']->status);
+        $this->assertSame(CiActivityBankTarget::deriveParentStatus($targets->pluck('status')), $activity->status);
+    }
+
+    public function test_an_invalid_added_row_blocks_the_whole_add_and_saves_nothing(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+
+        $this->actingAs($ci)->from(route('client-folders.activities.index', $folder))->post(route('client-folders.activities.store', $folder), [
+            'activity_definition_id' => $this->bankDefinition()->id,
+            'create_new_activity_type' => false,
+            'bank_targets' => [
+                ['inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK, 'institution_name' => 'BPI', 'branch_location' => 'PUERTO', 'status' => ActivityStatus::Completed->value, 'remarks' => 'Verified.'],
+                ['inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK, 'institution_name' => '', 'status' => ActivityStatus::Pending->value],
+            ],
+        ])->assertSessionHasErrors('bank_targets.1.institution_name');
+
+        $this->assertDatabaseCount('ci_activities', 0);
+        $this->assertDatabaseCount('ci_activity_bank_targets', 0);
+    }
+
+    public function test_adding_a_target_in_the_tracker_leaves_an_existing_completed_target_untouched(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->bankActivity($folder, $ci);
+        $completed = $this->target($activity, $ci, 'LANDBANK', 'PUERTO');
+        $completed->update(['status' => ActivityStatus::Completed, 'remarks' => 'Account verified.']);
+        $activity->update(['status' => ActivityStatus::Completed, 'completed_at' => now()]);
+        $completed->refresh();
+        $this->travel(5)->minutes();
+
+        $this->actingAs($ci)->post(route('client-folders.activities.bank-targets.store', [$folder, $activity]), [
+            'co_maker_id' => '',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
+            'institution_name' => 'BPI',
+            'branch_location' => 'PUERTO',
+            'status' => ActivityStatus::Pending->value,
+        ])->assertSessionHasNoErrors();
+
+        $fresh = $completed->fresh();
+        $this->assertSame(ActivityStatus::Completed, $fresh->status);
+        $this->assertSame('Account verified.', $fresh->remarks);
+        $this->assertTrue($fresh->updated_at->equalTo($completed->updated_at), 'The untouched target must not be re-written.');
+        $this->assertSame(2, $activity->bankTargets()->count());
+        // The parent follows the existing target-derived rule once an unfinished target joins.
+        $this->assertSame(CiActivityBankTarget::deriveParentStatus($activity->bankTargets()->pluck('status')), $activity->fresh()->status);
+        $this->assertNotSame(ActivityStatus::Completed, $activity->fresh()->status);
+    }
+
+    /**
+     * Regression: the Add Activity repeater derives the next row index from each row's
+     * data-bank-target-index. When that attribute was fused into another one, JS restarted at 0,
+     * so the second prefilled row reused bank_targets[0] and overwrote the first (folder #34 lost BPI).
+     */
+    public function test_add_activity_rows_expose_their_index_so_prefilled_rows_never_share_a_name(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $this->folderThirtyFourCibi($folder, $ci);
+
+        $html = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('data-schedule-scopedata-', $html);
+        foreach (['bank', 'asset'] as $kind) {
+            $this->assertMatchesRegularExpression('/<article[^>]*\sdata-'.$kind.'-target-row\s+data-schedule-scope\s+data-'.$kind.'-target-index="0"/', $html, "Server-rendered {$kind} row must carry its index.");
+            $this->assertMatchesRegularExpression('/<article[^>]*\sdata-'.$kind.'-target-row\s+data-schedule-scope\s+data-'.$kind.'-target-index="__INDEX__"/', $html, "The {$kind} row template must carry its index.");
+        }
+        $this->assertStringContainsString("querySelectorAll('[data-bank-target-index]')", $html);
+
+        // The JS receives all five CIBI candidates, in order, with their types and branches.
+        // @js renders JSON.parse('…') with \uXXXX escapes, which are also valid JSON string escapes.
+        preg_match("/const bankPrefillCandidates = JSON\\.parse\\('(.*?)'\\);/s", $html, $matches);
+        $this->assertSame([
+            ['inquiry_type' => 'bank_coop_check', 'institution_name' => 'BPI', 'branch_location' => 'PUERTO'],
+            ['inquiry_type' => 'bank_coop_check', 'institution_name' => 'LANDBANK', 'branch_location' => 'PUERTO'],
+            ['inquiry_type' => 'loan_inquiry', 'institution_name' => 'MCCB', 'branch_location' => null],
+            ['inquiry_type' => 'loan_inquiry', 'institution_name' => 'OIC', 'branch_location' => null],
+            ['inquiry_type' => 'loan_inquiry', 'institution_name' => 'FICCO', 'branch_location' => null],
+        ], json_decode((string) json_decode('"'.($matches[1] ?? '[]').'"'), true));
+    }
+
+    public function test_every_submitted_prefilled_row_is_saved_with_its_own_type_branch_status_remarks_and_schedule(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $this->folderThirtyFourCibi($folder, $ci);
+
+        $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), $this->bankPayload([
+            0 => $this->row('bank_coop_check', 'BPI', 'PUERTO', ActivityStatus::Completed, remarks: 'Account verified.'),
+            1 => $this->row('bank_coop_check', 'LANDBANK', 'PUERTO', ActivityStatus::Pending),
+            2 => $this->row('loan_inquiry', 'MCCB', null, ActivityStatus::Completed, remarks: 'No arrears.'),
+            3 => $this->row('loan_inquiry', 'OIC', null, ActivityStatus::Scheduled, '2026-09-15', '09:30'),
+            4 => $this->row('loan_inquiry', 'FICCO', null, ActivityStatus::FollowUp, '2026-09-16'),
+        ]))->assertSessionHasNoErrors();
+
+        $activity = $folder->activities()->sole();
+        $targets = $activity->bankTargets()->orderBy('id')->get();
+        $this->assertSame(['BPI', 'LANDBANK', 'MCCB', 'OIC', 'FICCO'], $targets->pluck('institution_name')->all());
+        $byName = $targets->keyBy('institution_name');
+        $this->assertSame([CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK, 'PUERTO'], [$byName['BPI']->inquiry_type, $byName['BPI']->branch_location]);
+        $this->assertSame([CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK, 'PUERTO'], [$byName['LANDBANK']->inquiry_type, $byName['LANDBANK']->branch_location]);
+        foreach (['MCCB', 'OIC', 'FICCO'] as $loan) {
+            $this->assertSame(CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY, $byName[$loan]->inquiry_type);
+            $this->assertNull($byName[$loan]->branch_location);
+        }
+        $this->assertSame(
+            [ActivityStatus::Completed, ActivityStatus::Pending, ActivityStatus::Completed, ActivityStatus::Scheduled, ActivityStatus::FollowUp],
+            $targets->pluck('status')->all(),
+        );
+        $this->assertSame('Account verified.', $byName['BPI']->remarks);
+        $this->assertSame('No arrears.', $byName['MCCB']->remarks);
+        $this->assertTrue($byName['OIC']->scheduled_has_time);
+        $this->assertSame('2026-09-15 09:30', $byName['OIC']->scheduled_at->timezone('Asia/Manila')->format('Y-m-d H:i'));
+        $this->assertFalse($byName['FICCO']->scheduled_has_time);
+        $this->assertSame('2026-09-16', $byName['FICCO']->scheduled_at->timezone('Asia/Manila')->format('Y-m-d'));
+        $this->assertSame(CiActivityBankTarget::deriveParentStatus($targets->pluck('status')), $activity->status);
+        // CIBI stays the untouched source.
+        $this->assertSame(2, CibiReport::query()->where('client_folder_id', $folder->id)->sole()->bankAccounts()->count());
+        $this->assertSame(3, CibiReport::query()->where('client_folder_id', $folder->id)->sole()->loanRecords()->count());
+    }
+
+    public function test_six_rows_save_six_a_removed_row_stays_removed_and_an_added_row_is_saved_too(): void
+    {
+        $ci = User::factory()->create();
+        $six = $this->folderFor($ci);
+        $this->actingAs($ci)->post(route('client-folders.activities.store', $six), $this->bankPayload([
+            0 => $this->row('bank_coop_check', 'BPI', 'PUERTO'),
+            1 => $this->row('bank_coop_check', 'Metrobank', null),
+            2 => $this->row('bank_coop_check', 'BDO', null),
+            3 => $this->row('loan_inquiry', 'MCCB', null),
+            4 => $this->row('loan_inquiry', 'OIC', null),
+            5 => $this->row('loan_inquiry', 'FICCO', null),
+        ]))->assertSessionHasNoErrors();
+        $this->assertSame(6, $six->activities()->sole()->bankTargets()->count());
+
+        // BPI removed in the modal (index 0 gone) and one row added with "Add Another Bank / Coop".
+        $edited = $this->folderFor($ci);
+        $this->post(route('client-folders.activities.store', $edited), $this->bankPayload([
+            1 => $this->row('bank_coop_check', 'LANDBANK', 'PUERTO', ActivityStatus::Completed),
+            2 => $this->row('loan_inquiry', 'MCCB', null),
+            3 => $this->row('loan_inquiry', 'OIC', null),
+            4 => $this->row('loan_inquiry', 'FICCO', null),
+            5 => $this->row('bank_coop_check', 'Manual Coop', 'Poblacion'),
+        ]))->assertSessionHasNoErrors();
+        $targets = $edited->activities()->sole()->bankTargets()->orderBy('id')->get();
+        $this->assertSame(['LANDBANK', 'MCCB', 'OIC', 'FICCO', 'Manual Coop'], $targets->pluck('institution_name')->all());
+        $this->assertSame(ActivityStatus::Completed, $targets->first()->status);
+    }
+
+    public function test_a_scheduled_row_without_a_date_still_rejects_the_whole_add(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+
+        $this->actingAs($ci)->from(route('client-folders.activities.index', $folder))->post(route('client-folders.activities.store', $folder), $this->bankPayload([
+            0 => $this->row('bank_coop_check', 'BPI', 'PUERTO'),
+            1 => $this->row('loan_inquiry', 'MCCB', null, ActivityStatus::Scheduled),
+        ]))->assertSessionHasErrors(['bank_targets.1.scheduled_at' => 'Please select a scheduled date.']);
+
+        $this->assertDatabaseCount('ci_activities', 0);
+        $this->assertDatabaseCount('ci_activity_bank_targets', 0);
+    }
+
+    public function test_folder_thirty_four_shaped_prefill_stays_inside_the_exact_person(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $this->folderThirtyFourCibi($folder, $ci);
+        $makerA = $this->coMaker($folder, 'Maker Alpha');
+        $makerB = $this->coMaker($folder, 'Maker Beta');
+        $this->bankAccount($this->reportFor($folder, $ci, $makerA->id), 'Maker A Bank', 'Maker A Branch', 1);
+        $prefill = app(BankInstitutionPrefill::class);
+
+        $this->assertSame(['BPI', 'LANDBANK', 'MCCB', 'OIC', 'FICCO'], array_column($prefill->bankTargetsFromCibi($folder, null), 'institution_name'));
+        $this->assertSame(['Maker A Bank'], array_column($prefill->bankTargetsFromCibi($folder, $makerA), 'institution_name'));
+        $this->assertSame([], $prefill->bankTargetsFromCibi($folder, $makerB));
+    }
+
+    private function folderThirtyFourCibi(ClientFolder $folder, User $ci): void
+    {
+        $report = $this->reportFor($folder, $ci);
+        $this->bankAccount($report, 'BPI', 'PUERTO', 1);
+        $this->bankAccount($report, 'LANDBANK', 'PUERTO', 2);
+        $this->loan($report, 'MCCB', 1);
+        $this->loan($report, 'OIC', 2);
+        $this->loan($report, 'FICCO', 3);
+    }
+
+    private function bankPayload(array $rows): array
+    {
+        return ['activity_definition_id' => $this->bankDefinition()->id, 'create_new_activity_type' => false, 'bank_targets' => $rows];
+    }
+
+    private function row(string $type, string $name, ?string $branch, ActivityStatus $status = ActivityStatus::Pending, ?string $date = null, ?string $time = null, ?string $remarks = null): array
+    {
+        return [
+            'inquiry_type' => $type, 'institution_name' => $name, 'branch_location' => $branch, 'status' => $status->value,
+            'scheduled_at' => $date, 'scheduled_time' => $time, 'remarks' => $remarks,
+        ];
+    }
+
     private function reportFor(ClientFolder $folder, User $ci, ?int $coMakerId = null): CibiReport
     {
         return CibiReport::create([

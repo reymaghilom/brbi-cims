@@ -94,7 +94,7 @@ class StoreCiActivityRequest extends FormRequest
             'bank_targets.*.institution_name' => ['required', 'string', 'max:255'],
             'bank_targets.*.branch_location' => ['nullable', 'string', 'max:255'],
             'bank_targets.*.status' => ['required', Rule::enum(ActivityStatus::class)],
-            'bank_targets.*.scheduled_at' => ['nullable', 'date'],
+            'bank_targets.*.scheduled_at' => ['nullable', 'date', 'required_if:bank_targets.*.status,'.ActivityStatus::Scheduled->value],
             'bank_targets.*.scheduled_time' => ['nullable', 'date_format:H:i'],
             'bank_targets.*.remarks' => ['nullable', 'string', 'max:20000'],
             'asset_targets' => [
@@ -108,7 +108,7 @@ class StoreCiActivityRequest extends FormRequest
             'asset_targets.*.assessor_type' => ['required', Rule::in(array_keys(CiActivityAssetTarget::ASSESSOR_TYPES))],
             'asset_targets.*.office_location' => ['required', 'string', 'max:255'],
             'asset_targets.*.status' => ['required', Rule::enum(ActivityStatus::class)],
-            'asset_targets.*.scheduled_at' => ['nullable', 'date'],
+            'asset_targets.*.scheduled_at' => ['nullable', 'date', 'required_if:asset_targets.*.status,'.ActivityStatus::Scheduled->value],
             'asset_targets.*.scheduled_time' => ['nullable', 'date_format:H:i'],
             'asset_targets.*.remarks' => ['nullable', 'string', 'max:20000'],
         ];
@@ -117,6 +117,9 @@ class StoreCiActivityRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'scheduled_at.required' => 'Please select a scheduled date.',
+            'bank_targets.*.scheduled_at.required_if' => 'Please select a scheduled date.',
+            'asset_targets.*.scheduled_at.required_if' => 'Please select a scheduled date.',
             'bank_targets.required' => 'Add at least one Bank / Coop target.',
             'bank_targets.*.institution_name.required' => 'Enter the Bank / Coop name.',
             'bank_targets.*.inquiry_type.required' => 'Select an inquiry type.',

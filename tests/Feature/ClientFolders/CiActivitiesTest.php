@@ -1763,7 +1763,8 @@ class CiActivitiesTest extends TestCase
 
         $this->assertDatabaseHas('client_completion_results', ['client_folder_id' => $folder->id, 'is_satisfied' => true, 'explanation_key' => 'required_activities.complete']);
         $folder->refresh();
-        $this->assertEquals(16.67, $folder->progress_percent);
+        // Mandatory matrix: of these activities only Bank / Coop is mandatory -> 1 of 7.
+        $this->assertEquals(14.29, $folder->progress_percent);
         $this->assertSame(ClientFolderStatus::OnProgress, $folder->status);
         $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()
             ->assertSee(route('client-folders.activities.index', $folder), false)

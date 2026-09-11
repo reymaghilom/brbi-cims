@@ -14,6 +14,7 @@ use App\Services\ClientFolders\PersonAddressResolver;
 use App\Services\ClientFolders\PersonCiDateResolver;
 use App\Services\ClientFolders\ResidenceBusinessCheckCompletionEvaluator;
 use App\Services\Media\ClientMediaUploader;
+use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -27,6 +28,7 @@ class SaveResidenceCheck
         private readonly ResidenceBusinessCheckCompletionEvaluator $completion,
         private readonly CiParticipantService $participants,
         private readonly UpdateResidenceCheckContributors $updateContributors,
+        private readonly ClientProgressService $progress,
     ) {}
 
     /** @param  array<string, mixed>  $data */
@@ -293,6 +295,7 @@ class SaveResidenceCheck
                 ]);
 
                 $this->completion->evaluate($folder, $activePerson?->id);
+                $this->progress->recalculate($folder);
 
                 return $check->refresh();
             });

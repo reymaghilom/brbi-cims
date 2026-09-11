@@ -323,9 +323,12 @@ class CiActivityDefaultTrackerTest extends TestCase
         $this->assertNull($activity->scheduled_at);
         $this->assertFalse($activity->scheduled_has_time);
 
-        $this->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled))->assertRedirect();
+        // Scheduled requires a date — it is rejected as a whole, so the status never lands as Scheduled.
+        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['scheduled_at' => 'Please select a scheduled date.']);
         $activity->refresh();
-        $this->assertSame(ActivityStatus::Scheduled, $activity->status);
+        $this->assertSame(ActivityStatus::Pending, $activity->status);
         $this->assertNull($activity->scheduled_at);
         $this->assertFalse($activity->scheduled_has_time);
 

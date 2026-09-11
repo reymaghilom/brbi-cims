@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\ClientFolders\ResidenceBusinessCheckCompletionEvaluator;
 use App\Services\Media\ClientMediaUploader;
 use App\Services\Media\PrivateMediaStorage;
+use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Facades\DB;
 
 class DeleteResidenceCheck
@@ -17,6 +18,7 @@ class DeleteResidenceCheck
         private readonly PrivateMediaStorage $storage,
         private readonly ClientMediaUploader $mediaUploader,
         private readonly ResidenceBusinessCheckCompletionEvaluator $completion,
+        private readonly ClientProgressService $progress,
     ) {}
 
     public function execute(User $actor, ClientFolder $folder, ResidenceCheck $check): void
@@ -65,6 +67,7 @@ class DeleteResidenceCheck
             ]);
 
             $this->completion->evaluate($folder, $coMakerId);
+            $this->progress->recalculate($folder);
         });
 
         DB::afterCommit(function () use ($retiredCloudAssets): void {

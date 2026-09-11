@@ -781,7 +781,8 @@ class CibiReportTest extends TestCase
         $this->assertSame(RecordState::Complete, $report->state);
         $this->assertDatabaseHas('client_completion_results', ['client_folder_id' => $folder->id, 'is_satisfied' => true, 'explanation_key' => 'cibi_report.complete']);
         $folder->refresh();
-        $this->assertEquals(16.67, $folder->progress_percent);
+        // The Applicant CIBI is 1 of the 7 mandatory requirements.
+        $this->assertEquals(14.29, $folder->progress_percent);
         $this->assertSame(ClientFolderStatus::OnProgress, $folder->status);
         $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()
             ->assertSee('href="'.route('client-folders.cibi-report.edit', $folder).'"', false)

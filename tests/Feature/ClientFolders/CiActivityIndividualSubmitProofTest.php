@@ -112,7 +112,7 @@ class CiActivityIndividualSubmitProofTest extends TestCase
         $page = $this->actingAs($ci)->get(route('client-folders.activities.index', [$folder, 'status' => 'completed']));
 
         $page->assertOk()
-            ->assertSee('1 / 5 attachments')
+            ->assertSee('1 / 10 attachments')
             ->assertSee('removable-proof.jpg')
             ->assertSee('data-ci-submission-remove-proof="'.$activity->id.'"', false)
             ->assertSee('data-ci-submission-remove-proof-url="'.$destroyUrl.'"', false)
@@ -138,28 +138,28 @@ class CiActivityIndividualSubmitProofTest extends TestCase
         $this->assertFalse($activity->mediaReferences()->whereKey($media->id)->exists());
     }
 
-    public function test_removing_one_of_five_allows_another_upload(): void
+    public function test_removing_one_of_ten_allows_another_upload(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
-        $activity = $this->activityFor($folder, $ci, 'REMOVE ONE OF FIVE');
-        $media = collect(range(1, 5))->map(fn (int $i) => $this->cloudinaryMedia($folder, $ci, "photo-{$i}.jpg", "brbi-cims/photo-{$i}"));
+        $activity = $this->activityFor($folder, $ci, 'REMOVE ONE OF TEN');
+        $media = collect(range(1, 10))->map(fn (int $i) => $this->cloudinaryMedia($folder, $ci, "photo-{$i}.jpg", "brbi-cims/photo-{$i}"));
         $activity->mediaReferences()->attach($media->pluck('id'));
         $this->mock(CloudinaryCiActivityProofStorage::class)->shouldReceive('delete')->once();
 
         $this->actingAs($ci)->deleteJson(route('client-folders.activities.proof.destroy', [$folder, $activity, $media->first()]))
             ->assertOk();
 
-        $this->assertSame(4, $activity->mediaReferences()->count());
+        $this->assertSame(9, $activity->mediaReferences()->count());
 
         $storage = $this->mock(CloudinaryCiActivityProofStorage::class);
-        $storage->shouldReceive('store')->once()->andReturn($this->cloudinaryStored('sixth-slot.jpg', 'brbi-cims/sixth-slot'));
+        $storage->shouldReceive('store')->once()->andReturn($this->cloudinaryStored('tenth-slot.jpg', 'brbi-cims/tenth-slot'));
 
         $this->actingAs($ci)->postJson(route('client-folders.activities.proof.store', [$folder, $activity]), [
-            'photos' => [UploadedFile::fake()->image('sixth-slot.jpg')],
+            'photos' => [UploadedFile::fake()->image('tenth-slot.jpg')],
         ])->assertOk()->assertJson(['added' => true]);
 
-        $this->assertSame(5, $activity->mediaReferences()->count());
+        $this->assertSame(10, $activity->mediaReferences()->count());
     }
 
     public function test_submitted_activity_remains_submitted_after_proof_removal(): void
@@ -245,7 +245,7 @@ class CiActivityIndividualSubmitProofTest extends TestCase
             ->assertSee('data-ci-submission-proof-status-text', false);
     }
 
-    public function test_activity_without_existing_proof_shows_zero_of_five_and_add_photos(): void
+    public function test_activity_without_existing_proof_shows_zero_of_ten_and_add_photos(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -255,8 +255,9 @@ class CiActivityIndividualSubmitProofTest extends TestCase
 
         $page->assertOk()
             ->assertSee('Supporting Proof')
-            ->assertSee('0 / 5 attachments')
-            ->assertSee('Add Photos');
+            ->assertSee('0 / 10 attachments')
+            ->assertSee('Add Photos')
+            ->assertSee('data-ci-proof-count="0" data-ci-proof-max="10"', false);
     }
 
     public function test_activity_with_existing_proof_shows_view_and_replace_and_remove(): void
@@ -279,18 +280,34 @@ class CiActivityIndividualSubmitProofTest extends TestCase
             ->assertSee('data-ci-submission-replace-proof-url="'.route('client-folders.activities.proof.replace', [$folder, $activity, $media]).'"', false);
     }
 
-    public function test_five_of_five_hides_add_photos_and_shows_maximum_reached(): void
+    public function test_five_of_ten_still_offers_add_photos(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
-        $activity = $this->activityFor($folder, $ci, 'MODAL FIVE OF FIVE');
+        $activity = $this->activityFor($folder, $ci, 'MODAL FIVE OF TEN');
         $media = collect(range(1, 5))->map(fn (int $i) => $this->cloudinaryMedia($folder, $ci, "modal-photo-{$i}.jpg", "brbi-cims/modal-photo-{$i}"));
         $activity->mediaReferences()->attach($media->pluck('id'));
 
         $page = $this->actingAs($ci)->get(route('client-folders.activities.index', [$folder, 'status' => 'completed']));
 
         $page->assertOk()
-            ->assertSee('5 / 5 attachments')
+            ->assertSee('5 / 10 attachments')
+            ->assertDontSee('Maximum reached')
+            ->assertSee('data-ci-submission-add-proof="'.$activity->id.'"', false);
+    }
+
+    public function test_ten_of_ten_hides_add_photos_and_shows_maximum_reached(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->activityFor($folder, $ci, 'MODAL TEN OF TEN');
+        $media = collect(range(1, 10))->map(fn (int $i) => $this->cloudinaryMedia($folder, $ci, "modal-photo-{$i}.jpg", "brbi-cims/modal-photo-{$i}"));
+        $activity->mediaReferences()->attach($media->pluck('id'));
+
+        $page = $this->actingAs($ci)->get(route('client-folders.activities.index', [$folder, 'status' => 'completed']));
+
+        $page->assertOk()
+            ->assertSee('10 / 10 attachments')
             ->assertSee('Maximum reached');
         $this->assertStringNotContainsString('data-ci-submission-add-proof="'.$activity->id.'"', $page->getContent());
     }
@@ -305,7 +322,8 @@ class CiActivityIndividualSubmitProofTest extends TestCase
 
         $page->assertOk()
             ->assertSee('Cloud Storage')
-            ->assertSee('Photos will be securely uploaded to cloud storage. Maximum 5 photos per activity.');
+            ->assertSee('Photos will be securely uploaded to cloud storage. Maximum 10 photos per activity.')
+            ->assertDontSee('Maximum 5 photos per activity.');
     }
 
     public function test_redundant_submitted_by_helper_sentence_is_absent(): void
@@ -362,54 +380,51 @@ class CiActivityIndividualSubmitProofTest extends TestCase
         }
     }
 
-    public function test_five_total_photos_accepted_sixth_rejected(): void
+    public function test_ten_total_photos_accepted_eleventh_rejected(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
-        $activity = $this->activityFor($folder, $ci, 'FIVE ACCEPTED SIXTH REJECTED');
+        $activity = $this->activityFor($folder, $ci, 'TEN ACCEPTED ELEVENTH REJECTED');
         $storage = $this->mock(CloudinaryCiActivityProofStorage::class);
-        $storage->shouldReceive('store')->times(5)->andReturn(
-            $this->cloudinaryStored('p1.jpg', 'brbi-cims/p1'),
-            $this->cloudinaryStored('p2.jpg', 'brbi-cims/p2'),
-            $this->cloudinaryStored('p3.jpg', 'brbi-cims/p3'),
-            $this->cloudinaryStored('p4.jpg', 'brbi-cims/p4'),
-            $this->cloudinaryStored('p5.jpg', 'brbi-cims/p5'),
+        $storage->shouldReceive('store')->times(10)->andReturn(
+            ...collect(range(1, 10))->map(fn (int $i) => $this->cloudinaryStored("p{$i}.jpg", "brbi-cims/p{$i}"))->all(),
         );
 
         $this->actingAs($ci)->postJson(route('client-folders.activities.proof.store', [$folder, $activity]), [
-            'photos' => collect(range(1, 5))->map(fn (int $i) => UploadedFile::fake()->image("p{$i}.jpg"))->all(),
+            'photos' => collect(range(1, 10))->map(fn (int $i) => UploadedFile::fake()->image("p{$i}.jpg"))->all(),
         ])->assertOk();
-        $this->assertSame(5, $activity->mediaReferences()->count());
+        $this->assertSame(10, $activity->mediaReferences()->count());
 
         $storage->shouldNotReceive('store');
         $this->actingAs($ci)->postJson(route('client-folders.activities.proof.store', [$folder, $activity]), [
-            'photos' => [UploadedFile::fake()->image('sixth.jpg')],
-        ])->assertStatus(422)->assertJsonValidationErrors('photos');
-        $this->assertSame(5, $activity->mediaReferences()->count());
+            'photos' => [UploadedFile::fake()->image('eleventh.jpg')],
+        ])->assertStatus(422)->assertJsonValidationErrors(['photos' => 'You can attach up to 10 supporting photos per activity.']);
+        $this->assertSame(10, $activity->mediaReferences()->count());
     }
 
-    public function test_existing_three_plus_new_two_succeeds_existing_three_plus_new_three_rejected(): void
+    public function test_existing_seven_plus_new_three_succeeds_existing_seven_plus_new_four_rejected(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
-        $activity = $this->activityFor($folder, $ci, 'THREE PLUS TWO OR THREE');
-        $existing = collect(range(1, 3))->map(fn (int $i) => $this->cloudinaryMedia($folder, $ci, "existing-{$i}.jpg", "brbi-cims/existing-{$i}"));
+        $activity = $this->activityFor($folder, $ci, 'SEVEN PLUS THREE OR FOUR');
+        $existing = collect(range(1, 7))->map(fn (int $i) => $this->cloudinaryMedia($folder, $ci, "existing-{$i}.jpg", "brbi-cims/existing-{$i}"));
         $activity->mediaReferences()->attach($existing->pluck('id'));
+        $extras = fn (int $count): array => collect(range(1, $count))->map(fn (int $i) => UploadedFile::fake()->image("extra{$i}.jpg"))->all();
 
+        $this->mock(CloudinaryCiActivityProofStorage::class)->shouldNotReceive('store');
         $this->actingAs($ci)->postJson(route('client-folders.activities.proof.store', [$folder, $activity]), [
-            'photos' => [UploadedFile::fake()->image('extra.jpg'), UploadedFile::fake()->image('extra2.jpg'), UploadedFile::fake()->image('extra3.jpg')],
+            'photos' => $extras(4),
         ])->assertStatus(422)->assertJsonValidationErrors('photos');
-        $this->assertSame(3, $activity->mediaReferences()->count());
+        $this->assertSame(7, $activity->mediaReferences()->count());
 
         $storage = $this->mock(CloudinaryCiActivityProofStorage::class);
-        $storage->shouldReceive('store')->twice()->andReturn(
-            $this->cloudinaryStored('extra.jpg', 'brbi-cims/extra'),
-            $this->cloudinaryStored('extra2.jpg', 'brbi-cims/extra2'),
+        $storage->shouldReceive('store')->times(3)->andReturn(
+            ...collect(range(1, 3))->map(fn (int $i) => $this->cloudinaryStored("extra{$i}.jpg", "brbi-cims/extra{$i}"))->all(),
         );
         $this->actingAs($ci)->postJson(route('client-folders.activities.proof.store', [$folder, $activity]), [
-            'photos' => [UploadedFile::fake()->image('extra.jpg'), UploadedFile::fake()->image('extra2.jpg')],
+            'photos' => $extras(3),
         ])->assertOk();
-        $this->assertSame(5, $activity->mediaReferences()->count());
+        $this->assertSame(10, $activity->mediaReferences()->count());
     }
 
     public function test_jpg_jpeg_png_webp_are_accepted_via_dedicated_endpoint(): void

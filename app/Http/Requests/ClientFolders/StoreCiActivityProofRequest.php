@@ -56,9 +56,10 @@ class StoreCiActivityProofRequest extends FormRequest
             $photos = is_array($photos) ? $photos : [];
             $newCount = count(array_filter($photos, fn (mixed $photo): bool => $photo instanceof UploadedFile));
             $existingCount = $activity instanceof CiActivity ? $activity->mediaReferences()->count() : 0;
+            $maxPhotos = (int) config('cims.media.max_files_per_upload');
 
-            if ($existingCount + $newCount > 5) {
-                $validator->errors()->add('photos', 'You can attach up to 5 supporting photos per activity.');
+            if ($existingCount + $newCount > $maxPhotos) {
+                $validator->errors()->add('photos', "You can attach up to {$maxPhotos} supporting photos per activity.");
             }
 
             foreach ($photos as $index => $photo) {

@@ -2,9 +2,12 @@
 
 namespace App\Services\ClientFolders;
 
+use App\Enums\ActivityStatus;
+use App\Models\ActivityDefinition;
 use App\Models\ClientFolder;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 
 class ClientFolderBrowser
 {
@@ -44,7 +47,7 @@ class ClientFolderBrowser
                 'residenceBusinessReport as has_residence_business_data',
                 'residenceChecks as has_residence_check_data',
                 'businessChecks as has_business_check_data',
-                'activities as has_activity_data',
+                'activities as has_activity_data' => fn (Builder $query) => $this->withSavedWork($query),
                 'mediaReferences as has_media_data',
                 'generatedReports as has_generated_report_data',
                 'completionResults as has_completion_data',
@@ -71,5 +74,37 @@ class ClientFolderBrowser
         }
 
         return $paginator;
+    }
+
+    /**
+     * Delete-warning detection only. Every new folder (and Co-Maker) is seeded with Pending
+     * Barangay / Neighbor Checks and no audit entry, so those rows alone are not saved work. Any
+     * other activity type counts, and a default counts as soon as anything departs from its seeded
+     * state or a user saved it (UpdateCiActivity audits every save with metadata.activity_id).
+     * This never affects what PurgeClientFolder deletes.
+     */
+    private function withSavedWork(Builder $query): Builder
+    {
+        return $query->where(function (Builder $query): void {
+            $query->whereDoesntHave('definition', fn (Builder $definition) => $definition->whereIn('code', ActivityDefinition::MANDATORY_DEFAULT_CODES))
+                ->orWhere('status', '!=', ActivityStatus::Pending->value)
+                ->orWhereNotNull('scheduled_at')
+                ->orWhereNotNull('visit_date')
+                ->orWhereNotNull('time_in')
+                ->orWhereNotNull('time_out')
+                ->orWhereNotNull('completed_at')
+                ->orWhereNotNull('submitted_at');
+
+            foreach (['remarks', 'visited_by', 'person_met_contact', 'supporting_reference', 'submitted_to', 'submission_note'] as $column) {
+                $query->orWhere(fn (Builder $filled) => $filled->whereNotNull($column)->where($column, '!=', ''));
+            }
+
+            $query->orWhereHas('mediaReferences')
+                ->orWhereHas('notes')
+                ->orWhereExists(fn ($audit) => $audit->from('audit_logs')
+                    ->whereColumn('audit_logs.client_folder_id', 'ci_activities.client_folder_id')
+                    ->where('audit_logs.module', 'ci_activities')
+                    ->whereColumn('audit_logs.metadata->activity_id', 'ci_activities.id'));
+        });
     }
 }

@@ -10,6 +10,7 @@ use App\Enums\UserRole;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\CiActivity;
+use App\Models\CibiReport;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\GeneratedReport;
@@ -134,7 +135,8 @@ class CreditInvestigatorDashboardTest extends TestCase
 
         $this->assertSame(5, $summary['assigned']);
         $this->assertSame(2, $summary['needs_attention'], 'Both overdue folders count, whoever they are assigned to.');
-        $this->assertSame(1, $summary['in_progress']);
+        // In Progress = folders with unfinished mandatory work; none of these five has any of it.
+        $this->assertSame(5, $summary['in_progress']);
         $this->assertSame(1, $summary['completed_this_month']);
 
         // The four buckets are mutually exclusive and their percentages describe the same total.
@@ -288,17 +290,22 @@ class CreditInvestigatorDashboardTest extends TestCase
         $this->assertSame('Team Mate', $events->first()['user']);
     }
 
-    public function test_reports_ready_counts_completed_generations_across_accessible_folders(): void
+    public function test_reports_ready_counts_completed_report_records_across_accessible_folders(): void
     {
         $ci = User::factory()->create();
         $mine = $this->folder($ci, 'INDIA, CLIENT');
         $theirs = $this->folder(User::factory()->create(), 'ZULU, OTHER CI');
+        $draft = $this->folder($ci, 'JULIET, CLIENT');
+        foreach ([[$mine, RecordState::Complete], [$theirs, RecordState::Complete], [$draft, RecordState::Draft]] as [$folder, $state]) {
+            CibiReport::factory()->create(['client_folder_id' => $folder->id, 'co_maker_id' => null, 'ci_in_charge_id' => $ci->id, 'state' => $state]);
+        }
 
+        // Generated output history is not a report record: it never adds to the count.
         $this->report($mine, GenerationStatus::Completed);
         $this->report($mine, GenerationStatus::Processing);
         $this->report($theirs, GenerationStatus::Completed);
 
-        // Both completed artifacts sit on accessible folders; the in-flight one never counts.
+        // Both completed CI / BI reports sit on accessible folders; the draft never counts.
         $this->assertSame(2, $this->actingAs($ci)->get(route('home'))->assertOk()->viewData('summary')['reports_ready']);
     }
 
@@ -339,7 +346,9 @@ class CreditInvestigatorDashboardTest extends TestCase
         $large = $measure(12);
 
         $this->assertSame($small, $large, 'Dashboard query count must not scale with the number of assigned folders.');
-        $this->assertLessThanOrEqual(20, $large);
+        // 21: the Needs Attention detail adds three fixed queries (activities, Bank / Coop targets,
+        // Asset targets); the flat count above remains the actual N+1 guard.
+        $this->assertLessThanOrEqual(21, $large);
     }
 
     /**
@@ -416,7 +425,8 @@ class CreditInvestigatorDashboardTest extends TestCase
 
             $this->assertSame(1, $response->viewData('summary')['needs_attention'], 'The KPI counts folders, not activities.');
             $this->assertSame(1, collect($response->viewData('workload')['segments'])->firstWhere('key', 'needs_attention')['count']);
-            $response->assertSee('1 client folder with overdue activity');
+            $this->assertSame(3, $response->viewData('summary')['needs_attention_items']);
+            $response->assertSee('1 client folder • 3 overdue activities');
         } finally {
             Carbon::setTestNow();
         }
@@ -435,25 +445,24 @@ class CreditInvestigatorDashboardTest extends TestCase
             }
 
             $this->actingAs($ci)->get(route('home'))->assertOk()
-                ->assertSee('2 client folders with overdue activities');
+                ->assertSee('2 client folders • 2 overdue activities');
         } finally {
             Carbon::setTestNow();
         }
     }
 
-    public function test_the_in_progress_hint_reads_ongoing_investigations(): void
+    public function test_the_in_progress_hint_reads_active_investigations(): void
     {
         $ci = User::factory()->create();
-        // "In Progress" means a folder whose CI Activities have actually started (a non-pending,
-        // non-overdue activity) — the same bucket rule DashboardData::workload() already applies.
+        // One completed activity is not all of the folder's mandatory work, so it is still In Progress.
         $this->activity($this->folder($ci, 'NOVEMBER, CLIENT'), ActivityStatus::Completed);
 
         $response = $this->actingAs($ci)->get(route('home'))->assertOk();
 
-        $response->assertSee('Ongoing Investigations')
+        $response->assertSee('Active Investigations')
+            ->assertDontSee('Ongoing Investigations')
             ->assertDontSee('Investigations already underway');
 
-        // Wording only: the KPI it sits under still counts the same folders.
         $this->assertSame(1, $response->viewData('summary')['in_progress']);
     }
 

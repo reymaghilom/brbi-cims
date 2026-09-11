@@ -85,8 +85,9 @@ class SubmitCiActivitiesRequest extends FormRequest
                 }
 
                 $existingCount = (int) DB::table('activity_media')->where('ci_activity_id', (int) $activityKey)->count();
-                if ($existingCount + $newCount > 5) {
-                    $validator->errors()->add('proofs.'.$activityKey, 'You can attach up to 5 supporting photos per activity.');
+                $maxPhotos = (int) config('cims.media.max_files_per_upload');
+                if ($existingCount + $newCount > $maxPhotos) {
+                    $validator->errors()->add('proofs.'.$activityKey, "You can attach up to {$maxPhotos} supporting photos per activity.");
                 }
 
                 foreach ($files as $index => $file) {

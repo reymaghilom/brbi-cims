@@ -311,7 +311,7 @@ class CiActivityBankTargetsTest extends TestCase
         }
     }
 
-    public function test_scheduled_and_follow_up_targets_allow_empty_schedules_but_time_without_date_and_malformed_input_are_rejected(): void
+    public function test_scheduled_targets_require_a_date_while_follow_up_stays_optional_and_time_without_date_and_malformed_input_are_rejected(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -322,14 +322,28 @@ class CiActivityBankTargetsTest extends TestCase
                 $this->target('Scheduled Without Date', ActivityStatus::Scheduled),
                 $this->target('Follow-up Without Date', ActivityStatus::FollowUp),
             ]))
+            ->assertSessionHasErrors(['bank_targets.0.scheduled_at' => 'Please select a scheduled date.'])
+            ->assertSessionDoesntHaveErrors('bank_targets.1.scheduled_at');
+        $this->assertDatabaseCount('ci_activities', 0);
+        $this->assertDatabaseCount('ci_activity_bank_targets', 0);
+
+        $this->actingAs($ci)
+            ->from(route('client-folders.activities.index', $folder))
+            ->post(route('client-folders.activities.store', $folder), $this->bankActivityPayload([
+                $this->target('Scheduled Date Only', ActivityStatus::Scheduled, '2026-09-15'),
+                $this->target('Follow-up Without Date', ActivityStatus::FollowUp),
+            ]))
             ->assertRedirect(route('client-folders.activities.index', [$folder, 'status' => 'all']))
             ->assertSessionHasNoErrors();
 
         $activity = $folder->activities()->sole();
         $this->assertSame(ActivityStatus::FollowUp, $activity->status);
-        $this->assertNull($activity->scheduled_at);
-        $this->assertFalse($activity->scheduled_has_time);
-        $this->assertTrue($activity->bankTargets->every(fn (CiActivityBankTarget $target): bool => $target->scheduled_at === null && ! $target->scheduled_has_time));
+        $scheduled = $activity->bankTargets()->where('institution_name', 'Scheduled Date Only')->sole();
+        $followUp = $activity->bankTargets()->where('institution_name', 'Follow-up Without Date')->sole();
+        $this->assertTrue($scheduled->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-15 08:00', 'Asia/Manila')->utc()));
+        $this->assertFalse($scheduled->scheduled_has_time);
+        $this->assertNull($followUp->scheduled_at);
+        $this->assertFalse($followUp->scheduled_has_time);
 
         $timeWithoutDateFolder = $this->folderFor($ci);
         $this->actingAs($ci)
@@ -461,7 +475,7 @@ class CiActivityBankTargetsTest extends TestCase
         ]);
         $this->assertDatabaseCount('ci_activity_bank_targets', 0);
 
-        $this->post(route('client-folders.activities.bank-targets.store', [$folder, $activity]), [
+        $this->from($detailUrl)->post(route('client-folders.activities.bank-targets.store', [$folder, $activity]), [
             'co_maker_id' => '',
             'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'BDO',
@@ -470,21 +484,33 @@ class CiActivityBankTargetsTest extends TestCase
             'scheduled_at' => '',
             'scheduled_time' => '',
             'remarks' => 'Scheduled with bank staff.',
-        ])->assertRedirect($detailUrl);
+        ])->assertRedirect($detailUrl)->assertSessionHasErrors([
+            'scheduled_at' => 'Please select a scheduled date.',
+        ]);
+        $this->assertDatabaseCount('ci_activity_bank_targets', 0);
+
+        $this->post(route('client-folders.activities.bank-targets.store', [$folder, $activity]), [
+            'co_maker_id' => '',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
+            'institution_name' => 'BDO',
+            'branch_location' => 'Carmen Branch',
+            'status' => ActivityStatus::Scheduled->value,
+            'scheduled_at' => '2026-09-15',
+            'scheduled_time' => '',
+            'remarks' => 'Scheduled with bank staff.',
+        ])->assertRedirect($detailUrl)->assertSessionHasNoErrors();
 
         $target = $activity->bankTargets()->sole();
         $this->assertSame($creator->id, $target->created_by);
         $this->assertSame($creator->id, $target->updated_by);
-        $this->assertNull($target->scheduled_at);
+        $this->assertTrue($target->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-15 08:00', 'Asia/Manila')->utc()));
         $this->assertFalse($target->scheduled_has_time);
         $this->assertSame(ActivityStatus::Scheduled, $activity->fresh()->status);
-        $this->assertNull($activity->fresh()->scheduled_at);
-        $this->assertFalse($activity->fresh()->scheduled_has_time);
         $this->get($detailUrl)
             ->assertOk()
-            ->assertSee('No schedule set')
             ->assertSee('Schedule Date')
-            ->assertSee('Date and time are optional. Select a date to enable a specific time.');
+            ->assertSee('Date is required for Scheduled activities. Time is optional.')
+            ->assertDontSee('Date and time are optional. Select a date to enable a specific time.');
 
         $folder->update(['assigned_ci_id' => $updater->id]);
         $this->actingAs($updater)->put(route('client-folders.activities.bank-targets.update', [$folder, $activity, $target]), [

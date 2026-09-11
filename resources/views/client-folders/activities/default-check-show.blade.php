@@ -57,16 +57,16 @@
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div class="sm:col-span-2">
                         <label for="default-check-status-{{ $activity->id }}" class="ui-label">Status</label>
-                        <select id="default-check-status-{{ $activity->id }}" name="status" class="ui-control" required data-default-check-status-control>
+                        <select id="default-check-status-{{ $activity->id }}" name="status" class="ui-control" required data-default-check-status-control data-schedule-status>
                             @foreach($statuses as $status)
                                 <option value="{{ $status->value }}" @selected($activity->status === $status)>{{ $status->label() }}</option>
                             @endforeach
                         </select>
                     </div>
                     <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,0.55fr)]">
-                        <div><label for="default-check-date-{{ $activity->id }}" class="ui-label">Schedule / Follow-up Date <span class="font-normal text-text-muted">(optional)</span></label><input id="default-check-date-{{ $activity->id }}" name="scheduled_at" type="date" value="{{ $supportsSchedule ? $localSchedule?->format('Y-m-d') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-default-check-date @disabled(! $supportsSchedule)></div>
+                        <div><label for="default-check-date-{{ $activity->id }}" class="ui-label">Schedule / Follow-up Date <x-form.schedule-date-indicator :required="$activity->status === App\Enums\ActivityStatus::Scheduled" /></label><input id="default-check-date-{{ $activity->id }}" name="scheduled_at" type="date" value="{{ $supportsSchedule ? $localSchedule?->format('Y-m-d') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-default-check-date data-schedule-date @disabled(! $supportsSchedule)></div>
                         <div><label for="default-check-time-{{ $activity->id }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="default-check-time-{{ $activity->id }}" name="scheduled_time" type="time" value="{{ $supportsSchedule && $activity->scheduled_has_time ? $localSchedule?->format('H:i') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-default-check-time @disabled(! $supportsSchedule || ! $localSchedule)></div>
-                        <p class="text-xs leading-5 text-text-muted sm:col-span-2">Date and time are optional. Select a date to enable a specific time.</p>
+                        <p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled activities. Time is optional.</p>
                     </div>
                     <div class="sm:col-span-2"><label for="default-check-remarks-{{ $activity->id }}" class="ui-label">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="default-check-remarks-{{ $activity->id }}" name="remarks" rows="4" class="ui-control" data-default-check-remarks>{{ $activity->remarks }}</textarea></div>
                 </div>
@@ -84,7 +84,7 @@
 
         <dialog class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-default-check-completion aria-labelledby="default-check-completion-title-{{ $activity->id }}">
             <div class="border-b border-ui-border px-5 py-4"><h2 id="default-check-completion-title-{{ $activity->id }}" class="flex items-center gap-2 text-lg font-bold text-brand-sidebar"><x-ui.icon name="check-circle" size="size-5" class="shrink-0 text-success" /><span>Mark {{ $activity->display_name }} as completed?</span></h2></div>
-            <div class="px-5 py-5 text-sm leading-6 text-text-muted">The schedule and time will be cleared. Completion will be recorded in Recent Activity under the actual user confirming this action.</div>
+            <div class="px-5 py-5 text-sm leading-6 text-text-muted">The schedule and time will be cleared. This completion will be recorded in Recent Activity under the user who confirms it.</div>
             <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-default-check-completion-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-primary" data-default-check-completion-confirm><x-ui.icon name="check" size="size-4" />Mark Completed</button></div>
         </dialog>
 

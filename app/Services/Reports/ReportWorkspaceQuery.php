@@ -148,6 +148,23 @@ class ReportWorkspaceQuery
     }
 
     /**
+     * Every Completed work item - exactly the rows of the Completed tab, unpaginated, newest
+     * completion first - in one query. Used by the Dashboard's Reports Ready card and its detail
+     * list, so that KPI is, by construction, this page's Completed count.
+     *
+     * @return Collection<int, ReportWorkItem>
+     */
+    public function completedItems(User $user): Collection
+    {
+        return $this->filtered($user, ['tab' => 'completed'])
+            ->orderByDesc('sort_date')
+            ->orderBy('kind')
+            ->orderBy('source_id')
+            ->get()
+            ->map(fn (object $row): ReportWorkItem => ReportWorkItem::fromRow($row));
+    }
+
+    /**
      * The four KPI counts, over the same unfiltered scope the tabs count, as a single aggregate —
      * the page must never load work items just to count them.
      *

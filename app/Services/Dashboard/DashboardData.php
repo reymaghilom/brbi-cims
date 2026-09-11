@@ -4,21 +4,29 @@ namespace App\Services\Dashboard;
 
 use App\Enums\ActivityStatus;
 use App\Enums\ClientFolderStatus;
-use App\Enums\GenerationStatus;
 use App\Enums\RecordState;
+use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\BusinessCheck;
 use App\Models\CiActivity;
+use App\Models\CiActivityAssetTarget;
+use App\Models\CiActivityBankTarget;
 use App\Models\CibiReport;
 use App\Models\ClientFolder;
-use App\Models\GeneratedReport;
+use App\Models\CoMaker;
 use App\Models\IncomeSource;
 use App\Models\ResidenceCheck;
 use App\Models\User;
+use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\ClientFolderOverview;
+use App\Services\Progress\MandatoryInvestigationRequirements;
+use App\Services\Reports\ReportWorkItem;
+use App\Services\Reports\ReportWorkspaceQuery;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Every number on the Dashboard comes from here, derived from the application's own workflow state —
@@ -50,16 +58,27 @@ class DashboardData
 
     private const RECENT_ACTIVITY_LIMIT = 3;
 
+    public function __construct(private readonly ReportWorkspaceQuery $reports) {}
+
     public function for(User $user, ?string $trendRange = null): array
     {
         $trendRange = array_key_exists((string) $trendRange, self::TREND_RANGES) ? (string) $trendRange : self::DEFAULT_TREND_RANGE;
         $timezone = (string) config('cims.display_timezone');
         $now = CarbonImmutable::now($timezone);
 
-        $folders = $this->scopedFolders($user)->get(['id', 'status', 'completed_at']);
+        // One query also carries what the KPI detail lists show (name, updated, assigned CI), most
+        // recently updated first - no per-folder lookups.
+        $folders = $this->scopedFolders($user)
+            ->leftJoin('users as assigned_ci', 'assigned_ci.id', '=', 'client_folders.assigned_ci_id')
+            ->orderByDesc('client_folders.updated_at')
+            ->orderByDesc('client_folders.id')
+            ->get(['client_folders.id', 'client_folders.display_name', 'client_folders.status', 'client_folders.completed_at', 'client_folders.updated_at', 'assigned_ci.full_name as assigned_ci_name']);
         $folderIds = $folders->pluck('id');
 
-        $workload = $this->workload($folders, $folderIds, $now);
+        $mandatory = $this->mandatoryProgress($folderIds);
+        $readyReports = $this->reports->completedItems($user);
+        $needsAttention = $this->needsAttention($folderIds, $now, $timezone);
+        $workload = $this->workload($folders, $folderIds, $needsAttention['folder_ids']);
         $recentActivity = $this->recentActivity($folderIds, $timezone);
         $trends = collect(self::TREND_RANGES)
             ->map(fn (string $label, string $key): array => $this->trend($user, $key, $now, $timezone))
@@ -68,8 +87,10 @@ class DashboardData
         return [
             'greeting' => $this->greeting($now),
             'today' => $now,
-            'summary' => $this->summary($user, $folders, $folderIds, $workload, $now, $timezone),
+            'summary' => $this->summary($folders, $mandatory, $readyReports, $needsAttention, $now, $timezone),
             'workload' => $workload,
+            'needsAttention' => $needsAttention['folders'],
+            'kpiDetails' => $this->kpiDetails($folders, $mandatory, $readyReports, $now, $timezone),
             // Every range is computed up front so the CI Completion Trend card can switch between
             // 7 Days / 30 Days / 12 Months instantly on the client, with no second request and no
             // loading state. Each entry is produced by the exact same trend() call the single-range
@@ -108,15 +129,16 @@ class DashboardData
      * Four mutually exclusive buckets over the same folder set, so the donut's slices always add up
      * to the folder total and every percentage is that slice over that same total.
      *
-     * Priority is deliberate: a completed folder is never "needs attention", and an overdue folder
-     * is surfaced as needing attention rather than being buried in the in-progress count.
+     * Needs Attention is the exact folder set behind the Needs Attention KPI (needsAttention()), so
+     * the slice and the card always agree. It takes priority - including over a Completed folder
+     * that still holds overdue work - so overdue work is never buried in another slice.
      *
      * @param  Collection<int, ClientFolder>  $folders
      * @param  Collection<int, int>  $folderIds
+     * @param  list<int>  $needsAttentionFolderIds
      */
-    private function workload(Collection $folders, Collection $folderIds, CarbonImmutable $now): array
+    private function workload(Collection $folders, Collection $folderIds, array $needsAttentionFolderIds): array
     {
-        $overdueFolderIds = $this->overdueActivities($folderIds, $now)->distinct()->pluck('client_folder_id')->all();
         $startedFolderIds = CiActivity::query()
             ->whereIn('client_folder_id', $folderIds)
             ->where('status', '!=', ActivityStatus::Pending)
@@ -128,8 +150,8 @@ class DashboardData
 
         foreach ($folders as $folder) {
             $bucket = match (true) {
+                in_array($folder->id, $needsAttentionFolderIds, true) => 'needs_attention',
                 $folder->status === ClientFolderStatus::Completed => 'completed',
-                in_array($folder->id, $overdueFolderIds, true) => 'needs_attention',
                 in_array($folder->id, $startedFolderIds, true) => 'in_progress',
                 default => 'pending',
             };
@@ -163,21 +185,94 @@ class DashboardData
      *   scheduled DAY has passed, so an activity due today never turns red during its own due date.
      *
      * The date-only cutoff is derived through that same normalizer, so the comparison can never
-     * drift from the convention the writer used.
-     *
-     * @param  Collection<int, int>  $folderIds
+     * drift from the convention the writer used. It applies to any record carrying status /
+     * scheduled_at / scheduled_has_time: CI activities and their Bank / Coop and Asset targets alike.
      */
-    private function overdueActivities(Collection $folderIds, CarbonImmutable $now): Builder
+    private function whereOverdue(Builder $query, CarbonImmutable $now): Builder
     {
         [$startOfToday] = CiActivity::normalizeScheduleInput($now->format('Y-m-d'));
 
-        return CiActivity::query()
-            ->whereIn('client_folder_id', $folderIds)
+        return $query
             ->where('status', '!=', ActivityStatus::Completed)
             ->whereNotNull('scheduled_at')
             ->where(fn (Builder $query) => $query
                 ->where(fn (Builder $timed) => $timed->where('scheduled_has_time', true)->where('scheduled_at', '<', $now->utc()))
                 ->orWhere(fn (Builder $dateOnly) => $dateOnly->where('scheduled_has_time', false)->where('scheduled_at', '<', $startOfToday)));
+    }
+
+    /**
+     * The Needs Attention KPI and its detail list: every overdue item, grouped by Client Folder.
+     *
+     * Items are ordinary CI activities (Barangay, Neighbor, custom) plus the individual Bank / Coop
+     * and Asset targets - those two parents are represented only by their targets, which carry the
+     * authoritative per-institution / per-office schedule and status, so nothing is counted twice.
+     * The KPI is the number of folders here (each once); the Workload chart keeps its own buckets.
+     * Three queries with eager-loaded folder/person/definition; nothing runs per folder or item.
+     *
+     * @param  Collection<int, int>  $folderIds
+     * @return array{folders: array<int, array{client: string, url: string, items: array<int, array<string, mixed>>}>, folder_count: int, item_count: int}
+     */
+    private function needsAttention(Collection $folderIds, CarbonImmutable $now, string $timezone): array
+    {
+        $targetParents = [ActivityDefinition::BANK_COOP_CHECK_CODE, ActivityDefinition::ASSET_CHECK_CODE];
+        $parentRelations = ['activity:id,client_folder_id,co_maker_id,name', 'activity.clientFolder:id,display_name', 'activity.coMaker:id,full_name'];
+
+        $activities = $this->whereOverdue(CiActivity::query()->whereIn('client_folder_id', $folderIds), $now)
+            ->whereDoesntHave('definition', fn (Builder $definition) => $definition->whereIn('code', $targetParents))
+            ->with(['clientFolder:id,display_name', 'coMaker:id,full_name', 'definition'])
+            ->get()
+            ->map(fn (CiActivity $activity): array => $this->needsAttentionItem($activity->clientFolder, $activity->coMaker, $activity->display_name, $activity, $now, $timezone));
+
+        $bankTargets = $this->whereOverdue(CiActivityBankTarget::query()->whereHas('activity', fn (Builder $activity) => $activity->whereIn('client_folder_id', $folderIds)), $now)
+            ->with($parentRelations)
+            ->get()
+            ->map(fn (CiActivityBankTarget $target): array => $this->needsAttentionItem(
+                $target->activity->clientFolder,
+                $target->activity->coMaker,
+                $target->activity->name.' — '.$target->institution_name.($target->branch_location ? ' ('.$target->branch_location.')' : ''),
+                $target, $now, $timezone,
+            ));
+
+        $assetTargets = $this->whereOverdue(CiActivityAssetTarget::query()->whereHas('activity', fn (Builder $activity) => $activity->whereIn('client_folder_id', $folderIds)), $now)
+            ->with($parentRelations)
+            ->get()
+            ->map(fn (CiActivityAssetTarget $target): array => $this->needsAttentionItem(
+                $target->activity->clientFolder,
+                $target->activity->coMaker,
+                $target->activity->name.' — '.$target->assessorLabel().($target->office_location ? ' ('.$target->office_location.')' : ''),
+                $target, $now, $timezone,
+            ));
+
+        $items = $activities->concat($bankTargets)->concat($assetTargets)->sortBy('sort')->values();
+        $folders = $items->groupBy('folder_id')->map(fn (Collection $folderItems): array => [
+            'client' => $folderItems->first()['client'],
+            'url' => route('client-folders.activities.index', $folderItems->first()['folder_id']),
+            'items' => $folderItems->values()->all(),
+        ])->values();
+
+        return [
+            'folders' => $folders->all(),
+            'folder_ids' => $items->pluck('folder_id')->unique()->map(fn ($id): int => (int) $id)->values()->all(),
+            'folder_count' => $folders->count(),
+            'item_count' => $items->count(),
+        ];
+    }
+
+    private function needsAttentionItem(?ClientFolder $folder, ?CoMaker $coMaker, string $label, CiActivity|CiActivityBankTarget|CiActivityAssetTarget $record, CarbonImmutable $now, string $timezone): array
+    {
+        $due = CarbonImmutable::instance($record->scheduled_at)->timezone($timezone);
+
+        return [
+            'folder_id' => $folder?->id,
+            'client' => $folder?->display_name ?? 'Unnamed client',
+            'person' => $coMaker ? 'Co-Maker: '.$coMaker->full_name : 'Applicant',
+            'url' => $folder ? route('client-folders.activities.index', [$folder->id] + ActivePersonResolver::queryParamsForId($coMaker?->id)) : null,
+            'label' => $label,
+            'status' => $record->status->label(),
+            'due' => $record->scheduled_has_time ? $due->format('M j, Y · g:i A') : $due->format('M j, Y'),
+            'days_overdue' => (int) $due->startOfDay()->diffInDays($now->startOfDay()),
+            'sort' => $record->scheduled_at->getTimestamp(),
+        ];
     }
 
     /** The same rule as the query above, applied to one already-loaded activity. */
@@ -196,29 +291,133 @@ class DashboardData
 
     /**
      * @param  Collection<int, ClientFolder>  $folders
-     * @param  Collection<int, int>  $folderIds
+     * @param  array<int, array{completed: int, total: int, percent: int, missing: list<string>}>  $mandatory
+     * @param  Collection<int, ReportWorkItem>  $readyReports
      */
-    private function summary(User $user, Collection $folders, Collection $folderIds, array $workload, CarbonImmutable $now, string $timezone): array
+    private function summary(Collection $folders, array $mandatory, Collection $readyReports, array $needsAttention, CarbonImmutable $now, string $timezone): array
     {
-        $completedThisMonth = $folders
-            ->filter(fn (ClientFolder $folder): bool => $folder->status === ClientFolderStatus::Completed
-                && $folder->completed_at !== null
-                && $folder->completed_at->timezone($timezone)->isSameMonth($now))
-            ->count();
-
-        $byKey = collect($workload['segments'])->keyBy('key');
-
         return [
             'assigned' => $folders->count(),
-            'in_progress' => $byKey['in_progress']['count'],
-            'needs_attention' => $byKey['needs_attention']['count'],
-            'completed_this_month' => $completedThisMonth,
-            // Report artifacts that finished generating — the same "completed generation" rule the
-            // Generated Reports module itself uses, counted once per artifact.
-            'reports_ready' => GeneratedReport::query()
-                ->whereIn('client_folder_id', $folderIds)
-                ->where('status', GenerationStatus::Completed)
-                ->count(),
+            // Unique folders whose mandatory investigation work is not all complete.
+            'in_progress' => collect($mandatory)->filter(fn (array $folder): bool => $folder['missing'] !== [])->count(),
+            // Unique folders holding overdue work (each once), plus how many overdue items they hold.
+            'needs_attention' => $needsAttention['folder_count'],
+            'needs_attention_items' => $needsAttention['item_count'],
+            'completed_this_month' => $this->completedThisMonth($folders, $now, $timezone)->count(),
+            // Completed report RECORDS, exactly as Global Reports counts them (ReportWorkspaceQuery):
+            // CI / BI, Business Report (per income source), Residence and Business Check, per
+            // Applicant / Co-Maker. Generated files are not counted, so re-generating or
+            // re-downloading an output never changes this number.
+            'reports_ready' => $readyReports->count(),
+        ];
+    }
+
+    /** @param  Collection<int, ClientFolder>  $folders */
+    private function completedThisMonth(Collection $folders, CarbonImmutable $now, string $timezone): Collection
+    {
+        return $folders->filter(fn (ClientFolder $folder): bool => $folder->status === ClientFolderStatus::Completed
+            && $folder->completed_at !== null
+            && $folder->completed_at->timezone($timezone)->isSameMonth($now));
+    }
+
+    /**
+     * Mandatory investigation progress for every folder, set-based: one query returns each folder's
+     * seven Applicant flags and one returns each Co-Maker's four, all built from
+     * MandatoryInvestigationRequirements' own predicates (the definition folder progress and the
+     * In Progress KPI share). A folder is In Progress exactly when something here is missing.
+     *
+     * @param  Collection<int, int>  $folderIds
+     * @return array<int, array{completed: int, total: int, percent: int, missing: list<string>}>
+     */
+    private function mandatoryProgress(Collection $folderIds): array
+    {
+        if ($folderIds->isEmpty()) {
+            return [];
+        }
+
+        $flag = fn (string $requirement, ?string $coMakerColumn) => fn (QueryBuilder $record) => MandatoryInvestigationRequirements::recordQuery($record, $requirement, $coMakerColumn)->selectRaw('1')->limit(1);
+
+        $applicants = DB::table('client_folders')->whereIn('client_folders.id', $folderIds)->select('client_folders.id');
+        foreach (array_keys(MandatoryInvestigationRequirements::APPLICANT) as $requirement) {
+            $applicants->selectSub($flag($requirement, null), 'met_'.$requirement);
+        }
+        $coMakers = DB::table('co_makers')
+            ->join('client_folders', 'client_folders.id', '=', 'co_makers.client_folder_id')
+            ->whereIn('client_folders.id', $folderIds)
+            ->orderBy('co_makers.id')
+            ->select('co_makers.id', 'co_makers.client_folder_id', 'co_makers.full_name');
+        foreach (array_keys(MandatoryInvestigationRequirements::CO_MAKER) as $requirement) {
+            $coMakers->selectSub($flag($requirement, 'co_makers.id'), 'met_'.$requirement);
+        }
+        $coMakersByFolder = $coMakers->get()->groupBy('client_folder_id');
+
+        return $applicants->get()->mapWithKeys(function (object $folder) use ($coMakersByFolder): array {
+            $missing = [];
+            $total = 0;
+            foreach (MandatoryInvestigationRequirements::APPLICANT as $requirement => $label) {
+                $total++;
+                if (! $folder->{'met_'.$requirement}) {
+                    $missing[] = $label;
+                }
+            }
+            foreach ($coMakersByFolder->get($folder->id, collect()) as $coMaker) {
+                foreach (MandatoryInvestigationRequirements::CO_MAKER as $requirement => $label) {
+                    $total++;
+                    if (! $coMaker->{'met_'.$requirement}) {
+                        $missing[] = 'Co-Maker: '.$coMaker->full_name.' — '.$label;
+                    }
+                }
+            }
+            $completed = $total - count($missing);
+
+            return [(int) $folder->id => ['completed' => $completed, 'total' => $total, 'percent' => (int) round($completed / $total * 100), 'missing' => $missing]];
+        })->all();
+    }
+
+    /**
+     * Rows behind the Active Client Folders, In Progress, Completed This Month and Reports Ready
+     * detail modals - built only from data already loaded above (no further queries). Each list is
+     * the exact set its KPI counts.
+     *
+     * @param  Collection<int, ClientFolder>  $folders
+     * @param  array<int, array{completed: int, total: int, percent: int, missing: list<string>}>  $mandatory
+     * @param  Collection<int, ReportWorkItem>  $readyReports
+     */
+    private function kpiDetails(Collection $folders, array $mandatory, Collection $readyReports, CarbonImmutable $now, string $timezone): array
+    {
+        $folderRow = fn (ClientFolder $folder): array => [
+            'client' => $folder->display_name ?: 'Unnamed client',
+            'url' => route('client-folders.show', $folder->id),
+            'status' => str($folder->status->value)->replace('_', ' ')->title()->toString(),
+            'ci' => $folder->assigned_ci_name,
+            'progress' => $mandatory[$folder->id] ?? null,
+            'updated' => $folder->updated_at?->timezone($timezone)->format('M j, Y'),
+        ];
+
+        return [
+            'active' => $folders->map($folderRow)->values()->all(),
+            'in_progress' => $folders->filter(fn (ClientFolder $folder): bool => ($mandatory[$folder->id]['missing'] ?? []) !== [])
+                ->map($folderRow)->values()->all(),
+            'completed_this_month' => $this->completedThisMonth($folders, $now, $timezone)
+                ->sortByDesc(fn (ClientFolder $folder) => $folder->completed_at->getTimestamp())
+                ->map(fn (ClientFolder $folder): array => $folderRow($folder) + ['completed_on' => $folder->completed_at->timezone($timezone)->format('M j, Y')])
+                ->values()->all(),
+            // Folder -> person -> reports, in Global Reports' newest-completion-first order.
+            'reports_ready' => $readyReports->groupBy('clientFolderId')->map(fn (Collection $items): array => [
+                'client' => $items->first()->clientName,
+                'people' => $items->groupBy(fn (ReportWorkItem $item) => $item->coMakerId ?? 0)->sortKeys()->map(fn (Collection $personItems): array => [
+                    'person' => $personItems->first()->coMakerId === null ? 'Applicant' : 'Co-Maker: '.$personItems->first()->personName,
+                    'reports' => $personItems->map(fn (ReportWorkItem $item): array => [
+                        'label' => $item->typeLabel().($item->businessName ? ' — '.$item->businessName : ''),
+                        'icon' => $item->typeIcon(),
+                        // A read-only preview where one is a plain link; otherwise the exact person's folder.
+                        // Never a generate/download action.
+                        'url' => ($preview = $item->previewAction()) && $preview['method'] === 'GET' ? $preview['url'] : $item->folderUrl(),
+                        'completed' => $item->lastUpdatedAt?->timezone($timezone)->format('M j, Y'),
+                    ])->values()->all(),
+                ])->values()->all(),
+                'count' => $items->count(),
+            ])->values()->all(),
         ];
     }
 

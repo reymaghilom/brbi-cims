@@ -222,12 +222,12 @@ class CiActivitySubmitBatchTest extends TestCase
         $this->assertNotNull($activity->fresh()->submitted_at);
     }
 
-    public function test_batch_rejects_new_photos_that_would_exceed_five_total_for_one_activity(): void
+    public function test_batch_rejects_new_photos_that_would_exceed_ten_total_for_one_activity(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
-        $activity = $this->activityFor($folder, $ci, 'BATCH FIVE LIMIT');
-        $existing = collect(range(1, 4))->map(fn (int $i) => $this->cloudinaryMedia($folder, $ci, "existing-{$i}.jpg", "brbi-cims/existing-batch-{$i}"));
+        $activity = $this->activityFor($folder, $ci, 'BATCH TEN LIMIT');
+        $existing = collect(range(1, 9))->map(fn (int $i) => $this->cloudinaryMedia($folder, $ci, "existing-{$i}.jpg", "brbi-cims/existing-batch-{$i}"));
         $activity->mediaReferences()->attach($existing->pluck('id'));
         $this->mock(CloudinaryCiActivityProofStorage::class)->shouldNotReceive('store');
 
@@ -237,9 +237,9 @@ class CiActivitySubmitBatchTest extends TestCase
                 UploadedFile::fake()->image('extra-1.jpg'),
                 UploadedFile::fake()->image('extra-2.jpg'),
             ]],
-        ])->assertSessionHasErrors('proofs.'.$activity->id, null, 'submission');
+        ])->assertSessionHasErrors(['proofs.'.$activity->id => 'You can attach up to 10 supporting photos per activity.'], null, 'submission');
 
-        $this->assertSame(4, $activity->mediaReferences()->count());
+        $this->assertSame(9, $activity->mediaReferences()->count());
         $this->assertNull($activity->fresh()->submitted_at);
     }
 

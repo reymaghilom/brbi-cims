@@ -6,6 +6,7 @@ use App\Enums\ActivityStatus;
 use App\Models\ActivityDefinition;
 use App\Models\CiActivity;
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use App\Models\User;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -119,12 +120,47 @@ class CiActivityQuickCompleteModalTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
-        $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+        $applicant = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Maker Alpha', 'first_name' => 'Maker', 'last_name' => 'Alpha']);
+        $coMakerActivity = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, $coMaker->id);
+        $coMakerParams = ['person' => 'co-maker', 'co_maker_id' => $coMaker->id];
+        $note = 'The schedule and time will be cleared. This completion will be recorded in Recent Activity under the user who confirms it.';
+        $oldNote = 'Completion will be recorded in Recent Activity under the actual user confirming this action.';
 
-        $page = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
+        $this->actingAs($ci);
+        foreach ([
+            route('client-folders.activities.index', $folder),
+            route('client-folders.activities.index', [$folder] + $coMakerParams),
+            route('client-folders.activities.default-check.show', [$folder, $applicant]),
+            route('client-folders.activities.default-check.show', [$folder, $coMakerActivity] + $coMakerParams),
+        ] as $url) {
+            $this->get($url)->assertOk()->assertSee($note)->assertDontSee($oldNote);
+        }
+    }
 
-        $page->assertOk()
-            ->assertSee('The schedule and time will be cleared. Completion will be recorded in Recent Activity under the actual user confirming this action.');
+    public function test_target_and_submission_helper_wording_is_shared_by_applicant_and_co_maker(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Maker Alpha', 'first_name' => 'Maker', 'last_name' => 'Alpha']);
+        $coMakerParams = ['person' => 'co-maker', 'co_maker_id' => $coMaker->id];
+        $this->actingAs($ci);
+
+        foreach ([[null, []], [$coMaker->id, $coMakerParams]] as [$coMakerId, $params]) {
+            $bank = $this->activity($folder, $ci, ActivityDefinition::BANK_COOP_CHECK_CODE, $coMakerId);
+            $asset = $this->activity($folder, $ci, ActivityDefinition::ASSET_CHECK_CODE, $coMakerId);
+            $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, $coMakerId)->update(['status' => ActivityStatus::Completed]);
+
+            $this->get(route('client-folders.activities.bank-coop.show', [$folder, $bank] + $params))->assertOk()
+                ->assertSee('Each institution has its own status, schedule, and remarks.')
+                ->assertDontSee('Each institution keeps its own status, schedule, and remarks.');
+            $this->get(route('client-folders.activities.asset-check.show', [$folder, $asset] + $params))->assertOk()
+                ->assertSee('Each office has its own status, schedule, remarks, and updater.')
+                ->assertDontSee('Each office keeps its own status, schedule, remarks, and updater.');
+            $this->get(route('client-folders.activities.index', [$folder] + $params))->assertOk()
+                ->assertSee('placeholder="Include a short handoff or submission note."', false)
+                ->assertDontSee('concise handoff or submission note');
+        }
     }
 
     private function extractCheckboxMarkup(string $content, int $activityId): string

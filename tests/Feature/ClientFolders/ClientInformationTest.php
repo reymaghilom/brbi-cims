@@ -119,12 +119,13 @@ class ClientInformationTest extends TestCase
         $this->assertSame(RecordState::Complete, ClientInformation::whereBelongsTo($folder)->sole()->completion_state);
         $this->assertDatabaseHas('client_completion_results', ['client_folder_id' => $folder->id, 'is_satisfied' => true, 'explanation_key' => 'client_information.complete']);
         $folder->refresh();
-        $this->assertEquals(16.67, $folder->progress_percent);
+        // Client Information is not one of the mandatory investigation requirements.
+        $this->assertEquals(0, $folder->progress_percent);
         $this->assertSame(ClientFolderStatus::OnProgress, $folder->status);
         $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()
             ->assertDontSee('Client profile record available.')
             ->assertDontSee(route('client-folders.client-information.edit', $folder), false)
-            ->assertSee('16.67')
+            ->assertDontSee('16.67')
             ->assertSee('CI / BI Report');
 
         $audit = AuditLog::where('action', 'client_information.created')->sole();

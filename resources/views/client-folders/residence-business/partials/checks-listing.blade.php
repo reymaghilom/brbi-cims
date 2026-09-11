@@ -224,7 +224,10 @@
                 </div>
             </x-ui.modal>
         @endif
-        <x-ui.confirmation-dialog id="delete-residence-check-{{ $check->id }}" title="Delete this Residence Check?" :action="route('client-folders.residence-checks.destroy', [$clientFolder, $check])" method="DELETE" confirm-label="Delete Permanently" cancel-icon="close" confirm-icon="trash" destructive>
+        {{-- $personParams carries the active person forward, exactly as the Business Check delete
+             below: without it a Co-Maker's own Residence Check resolves to the Applicant and
+             ActivePersonResolver::assertOwnedBy() answers 404. --}}
+        <x-ui.confirmation-dialog id="delete-residence-check-{{ $check->id }}" title="Delete this Residence Check?" :action="route('client-folders.residence-checks.destroy', [$clientFolder, $check] + $personParams)" method="DELETE" confirm-label="Delete Permanently" cancel-icon="close" confirm-icon="trash" destructive>
             <p class="text-sm text-text-muted">Are you sure you want to permanently delete this Residence Check and its photos? This action cannot be undone.</p>
         </x-ui.confirmation-dialog>
     @endforeach

@@ -13,6 +13,7 @@ use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CiParticipantService;
 use App\Services\ClientFolders\ResidenceBusinessCheckCompletionEvaluator;
 use App\Services\Media\ClientMediaUploader;
+use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -27,6 +28,7 @@ class SaveBusinessCheck
         private readonly ResidenceBusinessCheckCompletionEvaluator $completion,
         private readonly CiParticipantService $participants,
         private readonly UpdateBusinessCheckContributors $updateContributors,
+        private readonly ClientProgressService $progress,
     ) {}
 
     /** @param  array<string, mixed>  $data */
@@ -235,6 +237,7 @@ class SaveBusinessCheck
                 ]);
 
                 $this->completion->evaluate($folder, $activePerson?->id);
+                $this->progress->recalculate($folder);
 
                 return $check->refresh();
             });

@@ -7,12 +7,14 @@ use App\Models\AuditLog;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\User;
+use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Facades\DB;
 
 class SaveCoMaker
 {
     public function __construct(
         private readonly SeedCiActivities $seedActivities,
+        private readonly ClientProgressService $progress,
     ) {}
 
     /** @param  array{co_maker_id: ?int, first_name: string, middle_name: ?string, last_name: string, suffix: ?string, address?: ?string}  $data */
@@ -62,6 +64,8 @@ class SaveCoMaker
                 // mirroring how the Applicant's is seeded when the folder itself is created —
                 // there is no "add activity" UI, so without this a new co-maker would have none.
                 $this->seedActivities->execute($folder, $coMaker, $actor);
+                // A new Co-Maker adds their own four mandatory requirements to the folder.
+                $this->progress->recalculate($folder);
             }
 
             AuditLog::create([

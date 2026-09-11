@@ -41,7 +41,7 @@
         <template data-ci-new-history>{!! implode('', $newHistoryEntries) !!}</template>
     @endif
         <section class="ui-panel p-4 sm:p-5 lg:p-6" aria-labelledby="asset-targets-title">
-            <div class="flex flex-col gap-3 border-b border-ui-border pb-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 id="asset-targets-title" class="ui-section-title">Assessor Offices</h2><p class="mt-1 text-sm text-text-muted">Each office keeps its own status, schedule, remarks, and updater.</p></div><div class="w-fit rounded-full bg-brand-soft px-3 py-1.5 text-sm font-bold text-brand-primary">{{ $completedCount }} of {{ $targetCount }} Completed</div></div>
+            <div class="flex flex-col gap-3 border-b border-ui-border pb-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 id="asset-targets-title" class="ui-section-title">Assessor Offices</h2><p class="mt-1 text-sm text-text-muted">Each office has its own status, schedule, remarks, and updater.</p></div><div class="w-fit rounded-full bg-brand-soft px-3 py-1.5 text-sm font-bold text-brand-primary">{{ $completedCount }} of {{ $targetCount }} Completed</div></div>
             @if($targetCount > 0)
                 @php $incompleteTargetCount = $targetCount - $completedCount; @endphp
                 <div class="mt-3 flex flex-col gap-2.5 border-b border-ui-border pb-3 sm:flex-row sm:items-center sm:justify-between" data-asset-bulk-panel>

@@ -149,7 +149,8 @@ class OfficialReportGenerationTest extends TestCase
         $this->assertSame(4, GeneratedReport::where('status', GenerationStatus::Completed)->count());
         $this->assertSame(2, GeneratedReport::whereNotNull('income_source_id')->count());
         $this->assertTrue($folder->completionResults()->whereHas('rule', fn ($query) => $query->where('code', 'required_reports'))->firstOrFail()->is_satisfied);
-        $this->assertEquals(16.67, $folder->refresh()->progress_percent);
+        // Generated reports are not mandatory; the complete CIBI and saved Residence Check are 2 of 7.
+        $this->assertEquals(28.57, $folder->refresh()->progress_percent);
     }
 
     public function test_cibi_preview_and_direct_pdf_export_require_completion_and_use_the_official_saved_data_template(): void

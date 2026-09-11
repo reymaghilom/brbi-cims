@@ -14,6 +14,7 @@
             ? old('scheduled_time', $activity->scheduled_has_time ? $activity->scheduled_at?->timezone(config('cims.display_timezone'))->format('H:i') : '')
             : '';
         $contextLabel = $activePerson ? 'Co-Maker: '.$activePerson->full_name : 'Applicant: '.$clientFolder->display_name;
+        $maxProofPhotos = (int) config('cims.media.max_files_per_upload');
     @endphp
 
     <x-ui.breadcrumb :items="[
@@ -82,7 +83,7 @@
             </section>
 
             <section class="ui-panel p-5 sm:p-6" aria-labelledby="media-title">
-                <div class="flex items-center justify-between gap-3"><h2 id="media-title" class="ui-section-title">Supporting Proof</h2><span class="text-sm font-bold text-text-muted">{{ $activity->media_references_count }} / 5 attachments</span></div>
+                <div class="flex items-center justify-between gap-3"><h2 id="media-title" class="ui-section-title">Supporting Proof</h2><span class="text-sm font-bold text-text-muted">{{ $activity->media_references_count }} / {{ $maxProofPhotos }} attachments</span></div>
                 <x-form.validation-message for="photos" />
                 @if($activity->mediaReferences->isEmpty())
                     <div class="mt-4 rounded-control bg-surface-subtle p-4 text-sm leading-6 text-text-muted"><p>No proof is linked. Proof is optional.</p></div>
@@ -118,18 +119,19 @@
                 @endif
 
                 @if($activity->status === App\Enums\ActivityStatus::Completed)
-                    @if($activity->media_references_count < 5)
+                    @if($activity->media_references_count < $maxProofPhotos)
                         <form method="POST" action="{{ route('client-folders.activities.proof.store', [$clientFolder, $activity] + $personParams) }}" enctype="multipart/form-data" class="mt-4" data-ci-add-photos-form>
                             @csrf
                             <label for="add-proof-photos" class="ui-label">Add Photos <span class="font-normal text-text-muted">(optional)</span></label>
-                            <input id="add-proof-photos" name="photos[]" type="file" accept="image/jpeg,image/png,image/webp" multiple class="ui-control !py-1.5 text-sm" data-ci-add-photos-input>
+                            <input id="add-proof-photos" name="photos[]" type="file" accept="image/jpeg,image/png,image/webp" multiple class="ui-control !py-1.5 text-sm" data-ci-add-photos-input data-ci-proof-count="{{ $activity->media_references_count }}" data-ci-proof-max="{{ $maxProofPhotos }}">
+                            <p class="mt-2 flex items-start gap-1.5 text-sm font-medium text-danger" role="alert" data-ci-add-photos-error hidden></p>
                             <p class="mt-2 flex items-center gap-1.5 text-xs font-semibold text-text-main"><x-ui.icon name="cloud" size="size-3.5" class="text-brand-primary" />Cloud Storage</p>
-                            <p class="mt-0.5 text-xs leading-4 text-text-muted">Photos will be securely uploaded to cloud storage. Maximum 5 photos per activity.</p>
+                            <p class="mt-0.5 text-xs leading-4 text-text-muted">Photos will be securely uploaded to cloud storage. Maximum {{ $maxProofPhotos }} photos per activity.</p>
                             <p class="ui-help">JPG, PNG, or WEBP · Optional</p>
                             <button type="submit" class="ui-button-secondary-compact mt-3" data-ci-add-photos-submit><x-ui.icon name="upload" size="size-3.5" /><span data-ci-add-photos-label>Add Photos</span></button>
                         </form>
                     @else
-                        <p class="mt-4 rounded-control border border-ui-border bg-surface-subtle px-3 py-2 text-xs font-semibold text-text-muted">5 / 5 attachments — Maximum reached</p>
+                        <p class="mt-4 rounded-control border border-ui-border bg-surface-subtle px-3 py-2 text-xs font-semibold text-text-muted">{{ $maxProofPhotos }} / {{ $maxProofPhotos }} attachments — Maximum reached</p>
                     @endif
                 @endif
             </section>
@@ -190,8 +192,25 @@
                 && addPhotosInput instanceof HTMLInputElement
                 && addPhotosButton instanceof HTMLButtonElement
                 && addPhotosLabel instanceof HTMLElement) {
-                addPhotosForm.addEventListener('submit', () => {
+                const addPhotosError = addPhotosForm.querySelector('[data-ci-add-photos-error]');
+                // Existing proof + this selection must stay within the per-activity maximum; the server enforces the same rule.
+                const exceedsProofMax = () => {
+                    const max = Number.parseInt(addPhotosInput.dataset.ciProofMax ?? '0', 10);
+                    const existing = Number.parseInt(addPhotosInput.dataset.ciProofCount ?? '0', 10);
+                    const exceeds = max > 0 && existing + (addPhotosInput.files?.length ?? 0) > max;
+                    if (addPhotosError instanceof HTMLElement) {
+                        addPhotosError.textContent = exceeds ? `You can attach up to ${max} supporting photos per activity.` : '';
+                        addPhotosError.hidden = ! exceeds;
+                    }
+                    return exceeds;
+                };
+                addPhotosInput.addEventListener('change', exceedsProofMax);
+                addPhotosForm.addEventListener('submit', (event) => {
                     if (addPhotosForm.dataset.submitting === 'true') return;
+                    if (exceedsProofMax()) {
+                        event.preventDefault();
+                        return;
+                    }
                     addPhotosForm.dataset.submitting = 'true';
                     const fileCount = addPhotosInput.files?.length ?? 0;
                     addPhotosButton.disabled = true;

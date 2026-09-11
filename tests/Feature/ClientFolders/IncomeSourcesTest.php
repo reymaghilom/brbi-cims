@@ -2587,7 +2587,8 @@ class IncomeSourcesTest extends TestCase
         $this->actingAs($ci)->put(route('client-folders.income-sources.general.update', [$folder, $complete]), $this->generalPayload());
         $rule = $folder->completionResults()->whereHas('rule', fn ($query) => $query->where('code', 'income_sources'))->firstOrFail();
         $this->assertTrue($rule->is_satisfied);
-        $this->assertEquals(16.67, $folder->refresh()->progress_percent);
+        // A general income source is not the mandatory Business Report, so folder progress is unchanged.
+        $this->assertEquals(0, $folder->refresh()->progress_percent);
 
         [, , $draft] = $this->createSource('general_income_sources', $ci, $folder);
         $this->assertFalse($rule->fresh()->is_satisfied);

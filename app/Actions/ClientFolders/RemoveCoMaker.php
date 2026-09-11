@@ -6,16 +6,21 @@ use App\Models\AuditLog;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\User;
+use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Facades\DB;
 
 class RemoveCoMaker
 {
+    public function __construct(private readonly ClientProgressService $progress) {}
+
     public function execute(User $actor, ClientFolder $folder, CoMaker $coMaker): void
     {
         DB::transaction(function () use ($actor, $folder, $coMaker): void {
             $fullName = $coMaker->full_name;
             $coMakerId = $coMaker->id;
             $coMaker->delete();
+            // Their four mandatory requirements leave the folder with them.
+            $this->progress->recalculate($folder);
 
             AuditLog::create([
                 'user_id' => $actor->id,

@@ -331,7 +331,10 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
             ->assertSee('data-modal-open="remove-proof-'.$media->id.'"', false)
             ->assertSee('id="remove-proof-'.$media->id.'"', false)
             ->assertSee('Cloud Storage')
-            ->assertSee('Photos will be securely uploaded to cloud storage. Maximum 5 photos per activity.')
+            ->assertSee('Photos will be securely uploaded to cloud storage. Maximum 10 photos per activity.')
+            ->assertSee('1 / 10 attachments')
+            ->assertSee('data-ci-proof-count="1" data-ci-proof-max="10"', false)
+            ->assertSee('data-ci-add-photos-error', false)
             ->assertSee('data-ci-add-photos-form', false)
             ->assertSee('data-ci-add-photos-submit', false);
     }

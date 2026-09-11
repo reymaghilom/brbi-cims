@@ -4727,6 +4727,76 @@ document.addEventListener('change', (event) => {
     if (message instanceof HTMLElement) message.hidden = true;
 });
 
+// A Scheduled CI Activity (or Bank / Coop / Asset target) needs a date; time stays optional.
+// Each [data-schedule-date] input is paired with the [data-schedule-status] select in its nearest
+// [data-schedule-scope] (a repeater row), else in its form. Registered after the no-change guard
+// and in the capture phase for the same reason: it runs before page-level submit handlers —
+// including forms loaded into a modal after page load — and keeps the form open with an inline
+// error instead of letting the request go out. The FormRequests enforce the same rule server-side.
+const SCHEDULE_DATE_INVALID_CLASSES = ['border-danger', 'ring-2', 'ring-danger/20'];
+
+function scheduleStatusFor(date) {
+    const scope = date.closest('[data-schedule-scope]') ?? date.form;
+    return scope?.querySelector('[data-schedule-status]') ?? null;
+}
+
+function setScheduleDateInvalid(date, invalid) {
+    SCHEDULE_DATE_INVALID_CLASSES.forEach((name) => date.classList.toggle(name, invalid));
+    date.setAttribute('aria-invalid', invalid ? 'true' : 'false');
+    let error = date.parentElement?.querySelector('[data-schedule-date-error]');
+    if (invalid && !(error instanceof HTMLElement)) {
+        error = document.createElement('p');
+        error.dataset.scheduleDateError = '';
+        error.className = 'mt-1.5 text-sm font-semibold text-danger';
+        error.setAttribute('role', 'alert');
+        error.textContent = 'Please select a scheduled date.';
+        date.insertAdjacentElement('afterend', error);
+    } else if (!invalid) {
+        error?.remove();
+    }
+}
+
+function syncScheduleDateRequirement(status) {
+    const scope = status.closest('[data-schedule-scope]') ?? status.form;
+    scope?.querySelectorAll('[data-schedule-date]').forEach((date) => {
+        if (!(date instanceof HTMLInputElement) || scheduleStatusFor(date) !== status) return;
+        const required = status.value === 'scheduled';
+        const label = date.labels?.[0] ?? date.parentElement?.querySelector('label');
+        label?.querySelector('[data-schedule-date-optional]')?.toggleAttribute('hidden', required);
+        label?.querySelector('[data-schedule-date-required]')?.toggleAttribute('hidden', !required);
+        date.setAttribute('aria-required', required ? 'true' : 'false');
+        if (!required) setScheduleDateInvalid(date, false);
+    });
+}
+
+document.addEventListener('submit', (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || event.defaultPrevented) return;
+    const missing = [...form.querySelectorAll('[data-schedule-date]')].filter((date) => {
+        if (!(date instanceof HTMLInputElement) || date.closest('[hidden]')) return false;
+        const status = scheduleStatusFor(date);
+        return status instanceof HTMLSelectElement && !status.disabled && status.value === 'scheduled' && date.value === '';
+    });
+    if (missing.length === 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    missing.forEach((date) => setScheduleDateInvalid(date, true));
+    missing[0].focus();
+}, true);
+
+// Capture phase so programmatic, non-bubbling status changes (e.g. "Follow-up" shortcuts) sync too.
+document.addEventListener('change', (event) => {
+    const control = event.target;
+    if (control instanceof HTMLSelectElement && control.matches('[data-schedule-status]')) syncScheduleDateRequirement(control);
+    if (control instanceof HTMLInputElement && control.matches('[data-schedule-date]') && control.value !== '') setScheduleDateInvalid(control, false);
+}, true);
+
+document.addEventListener('input', (event) => {
+    const date = event.target;
+    if (date instanceof HTMLInputElement && date.matches('[data-schedule-date]') && date.value !== '') setScheduleDateInvalid(date, false);
+});
+
 /**
  * CUSTOM "OTHER BUSINESS / SOURCE OF INCOME" CHECKBOX OPTIONS — add, rename and remove.
  *

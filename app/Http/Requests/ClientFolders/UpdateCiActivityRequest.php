@@ -41,7 +41,7 @@ class UpdateCiActivityRequest extends FormRequest
             'expected_updated_at' => ['nullable', 'date'],
             'status' => ['required', Rule::enum(ActivityStatus::class)],
             'scheduled_at' => ['nullable', 'date', Rule::requiredIf(
-                $this->input('status') === ActivityStatus::Scheduled->value && ! $this->isDefaultCheck()
+                $this->input('status') === ActivityStatus::Scheduled->value
             )],
             'scheduled_time' => ['nullable', 'date_format:H:i'],
             'visit_date' => ['nullable', 'date', 'before_or_equal:today'],
@@ -51,6 +51,13 @@ class UpdateCiActivityRequest extends FormRequest
             'person_met_contact' => ['nullable', 'string', 'max:255'],
             'remarks' => ['nullable', 'string', 'max:20000'],
             'supporting_reference' => ['nullable', 'string', 'max:10000'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'scheduled_at.required' => 'Please select a scheduled date.',
         ];
     }
 
