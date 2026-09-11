@@ -138,7 +138,7 @@ class RecentActivityAccountabilityTest extends TestCase
     {
         $ci = User::factory()->create(['full_name' => 'REY C. MAGHILOM']);
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'BEFORE NAME']);
-        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'AFTER NAME']);
+        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['last_name' => 'After', 'first_name' => 'Name']);
         // Stored raw value is genuine UTC — 05:55 UTC converts to 1:55 PM Manila (+8).
         AuditLog::where('client_folder_id', $folder->id)->where('action', 'client_folder.renamed')
             ->update(['created_at' => '2026-08-23 05:55:00']);

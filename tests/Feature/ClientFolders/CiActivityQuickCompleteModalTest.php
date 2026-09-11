@@ -33,8 +33,14 @@ class CiActivityQuickCompleteModalTest extends TestCase
             ->assertSee('id="quick-complete-activity-modal"', false)
             ->assertSee('Complete this activity?')
             ->assertSee('data-quick-complete-edit', false)
+            ->assertSee('data-quick-complete-cancel', false)
+            ->assertSee('data-quick-complete-confirm-label>Mark as Completed', false)
             ->assertSee('data-completion-status-label="Pending"', false)
             ->assertSee('data-default-check-open="'.$barangay->id.'"', false);
+
+        $this->assertMatchesRegularExpression('/data-quick-complete-cancel[^>]*>.*?<svg.*?<\/svg>\s*Cancel<\/button>/s', $page->getContent());
+        $this->assertMatchesRegularExpression('/data-quick-complete-edit[^>]*>.*?<svg.*?<\/svg>\s*Edit<\/button>/s', $page->getContent());
+        $this->assertMatchesRegularExpression('/data-quick-complete-confirm[^>]*>.*?<svg.*?<\/svg>.*?Mark as Completed.*?<\/button>/s', $page->getContent());
     }
 
     public function test_neighbor_uses_the_exact_same_confirmation_pattern_as_barangay(): void

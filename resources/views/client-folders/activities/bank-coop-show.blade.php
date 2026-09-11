@@ -7,6 +7,7 @@
         $personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null);
         $completedCount = $activity->bankTargets->where('status', App\Enums\ActivityStatus::Completed)->count();
         $targetCount = $activity->bankTargets->count();
+        $bankRemarks = $activity->bankTargets->pluck('remarks')->filter(fn ($remarks) => filled($remarks))->values();
     @endphp
 
     <x-ui.breadcrumb :items="[
@@ -32,6 +33,8 @@
         data-bank-coop-context="{{ $activePerson ? 'Co-Maker: '.$activePerson->full_name : 'Applicant: '.$clientFolder->display_name }}"
         data-bank-coop-target-count="{{ $targetCount }}"
         data-bank-coop-completed-count="{{ $completedCount }}"
+        data-bank-coop-remarks-preview="{{ $bankRemarks->first() }}"
+        data-bank-coop-remarks-count="{{ $bankRemarks->count() }}"
         data-bank-coop-status="{{ $activity->status->value }}"
         data-bank-coop-status-label="{{ $activity->status->label() }}"
         data-bank-coop-updated-date="{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}"
@@ -46,7 +49,7 @@
         <div class="flex flex-col gap-3 border-b border-ui-border pb-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
                 <h2 id="bank-targets-title" class="ui-section-title">Banks / Cooperatives</h2>
-                <p class="mt-1 text-sm text-text-muted">Each institution keeps its own status and schedule.</p>
+                <p class="mt-1 text-sm text-text-muted">Each institution keeps its own status, schedule, and remarks.</p>
             </div>
             <div class="w-fit shrink-0 rounded-full bg-brand-soft px-3 py-1 text-xs font-bold text-brand-primary">{{ $completedCount }} of {{ $targetCount }} Completed</div>
         </div>
@@ -104,8 +107,8 @@
                                 <span class="text-xs text-text-muted">No follow-up date set</span>
                             @endif
                         </div>
-                        @if($target->remarks)
-                            <p class="mt-1 truncate text-xs text-text-muted" title="{{ $target->remarks }}">{{ $target->remarks }}</p>
+                        @if(filled($target->remarks))
+                            <p class="mt-1 truncate text-xs text-text-muted" title="{{ $target->remarks }}"><span class="font-semibold text-text-main">Remarks:</span> {{ $target->remarks }}</p>
                         @endif
                     </div>
                     <x-ui.status-badge :status="$target->status" class="shrink-0 !px-2 !py-0.5 !text-[11px]" />

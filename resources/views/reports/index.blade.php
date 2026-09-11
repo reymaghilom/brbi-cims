@@ -33,8 +33,6 @@
     };
     $hasDateRange = $fromDate !== null || $toDate !== null;
     $dateRangeInvalid = $errors->has('from') || $errors->has('to');
-    // Clearing keeps every other active filter — it drops only the two date parameters.
-    $clearDatesQuery = collect($filters)->except(['from', 'to'])->filter(fn ($value) => filled($value))->all();
 @endphp
 
 @section('content')
@@ -97,7 +95,7 @@
             </div>
             <div class="w-full shrink-0 sm:w-40">
                 <label for="reports-type" class="sr-only">Report type</label>
-                <select id="reports-type" name="report_type" class="ui-control">
+                <select id="reports-type" name="report_type" class="ui-control" data-reports-auto-filter>
                     <option value="">All Report Types</option>
                     @foreach($reportTypes as $value => $label)
                         <option value="{{ $value }}" @selected(($filters['report_type'] ?? null) === $value)>{{ $label }}</option>
@@ -106,7 +104,7 @@
             </div>
             <div class="w-full shrink-0 sm:w-40">
                 <label for="reports-person" class="sr-only">Client Type</label>
-                <select id="reports-person" name="person" class="ui-control">
+                <select id="reports-person" name="person" class="ui-control" data-reports-auto-filter>
                     <option value="">All Client Types</option>
                     <option value="applicant" @selected(($filters['person'] ?? null) === 'applicant')>Applicant</option>
                     <option value="co_maker" @selected(($filters['person'] ?? null) === 'co_maker')>Co-Maker</option>
@@ -116,7 +114,7 @@
                 {{-- The Status filter writes the same `tab` parameter the tabs do, so the two can
                      never disagree about which status the page is showing. --}}
                 <label for="reports-status" class="sr-only">Status</label>
-                <select id="reports-status" name="tab" class="ui-control">
+                <select id="reports-status" name="tab" class="ui-control" data-reports-auto-filter>
                     <option value="all" @selected($tab === 'all')>All Statuses</option>
                     <option value="pending" @selected($tab === 'pending')>Pending</option>
                     <option value="completed" @selected($tab === 'completed')>Completed</option>
@@ -141,31 +139,21 @@
                         <div class="space-y-2.5">
                             <div>
                                 <label for="reports-from" class="mb-1 block text-xs font-semibold text-text-muted">From</label>
-                                <input id="reports-from" type="date" name="from" value="{{ old('from', $filters['from'] ?? '') }}" class="ui-control" @if($errors->has('from')) aria-invalid="true" aria-describedby="from-error" @endif>
+                                <input id="reports-from" type="date" name="from" value="{{ old('from', $filters['from'] ?? '') }}" class="ui-control" data-reports-auto-filter @if($errors->has('from')) aria-invalid="true" aria-describedby="from-error" @endif>
                             </div>
                             <div>
                                 <label for="reports-to" class="mb-1 block text-xs font-semibold text-text-muted">To</label>
-                                <input id="reports-to" type="date" name="to" value="{{ old('to', $filters['to'] ?? '') }}" class="ui-control" @if($errors->has('to')) aria-invalid="true" aria-describedby="to-error" @endif>
+                                <input id="reports-to" type="date" name="to" value="{{ old('to', $filters['to'] ?? '') }}" class="ui-control" data-reports-auto-filter @if($errors->has('to')) aria-invalid="true" aria-describedby="to-error" @endif>
                             </div>
                         </div>
                         <x-form.validation-message for="from" class="mt-2 text-xs" />
                         <x-form.validation-message for="to" class="mt-2 text-xs" />
-                        <div class="mt-3 flex items-center justify-end gap-2 border-t border-ui-border pt-3">
-                            <a href="{{ route('reports.index', $clearDatesQuery) }}" class="ui-button-secondary-compact px-2.5">Clear</a>
-                            <button type="submit" class="ui-button-primary-compact px-2.5">Apply</button>
-                        </div>
                     </div>
                 </details>
             </div>
 
-            {{-- Compact filter actions on the same line as the controls they apply, never a
-                 page-level CTA. They pair up on a phone and join the toolbar row from tablet up. --}}
-            <div class="flex items-center gap-2 sm:contents">
-                <button type="submit" class="ui-button-primary-compact shrink-0 px-3">Apply Filters</button>
-                {{-- The visible label already distinguishes it from the date popover's own Clear, which drops only
-                     the two dates: this one drops every filter and the search. --}}
-                @if($hasFilters)<a href="{{ route('reports.index', ['tab' => $tab]) }}" class="ui-button-secondary-compact shrink-0 px-2.5">Clear Filters</a>@endif
-            </div>
+            {{-- Filters auto-apply; this is the only remaining filter utility action. --}}
+            <a href="{{ route('reports.index') }}" class="ui-button-secondary w-full shrink-0 sm:w-auto" data-reports-clear-filters><x-ui.icon name="close" size="size-4" />Clear Filters</a>
         </div>
         {{-- The active sort travels with any filter submit, so searching a client never silently
              drops the column the user is sorting by. --}}

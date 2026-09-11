@@ -223,6 +223,19 @@
                                 $isBankCoopCheck = $activity->definition?->code === App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE;
                                 $isAssetCheck = $activity->definition?->code === App\Models\ActivityDefinition::ASSET_CHECK_CODE;
                                 $isCustomActivity = $activity->definition?->isCustom() ?? false;
+                                $remarksValues = match (true) {
+                                    $isBankCoopCheck => collect([$activity->bank_remarks_preview])->filter(fn ($remarks) => filled($remarks))->values(),
+                                    $isAssetCheck => collect([$activity->asset_remarks_preview])->filter(fn ($remarks) => filled($remarks))->values(),
+                                    $activity->isMandatoryDefault() => collect([$activity->remarks])->filter(fn ($remarks) => filled($remarks))->values(),
+                                    default => collect(),
+                                };
+                                $remarksPreview = $remarksValues->first();
+                                $remarksCount = match (true) {
+                                    $isBankCoopCheck => $activity->bank_remarks_count,
+                                    $isAssetCheck => $activity->asset_remarks_count,
+                                    default => $remarksValues->count(),
+                                };
+                                $additionalRemarksCount = max(0, $remarksCount - 1);
                                 $scheduleSummary = match (true) {
                                     $isBankCoopCheck => App\Services\ClientFolders\CiActivityScheduleSummary::fromCurrentTargets($activity->bankTargets),
                                     $isAssetCheck => App\Services\ClientFolders\CiActivityScheduleSummary::fromCurrentTargets($activity->assetTargets),
@@ -290,9 +303,12 @@
                                             @elseif($isAssetCheck)
                                                 <p class="mt-0.5 max-w-52 break-words text-xs text-text-muted" data-asset-check-progress="{{ $activity->id }}">{{ $activity->asset_targets_count }} {{ str('assessor')->plural($activity->asset_targets_count) }} · {{ $activity->completed_asset_targets_count }} completed</p>
                                             @elseif($isDefaultCheck)
-                                                <p class="mt-0.5 max-w-52 break-words text-xs text-text-muted" data-default-check-summary="{{ $activity->id }}">{{ $activity->status->label() }} · {{ $activity->remarks ?: 'No remarks yet' }}</p>
+                                                <p class="mt-0.5 max-w-52 break-words text-xs text-text-muted" data-default-check-summary="{{ $activity->id }}">{{ $activity->status->label() }}</p>
                                             @else
                                                 <p class="mt-0.5 max-w-52 truncate text-xs text-text-muted">{{ $activity->target ?: ($activity->definition?->is_required ? 'Required investigation activity' : 'General investigation activity') }}</p>
+                                            @endif
+                                            @if($isDefaultCheck || $isBankCoopCheck || $isAssetCheck)
+                                                <p class="mt-1 max-w-52 truncate text-xs text-text-muted" data-ci-activity-remarks-preview="{{ $activity->id }}" title="{{ $remarksPreview }}" @if(blank($remarksPreview)) hidden @endif><span class="font-semibold text-text-main">Remarks:</span> <span data-ci-activity-remarks-text>{{ $remarksPreview }}</span><span data-ci-activity-remarks-more>@if($additionalRemarksCount > 0) (+{{ $additionalRemarksCount }} more)@endif</span></p>
                                             @endif
                                         </div>
                                     </div>
@@ -555,15 +571,21 @@
                 <button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close Recent Activity"><x-ui.icon name="close" size="size-5" /></button>
             </div>
             <div class="min-h-0 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6" data-ci-history-modal-body>
-                @forelse($allHistory as $event)
-                    <div class="border-b border-ui-border px-1 py-4 first:pt-0 last:border-b-0 last:pb-0">
-                        <p class="text-sm font-bold leading-5 text-text-main">{{ $event->label }}</p>
-                        @if($event->detail)<p class="mt-1 break-words text-xs leading-5 text-text-muted">{{ $event->detail }}</p>@endif
-                        <p class="mt-1 text-xs leading-5 text-text-muted">by {{ $event->user?->full_name ?? 'System' }} &middot; {{ $event->created_at->timezone(config('cims.display_timezone'))->format('M j, Y · g:i A') }}</p>
-                    </div>
-                @empty
-                    <p class="rounded-control bg-surface-subtle p-4 text-sm leading-6 text-text-muted">No activity history has been recorded for this person yet.</p>
-                @endforelse
+                <ol class="relative space-y-0" aria-label="Complete CI activity history">
+                    @forelse($allHistory as $event)
+                        <li class="relative grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-3 pb-6 last:pb-0">
+                            @unless($loop->last)<span class="absolute bottom-0 left-[0.4375rem] top-4 border-l border-dashed border-ui-border-strong" aria-hidden="true"></span>@endunless
+                            <span @class(['relative z-10 mt-1 size-3.5 rounded-full border-2 border-white shadow-sm', 'bg-success' => $event->tone === 'success', 'bg-brand-primary' => $event->tone === 'progress', 'bg-text-muted' => $event->tone === 'neutral'])></span>
+                            <article class="min-w-0 rounded-control border border-ui-border bg-surface-subtle px-3.5 py-3">
+                                <p class="text-sm font-bold leading-5 text-text-main">{{ $event->label }}</p>
+                                @if($event->detail)<p class="mt-1 break-words text-xs leading-5 text-text-muted">{{ $event->detail }}</p>@endif
+                                <p class="mt-1 text-xs leading-5 text-text-muted">by {{ $event->user?->full_name ?? 'System' }} &middot; {{ $event->created_at->timezone(config('cims.display_timezone'))->format('M j, Y · g:i A') }}</p>
+                            </article>
+                        </li>
+                    @empty
+                        <li class="rounded-control bg-surface-subtle p-4 text-sm leading-6 text-text-muted">No activity history has been recorded for this person yet.</li>
+                    @endforelse
+                </ol>
             </div>
         </div>
     </dialog>
@@ -886,6 +908,20 @@
             // Keep the connector line honest: only the actual last visible entry should lack one.
             const last = list.lastElementChild;
             if (last instanceof HTMLLIElement && last.children.length > 2) last.firstElementChild?.remove();
+        }
+
+        function syncCiActivityRemarksPreview(activityId, remarks, remarksCount = 1) {
+            const preview = document.querySelector(`[data-ci-activity-remarks-preview="${activityId}"]`);
+            const text = preview?.querySelector('[data-ci-activity-remarks-text]');
+            const more = preview?.querySelector('[data-ci-activity-remarks-more]');
+            if (!(preview instanceof HTMLElement) || !(text instanceof HTMLElement) || !(more instanceof HTMLElement)) return;
+
+            const value = String(remarks ?? '').trim();
+            const count = Number.parseInt(String(remarksCount), 10);
+            preview.hidden = value === '';
+            preview.title = value;
+            text.textContent = value;
+            more.textContent = Number.isFinite(count) && count > 1 ? ` (+${count - 1} more)` : '';
         }
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -2565,6 +2601,7 @@
                 if (progress instanceof HTMLElement) {
                     progress.textContent = `${targetCount} ${targetCount === 1 ? 'institution' : 'institutions'} · ${completedCount} completed`;
                 }
+                syncCiActivityRemarksPreview(activityId, source.dataset.bankCoopRemarksPreview, source.dataset.bankCoopRemarksCount);
                 if (statusBadge instanceof HTMLElement) {
                     Object.values(statusClasses).flat().forEach((className) => statusBadge.classList.remove(className));
                     (statusClasses[status] ?? statusClasses.pending).forEach((className) => statusBadge.classList.add(className));
@@ -3025,6 +3062,7 @@
                 const targetCount = Number.parseInt(source.dataset.assetTargetCount ?? '0', 10);
                 const completedCount = Number.parseInt(source.dataset.assetCompletedCount ?? '0', 10);
                 if (progress) progress.textContent = `${source.dataset.assetTargetCount ?? '0'} assessor${source.dataset.assetTargetCount === '1' ? '' : 's'} · ${source.dataset.assetCompletedCount ?? '0'} completed`;
+                syncCiActivityRemarksPreview(activityId, source.dataset.assetRemarksPreview, source.dataset.assetRemarksCount);
                 const badge = document.querySelector(`[data-ci-activity-status-badge="${activityId}"]`);
                 const row = badge?.closest('[data-ci-activity-row]');
                 const updatedCell = document.querySelector(`[data-ci-activity-updated-cell="${activityId}"]`);
@@ -3248,7 +3286,8 @@
                     date.textContent = source.dataset.defaultCheckUpdatedDate ?? '';
                     updatedCell.append(date, document.createTextNode(source.dataset.defaultCheckUpdatedDetail ?? ''));
                 }
-                if (summary instanceof HTMLElement) summary.textContent = `${source.dataset.defaultCheckStatusLabel ?? 'Pending'} · ${source.dataset.defaultCheckRemarks || 'No remarks yet'}`;
+                if (summary instanceof HTMLElement) summary.textContent = source.dataset.defaultCheckStatusLabel ?? 'Pending';
+                syncCiActivityRemarksPreview(activityId, source.dataset.defaultCheckRemarks, 1);
                 if (completionCheckbox instanceof HTMLInputElement) {
                     const completed = status === 'completed';
                     completionCheckbox.checked = completed;

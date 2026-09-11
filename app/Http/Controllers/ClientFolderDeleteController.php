@@ -12,9 +12,9 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Canonical (and only) Client Folder delete path. Deleting a folder is permanent: there is no
- * Recycle Bin to restore it from, so this authorizes against the stricter 'forceDelete' policy
- * ability rather than 'delete', and defers to PurgeClientFolder for the owned-graph removal plus
- * its existing file/external-reference safety block.
+ * Recycle Bin to restore it from, so this authorizes the explicit 'forceDelete' policy ability
+ * and defers to PurgeClientFolder for the owned-graph removal plus its existing
+ * file/external-reference safety block.
  */
 class ClientFolderDeleteController extends Controller
 {

@@ -136,7 +136,7 @@ class RecentActivityScopingTest extends TestCase
     {
         $ci = User::factory()->create(['full_name' => 'REY C. MAGHILOM']);
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'BEFORE']);
-        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'AFTER']);
+        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['last_name' => 'After', 'first_name' => 'Client']);
 
         $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
         $this->assertStringContainsString('Folder renamed', $content);

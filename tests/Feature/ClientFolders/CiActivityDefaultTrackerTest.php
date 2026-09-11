@@ -67,6 +67,118 @@ class CiActivityDefaultTrackerTest extends TestCase
         }
     }
 
+    public function test_four_core_check_types_show_saved_remarks_in_compact_rows_and_full_edit_details(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $barangay = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+        $neighbor = $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE);
+        $bank = $this->activity($folder, $ci, ActivityDefinition::BANK_COOP_CHECK_CODE);
+        $asset = $this->activity($folder, $ci, ActivityDefinition::ASSET_CHECK_CODE);
+        $longRemarks = str_repeat('Long barangay verification remarks ', 15).'END';
+        $neighborRemarks = 'Neighbor confirmed the applicant residence details.';
+        $bankRemarks = 'Bank target remarks remain attached to this institution.';
+        $assetRemarks = 'Asset remarks remain attached to this assessor office.';
+
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $barangay]), $this->payload(ActivityStatus::Pending, remarks: $longRemarks))->assertRedirect();
+        $this->put(route('client-folders.activities.update', [$folder, $neighbor]), $this->payload(ActivityStatus::Pending, remarks: $neighborRemarks))->assertRedirect();
+        $this->post(route('client-folders.activities.bank-targets.store', [$folder, $bank]), [
+            'co_maker_id' => null,
+            'inquiry_type' => 'bank_coop_check',
+            'institution_name' => 'Remarks Test Bank',
+            'status' => 'pending',
+            'remarks' => $bankRemarks,
+        ])->assertRedirect();
+        $this->post(route('client-folders.activities.asset-targets.store', [$folder, $asset]), [
+            'co_maker_id' => null,
+            'assessor_type' => 'city_assessor',
+            'office_location' => 'Remarks Test City',
+            'status' => 'pending',
+            'remarks' => $assetRemarks,
+        ])->assertRedirect();
+
+        $page = $this->get(route('client-folders.activities.index', [$folder, 'status' => 'all']))->assertOk();
+        $html = $page->getContent();
+        $activityRow = static function (CiActivity $activity) use ($html): string {
+            $start = strpos($html, 'id="activity-'.$activity->id.'"');
+            $end = strpos($html, '</tr>', $start);
+
+            return substr($html, $start, $end + 5 - $start);
+        };
+
+        foreach ([
+            $barangay->id => $longRemarks,
+            $neighbor->id => $neighborRemarks,
+            $bank->id => $bankRemarks,
+            $asset->id => $assetRemarks,
+        ] as $activityId => $remarks) {
+            $row = $activityRow(CiActivity::findOrFail($activityId));
+            $this->assertStringContainsString('data-ci-activity-remarks-preview="'.$activityId.'"', $row);
+            $this->assertStringContainsString('max-w-52 truncate', $row);
+            $this->assertStringContainsString('Remarks:', $row);
+            $this->assertStringContainsString(e($remarks), $row);
+        }
+
+        foreach ([
+            [$this->get(route('client-folders.activities.default-check.show', [$folder, $barangay]))->assertOk(), $longRemarks],
+            [$this->get(route('client-folders.activities.default-check.show', [$folder, $neighbor]))->assertOk(), $neighborRemarks],
+            [$this->get(route('client-folders.activities.bank-coop.show', [$folder, $bank]))->assertOk(), $bankRemarks],
+            [$this->get(route('client-folders.activities.asset-check.show', [$folder, $asset]))->assertOk(), $assetRemarks],
+        ] as [$response, $remarks]) {
+            $this->assertMatchesRegularExpression('/<textarea[^>]*name="remarks"[^>]*>'.preg_quote(e($remarks), '/').'<\/textarea>/', $response->getContent());
+        }
+
+        $this->assertStringContainsString('syncCiActivityRemarksPreview(activityId, source.dataset.bankCoopRemarksPreview', $html);
+        $this->assertStringContainsString('syncCiActivityRemarksPreview(activityId, source.dataset.assetRemarksPreview', $html);
+        $this->assertStringContainsString('syncCiActivityRemarksPreview(activityId, source.dataset.defaultCheckRemarks', $html);
+
+        $this->assertSame(ActivityStatus::Pending, $barangay->fresh()->status);
+        $this->assertSame(ActivityStatus::Pending, $neighbor->fresh()->status);
+        $this->assertSame(ActivityStatus::Pending, $bank->fresh()->status);
+        $this->assertSame(ActivityStatus::Pending, $asset->fresh()->status);
+    }
+
+    public function test_blank_remarks_stay_hidden_and_remarks_remain_person_scoped(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $makerA = $this->coMaker($folder, 'Maker Alpha');
+        $makerB = $this->coMaker($folder, 'Maker Beta');
+        $applicant = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+        $makerAActivity = $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE, $makerA->id);
+        $makerBActivity = $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE, $makerB->id);
+
+        $applicant->update(['remarks' => null]);
+        $makerAActivity->update(['remarks' => 'MAKER A REMARKS']);
+        $makerBActivity->update(['remarks' => 'MAKER B REMARKS']);
+
+        $applicantPage = $this->actingAs($ci)->get(route('client-folders.activities.index', [$folder, 'status' => 'all']))->assertOk();
+        $applicantHtml = $applicantPage->getContent();
+        $coreCodes = [
+            ActivityDefinition::BARANGAY_CHECK_CODE,
+            ActivityDefinition::NEIGHBOR_CHECK_CODE,
+            ActivityDefinition::ASSET_CHECK_CODE,
+            ActivityDefinition::BANK_COOP_CHECK_CODE,
+        ];
+        foreach ($applicantPage->viewData('activities')->filter(fn (CiActivity $activity) => in_array($activity->definition->code, $coreCodes, true)) as $blankActivity) {
+            $rowStart = strpos($applicantHtml, 'id="activity-'.$blankActivity->id.'"');
+            $row = substr($applicantHtml, $rowStart, strpos($applicantHtml, '</tr>', $rowStart) + 5 - $rowStart);
+            $this->assertMatchesRegularExpression('/data-ci-activity-remarks-preview="'.$blankActivity->id.'"[^>]*hidden/', $row);
+            $this->assertStringNotContainsString('N/A', $row);
+        }
+        $this->assertStringNotContainsString('No remarks yet', $applicantHtml);
+        $this->assertStringNotContainsString('MAKER A REMARKS', $applicantHtml);
+        $this->assertStringNotContainsString('MAKER B REMARKS', $applicantHtml);
+
+        $makerAHtml = $this->get(route('client-folders.activities.index', [$folder, 'person' => 'co-maker', 'co_maker_id' => $makerA->id, 'status' => 'all']))->assertOk()->getContent();
+        $this->assertStringContainsString('MAKER A REMARKS', $makerAHtml);
+        $this->assertStringNotContainsString('MAKER B REMARKS', $makerAHtml);
+
+        $makerBHtml = $this->get(route('client-folders.activities.index', [$folder, 'person' => 'co-maker', 'co_maker_id' => $makerB->id, 'status' => 'all']))->assertOk()->getContent();
+        $this->assertStringContainsString('MAKER B REMARKS', $makerBHtml);
+        $this->assertStringNotContainsString('MAKER A REMARKS', $makerBHtml);
+    }
+
     public function test_default_check_tracker_removes_redundant_footer_close_button_and_keeps_header_close(): void
     {
         $ci = User::factory()->create();
@@ -301,6 +413,10 @@ class CiActivityDefaultTrackerTest extends TestCase
         $this->get(route('client-folders.activities.default-check.show', [$folder, $makerActivity]))->assertNotFound();
         $this->get(route('client-folders.activities.default-check.show', [$folder, $makerActivity, 'person' => 'co-maker', 'co_maker_id' => $makerA->id]))
             ->assertOk()->assertSee('Co-Maker: '.$makerA->full_name);
+        $this->get(route('client-folders.activities.index', [$folder, 'person' => 'co-maker', 'co_maker_id' => $makerA->id, 'status' => 'all']))
+            ->assertOk()
+            ->assertSee('aria-label="Edit '.$makerActivity->display_name.'"', false)
+            ->assertSee('data-default-check-url="'.e(route('client-folders.activities.default-check.show', [$folder, $makerActivity, 'person' => 'co-maker', 'co_maker_id' => $makerA->id])).'"', false);
         $this->get(route('client-folders.activities.default-check.show', [$folder, $makerActivity, 'person' => 'co-maker', 'co_maker_id' => $makerB->id]))->assertNotFound();
         $this->get(route('client-folders.activities.default-check.show', [$otherFolder, $applicant]))->assertNotFound();
 

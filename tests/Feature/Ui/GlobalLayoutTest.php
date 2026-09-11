@@ -544,12 +544,16 @@ class GlobalLayoutTest extends TestCase
             ->assertSee(route('admin.audit-logs.index'), false)
             ->assertSee('Users')
             ->assertSee('Settings')
-            ->assertSee('Audit Trail');
+            ->assertSee('Audit Trail')
+            ->assertDontSee('Integrations &amp; records', false)
+            ->assertDontSee('Recycle Bin');
 
         $this->actingAs($ci)->get(route('home'))
             ->assertDontSee(route('admin.users.index'), false)
             ->assertDontSee(route('admin.settings.index'), false)
-            ->assertDontSee(route('admin.audit-logs.index'), false);
+            ->assertDontSee(route('admin.audit-logs.index'), false)
+            ->assertDontSee('Integrations &amp; records', false)
+            ->assertDontSee('Recycle Bin');
     }
 
     public function test_authentication_screens_use_accessible_brbi_controls_without_changing_routes(): void

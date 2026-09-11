@@ -256,7 +256,7 @@
 
                 @if($recentActivityHasMore)
                     <div class="mt-5 border-t border-ui-border pt-4">
-                        <a href="{{ route('client-folders.index') }}" class="block w-full text-center text-sm font-bold text-brand-primary hover:underline">View All</a>
+                        <button type="button" class="block w-full text-center text-sm font-bold text-brand-primary hover:underline" data-modal-open="dashboard-recent-activity-dialog">View All</button>
                     </div>
                 @endif
             @endif
@@ -280,4 +280,27 @@
             <a href="{{ route('reports.index') }}" class="ui-button-secondary w-full lg:w-auto"><x-ui.icon name="report" size="size-4" />View Reports</a>
         </div>
     </section>
+
+    @if($recentActivityHasMore)
+        {{-- Match the established Client Folder Recent Activity behavior: View All expands the
+             complete newest-first history in a modal instead of navigating to Client Folders. --}}
+        <x-ui.modal id="dashboard-recent-activity-dialog" title="Recent Activity" description="Newest activity first." size="max-w-2xl">
+            <ol class="relative space-y-0" aria-label="Complete recent activity history">
+                @foreach($recentActivityAll as $event)
+                    <li class="relative grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-3 pb-6 last:pb-0">
+                        @if(! $loop->last)<span class="absolute bottom-0 left-[0.4375rem] top-4 border-l border-dashed border-ui-border-strong" aria-hidden="true"></span>@endif
+                        <span class="relative z-10 mt-1 size-3.5 rounded-full border-2 border-white bg-brand-primary shadow-sm" aria-hidden="true"></span>
+                        <article class="min-w-0 rounded-control border border-ui-border bg-surface-subtle px-3.5 py-3">
+                            <div class="flex min-w-0 flex-wrap items-start justify-between gap-x-4 gap-y-1">
+                                <p class="min-w-0 break-words text-sm font-bold leading-5 text-text-main">{{ $event['label'] }}</p>
+                                <time class="shrink-0 text-xs font-semibold leading-5 text-text-muted" datetime="{{ $event['at']?->toIso8601String() }}">{{ $event['at']?->format('M j, Y') }}</time>
+                            </div>
+                            <p class="mt-1 min-w-0 break-words text-sm leading-5 text-text-muted">{{ $event['client'] }}</p>
+                            <p class="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs leading-5 text-text-muted"><span class="break-words">{{ $event['user'] ?? 'System' }}</span><span aria-hidden="true">&middot;</span><time datetime="{{ $event['at']?->toIso8601String() }}">{{ $event['at']?->format('g:i A') }}</time></p>
+                        </article>
+                    </li>
+                @endforeach
+            </ol>
+        </x-ui.modal>
+    @endif
 @endsection

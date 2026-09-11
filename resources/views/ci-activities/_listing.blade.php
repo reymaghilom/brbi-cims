@@ -22,7 +22,6 @@
                             <tr>
                                 <td class="px-3 py-3">
                                     <a href="{{ route('client-folders.show', $row->clientFolder) }}" class="block font-bold text-brand-primary hover:underline">{{ strtoupper($row->clientFolder->display_name) }}</a>
-                                    @if($row->clientFolder->folder_number)<span class="block text-xs text-text-muted">{{ '#'.$row->clientFolder->folder_number }}</span>@endif
                                 </td>
                                 <td class="px-3 py-3">
                                     <div class="min-w-0">

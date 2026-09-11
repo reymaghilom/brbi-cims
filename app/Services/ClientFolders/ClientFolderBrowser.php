@@ -33,6 +33,22 @@ class ClientFolderBrowser
                 'created_at',
                 'updated_at',
             ])
+            // Informational only: these authoritative folder-owned relationships decide which
+            // permanent-delete warning the browser renders. Basic identity/profile fields are
+            // deliberately excluded, and the DELETE endpoint still re-authorizes and runs
+            // PurgeClientFolder's external-file safety checks independently.
+            ->withExists([
+                'cibiReports as has_cibi_data',
+                'coMakers as has_co_maker_data',
+                'incomeSources as has_income_source_data',
+                'residenceBusinessReport as has_residence_business_data',
+                'residenceChecks as has_residence_check_data',
+                'businessChecks as has_business_check_data',
+                'activities as has_activity_data',
+                'mediaReferences as has_media_data',
+                'generatedReports as has_generated_report_data',
+                'completionResults as has_completion_data',
+            ])
             ->when($search, fn ($query, $search) => $query->where('display_name', 'like', "%{$search}%"))
             ->when($status, fn ($query, $status) => $query->where('status', $status));
 

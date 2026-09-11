@@ -1233,10 +1233,15 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
 
         $content = $this->actingAs($ci)->get(route('client-folders.income-sources.manage', $folder))->assertOk()->getContent();
 
-        $connectorCount = substr_count($content, 'border-l border-dashed border-ui-border-strong');
-        $listItemCount = substr_count($content, 'relative grid grid-cols-[1.75rem_1fr]');
-        $this->assertGreaterThanOrEqual(2, $listItemCount, 'At least two activity rows should render.');
-        $this->assertSame($listItemCount - 1, $connectorCount, 'There must be exactly one fewer connector than activity rows (none after the last item).');
+        $previewItemCount = substr_count($content, 'relative grid grid-cols-[1.75rem_1fr]');
+        $this->assertGreaterThanOrEqual(2, $previewItemCount, 'At least two activity rows should render.');
+
+        $modalStart = strpos($content, 'id="business-recent-activity-dialog"');
+        $modalEnd = strpos($content, '</dialog>', $modalStart);
+        $modalHtml = substr($content, $modalStart, $modalEnd - $modalStart);
+        $modalItemCount = substr_count($modalHtml, 'relative grid min-w-0 grid-cols-[1rem_minmax(0,1fr)]');
+        $this->assertGreaterThanOrEqual(2, $modalItemCount, 'The full history should render the activity rows.');
+        $this->assertSame($modalItemCount - 1, substr_count($modalHtml, 'border-l border-dashed border-ui-border-strong'), 'There must be exactly one fewer connector than full-history activity rows.');
     }
 
     public function test_recent_activity_rows_show_full_date_and_time_not_time_only(): void

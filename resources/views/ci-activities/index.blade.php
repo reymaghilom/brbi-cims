@@ -27,12 +27,14 @@
     <section class="mt-6 ui-panel overflow-hidden">
         <div class="border-b border-ui-border p-4 sm:p-5">
             <form method="GET" action="{{ route('ci-activities.index') }}" id="global-ci-filter" class="flex flex-col gap-3 lg:flex-row lg:items-end">
-                <div class="min-w-0 flex-1">
+                <div class="relative min-w-0 flex-1" data-ci-client-search data-suggest-url="{{ route('reports.client-suggestions') }}">
                     <label for="global-ci-search" class="sr-only">Search client, person, or activity</label>
-                    <div class="relative">
-                        <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-text-muted" aria-hidden="true"><x-ui.icon name="search" size="size-4" /></span>
-                        <input id="global-ci-search" type="search" name="search" value="{{ $filters['search'] }}" maxlength="150" class="ui-control min-h-10 py-2 pl-9" placeholder="Search client, person, or activity...">
-                    </div>
+                    <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-text-muted" aria-hidden="true"><x-ui.icon name="search" size="size-4" /></span>
+                    <input id="global-ci-search" type="search" name="search" value="{{ $filters['search'] }}" maxlength="150" class="ui-control min-h-10 py-2 pl-9" placeholder="Search client, person, or activity..."
+                           role="combobox" aria-expanded="false" aria-controls="global-ci-client-suggestions" aria-autocomplete="list" autocomplete="off" data-ci-client-input>
+                    <ul id="global-ci-client-suggestions" role="listbox" aria-label="Client name suggestions" hidden
+                        class="absolute inset-x-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-card border border-ui-border bg-surface p-1.5 shadow-float"
+                        data-ci-client-suggestions></ul>
                 </div>
                 <div class="w-full lg:w-44">
                     <label for="global-ci-status" class="ui-label">Status</label>

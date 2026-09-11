@@ -381,6 +381,60 @@ class GlobalCiActivitiesTest extends TestCase
         $this->assertStringNotContainsString('NEIGHBOR ROW CLIENT', $content);
     }
 
+    public function test_search_renders_the_shared_client_autosuggest_combobox_and_async_contract(): void
+    {
+        $ci = User::factory()->create();
+        $this->folderFor($ci, ['display_name' => 'Pedro Garcia']);
+
+        $content = $this->actingAs($ci)->get(route('ci-activities.index', [
+            'tab' => 'scheduled',
+            'status' => 'scheduled',
+            'person' => 'applicant',
+        ]))->assertOk()->getContent();
+
+        foreach (['data-ci-client-search', 'data-ci-client-input', 'data-ci-client-suggestions', 'role="combobox"', 'role="listbox"', 'aria-autocomplete="list"'] as $hook) {
+            $this->assertStringContainsString($hook, $content);
+        }
+        $this->assertStringContainsString(e(route('reports.client-suggestions')), $content);
+        $this->assertStringContainsString('name="tab" value="scheduled"', $content);
+        $this->assertStringContainsString('name="person"', $content);
+
+        $suggestions = $this->actingAs($ci)
+            ->getJson(route('reports.client-suggestions', ['q' => 'Pedro']))
+            ->assertOk()
+            ->json('suggestions');
+        $this->assertSame('PEDRO GARCIA', strtoupper($suggestions[0]['name']));
+
+        $javascript = file_get_contents(resource_path('js/app.js'));
+        $this->assertStringContainsString("document.querySelectorAll('[data-reports-client-search], [data-ci-client-search]').forEach(initReportsClientSearch);", $javascript);
+        $this->assertStringContainsString("const region = document.querySelector(isCiActivities ? '[data-ci-activities-listing]' : '[data-reports-listing]');", $javascript);
+        $this->assertStringContainsString('new FormData(form).forEach', $javascript);
+        $this->assertStringContainsString('activeRequest?.abort();', $javascript);
+        $this->assertStringContainsString('if (activeRequest !== request) return;', $javascript);
+        $this->assertStringContainsString("runSearch('replace');", $javascript);
+        $this->assertStringContainsString("runSearch('push');", $javascript);
+        $this->assertStringContainsString("event.key === 'ArrowDown' || event.key === 'ArrowUp'", $javascript);
+        $this->assertStringContainsString("if (event.key === 'Enter')", $javascript);
+        $this->assertStringContainsString("if (event.key === 'Escape')", $javascript);
+        $this->assertStringContainsString('if (!container.contains(event.target)) close();', $javascript);
+    }
+
+    public function test_client_loan_column_hides_the_folder_number_without_changing_its_identity(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci, [
+            'display_name' => 'Juan Dela Cruz',
+            'folder_number' => 'BRBI-CI-2026-00026',
+        ]);
+        $this->simpleActivity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+
+        $content = $this->actingAs($ci)->get(route('ci-activities.index'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('JUAN DELA CRUZ', $content);
+        $this->assertStringNotContainsString('#BRBI-CI-2026-00026', $content);
+        $this->assertSame('BRBI-CI-2026-00026', $folder->fresh()->folder_number);
+    }
+
     // ==================================================
     // Person / activity type / schedule filters
     // ==================================================

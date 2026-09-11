@@ -38,22 +38,25 @@ class PolicyMatrixTest extends TestCase
         }
     }
 
-    public function test_folder_policy_allows_expected_operations_and_reserves_permanent_delete_and_restore(): void
+    public function test_folder_policy_allows_shared_active_folder_operations_and_reserves_restore(): void
     {
         $administrator = User::factory()->administrator()->create();
         $assignedCi = User::factory()->create();
         $otherCi = User::factory()->create();
+        $seniorCi = User::factory()->seniorCreditInvestigator()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $assignedCi->id]);
 
         $this->assertTrue(Gate::forUser($administrator)->allows('view', $folder));
         $this->assertTrue(Gate::forUser($administrator)->allows('forceDelete', $folder));
         $this->assertTrue(Gate::forUser($assignedCi)->allows('update', $folder));
         $this->assertTrue(Gate::forUser($assignedCi)->allows('delete', $folder));
-        $this->assertFalse(Gate::forUser($assignedCi)->allows('forceDelete', $folder));
+        $this->assertTrue(Gate::forUser($assignedCi)->allows('forceDelete', $folder));
         $this->assertFalse(Gate::forUser($assignedCi)->allows('restore', $folder));
         $this->assertTrue(Gate::forUser($otherCi)->allows('view', $folder));
         $this->assertFalse(Gate::forUser($otherCi)->allows('restore', $folder));
-        $this->assertFalse(Gate::forUser($otherCi)->allows('forceDelete', $folder));
+        $this->assertTrue(Gate::forUser($otherCi)->allows('forceDelete', $folder));
+        $this->assertTrue(Gate::forUser($seniorCi)->allows('forceDelete', $folder));
+        $this->assertFalse(Gate::forUser($seniorCi)->allows('restore', $folder));
         $this->assertTrue(Gate::forUser($assignedCi)->allows('create', ClientFolder::class));
     }
 

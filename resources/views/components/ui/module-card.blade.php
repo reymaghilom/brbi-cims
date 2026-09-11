@@ -1,4 +1,4 @@
-@props(['title', 'description' => null, 'icon' => 'report', 'href' => null, 'state' => null, 'badge' => null, 'updatedAt' => null, 'asButton' => false, 'modalId' => null, 'modalUrl' => null, 'openLabel' => 'Open', 'openIcon' => 'open', 'primary' => false])
+@props(['title', 'description' => null, 'icon' => 'report', 'href' => null, 'state' => null, 'badge' => null, 'updatedAt' => null, 'asButton' => false, 'modalId' => null, 'modalUrl' => null, 'modalTitle' => null, 'openLabel' => 'Open', 'openIcon' => 'open', 'primary' => false])
 
 @php
     $stateValue = $state instanceof BackedEnum ? $state->value : (string) $state;
@@ -27,7 +27,7 @@
 
     <div class="mt-auto flex flex-wrap items-center gap-1 border-t border-ui-border pt-3">
         @if($href)
-            <a href="{{ $href }}" @if($modalId) data-modal-open="{{ $modalId }}" @if($modalId === 'business-report-dialog') data-business-report-url="{{ $modalUrl ?? $href }}" @else data-cibi-report-url="{{ $modalUrl ?? $href }}" @endif @endif class="{{ $openButtonClass }}"><x-ui.icon :name="$openIcon" size="size-3.5" />{{ $openLabel }}</a>
+            <a href="{{ $href }}" @if($modalId) data-modal-open="{{ $modalId }}" @if($modalId === 'business-report-dialog') data-business-report-url="{{ $modalUrl ?? $href }}" @else data-cibi-report-url="{{ $modalUrl ?? $href }}" @endif @if($modalTitle) data-modal-title="{{ $modalTitle }}" @endif @endif class="{{ $openButtonClass }}"><x-ui.icon :name="$openIcon" size="size-3.5" />{{ $openLabel }}</a>
         @elseif($asButton)
             <button type="button" class="{{ $openButtonClass }}"><x-ui.icon :name="$openIcon" size="size-3.5" />{{ $openLabel }}</button>
         @endif

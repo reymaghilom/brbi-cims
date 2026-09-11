@@ -23,7 +23,7 @@ class ClientFolderNameController extends Controller
     public function update(RenameClientFolderRequest $request, ClientFolder $clientFolder, RenameClientFolder $action): RedirectResponse|JsonResponse
     {
         try {
-            $action->execute($request->user(), $clientFolder, $request->validated('display_name'));
+            $action->execute($request->user(), $clientFolder, $request->validated());
         } catch (NoChangesDetectedException $e) {
             if ($request->expectsJson()) {
                 return response()->json(['message' => $e->getMessage(), 'no_change' => true]);
@@ -35,12 +35,12 @@ class ClientFolderNameController extends Controller
 
         if ($request->expectsJson()) {
             return response()->json([
-                'message' => 'Client folder renamed successfully.',
+                'message' => 'Client folder updated successfully.',
                 'folder' => ['display_name' => $clientFolder->fresh()->display_name],
             ]);
         }
 
         return redirect()->route('client-folders.show', $clientFolder)
-            ->with('status', 'Client folder renamed successfully.');
+            ->with('status', 'Client folder updated successfully.');
     }
 }

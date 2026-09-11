@@ -98,9 +98,20 @@ class DashboardRecentActivityTest extends TestCase
 
         $panel = $this->panel($this->html($ci));
         $this->assertStringContainsString('View All', $panel);
+        $this->assertStringContainsString('data-modal-open="dashboard-recent-activity-dialog"', $panel);
+        $this->assertStringNotContainsString(route('client-folders.index'), $panel);
 
         // Below the list, never above it or inside an entry.
         $this->assertGreaterThan(strpos($panel, '</ol>'), strpos($panel, 'View All'));
+
+        // Match the established Client Folder behavior: View All opens the complete newest-first
+        // history in a modal instead of navigating away to the Client Folders page.
+        $html = $this->html($ci);
+        $this->assertStringContainsString('id="dashboard-recent-activity-dialog"', $html);
+        $this->assertStringContainsString('aria-label="Complete recent activity history"', $html);
+        $modal = substr($html, strpos($html, 'id="dashboard-recent-activity-dialog"'));
+        $this->assertSame(3, substr_count($modal, 'border-l border-dashed border-ui-border-strong'));
+        $this->assertCount(4, $this->viewData($ci, 'recentActivityAll'));
     }
 
     /** TEST 6 — exactly three (or fewer) must not offer a pointless View All. */

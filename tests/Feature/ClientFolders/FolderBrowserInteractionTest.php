@@ -48,13 +48,63 @@ class FolderBrowserInteractionTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'OLD NAME']);
 
         $this->actingAs($ci)
-            ->patchJson(route('client-folders.update-name', $folder), ['display_name' => 'new browser name'])
+            ->patchJson(route('client-folders.update-name', $folder), ['last_name' => 'New', 'first_name' => 'Browser', 'middle_name' => 'Name'])
             ->assertOk()
-            ->assertJsonPath('message', 'Client folder renamed successfully.')
-            ->assertJsonPath('folder.display_name', 'NEW BROWSER NAME')
+            ->assertJsonPath('message', 'Client folder updated successfully.')
+            ->assertJsonPath('folder.display_name', 'NEW, BROWSER NAME')
             ->assertHeaderMissing('Location');
 
-        $this->assertSame('NEW BROWSER NAME', $folder->fresh()->display_name);
+        $this->assertSame('NEW, BROWSER NAME', $folder->fresh()->display_name);
+    }
+
+    public function test_ajax_edit_with_no_changes_keeps_the_modal_open_and_returns_the_exact_notice(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $updatedAt = $folder->updated_at;
+
+        $this->actingAs($ci)->patchJson(route('client-folders.update-name', $folder), [
+            'last_name' => $folder->last_name,
+            'first_name' => $folder->first_name,
+            'middle_name' => $folder->middle_name,
+            'suffix' => $folder->suffix,
+        ])->assertOk()
+            ->assertJson([
+                'message' => 'No changes detected.',
+                'no_change' => true,
+            ])
+            ->assertJsonMissingPath('folder');
+
+        $folder->refresh();
+        $this->assertTrue($updatedAt->equalTo($folder->updated_at));
+        $this->assertDatabaseMissing('audit_logs', [
+            'client_folder_id' => $folder->id,
+            'action' => 'client_folder.renamed',
+        ]);
+
+        $javascript = file_get_contents(resource_path('js/app.js'));
+        $submitStart = strpos($javascript, "document.addEventListener('submit', async (event) => {");
+        $clientNoChangeCheck = strpos($javascript, '!folderEditHasChanges(form)', $submitStart);
+        $request = strpos($javascript, 'const response = await fetch(form.action', $submitStart);
+        $this->assertStringContainsString("const FOLDER_EDIT_NO_CHANGES_MESSAGE = 'No changes detected.'", $javascript);
+        $this->assertStringContainsString('field.defaultValue', $javascript);
+        $this->assertLessThan($request, $clientNoChangeCheck, 'No-change detection runs before any request.');
+        $clientNoChangeEnd = strpos($javascript, 'const submit = form.querySelector', $clientNoChangeCheck);
+        $clientNoChangeSource = substr($javascript, $clientNoChangeCheck, $clientNoChangeEnd - $clientNoChangeCheck);
+        $this->assertStringContainsString('setFolderEditNotice(form, true)', $clientNoChangeSource);
+        $this->assertStringNotContainsString('showToast', $clientNoChangeSource);
+        $this->assertStringNotContainsString('folder-browser:refresh', $clientNoChangeSource);
+        $this->assertStringContainsString("document.addEventListener('input', clearFolderEditNoticeOnChange)", $javascript);
+        $this->assertStringContainsString("document.addEventListener('change', clearFolderEditNoticeOnChange)", $javascript);
+        $this->assertStringContainsString("setFolderEditNotice(field.closest('[data-folder-rename-form]'), false)", $javascript);
+        $this->assertStringContainsString('}, 4000)', $javascript);
+        $this->assertStringContainsString("setFolderEditNotice(dialog.querySelector('[data-folder-rename-form]'), false)", $javascript);
+        $this->assertStringContainsString("setFolderEditNotice(dialog?.querySelector('[data-folder-rename-form]'), false)", $javascript);
+
+        $branchStart = strpos($javascript, "} else if (form.matches('[data-folder-rename-form]')) {");
+        $noChangeCheck = strpos($javascript, 'if (payload.no_change)', $branchStart);
+        $dialogClose = strpos($javascript, 'dialog?.close()', $noChangeCheck);
+        $this->assertGreaterThan($noChangeCheck, $dialogClose, 'The modal closes only after the no-change early return.');
     }
 
     public function test_ajax_create_reuses_existing_action_and_returns_folder_data_without_navigation(): void
@@ -128,6 +178,18 @@ class FolderBrowserInteractionTest extends TestCase
             ->assertHeaderMissing('Location');
 
         $this->assertNull(ClientFolder::withTrashed()->find($folder->id));
+
+        $javascript = file_get_contents(resource_path('js/app.js'));
+        $submitStart = strpos($javascript, "document.addEventListener('submit', async (event) => {");
+        $responseGuard = strpos($javascript, "if (!response.ok) throw new Error(payload.message || 'Folder action failed.');", $submitStart);
+        $deleteBranchStart = strpos($javascript, "} else {\n            const folderId = form.dataset.folderId;", $responseGuard);
+        $deleteBranch = substr($javascript, $deleteBranchStart);
+        $this->assertStringContainsString('dialog?.close();', $deleteBranch);
+        $this->assertStringContainsString('shell?.remove();', $deleteBranch);
+        $this->assertStringContainsString('if (wasSelected) resetFolderPreview(browser);', $deleteBranch);
+        $this->assertStringContainsString('showToast(payload.message);', $deleteBranch);
+        $this->assertStringContainsString('browser?.dispatchEvent(new CustomEvent(\'folder-browser:refresh\'))', $deleteBranch);
+        $this->assertLessThan($deleteBranchStart + strpos($deleteBranch, 'shell?.remove();'), $responseGuard);
     }
 
     public function test_the_search_box_offers_an_accessible_autosuggest_beside_the_live_grid(): void
@@ -222,7 +284,7 @@ class FolderBrowserInteractionTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $assigned->id]);
 
         $this->actingAs($otherCi)
-            ->patchJson(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED BY OTHER CI'])
+            ->patchJson(route('client-folders.update-name', $folder), ['last_name' => 'Renamed', 'first_name' => 'Other CI'])
             ->assertOk();
 
         // Delete is the one folder action the shared workspace does NOT open up: it is permanent

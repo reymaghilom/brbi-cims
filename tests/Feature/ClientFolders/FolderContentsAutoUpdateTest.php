@@ -40,6 +40,10 @@ class FolderContentsAutoUpdateTest extends TestCase
         $this->assertStringContainsString('Completed', $moduleHtml);
         $this->assertStringContainsString('Official CI / BI report record available.', $moduleHtml);
         $this->assertStringNotContainsString('No CI / BI report has been started.', $moduleHtml);
+        $this->assertStringContainsString('Open</a>', $moduleHtml);
+        $this->assertStringContainsString('d="m4 20 4.2-1 10.4-10.4a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"', $moduleHtml);
+        $this->assertStringContainsString('data-modal-title="CIBI Report"', $moduleHtml);
+        $this->assertStringNotContainsString('Add</a>', $moduleHtml);
 
         // No Co-Maker content leaks into the Applicant's own module fragment.
         $this->assertStringNotContainsString('Co-Maker', $moduleHtml);
@@ -220,6 +224,8 @@ class FolderContentsAutoUpdateTest extends TestCase
         $this->assertStringContainsString("document.getElementById('open-cibi-report')", $javascript);
         $this->assertStringContainsString('cibiModuleCard.outerHTML = event.data.cibiModuleHtml', $javascript);
         $this->assertStringContainsString('recentActivityBody.innerHTML = event.data.recentActivityHtml', $javascript);
+        $this->assertStringContainsString("dialog.querySelector('[data-cibi-report-title-heading]')", $javascript);
+        $this->assertStringContainsString('modalTrigger.dataset.modalTitle', $javascript);
     }
 
     private function cibiPayload(): array

@@ -22,6 +22,8 @@ use App\Http\Requests\ClientFolders\UpdateCiActivityRequest;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\CiActivity;
+use App\Models\CiActivityAssetTarget;
+use App\Models\CiActivityBankTarget;
 use App\Models\ClientFolder;
 use App\Models\MediaReference;
 use App\Services\ClientFolders\ActivePersonResolver;
@@ -58,6 +60,16 @@ class CiActivityController extends Controller
             ->where('ci_activities.co_maker_id', $activePerson?->id)
             ->join('activity_definitions', 'activity_definitions.id', '=', 'ci_activities.activity_definition_id')
             ->select('ci_activities.*')
+            ->addSelect([
+                'bank_remarks_preview' => CiActivityBankTarget::query()->select('remarks')
+                    ->whereColumn('ci_activity_id', 'ci_activities.id')
+                    ->whereNotNull('remarks')->where('remarks', '!=', '')
+                    ->oldest('id')->limit(1),
+                'asset_remarks_preview' => CiActivityAssetTarget::query()->select('remarks')
+                    ->whereColumn('ci_activity_id', 'ci_activities.id')
+                    ->whereNotNull('remarks')->where('remarks', '!=', '')
+                    ->oldest('id')->limit(1),
+            ])
             ->with([
                 'definition:id,name,code,is_required,is_active,sort_order',
                 'creator:id,full_name',
@@ -85,8 +97,10 @@ class CiActivityController extends Controller
                 'notes',
                 'bankTargets',
                 'bankTargets as completed_bank_targets_count' => fn ($query) => $query->where('status', ActivityStatus::Completed->value),
+                'bankTargets as bank_remarks_count' => fn ($query) => $query->whereNotNull('remarks')->where('remarks', '!=', ''),
                 'assetTargets',
                 'assetTargets as completed_asset_targets_count' => fn ($query) => $query->where('status', ActivityStatus::Completed->value),
+                'assetTargets as asset_remarks_count' => fn ($query) => $query->whereNotNull('remarks')->where('remarks', '!=', ''),
                 'mediaReferences' => fn ($query) => $query
                     ->where('media_references.client_folder_id', $clientFolder->id)
                     ->where('media_references.co_maker_id', $activePerson?->id),

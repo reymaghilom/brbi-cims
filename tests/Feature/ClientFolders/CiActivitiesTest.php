@@ -1001,6 +1001,13 @@ class CiActivitiesTest extends TestCase
             $compactHistoryResponse->viewData('history')->pluck('label')->all(),
         );
         $this->assertCount(10, $compactHistoryResponse->viewData('allHistory'));
+        $historyHtml = $compactHistoryResponse->getContent();
+        $modalStart = strpos($historyHtml, 'id="all-activity-history"');
+        $modalEnd = strpos($historyHtml, '</dialog>', $modalStart);
+        $modalHtml = substr($historyHtml, $modalStart, $modalEnd - $modalStart);
+        $this->assertSame(10, substr_count($modalHtml, 'relative grid min-w-0 grid-cols-[1rem_minmax(0,1fr)]'));
+        $this->assertSame(9, substr_count($modalHtml, 'border-l border-dashed border-ui-border-strong'));
+        $this->assertStringContainsString('min-w-0 rounded-control border border-ui-border bg-surface-subtle', $modalHtml);
         $this->assertMatchesRegularExpression(
             '/<aside[^>]*data-ci-history-panel[^>]*>.*Applicant Event 06 updated.*View All.*<\/aside>/s',
             $compactHistoryResponse->getContent(),

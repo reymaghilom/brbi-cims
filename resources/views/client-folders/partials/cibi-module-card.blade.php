@@ -6,13 +6,14 @@
 @endphp
 <x-ui.module-card
     id="open-cibi-report"
-    title="CI / BI Report"
+    title="CIBI Report"
     icon="report"
     :state="$cibiReport?->state?->value ?? 'not_started'"
     :description="$cibiHasReport ? 'Official CI / BI report record available.' : 'No CI / BI report has been started.'"
     :href="$cibiHref"
     modal-id="cibi-report-dialog"
     :modal-url="$cibiHref"
+    :modal-title="$cibiHasReport ? 'CIBI Report' : 'Create CIBI Report'"
     :updated-at="$cibiReport?->updated_at?->timezone($displayTimezone)->format('M j, Y')"
     :open-label="$cibiHasReport ? 'Open' : 'Add'"
     :open-icon="$cibiHasReport ? 'edit' : 'plus'"

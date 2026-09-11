@@ -282,26 +282,41 @@ class NoChangeDetectionTest extends TestCase
     public function test_unchanged_rename_creates_no_audit_or_history_event(): void
     {
         $ci = User::factory()->create();
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'MICABALO, RONILO CABIGAS']);
+        $folder = ClientFolder::factory()->create([
+            'assigned_ci_id' => $ci->id,
+            'last_name' => 'MICABALO',
+            'first_name' => 'RONILO',
+            'middle_name' => 'CABIGAS',
+            'suffix' => null,
+            'display_name' => 'MICABALO, RONILO CABIGAS',
+        ]);
+        $updatedAt = $folder->updated_at;
+        $updatedBy = $folder->updated_by;
 
         $response = $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), [
-            'display_name' => 'micabalo, ronilo cabigas',
+            'last_name' => 'micabalo',
+            'first_name' => 'ronilo',
+            'middle_name' => 'cabigas',
         ])->assertRedirect();
 
-        $response->assertSessionHas('status');
-        $this->assertStringContainsString('No changes detected', session('status'));
+        $response->assertSessionHas('status', 'No changes detected.');
         $this->assertSame('info', session('statusType'));
         $this->assertDatabaseMissing('audit_logs', ['client_folder_id' => $folder->id, 'action' => 'client_folder.renamed']);
-        $this->assertSame('MICABALO, RONILO CABIGAS', $folder->fresh()->display_name);
+        $folder->refresh();
+        $this->assertSame('MICABALO, RONILO CABIGAS', $folder->display_name);
+        $this->assertTrue($updatedAt->equalTo($folder->updated_at));
+        $this->assertSame($updatedBy, $folder->updated_by);
     }
 
     public function test_real_rename_creates_exactly_one_event_and_folder_history_refreshes_immediately(): void
     {
         $ci = User::factory()->create(['full_name' => 'REY C. MAGHILOM']);
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'MICABALO']);
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'last_name' => 'MICABALO', 'first_name' => 'OLD', 'display_name' => 'MICABALO, OLD']);
 
         $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), [
-            'display_name' => 'MICABALO, RONILO CABIGAS',
+            'last_name' => 'MICABALO',
+            'first_name' => 'RONILO',
+            'middle_name' => 'CABIGAS',
         ])->assertRedirect();
 
         $this->assertSame(1, AuditLog::where('client_folder_id', $folder->id)->where('action', 'client_folder.renamed')->count());
@@ -319,11 +334,11 @@ class NoChangeDetectionTest extends TestCase
     public function test_folder_created_and_prior_rename_events_remain_preserved_after_a_new_rename(): void
     {
         $ci = User::factory()->create(['full_name' => 'REY C. MAGHILOM']);
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'MICABALO']);
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'last_name' => 'MICABALO', 'first_name' => 'OLD', 'display_name' => 'MICABALO, OLD']);
         AuditLog::create(['user_id' => $ci->id, 'client_folder_id' => $folder->id, 'action' => 'client_folder.created', 'module' => 'client_folders', 'description' => 'A client folder was created.', 'metadata' => []]);
         DB::table('audit_logs')->where('client_folder_id', $folder->id)->update(['created_at' => '2026-08-20 09:00:00']);
 
-        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'MICABALO, RONILO CABIGAS'])->assertRedirect();
+        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['last_name' => 'MICABALO', 'first_name' => 'RONILO', 'middle_name' => 'CABIGAS'])->assertRedirect();
 
         $content = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
         $this->assertStringContainsString('Folder Created', $content);

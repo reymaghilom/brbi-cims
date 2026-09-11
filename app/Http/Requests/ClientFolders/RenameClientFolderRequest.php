@@ -13,15 +13,30 @@ class RenameClientFolderRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['display_name' => ['required', 'string', 'max:255']];
+        return [
+            'last_name' => ['required', 'string', 'max:100'],
+            'first_name' => ['required', 'string', 'max:100'],
+            'middle_name' => ['nullable', 'string', 'max:100'],
+            'suffix' => ['nullable', 'string', 'max:30'],
+        ];
     }
 
     protected function prepareForValidation(): void
     {
         $this->merge([
-            'display_name' => filled($this->input('display_name'))
-                ? mb_strtoupper((string) preg_replace('/\s+/', ' ', trim((string) $this->input('display_name'))))
-                : null,
+            'last_name' => $this->normalizedName($this->input('last_name')),
+            'first_name' => $this->normalizedName($this->input('first_name')),
+            'middle_name' => $this->normalizedName($this->input('middle_name')),
+            'suffix' => $this->normalizedName($this->input('suffix')),
         ]);
+    }
+
+    private function normalizedName(mixed $value): ?string
+    {
+        if (! filled($value)) {
+            return null;
+        }
+
+        return mb_strtoupper((string) preg_replace('/\s+/', ' ', trim((string) $value)));
     }
 }

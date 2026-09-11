@@ -8,6 +8,7 @@
         $completedCount = $activity->assetTargets->where('status', App\Enums\ActivityStatus::Completed)->count();
         $targetCount = $activity->assetTargets->count();
         $context = $activePerson ? 'Co-Maker: '.$activePerson->full_name : 'Applicant: '.$clientFolder->display_name;
+        $assetRemarks = $activity->assetTargets->pluck('remarks')->filter(fn ($remarks) => filled($remarks))->values();
     @endphp
 
     <x-ui.breadcrumb :items="[
@@ -27,6 +28,8 @@
         data-asset-context="{{ $context }}"
         data-asset-target-count="{{ $targetCount }}"
         data-asset-completed-count="{{ $completedCount }}"
+        data-asset-remarks-preview="{{ $assetRemarks->first() }}"
+        data-asset-remarks-count="{{ $assetRemarks->count() }}"
         data-asset-status="{{ $activity->status->value }}"
         data-asset-status-label="{{ $activity->status->label() }}"
         data-asset-updated-date="{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}"
@@ -75,7 +78,7 @@
                         <div class="min-w-0 flex-1">
                             <p class="break-words text-sm font-bold text-brand-sidebar">{{ $target->assessorLabel() }} <span class="font-normal text-text-muted">&mdash; {{ $target->office_location }}</span></p>
                             @if($localSchedule)<p class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-text-muted"><x-ui.icon name="calendar" size="size-3.5" />{{ $localSchedule->format('M j, Y') }} <span>&middot; {{ $target->scheduled_has_time ? $localSchedule->format('g:i A') : 'No specific time' }}</span></p>@elseif(in_array($target->status, [App\Enums\ActivityStatus::Scheduled, App\Enums\ActivityStatus::FollowUp], true))<p class="mt-1 text-xs text-text-muted">No date set</p>@endif
-                            @if($target->remarks)<p class="mt-1 truncate text-xs text-text-muted" title="{{ $target->remarks }}">{{ $target->remarks }}</p>@endif
+                            @if(filled($target->remarks))<p class="mt-1 truncate text-xs text-text-muted" title="{{ $target->remarks }}"><span class="font-semibold text-text-main">Remarks:</span> {{ $target->remarks }}</p>@endif
                         </div>
                         <x-ui.status-badge :status="$target->status" class="shrink-0" />
                         <div class="shrink-0">

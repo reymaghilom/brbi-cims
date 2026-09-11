@@ -82,6 +82,7 @@ class DashboardData
             'workToday' => $this->workToday($user, $folderIds, $now),
             'recentActivity' => $recentActivity['events'],
             'recentActivityHasMore' => $recentActivity['hasMore'],
+            'recentActivityAll' => $recentActivity['allEvents'],
         ];
     }
 
@@ -370,12 +371,12 @@ class DashboardData
      * The existing AuditLog, scoped to the same folders, rendered through the audit vocabulary
      * ClientFolderOverview already owns — this deliberately does not introduce a second history.
      *
-     * Reads exactly one row more than the panel shows: that single extra row is what tells the view
-     * whether a "View All" is warranted, so the dashboard never loads the whole audit trail (nor
-     * runs a second COUNT over it) just to answer "is there a sixth?".
+     * The card still receives only the three newest entries. The complete mapped collection is
+     * retained solely for the established View All modal, avoiding the incorrect Client Folders
+     * navigation without introducing another route or another database query.
      *
      * @param  Collection<int, int>  $folderIds
-     * @return array{events: array<int, array{label: string, icon: string, client: string, user: ?string, at: ?CarbonImmutable}>, hasMore: bool}
+     * @return array{events: array<int, array{label: string, icon: string, client: string, user: ?string, at: ?CarbonImmutable}>, hasMore: bool, allEvents: array<int, array{label: string, icon: string, client: string, user: ?string, at: ?CarbonImmutable}>}
      */
     private function recentActivity(Collection $folderIds, string $timezone): array
     {
@@ -384,26 +385,29 @@ class DashboardData
             ->with(['clientFolder:id,display_name', 'user:id,full_name'])
             ->latest('created_at')
             ->latest('id')
-            ->limit(self::RECENT_ACTIVITY_LIMIT + 1)
             ->get(['id', 'user_id', 'client_folder_id', 'action', 'created_at']);
 
-        return [
-            'events' => $events
-                ->take(self::RECENT_ACTIVITY_LIMIT)
-                ->map(function (AuditLog $event) use ($timezone): array {
-                    $definition = ClientFolderOverview::activityLabel($event->action);
+        $mappedEvents = $events
+            ->map(function (AuditLog $event) use ($timezone): array {
+                $definition = ClientFolderOverview::activityLabel($event->action);
 
-                    return [
-                        'label' => $definition['label'],
-                        'icon' => $definition['icon'],
-                        'client' => $event->clientFolder?->display_name ?? 'Unnamed client',
-                        'user' => $event->user?->full_name,
-                        'at' => $event->created_at?->timezone($timezone),
-                    ];
-                })
+                return [
+                    'label' => $definition['label'],
+                    'icon' => $definition['icon'],
+                    'client' => $event->clientFolder?->display_name ?? 'Unnamed client',
+                    'user' => $event->user?->full_name,
+                    'at' => $event->created_at?->timezone($timezone),
+                ];
+            })
+            ->values();
+
+        return [
+            'events' => $mappedEvents
+                ->take(self::RECENT_ACTIVITY_LIMIT)
                 ->values()
                 ->all(),
             'hasMore' => $events->count() > self::RECENT_ACTIVITY_LIMIT,
+            'allEvents' => $mappedEvents->all(),
         ];
     }
 }

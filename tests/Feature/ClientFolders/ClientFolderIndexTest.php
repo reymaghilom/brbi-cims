@@ -4,6 +4,7 @@ namespace Tests\Feature\ClientFolders;
 
 use App\Enums\ClientFolderStatus;
 use App\Enums\UserStatus;
+use App\Models\CibiReport;
 use App\Models\ClientFolder;
 use App\Models\User;
 use App\Services\ClientFolders\ClientFolderBrowser;
@@ -137,8 +138,9 @@ class ClientFolderIndexTest extends TestCase
         $ci = User::factory()->create();
         ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'progress_percent' => 65]);
 
-        $this->actingAs($ci)->get(route('client-folders.index'))
-            ->assertOk()
+        $response = $this->actingAs($ci)->get(route('client-folders.index'));
+
+        $response->assertOk()
             ->assertSee('client-folder-browser-layout', false)
             ->assertSee('client-folder-grid', false)
             ->assertSee('role="listbox"', false)
@@ -196,7 +198,7 @@ class ClientFolderIndexTest extends TestCase
             'progress_percent' => 40,
         ]);
 
-        $this->actingAs($ci)->get(route('client-folders.index'))
+        $response = $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('PREVIEW CLIENT')
             ->assertSee('Assigned Investigator')
@@ -208,33 +210,216 @@ class ClientFolderIndexTest extends TestCase
             ->assertDontSee('Client Information')
             ->assertDontSee(route('client-folders.client-information.edit', $folder), false)
             ->assertSee(route('client-folders.cibi-report.edit', $folder), false)
-            ->assertSee(route('client-folders.income-sources.index', $folder), false)
-            ->assertSee('data-modal-open="business-report-dialog"', false)
-            ->assertSee('data-business-report-url="'.route('client-folders.income-sources.index', $folder).'"', false)
+            ->assertSee(route('client-folders.income-sources.manage', $folder), false)
+            ->assertDontSee('data-business-report-url', false)
             ->assertSee('data-business-report-frame', false)
-            ->assertSee(route('client-folders.generated-reports.index', $folder), false)
+            ->assertSee(route('client-folders.residence-business.edit', $folder), false)
+            ->assertSee(route('client-folders.activities.index', $folder), false)
+            ->assertDontSee('Generated Reports')
+            ->assertDontSee(route('client-folders.generated-reports.index', $folder), false)
             ->assertDontSee('/client-folders/'.$folder->id.'/media', false);
+
+        $html = $response->getContent();
+        $templateStart = strpos($html, 'id="client-folder-preview-'.$folder->id.'"');
+        $navStart = strpos($html, '<nav class="folder-contents-nav', $templateStart);
+        $navEnd = strpos($html, '</nav>', $navStart);
+        $sidePanelNavigation = substr($html, $navStart, $navEnd + 6 - $navStart);
+        $this->assertSame(4, substr_count($sidePanelNavigation, 'class="folder-content-link"'));
+        $this->assertStringContainsString('CIBI Report', $sidePanelNavigation);
+        $this->assertStringContainsString('Business / Income Sources', $sidePanelNavigation);
+        $this->assertStringContainsString('href="'.route('client-folders.income-sources.manage', $folder).'" class="folder-content-link"', $sidePanelNavigation);
+        $this->assertStringNotContainsString('data-modal-open="business-report-dialog"', $sidePanelNavigation);
+        $this->assertStringNotContainsString('data-business-report-url', $sidePanelNavigation);
+        $this->assertStringContainsString('Residence &amp; Business Report', $sidePanelNavigation);
+        $this->assertStringContainsString('CI Activities', $sidePanelNavigation);
+        $this->assertStringNotContainsString('Generated Reports', $sidePanelNavigation);
+
+        $this->actingAs($ci)
+            ->get(route('client-folders.income-sources.manage', $folder))
+            ->assertOk()
+            ->assertSee('Business / Income Sources')
+            ->assertSee('data-business-activities-layout', false)
+            ->assertSee('data-add-business-template-select', false)
+            ->assertDontSee('data-folder-browser', false);
     }
 
-    public function test_rename_and_recycle_actions_use_accessible_modals_and_existing_backend_routes(): void
+    public function test_side_panel_cibi_row_always_uses_navigation_chevron_regardless_of_saved_report(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+
+        $sidePanelCibi = function (string $html) use ($folder): string {
+            $marker = 'data-cibi-report-url="'.route('client-folders.cibi-report.edit', $folder).'"';
+            $markerPosition = strpos($html, $marker);
+            $start = strrpos(substr($html, 0, $markerPosition), '<a ');
+            $end = strpos($html, '</a>', $markerPosition);
+
+            return substr($html, $start, $end + 4 - $start);
+        };
+
+        $withoutReport = $this->actingAs($ci)
+            ->get(route('client-folders.index'))
+            ->assertOk()
+            ->assertSee('data-cibi-report-stay', false)
+            ->getContent();
+        $unsavedRow = $sidePanelCibi($withoutReport);
+        $this->assertStringContainsString('CIBI Report', $unsavedRow);
+        $this->assertStringContainsString('data-modal-open="cibi-report-dialog"', $unsavedRow);
+        $this->assertStringContainsString('d="m9 5 7 7-7 7"', $unsavedRow);
+        $this->assertStringNotContainsString('>Add<', $unsavedRow);
+        $this->assertStringNotContainsString('>Open<', $unsavedRow);
+        $this->assertStringNotContainsString('d="M12 5v14M5 12h14"', $unsavedRow);
+        $this->assertStringNotContainsString('d="m4 20 4.2-1 10.4-10.4a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"', $unsavedRow);
+
+        CibiReport::factory()->create([
+            'client_folder_id' => $folder->id,
+            'co_maker_id' => null,
+            'ci_in_charge_id' => $ci->id,
+        ]);
+
+        $withReport = $this->get(route('client-folders.index'))->assertOk()->getContent();
+        $savedRow = $sidePanelCibi($withReport);
+        $this->assertStringContainsString('CIBI Report', $savedRow);
+        $this->assertStringContainsString('data-modal-open="cibi-report-dialog"', $savedRow);
+        $this->assertStringContainsString('d="m9 5 7 7-7 7"', $savedRow);
+        $this->assertStringNotContainsString('>Add<', $savedRow);
+        $this->assertStringNotContainsString('>Open<', $savedRow);
+        $this->assertStringNotContainsString('d="M12 5v14M5 12h14"', $savedRow);
+        $this->assertStringNotContainsString('d="m4 20 4.2-1 10.4-10.4a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"', $savedRow);
+
+        $javascript = file_get_contents(resource_path('js/app.js'));
+        $this->assertStringContainsString('dialog.close();', $javascript);
+        $this->assertStringNotContainsString('folderBrowserCibiLinkHtml', $javascript);
+    }
+
+    public function test_delete_menu_is_visible_to_both_ci_grades_and_administrator(): void
+    {
+        $assignedCi = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $assignedCi->id]);
+        $actors = [
+            $assignedCi,
+            User::factory()->seniorCreditInvestigator()->create(),
+            User::factory()->administrator()->create(),
+        ];
+
+        foreach ($actors as $actor) {
+            $html = $this->actingAs($actor)->get(route('client-folders.index'))->assertOk()->getContent();
+            $start = strpos($html, 'id="client-folder-menu-'.$folder->id.'"');
+            $end = strpos($html, '</div>', $start);
+            $menu = substr($html, $start, $end + 6 - $start);
+
+            $this->assertStringContainsString('data-modal-open="dashboard-delete-dialog-'.$folder->id.'"', $menu);
+            $this->assertStringContainsString('d="M4.5 7h15M9 3.5h6L16 7H8l1-3.5ZM7 7l1 13h8l1-13M10 10v7M14 10v7"', $menu);
+            $this->assertMatchesRegularExpression('/Delete Permanently\s*<\/button>/', $menu);
+            $this->assertStringNotContainsString('Recycle Bin', $html);
+            $this->assertStringNotContainsString('Move to Recycle Bin', $html);
+        }
+    }
+
+    public function test_permanent_delete_modal_distinguishes_empty_and_data_containing_folders_with_icon_actions(): void
+    {
+        $administrator = User::factory()->administrator()->create();
+        $assignedCi = User::factory()->create();
+        $emptyFolder = ClientFolder::factory()->create(['assigned_ci_id' => $assignedCi->id]);
+        $dataFolder = ClientFolder::factory()->create(['assigned_ci_id' => $assignedCi->id]);
+        CibiReport::factory()->create([
+            'client_folder_id' => $dataFolder->id,
+            'ci_in_charge_id' => $assignedCi->id,
+        ]);
+
+        $html = $this->actingAs($administrator)->get(route('client-folders.index'))->assertOk()->getContent();
+        $deleteModal = static function (ClientFolder $folder) use ($html): string {
+            $start = strpos($html, 'id="dashboard-delete-dialog-'.$folder->id.'"');
+            $end = strpos($html, '</dialog>', $start);
+
+            return substr($html, $start, $end + 9 - $start);
+        };
+
+        $emptyModal = $deleteModal($emptyFolder);
+        $this->assertStringContainsString('Delete Client Folder Permanently?', $emptyModal);
+        $this->assertStringContainsString('data-folder-delete-empty-warning', $emptyModal);
+        $this->assertStringContainsString('Are you sure you want to permanently delete this client folder?', $emptyModal);
+        $this->assertStringContainsString('This action cannot be undone.', $emptyModal);
+        $this->assertStringNotContainsString('data-folder-delete-data-warning', $emptyModal);
+
+        $dataModal = $deleteModal($dataFolder);
+        $this->assertStringContainsString('data-folder-delete-data-warning', $dataModal);
+        $this->assertStringContainsString('already contains saved data', $dataModal);
+        $this->assertStringContainsString('permanently remove the folder and its related records', $dataModal);
+        $this->assertStringContainsString('cannot be recovered', $dataModal);
+        $this->assertStringContainsString('Are you sure you want to continue?', $dataModal);
+        $this->assertStringContainsString('d="M12 3 2.8 20h18.4L12 3Z"', $dataModal);
+
+        foreach ([$emptyModal, $dataModal] as $modal) {
+            $this->assertStringContainsString('data-modal-close class="ui-button-secondary shrink-0 whitespace-nowrap"', $modal);
+            $this->assertStringContainsString('d="m6 6 12 12M18 6 6 18"', $modal);
+            $this->assertMatchesRegularExpression('/Cancel\s*<\/button>/', $modal);
+            $this->assertStringContainsString('class="ui-button-danger shrink-0 whitespace-nowrap"', $modal);
+            $this->assertStringContainsString('d="M4.5 7h15M9 3.5h6L16 7H8l1-3.5ZM7 7l1 13h8l1-13M10 10v7M14 10v7"', $modal);
+            $this->assertMatchesRegularExpression('/Delete Permanently\s*<\/button>/', $modal);
+        }
+
+        $this->assertNotNull(ClientFolder::find($emptyFolder->id));
+        $this->assertNotNull(ClientFolder::find($dataFolder->id));
+        $this->assertStringNotContainsString('Move to Recycle Bin', $html);
+    }
+
+    public function test_rename_action_uses_an_accessible_modal_and_the_existing_backend_route(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'MODAL CLIENT']);
 
-        $this->actingAs($ci)->get(route('client-folders.index'))
+        $response = $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('data-modal-open="folder-rename-dialog-'.$folder->id.'"', false)
             ->assertSee('id="folder-rename-dialog-'.$folder->id.'"', false)
             ->assertSee('action="'.route('client-folders.update-name', $folder).'"', false)
             ->assertSee('data-folder-rename-form', false)
-            ->assertSee('name="display_name"', false)
+            ->assertSee('data-folder-edit-action', false)
+            ->assertSeeText('Edit Folder')
+            ->assertSee('name="last_name"', false)
+            ->assertSee('name="first_name"', false)
+            ->assertSee('name="middle_name"', false)
+            ->assertSee('name="suffix"', false)
+            ->assertDontSee('name="display_name"', false)
             ->assertSee('autofocus', false)
-            ->assertSee('>Cancel<', false)
-            ->assertSee('>Rename<', false)
-            ->assertSee('data-modal-open="dashboard-recycle-dialog-'.$folder->id.'"', false)
-            ->assertSee('action="'.route('client-folders.destroy', $folder).'"', false)
-            ->assertSee('data-folder-recycle-form', false)
-            ->assertSee('restored according to the existing authorization rules');
+            ->assertSeeText('Cancel')
+            ->assertSee('data-folder-update-action', false)
+            ->assertSee('data-folder-edit-notice', false)
+            ->assertSee('role="status" aria-live="polite" data-folder-edit-notice hidden', false)
+            ->assertSee('border-progress/30 bg-progress-soft', false)
+            ->assertSeeText('Edit Folder')
+            ->assertDontSeeText('Update Folder')
+            ->assertDontSee('>Rename<', false)
+            ->assertDontSee('data-modal-open="dashboard-recycle-dialog-'.$folder->id.'"', false)
+            ->assertDontSee('data-folder-recycle-form', false);
+
+        $html = $response->getContent();
+        $modalStart = strpos($html, 'id="folder-rename-dialog-'.$folder->id.'"');
+        $modalEnd = strpos($html, '</dialog>', $modalStart);
+        $notice = strpos($html, 'No changes detected.');
+        $this->assertGreaterThan($modalStart, $notice);
+        $this->assertLessThan($modalEnd, $notice);
+        $footer = strpos($html, '<footer', $modalStart);
+        $this->assertGreaterThan($footer, $notice);
+        $this->assertSame(1, substr_count($html, 'No changes detected.'));
+
+        $source = file_get_contents(resource_path('views/dashboard/_folder-browser.blade.php'));
+        $this->assertStringContainsString('title="Edit Folder"', $source);
+        $this->assertStringContainsString("description=\"Edit the client's name details. All related folder records will remain unchanged.\"", $source);
+        $this->assertStringContainsString('data-folder-edit-action><x-ui.icon name="edit" size="size-4" />Edit Folder</button>', $source);
+        $this->assertStringContainsString('class="flex w-full flex-col gap-2 md:flex-row md:items-center md:gap-3"', $source);
+        $this->assertStringContainsString('md:flex-1 md:whitespace-nowrap" role="status"', $source);
+        $this->assertStringContainsString('class="flex flex-col gap-2 sm:flex-row sm:justify-end md:ml-auto md:shrink-0"', $source);
+        $this->assertStringContainsString('data-modal-close class="ui-button-secondary w-full shrink-0 whitespace-nowrap sm:w-auto"><x-ui.icon name="close"', $source);
+        $this->assertStringContainsString('data-folder-edit-notice hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected.</p>', $source);
+        $this->assertStringContainsString('class="ui-button-primary w-full shrink-0 whitespace-nowrap sm:w-auto" data-folder-update-action><x-ui.icon name="edit" size="size-4" />Edit Folder</button>', $source);
+
+        $this->actingAs($ci)->get(route('client-folders.edit-name', $folder))
+            ->assertOk()
+            ->assertSeeText('Edit Folder')
+            ->assertDontSeeText('Update Folder')
+            ->assertDontSeeText('Rename Client Folder');
     }
 
     public function test_create_uses_the_shared_centered_modal_and_open_actions_share_the_folder_contents_route(): void
@@ -311,23 +496,18 @@ class ClientFolderIndexTest extends TestCase
             ->from(route('client-folders.index'))
             ->patch(route('client-folders.update-name', $folder), [
                 'rename_folder_id' => $folder->id,
-                'display_name' => '',
+                'last_name' => '',
+                'first_name' => $folder->first_name,
             ])
             ->assertRedirect(route('client-folders.index'))
-            ->assertSessionHasErrors('display_name')
+            ->assertSessionHasErrors('last_name')
             ->assertSessionHasInput('rename_folder_id', (string) $folder->id);
 
-        $this->withSession([
-            '_old_input' => ['rename_folder_id' => (string) $folder->id, 'display_name' => ''],
-        ])->withViewErrors([
-            'display_name' => 'The display name field is required.',
-        ])->get(route('client-folders.index'))
+        $this->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('id="folder-rename-dialog-'.$folder->id.'"', false)
             ->assertSee('data-open-on-error="true"', false)
-            ->assertSee('aria-invalid="true"', false)
-            ->assertSee('id="folder-display-name-error-'.$folder->id.'"', false)
-            ->assertSee('role="alert"', false);
+            ->assertSee('id="folder-last-name-error-'.$folder->id.'"', false);
     }
 
     public function test_invalid_filters_are_rejected_without_executing_an_unbounded_query(): void

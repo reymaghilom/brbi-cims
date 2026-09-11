@@ -72,7 +72,7 @@ class ClientFolderContentsTest extends TestCase
         $contents = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk();
         $contents->assertDontSee(route('client-folders.client-information.edit', $folder), false);
         $contents->assertSee('CI Activities')->assertSee(route('client-folders.activities.index', $folder), false);
-        $contents->assertSee('CI / BI Report')->assertSee(route('client-folders.cibi-report.edit', $folder), false)->assertSee('data-modal-open="cibi-report-dialog"', false);
+        $contents->assertSee('CIBI Report')->assertSee(route('client-folders.cibi-report.edit', $folder), false)->assertSee('data-modal-open="cibi-report-dialog"', false);
         $contents->assertSee('Business / Income Sources')
             ->assertSee(route('client-folders.income-sources.manage', $folder), false)
             ->assertSee('id="open-business-report"', false)
@@ -97,6 +97,28 @@ class ClientFolderContentsTest extends TestCase
                 ->assertSee($title)
                 ->assertSee('No later-phase business workflow has been implemented.');
         }
+    }
+
+    public function test_co_maker_module_cards_link_directly_to_the_exact_person_scoped_destinations(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'DIRECT NAVIGATION CO MAKER']);
+        $personParams = ['person' => 'co-maker', 'co_maker_id' => $coMaker->id];
+
+        $response = $this->actingAs($ci)
+            ->get(route('client-folders.show', [$folder] + $personParams))
+            ->assertOk();
+
+        $response->assertSee(route('client-folders.cibi-report.edit', [$folder] + $personParams))
+            ->assertSee(route('client-folders.income-sources.manage', [$folder] + $personParams))
+            ->assertSee(route('client-folders.residence-business.edit', [$folder] + $personParams))
+            ->assertSee(route('client-folders.activities.index', [$folder] + $personParams))
+            ->assertDontSee('Generated Reports');
+
+        $this->actingAs($ci)->get(route('client-folders.income-sources.manage', [$folder] + $personParams))->assertOk()->assertSee('Business / Income Sources');
+        $this->actingAs($ci)->get(route('client-folders.residence-business.edit', [$folder] + $personParams))->assertOk()->assertSee('Residence &amp; Business Report', false);
+        $this->actingAs($ci)->get(route('client-folders.activities.index', [$folder] + $personParams))->assertOk()->assertSee('CI Activities');
     }
 
     public function test_other_ci_can_open_folder_module_placeholder_for_a_folder_assigned_to_another_ci(): void
@@ -431,7 +453,7 @@ class ClientFolderContentsTest extends TestCase
         $ci = User::factory()->create(['full_name' => 'REY C. MAGHILOM']);
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'REYES, JUAN']);
 
-        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'REYES, JUAN JR.'])
+        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['last_name' => 'REYES', 'first_name' => 'JUAN', 'suffix' => 'JR.'])
             ->assertRedirect();
 
         $this->assertDatabaseHas('audit_logs', [
@@ -450,21 +472,21 @@ class ClientFolderContentsTest extends TestCase
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'NAME A']);
 
-        foreach (['NAME B', 'NAME C', 'NAME D'] as $newName) {
-            $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => $newName]);
+        foreach (['B', 'C', 'D'] as $firstName) {
+            $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['last_name' => 'NAME', 'first_name' => $firstName]);
         }
 
         $renames = AuditLog::where('client_folder_id', $folder->id)->where('action', 'client_folder.renamed')->orderBy('id')->get();
         $this->assertCount(3, $renames);
-        $this->assertSame(['NAME A', 'NAME B', 'NAME C'], $renames->pluck('metadata.previous_name')->all());
-        $this->assertSame(['NAME B', 'NAME C', 'NAME D'], $renames->pluck('metadata.new_name')->all());
+        $this->assertSame(['NAME A', 'NAME, B', 'NAME, C'], $renames->pluck('metadata.previous_name')->all());
+        $this->assertSame(['NAME, B', 'NAME, C', 'NAME, D'], $renames->pluck('metadata.new_name')->all());
     }
 
     public function test_client_folder_contents_no_longer_shows_a_folder_activity_or_history_card(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED']);
+        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['last_name' => 'Renamed', 'first_name' => 'Client']);
 
         $this->actingAs($ci)->get(route('client-folders.show', $folder))
             ->assertOk()
@@ -493,13 +515,20 @@ class ClientFolderContentsTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER TARGET']);
         $this->activityLog($ci, $folder, 'residence_check.updated', 'residence_business_report', ['residence_check_id' => 1, 'co_maker_id' => $coMaker->id]);
+        $this->activityLog($ci, $folder, 'business_report.updated', 'income_sources', ['income_source_id' => 1, 'co_maker_id' => $coMaker->id]);
         $this->activityLog($ci, $folder, 'cibi_report.updated', 'cibi_report', ['report_id' => 1, 'co_maker_id' => null]);
 
         $response = $this->actingAs($ci)
             ->get(route('client-folders.show', $folder).'?person=co-maker&co_maker_id='.$coMaker->id)
             ->assertOk();
 
-        $response->assertSee('Residence Check updated')->assertDontSee('CI/BI updated');
+        $response->assertSee('Residence Check updated')->assertSee('Business Report saved')->assertDontSee('CI/BI updated');
+        $content = $response->getContent();
+        $modalStart = strpos($content, 'id="recent-activity-dialog"');
+        $modalEnd = strpos($content, '</dialog>', $modalStart);
+        $modalHtml = substr($content, $modalStart, $modalEnd - $modalStart);
+        $this->assertSame(2, substr_count($modalHtml, 'relative grid min-w-0 grid-cols-[1rem_minmax(0,1fr)]'));
+        $this->assertSame(1, substr_count($modalHtml, 'border-l border-dashed border-ui-border-strong'));
     }
 
     public function test_another_co_makers_activity_never_leaks_into_the_selected_co_maker(): void
@@ -521,7 +550,7 @@ class ClientFolderContentsTest extends TestCase
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'BEFORE RENAME']);
         $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER X']);
-        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'AFTER RENAME']);
+        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['last_name' => 'After', 'first_name' => 'Rename']);
 
         $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->assertSee('Folder renamed');
         $this->actingAs($ci)
@@ -587,7 +616,13 @@ class ClientFolderContentsTest extends TestCase
         $this->assertStringNotContainsString('max-h-', $asideHtml);
         $this->assertStringNotContainsString('xl:sticky', $asideHtml);
         $this->assertStringContainsString('max-w-2xl', $content);
-        $this->assertStringContainsString('border-b border-ui-border px-1 py-4 first:pt-0 last:border-b-0 last:pb-0', $content);
+        $modalStart = strpos($content, 'id="recent-activity-dialog"');
+        $modalEnd = strpos($content, '</dialog>', $modalStart);
+        $modalHtml = substr($content, $modalStart, $modalEnd - $modalStart);
+        $this->assertSame(2, substr_count($modalHtml, 'relative grid min-w-0 grid-cols-[1rem_minmax(0,1fr)]'));
+        $this->assertSame(1, substr_count($modalHtml, 'border-l border-dashed border-ui-border-strong'));
+        $this->assertStringContainsString('min-w-0 rounded-control border border-ui-border bg-surface-subtle', $modalHtml);
+        $this->assertStringContainsString('by '.$ci->full_name, $modalHtml);
     }
 
     public function test_recent_activity_query_count_is_flat_regardless_of_activity_volume(): void
@@ -612,7 +647,7 @@ class ClientFolderContentsTest extends TestCase
         $ci = User::factory()->create(['full_name' => 'REY C. MAGHILOM']);
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'display_name' => 'BEFORE'])
             ->fresh();
-        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'AFTER']);
+        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['last_name' => 'After', 'first_name' => 'Client']);
 
         $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
@@ -628,8 +663,10 @@ class ClientFolderContentsTest extends TestCase
         $card = $this->cibiCardHtml($ci, $folder);
 
         $this->assertStringContainsString('Add</a>', $card);
+        $this->assertStringContainsString('data-modal-title="Create CIBI Report"', $card);
         $this->assertStringContainsString('d="M12 5v14M5 12h14"', $card);
         $this->assertStringNotContainsString('Open</a>', $card);
+        $this->assertDatabaseCount('cibi_reports', 0);
     }
 
     public function test_applicant_with_cibi_report_shows_open_with_edit_icon(): void
@@ -641,6 +678,7 @@ class ClientFolderContentsTest extends TestCase
         $card = $this->cibiCardHtml($ci, $folder);
 
         $this->assertStringContainsString('Open</a>', $card);
+        $this->assertStringContainsString('data-modal-title="CIBI Report"', $card);
         $this->assertStringContainsString('d="m4 20 4.2-1 10.4-10.4a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"', $card);
         $this->assertStringNotContainsString('Add</a>', $card);
     }
@@ -711,7 +749,8 @@ class ClientFolderContentsTest extends TestCase
         $this->assertStringContainsString('d="m5 9 7 7 7-7"', $card);
         $this->assertStringContainsString('Download PDF', $card);
         $this->assertStringContainsString('Download Excel', $card);
-        $this->assertStringContainsString('form="dashboard-cibi-export-pdf-form"', $card);
+        $this->assertStringContainsString('href="'.route('client-folders.cibi-report.export-pdf', $folder).'"', $card);
+        $this->assertStringNotContainsString('form="dashboard-cibi-export-pdf-form"', $card);
         $this->assertStringContainsString('form="dashboard-cibi-export-excel-form"', $card);
     }
 

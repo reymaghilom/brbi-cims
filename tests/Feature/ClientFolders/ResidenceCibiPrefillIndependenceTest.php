@@ -50,6 +50,17 @@ class ResidenceCibiPrefillIndependenceTest extends TestCase
         $xpath = $this->xpath($response->getContent());
         $this->assertSame('2026-06-03', $xpath->query("//*[@name='start_date']")->item(0)->getAttribute('value'));
         $this->assertSame('Zone 3, Igpit, Opol, Misamis Oriental', trim($xpath->query("//*[@name='personal_snapshot[present_address]']")->item(0)->textContent));
+
+        $folderContents = $this->actingAs($ci)
+            ->get(route('client-folders.show', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]))
+            ->assertOk()
+            ->getContent();
+        $cardStart = strpos($folderContents, 'id="open-cibi-report"');
+        $cardEnd = strpos($folderContents, '</article>', $cardStart);
+        $cibiCard = substr($folderContents, $cardStart, $cardEnd - $cardStart);
+        $this->assertStringContainsString('Add</a>', $cibiCard);
+        $this->assertStringContainsString('d="M12 5v14M5 12h14"', $cibiCard);
+        $this->assertStringNotContainsString('Open</a>', $cibiCard);
         $this->assertDatabaseCount('cibi_reports', 0);
     }
 

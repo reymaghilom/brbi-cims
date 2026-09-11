@@ -67,10 +67,10 @@ class GlobalReportsPageTest extends TestCase
         $this->assertStringNotContainsString('Client No.', $response->getContent());
         $this->assertStringNotContainsString('client no.', $response->getContent());
 
-        // The filter actions are compact toolbar controls, not page-level CTAs, and they sit on
-        // the same row as the controls they apply rather than on a second line of their own.
+        // Filters apply immediately; Clear Filters is the only utility action left in the toolbar.
         $html = $response->getContent();
-        $this->assertStringContainsString('class="ui-button-primary-compact shrink-0 px-3">Apply Filters', $html);
+        $this->assertStringNotContainsString('Apply Filters', $html);
+        $this->assertSame(1, substr_count($html, 'Clear Filters</a>'));
         $this->assertStringContainsString('xl:flex-nowrap', $html, 'The desktop toolbar is one line.');
         $this->assertStringNotContainsString('lg:grid-cols-12', $html, 'The wrapping grid toolbar is gone.');
         // Search is the one flexible control; every other one keeps a fixed compact width.
@@ -498,7 +498,7 @@ class GlobalReportsPageTest extends TestCase
         $this->folder($ci, 'ALPHA, CLIENT');
 
         $html = $this->actingAs($ci)->get(route('reports.index'))->assertOk()->getContent();
-        $toolbar = substr($html, strpos($html, 'Filter reports'), strpos($html, 'Apply Filters') - strpos($html, 'Filter reports'));
+        $toolbar = substr($html, strpos($html, 'Filter reports'), strpos($html, 'reports-table-title') - strpos($html, 'Filter reports'));
 
         // One trigger, with its default label.
         $this->assertSame(1, substr_count($toolbar, 'data-reports-date-range'));
@@ -510,8 +510,7 @@ class GlobalReportsPageTest extends TestCase
         $popover = substr($toolbar, strpos($toolbar, 'data-reports-date-range'));
         $this->assertStringContainsString('name="from"', $popover, 'The From field lives inside the popover, not the toolbar row.');
         $this->assertStringContainsString('name="to"', $popover);
-        $this->assertStringContainsString('Clear', $popover);
-        $this->assertStringContainsString('Apply', $popover);
+        $this->assertStringNotContainsString('>Apply<', $popover);
 
         // The retired always-visible toolbar fields are gone.
         $this->assertStringNotContainsString('aria-label="Updated from"', $html);
@@ -546,19 +545,16 @@ class GlobalReportsPageTest extends TestCase
         $this->assertStringContainsString('name="person"', $html);
         $this->assertStringContainsString('Client Type', $html);
 
-        // Clear Filters stays compact and lighter than Apply Filters, on the same baseline. Its
-        // visible label now names the action outright, so it no longer needs an aria-label to tell
-        // it apart from the date popover's own Clear (which drops only the two dates).
-        $this->assertStringContainsString('class="ui-button-secondary-compact shrink-0 px-2.5">Clear Filters', $html);
+        // Clear Filters is the only filter utility action and keeps its exact visible label.
+        $this->assertStringContainsString('data-reports-clear-filters', $html);
+        $this->assertStringContainsString('class="ui-button-secondary w-full shrink-0 sm:w-auto"', $html);
         $this->assertStringNotContainsString('aria-label="Clear filters"', $html);
-        // Scoped to the toolbar control (shrink-0); the date popover keeps its own plain Clear.
-        $this->assertStringNotContainsString('shrink-0 px-2.5">Clear<', $html, 'The toolbar reset action reads Clear Filters now.');
-        $this->assertStringContainsString('class="ui-button-secondary-compact px-2.5">Clear<', $html, "The date popover's own Clear is unchanged.");
-        $this->assertStringContainsString('class="ui-button-primary-compact shrink-0 px-3">Apply Filters', $html);
+        $this->assertStringNotContainsString('Apply Filters', $html);
+        $this->assertStringNotContainsString('>Apply<', $html);
         $this->assertStringNotContainsString('>Reset<', $html, 'The toolbar action reads Clear Filters now.');
 
-        // Same target as before: the current tab with every other filter dropped.
-        $this->assertStringContainsString(route('reports.index', ['tab' => 'all']).'" class="ui-button-secondary-compact shrink-0 px-2.5">Clear Filters', $html);
+        // Reset returns every control, including Status, to its default-all state.
+        $this->assertStringContainsString('href="'.route('reports.index').'"', $html);
     }
 
     public function test_the_date_range_filters_survives_other_filters_and_can_be_cleared(): void
@@ -1040,6 +1036,56 @@ class GlobalReportsPageTest extends TestCase
         $this->assertSame($before, DB::table('client_folders')->count());
         $this->assertSame(0, GeneratedReport::query()->count());
         $this->assertNotNull($folder->id);
+    }
+
+    public function test_report_filters_auto_refresh_through_the_shared_async_listing(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folder($ci, 'DELA CRUZ, JUAN');
+        $today = now(config('cims.display_timezone'))->toDateString();
+
+        $html = $this->actingAs($ci)->get(route('reports.index', [
+            'search' => 'DELA', 'client_folder_id' => $folder->id, 'tab' => 'completed',
+            'report_type' => 'cibi', 'person' => 'applicant', 'from' => $today, 'to' => $today,
+            'sort' => 'client', 'direction' => 'desc',
+        ]))->assertOk()->getContent();
+
+        // Every select and both date controls drive the existing fragment loader. Clear Filters is
+        // the only filter utility action; there is no submit control to wait for.
+        $this->assertSame(5, substr_count($html, 'data-reports-auto-filter'));
+        $this->assertSame(1, substr_count($html, 'Clear Filters</a>'));
+        $this->assertStringNotContainsString('Apply Filters', $html);
+        $this->assertStringNotContainsString('>Apply<', $html);
+
+        $script = file_get_contents(resource_path('js/app.js'));
+        $filtersStart = strpos($script, "document.querySelectorAll('[data-reports-filters]')");
+        $filtersScript = substr($script, $filtersStart, strpos($script, "document.querySelectorAll('[data-ci-activities-listing]')", $filtersStart) - $filtersStart);
+
+        $this->assertStringContainsString("form.addEventListener('change'", $filtersScript);
+        $this->assertStringContainsString("event.target.matches('[data-reports-auto-filter]')", $filtersScript);
+        $this->assertStringContainsString("region.dispatchEvent(new CustomEvent('async-list:load'", $filtersScript);
+        $this->assertStringContainsString("url.searchParams.delete('page')", $filtersScript);
+        $this->assertStringContainsString('new FormData(form)', $filtersScript);
+        $this->assertStringContainsString('from.value <= to.value', $filtersScript);
+        $this->assertStringContainsString('link !== clearFilters', $filtersScript);
+        $this->assertStringNotContainsString('clearFilters.hidden', $filtersScript);
+        $this->assertStringNotContainsString("form.addEventListener('submit'", $filtersScript);
+        $this->assertStringNotContainsString('window.location.assign', $filtersScript);
+
+        // The server-side fragment still applies every combined filter and preserves sort state;
+        // JavaScript changes only when that authoritative fragment is requested.
+        $fragment = $this->actingAs($ci)->withHeaders(['X-Requested-With' => 'XMLHttpRequest'])
+            ->get(route('reports.index', [
+                'search' => 'DELA', 'client_folder_id' => $folder->id, 'tab' => 'completed',
+                'report_type' => 'cibi', 'person' => 'applicant', 'from' => $today, 'to' => $today,
+                'sort' => 'client', 'direction' => 'desc',
+            ]))->assertOk();
+        $this->assertSame('DELA', $fragment->viewData('filters')['search']);
+        $this->assertSame('cibi', $fragment->viewData('filters')['report_type']);
+        $this->assertSame('applicant', $fragment->viewData('filters')['person']);
+        $this->assertSame('completed', $fragment->viewData('filters')['tab']);
+        $this->assertSame('client', $fragment->viewData('sort'));
+        $this->assertSame('desc', $fragment->viewData('direction'));
     }
 
     public function test_create_report_opens_the_existing_cibi_page_in_the_shared_modal(): void

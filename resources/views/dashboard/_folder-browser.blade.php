@@ -173,7 +173,7 @@
                                 <div id="client-folder-menu-{{ $clientFolder->id }}" class="client-folder-menu" role="menu" aria-label="Actions for {{ $clientFolder->display_name }}" hidden data-folder-action-menu>
                                     <a href="{{ route('client-folders.show', $clientFolder) }}" role="menuitem" class="client-folder-menu-item" data-folder-open-action><x-ui.icon name="open" size="size-4" />Open</a>
                                     @can('update', $clientFolder)
-                                        <button type="button" id="folder-rename-{{ $clientFolder->id }}" role="menuitem" class="client-folder-menu-item" data-modal-open="folder-rename-dialog-{{ $clientFolder->id }}"><x-ui.icon name="edit" size="size-4" />Rename</button>
+                                        <button type="button" id="folder-rename-{{ $clientFolder->id }}" role="menuitem" class="client-folder-menu-item" data-modal-open="folder-rename-dialog-{{ $clientFolder->id }}" data-folder-edit-action><x-ui.icon name="edit" size="size-4" />Edit Folder</button>
                                     @endcan
                                     @can('forceDelete', $clientFolder)
                                         <button type="button" id="dashboard-delete-{{ $clientFolder->id }}" role="menuitem" class="client-folder-menu-item text-danger hover:bg-danger-soft" data-modal-open="dashboard-delete-dialog-{{ $clientFolder->id }}"><x-ui.icon name="trash" size="size-4" />Delete Permanently</button>
@@ -215,12 +215,17 @@
         @php
             $renameHasError = (string) old('rename_folder_id') === (string) $clientFolder->id;
             $folderModules = [
-                ['label' => 'CI / BI Report', 'description' => 'Credit Investigation / Background Investigation', 'icon' => 'report', 'tone' => 'green', 'url' => route('client-folders.cibi-report.edit', $clientFolder)],
-                ['label' => 'Business / Income Sources', 'description' => 'Business information and income-source evaluation', 'icon' => 'folder', 'tone' => 'violet', 'url' => route('client-folders.income-sources.index', $clientFolder)],
+                ['label' => 'CIBI Report', 'description' => 'Credit Investigation / Background Investigation', 'icon' => 'report', 'tone' => 'green', 'url' => route('client-folders.cibi-report.edit', $clientFolder)],
+                ['label' => 'Business / Income Sources', 'description' => 'Business information and income-source evaluation', 'icon' => 'folder', 'tone' => 'violet', 'url' => route($folderBrowserContext === 'client_folders' ? 'client-folders.income-sources.manage' : 'client-folders.income-sources.index', $clientFolder)],
                 ['label' => 'Residence & Business Report', 'description' => 'Residence and business verification', 'icon' => 'report', 'tone' => 'orange', 'url' => route('client-folders.residence-business.edit', $clientFolder)],
                 ['label' => 'CI Activities', 'description' => 'Field investigation checklist and findings', 'icon' => 'activity', 'tone' => 'green', 'url' => route('client-folders.activities.index', $clientFolder)],
-                ['label' => 'Generated Reports', 'description' => 'PDF/DOCX reports ready for download and printing', 'icon' => 'report', 'tone' => 'red', 'url' => route('client-folders.generated-reports.index', $clientFolder)],
             ];
+            // Generated Reports is intentionally absent only from the main Client Folders
+            // right-side navigation. The shared Dashboard browser keeps its existing row, and no
+            // report-generation route or service is changed by this presentation-only filter.
+            if ($folderBrowserContext !== 'client_folders') {
+                $folderModules[] = ['label' => 'Generated Reports', 'description' => 'PDF/DOCX reports ready for download and printing', 'icon' => 'report', 'tone' => 'red', 'url' => route('client-folders.generated-reports.index', $clientFolder)];
+            }
         @endphp
         <template id="client-folder-preview-{{ $clientFolder->id }}" data-folder-preview-template data-folder-id="{{ $clientFolder->id }}">
             <div>
@@ -271,7 +276,7 @@
                     <h4 id="folder-contents-title-{{ $clientFolder->id }}" class="px-4 pb-1.5 pt-3 text-sm font-semibold">Folder Contents</h4>
                     <nav class="folder-contents-nav pb-2" aria-label="Folder contents for {{ $clientFolder->display_name }}">
                         @foreach($folderModules as $module)
-                            <a href="{{ $module['url'] }}" class="folder-content-link" @if($module['label'] === 'CI / BI Report') data-modal-open="cibi-report-dialog" data-cibi-report-url="{{ $module['url'] }}" @elseif($module['label'] === 'Business / Income Sources') data-modal-open="business-report-dialog" data-business-report-url="{{ $module['url'] }}" @endif>
+                            <a href="{{ $module['url'] }}" class="folder-content-link" @if($module['label'] === 'CIBI Report') data-modal-open="cibi-report-dialog" data-cibi-report-url="{{ $module['url'] }}" @elseif($module['label'] === 'Business / Income Sources' && $folderBrowserContext !== 'client_folders') data-modal-open="business-report-dialog" data-business-report-url="{{ $module['url'] }}" @endif>
                                 <span @class([
                                     'folder-content-icon',
                                     'bg-blue-50 text-blue-700' => $module['tone'] === 'blue',
@@ -291,33 +296,61 @@
         </template>
 
         @can('update', $clientFolder)
-            <x-ui.modal id="folder-rename-dialog-{{ $clientFolder->id }}" title="Rename Folder" size="max-w-md" :data-open-on-error="$renameHasError ? 'true' : 'false'">
+            <x-ui.modal id="folder-rename-dialog-{{ $clientFolder->id }}" title="Edit Folder" description="Edit the client's name details. All related folder records will remain unchanged." size="max-w-2xl" :data-open-on-error="$renameHasError ? 'true' : 'false'">
                 <form id="folder-rename-form-{{ $clientFolder->id }}" method="POST" action="{{ route('client-folders.update-name', $clientFolder) }}" data-folder-rename-form data-folder-id="{{ $clientFolder->id }}">
                     @csrf
                     @method('PATCH')
                     <input type="hidden" name="rename_folder_id" value="{{ $clientFolder->id }}">
                     <p class="mb-4 text-sm leading-5 text-text-muted">Current folder: <strong class="font-semibold text-text-main" data-folder-name-for="{{ $clientFolder->id }}">{{ $clientFolder->display_name }}</strong></p>
-                    <label for="folder-display-name-{{ $clientFolder->id }}" class="ui-label">Folder name <span class="text-danger" aria-hidden="true">*</span></label>
-                    <input id="folder-display-name-{{ $clientFolder->id }}" name="display_name" value="{{ (string) old('rename_folder_id') === (string) $clientFolder->id ? old('display_name') : $clientFolder->display_name }}" class="ui-control" required maxlength="255" autocomplete="off" autofocus @if($renameHasError) aria-invalid="true" aria-describedby="folder-display-name-error-{{ $clientFolder->id }}" @endif>
-                    <p id="folder-display-name-error-{{ $clientFolder->id }}" class="mt-2 text-sm font-semibold text-danger" role="alert" @if(! ($renameHasError && $errors->has('display_name'))) hidden @endif>{{ $renameHasError ? $errors->first('display_name') : '' }}</p>
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        @foreach([
+                            ['last_name', 'Last name', true, 'family-name', 100],
+                            ['first_name', 'First name', true, 'given-name', 100],
+                            ['middle_name', 'Middle name', false, 'additional-name', 100],
+                            ['suffix', 'Suffix', false, 'honorific-suffix', 30],
+                        ] as [$field, $label, $required, $autocomplete, $maxlength])
+                            @php($fieldHasError = $renameHasError && $errors->has($field))
+                            <div>
+                                <label for="folder-{{ str_replace('_', '-', $field) }}-{{ $clientFolder->id }}" class="ui-label">{{ $label }} @if($required)<span class="text-danger" aria-hidden="true">*</span>@else<span class="font-normal text-text-muted">(optional)</span>@endif</label>
+                                <input id="folder-{{ str_replace('_', '-', $field) }}-{{ $clientFolder->id }}" name="{{ $field }}" value="{{ $renameHasError ? old($field) : $clientFolder->{$field} }}" class="ui-control" @required($required) maxlength="{{ $maxlength }}" autocomplete="{{ $autocomplete }}" data-rename-field @if($field === 'last_name') autofocus @endif @if($fieldHasError) aria-invalid="true" aria-describedby="folder-{{ str_replace('_', '-', $field) }}-error-{{ $clientFolder->id }}" @endif>
+                                <p id="folder-{{ str_replace('_', '-', $field) }}-error-{{ $clientFolder->id }}" class="mt-2 text-sm font-semibold text-danger" role="alert" data-rename-error-for="{{ $field }}" @if(! $fieldHasError) hidden @endif>{{ $fieldHasError ? $errors->first($field) : '' }}</p>
+                            </div>
+                        @endforeach
+                    </div>
                 </form>
                 <x-slot:footer>
-                    <button type="button" data-modal-close class="ui-button-secondary">Cancel</button>
-                    <button type="submit" form="folder-rename-form-{{ $clientFolder->id }}" class="ui-button-primary">Rename</button>
+                    <div class="flex w-full flex-col gap-2 md:flex-row md:items-center md:gap-3">
+                        <p class="flex w-full items-start gap-1.5 rounded-control border border-progress/30 bg-progress-soft px-3 py-2 text-sm font-semibold text-progress md:min-w-0 md:flex-1 md:whitespace-nowrap" role="status" aria-live="polite" data-folder-edit-notice hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected.</p>
+                        <div class="flex flex-col gap-2 sm:flex-row sm:justify-end md:ml-auto md:shrink-0">
+                            <button type="button" data-modal-close class="ui-button-secondary w-full shrink-0 whitespace-nowrap sm:w-auto"><x-ui.icon name="close" size="size-4" />Cancel</button>
+                            <button type="submit" form="folder-rename-form-{{ $clientFolder->id }}" class="ui-button-primary w-full shrink-0 whitespace-nowrap sm:w-auto" data-folder-update-action><x-ui.icon name="edit" size="size-4" />Edit Folder</button>
+                        </div>
+                    </div>
                 </x-slot:footer>
             </x-ui.modal>
         @endcan
 
         @can('forceDelete', $clientFolder)
+            @php($folderHasMeaningfulData = $clientFolder->has_cibi_data || $clientFolder->has_co_maker_data || $clientFolder->has_income_source_data || $clientFolder->has_residence_business_data || $clientFolder->has_residence_check_data || $clientFolder->has_business_check_data || $clientFolder->has_activity_data || $clientFolder->has_media_data || $clientFolder->has_generated_report_data || $clientFolder->has_completion_data)
             <x-ui.modal id="dashboard-delete-dialog-{{ $clientFolder->id }}" title="Delete Client Folder Permanently?" size="max-w-md">
-                <p class="text-sm leading-6 text-text-muted">Are you sure you want to permanently delete <strong class="font-semibold text-text-main" data-folder-name-for="{{ $clientFolder->id }}">&ldquo;{{ $clientFolder->display_name }}&rdquo;</strong>?</p>
-                <p class="mt-3 text-sm leading-6 text-text-muted">This client folder and its owned records will be permanently deleted and cannot be restored.</p>
+                @if($folderHasMeaningfulData)
+                    <div class="flex items-start gap-3 rounded-control border border-danger/30 bg-danger-soft p-3.5 text-danger" role="alert" data-folder-delete-data-warning>
+                        <x-ui.icon name="warning" size="size-5" class="mt-0.5 shrink-0" aria-hidden="true" />
+                        <div class="min-w-0">
+                            <p class="text-sm font-semibold leading-6">This client folder already contains saved data. Deleting it will permanently remove the folder and its related records, and they cannot be recovered.</p>
+                            <p class="mt-2 text-sm font-bold leading-5">Are you sure you want to continue?</p>
+                        </div>
+                    </div>
+                @else
+                    <p class="text-sm leading-6 text-text-muted" data-folder-delete-empty-warning>Are you sure you want to permanently delete this client folder?</p>
+                    <p class="mt-2 text-sm leading-6 text-text-muted">This action cannot be undone.</p>
+                @endif
                 <x-slot:footer>
-                    <button type="button" data-modal-close class="ui-button-secondary">Cancel</button>
+                    <button type="button" data-modal-close class="ui-button-secondary shrink-0 whitespace-nowrap"><x-ui.icon name="close" size="size-4" />Cancel</button>
                     <form method="POST" action="{{ route('client-folders.destroy', $clientFolder) }}" data-folder-delete-form data-folder-id="{{ $clientFolder->id }}" data-folder-status="{{ $clientFolder->status->value }}">
                         @csrf
                         @method('DELETE')
-                        <button class="ui-button-danger">Delete Permanently</button>
+                        <button class="ui-button-danger shrink-0 whitespace-nowrap"><x-ui.icon name="trash" size="size-4" />Delete Permanently</button>
                     </form>
                 </x-slot:footer>
             </x-ui.modal>
@@ -325,7 +358,7 @@
     @endforeach
 
     @include('client-folders._create-modal')
-    <x-ui.cibi-report-modal />
+    <x-ui.cibi-report-modal :stay-on-page="$folderBrowserContext === 'client_folders'" />
     <x-ui.business-report-modal />
     </div>
 </section>

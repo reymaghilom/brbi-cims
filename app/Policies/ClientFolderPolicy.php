@@ -42,6 +42,6 @@ class ClientFolderPolicy
 
     public function forceDelete(User $user, ClientFolder $clientFolder): bool
     {
-        return $this->isAdministrator($user);
+        return $this->view($user, $clientFolder);
     }
 }

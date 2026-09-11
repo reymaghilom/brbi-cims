@@ -5,8 +5,11 @@ namespace Tests\Feature\ClientFolders;
 use App\Enums\UserStatus;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
+use App\Models\CibiReport;
 use App\Models\ClientFolder;
 use App\Models\ClientInformation;
+use App\Models\CoMaker;
+use App\Models\GeneratedReport;
 use App\Models\MediaReference;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -207,16 +210,26 @@ class ClientFolderLifecycleTest extends TestCase
     public function test_assigned_ci_can_rename_without_changing_identity_ownership_or_children(): void
     {
         $investigator = User::factory()->create();
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $investigator->id, 'display_name' => 'ORIGINAL NAME']);
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $investigator->id]);
         $information = ClientInformation::factory()->create(['client_folder_id' => $folder->id]);
-        $original = $folder->only(['id', 'folder_number', 'assigned_ci_id', 'last_name', 'first_name']);
+        $original = $folder->only(['id', 'folder_number', 'assigned_ci_id', 'created_by']);
 
         $this->actingAs($investigator)->patch(route('client-folders.update-name', $folder), [
-            'display_name' => ' updated client folder ',
+            'last_name' => ' dela   cruz ',
+            'first_name' => ' juan ',
+            'middle_name' => ' santos ',
+            'suffix' => ' jr. ',
         ])->assertRedirect(route('client-folders.show', $folder));
 
         $folder->refresh();
-        $this->assertSame('UPDATED CLIENT FOLDER', $folder->display_name);
+        $this->assertSame('DELA CRUZ, JUAN SANTOS JR.', $folder->display_name);
+        $this->assertSame([
+            'last_name' => 'DELA CRUZ',
+            'first_name' => 'JUAN',
+            'middle_name' => 'SANTOS',
+            'suffix' => 'JR.',
+        ], $folder->only(['last_name', 'first_name', 'middle_name', 'suffix']));
+        $this->assertStringNotContainsString('  ', $folder->display_name);
         $this->assertSame($original, $folder->only(array_keys($original)));
         $this->assertSame($folder->id, $information->fresh()->client_folder_id);
         $this->assertDatabaseHas('audit_logs', ['action' => 'client_folder.renamed', 'client_folder_id' => $folder->id]);
@@ -230,7 +243,8 @@ class ClientFolderLifecycleTest extends TestCase
         $folder = ClientFolder::factory()->create(['created_by' => $creator->id, 'assigned_ci_id' => $assignedCi->id, 'display_name' => 'ORIGINAL NAME']);
 
         $this->actingAs($actualRenamer)->patch(route('client-folders.update-name', $folder), [
-            'display_name' => 'RENAMED BY ACTUAL ACTOR',
+            'last_name' => 'Renamed',
+            'first_name' => 'Actor',
         ], ['Accept' => 'application/json'])->assertOk();
 
         $this->assertDatabaseHas('audit_logs', [
@@ -257,35 +271,45 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertStringContainsString("dispatchEvent(new CustomEvent('folder-browser:refresh'))", $renameSuccessSource);
     }
 
-    public function test_other_ci_can_open_and_rename_a_folder_assigned_to_another_ci_but_cannot_delete_it(): void
+    public function test_other_ci_can_open_rename_and_delete_a_shared_active_folder(): void
     {
         $assigned = User::factory()->create();
         $other = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $assigned->id]);
 
         $this->actingAs($other)->get(route('client-folders.edit-name', $folder))->assertOk();
-        $this->actingAs($other)->patch(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED BY OTHER CI'])->assertRedirect();
-        $this->assertSame('RENAMED BY OTHER CI', $folder->fresh()->display_name);
+        $this->actingAs($other)->patch(route('client-folders.update-name', $folder), ['last_name' => 'Renamed', 'first_name' => 'Other CI'])->assertRedirect();
+        $this->assertSame('RENAMED, OTHER CI', $folder->fresh()->display_name);
 
-        // Deleting a folder is permanent now that there is no Recycle Bin, so it is gated by the
-        // stricter 'forceDelete' ability (administrators only) rather than the shared-workspace
-        // 'delete' ability that still lets any CI open and rename the same folder.
-        $this->actingAs($other)->delete(route('client-folders.destroy', $folder))->assertForbidden();
-        $this->assertNotNull(ClientFolder::find($folder->id));
+        $this->actingAs($other)->delete(route('client-folders.destroy', $folder))
+            ->assertRedirect(route('client-folders.index'));
+        $this->assertNull(ClientFolder::withTrashed()->find($folder->id));
     }
 
-    public function test_assigned_ci_cannot_delete_folder_and_its_children_and_history_survive(): void
+    public function test_assigned_ci_can_permanently_delete_folder_and_its_owned_children(): void
     {
         $investigator = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $investigator->id, 'display_name' => 'KEPT CLIENT']);
         $information = ClientInformation::factory()->create(['client_folder_id' => $folder->id]);
 
-        $this->actingAs($investigator)->delete(route('client-folders.destroy', $folder))->assertForbidden();
+        $this->actingAs($investigator)->delete(route('client-folders.destroy', $folder))
+            ->assertRedirect(route('client-folders.index'));
 
-        $this->assertFalse(ClientFolder::withTrashed()->findOrFail($folder->id)->trashed());
-        $this->assertDatabaseHas('client_information', ['id' => $information->id, 'client_folder_id' => $folder->id]);
+        $this->assertNull(ClientFolder::withTrashed()->find($folder->id));
+        $this->assertDatabaseMissing('client_information', ['id' => $information->id]);
         $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.recycled', 'client_folder_id' => $folder->id]);
-        $this->actingAs($investigator)->get(route('client-folders.index'))->assertSee('KEPT CLIENT');
+        $this->actingAs($investigator)->get(route('client-folders.index'))->assertDontSee('KEPT CLIENT');
+    }
+
+    public function test_senior_ci_can_permanently_delete_an_eligible_shared_folder(): void
+    {
+        $senior = User::factory()->seniorCreditInvestigator()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => User::factory()->create()->id]);
+
+        $this->actingAs($senior)->delete(route('client-folders.destroy', $folder))
+            ->assertRedirect(route('client-folders.index'));
+
+        $this->assertNull(ClientFolder::withTrashed()->find($folder->id));
     }
 
     public function test_administrator_permanently_deletes_an_active_folder_with_its_owned_records(): void
@@ -294,6 +318,11 @@ class ClientFolderLifecycleTest extends TestCase
         $investigator = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $investigator->id]);
         $information = ClientInformation::factory()->create(['client_folder_id' => $folder->id]);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'DELETED CO-MAKER']);
+        $cibiReport = CibiReport::factory()->create(['client_folder_id' => $folder->id, 'ci_in_charge_id' => $investigator->id]);
+        $unrelatedFolder = ClientFolder::factory()->create(['assigned_ci_id' => $investigator->id]);
+        $unrelatedInformation = ClientInformation::factory()->create(['client_folder_id' => $unrelatedFolder->id]);
+        $unrelatedCoMaker = CoMaker::create(['client_folder_id' => $unrelatedFolder->id, 'full_name' => 'PRESERVED CO-MAKER']);
         $number = $folder->folder_number;
 
         $this->actingAs($administrator)->delete(route('client-folders.destroy', $folder))
@@ -302,6 +331,11 @@ class ClientFolderLifecycleTest extends TestCase
         // Permanent: the row is gone outright, never parked as an unreachable soft-deleted record.
         $this->assertNull(ClientFolder::withTrashed()->find($folder->id));
         $this->assertDatabaseMissing('client_information', ['id' => $information->id]);
+        $this->assertDatabaseMissing('co_makers', ['id' => $coMaker->id]);
+        $this->assertDatabaseMissing('cibi_reports', ['id' => $cibiReport->id]);
+        $this->assertDatabaseHas('client_folders', ['id' => $unrelatedFolder->id]);
+        $this->assertDatabaseHas('client_information', ['id' => $unrelatedInformation->id, 'client_folder_id' => $unrelatedFolder->id]);
+        $this->assertDatabaseHas('co_makers', ['id' => $unrelatedCoMaker->id, 'client_folder_id' => $unrelatedFolder->id]);
         $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.recycled']);
 
         // The audit row itself survives the folder it describes (client_folder_id nulls out).
@@ -326,17 +360,57 @@ class ClientFolderLifecycleTest extends TestCase
 
     public function test_permanent_delete_is_safely_blocked_when_external_cleanup_is_required(): void
     {
-        $administrator = User::factory()->administrator()->create();
-        $ci = User::factory()->create();
-        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        MediaReference::factory()->create(['client_folder_id' => $folder->id, 'uploaded_by' => $ci->id]);
+        $actors = [
+            User::factory()->create(),
+            User::factory()->seniorCreditInvestigator()->create(),
+            User::factory()->administrator()->create(),
+        ];
 
-        $this->actingAs($administrator)->from(route('client-folders.index'))
-            ->delete(route('client-folders.destroy', $folder))
-            ->assertRedirect(route('client-folders.index'))
-            ->assertSessionHasErrors('confirmation');
+        foreach ($actors as $actor) {
+            $folder = ClientFolder::factory()->create(['assigned_ci_id' => $actor->id]);
+            $media = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'uploaded_by' => $actor->id]);
 
-        // Blocked, never silently force-deleted and never left half-removed.
+            $this->actingAs($actor)->from(route('client-folders.index'))
+                ->delete(route('client-folders.destroy', $folder))
+                ->assertRedirect(route('client-folders.index'))
+                ->assertSessionHasErrors('confirmation');
+
+            // Blocked for every authorized role, never silently force-deleted or half-removed.
+            $this->assertNotNull(ClientFolder::find($folder->id));
+            $this->assertDatabaseHas('media_references', ['id' => $media->id, 'client_folder_id' => $folder->id]);
+            $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.permanently_deleted', 'client_folder_id' => $folder->id]);
+        }
+    }
+
+    public function test_permanent_delete_is_safely_blocked_when_generated_report_cleanup_is_required(): void
+    {
+        $actors = [
+            User::factory()->create(),
+            User::factory()->seniorCreditInvestigator()->create(),
+            User::factory()->administrator()->create(),
+        ];
+
+        foreach ($actors as $actor) {
+            $folder = ClientFolder::factory()->create(['assigned_ci_id' => $actor->id]);
+            $report = GeneratedReport::factory()->create(['client_folder_id' => $folder->id, 'generated_by' => $actor->id]);
+
+            $this->actingAs($actor)->from(route('client-folders.index'))
+                ->delete(route('client-folders.destroy', $folder))
+                ->assertRedirect(route('client-folders.index'))
+                ->assertSessionHasErrors('confirmation');
+
+            $this->assertNotNull(ClientFolder::find($folder->id));
+            $this->assertDatabaseHas('generated_reports', ['id' => $report->id, 'client_folder_id' => $folder->id]);
+            $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.permanently_deleted', 'client_folder_id' => $folder->id]);
+        }
+    }
+
+    public function test_unauthenticated_request_cannot_bypass_permanent_delete(): void
+    {
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => User::factory()->create()->id]);
+
+        $this->delete(route('client-folders.destroy', $folder))->assertRedirect(route('login'));
+
         $this->assertNotNull(ClientFolder::find($folder->id));
         $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.permanently_deleted', 'client_folder_id' => $folder->id]);
     }

@@ -681,10 +681,49 @@ document.addEventListener('click', (event) => {
 
 document.querySelectorAll('[data-client-search]').forEach(initializeClientSearch);
 
+const FOLDER_EDIT_NO_CHANGES_MESSAGE = 'No changes detected.';
+const normalizedFolderEditValue = (value) => value.trim().replace(/\s+/g, ' ').toLocaleUpperCase();
+const folderEditHasChanges = (form) => [...form.querySelectorAll('[data-rename-field]')]
+    .some((field) => normalizedFolderEditValue(field.value) !== normalizedFolderEditValue(field.defaultValue));
+const folderEditNoticeTimeouts = new WeakMap();
+const setFolderEditNotice = (form, visible) => {
+    const notice = form?.closest('dialog')?.querySelector('[data-folder-edit-notice]');
+    if (!notice) return;
+    window.clearTimeout(folderEditNoticeTimeouts.get(form));
+    notice.hidden = !visible;
+    if (visible) {
+        folderEditNoticeTimeouts.set(form, window.setTimeout(() => {
+            notice.hidden = true;
+            folderEditNoticeTimeouts.delete(form);
+        }, 4000));
+    } else {
+        folderEditNoticeTimeouts.delete(form);
+    }
+};
+
+const clearFolderEditNoticeOnChange = (event) => {
+    const field = event.target instanceof Element
+        ? event.target.closest('[data-folder-rename-form] [data-rename-field]')
+        : null;
+
+    if (field) setFolderEditNotice(field.closest('[data-folder-rename-form]'), false);
+};
+document.addEventListener('input', clearFolderEditNoticeOnChange);
+document.addEventListener('change', clearFolderEditNoticeOnChange);
+
 document.addEventListener('submit', async (event) => {
     const form = event.target.closest('[data-folder-create-form], [data-folder-rename-form], [data-folder-delete-form]');
     if (!form) return;
     event.preventDefault();
+
+    // Keep the rendered values as the comparison baseline. Harmless whitespace/case differences
+    // and null/blank optional fields are equivalent, so an unchanged edit never reaches fetch,
+    // closes the modal, writes data, creates history, or refreshes the folder fragment.
+    if (form.matches('[data-folder-rename-form]') && !folderEditHasChanges(form)) {
+        setFolderEditNotice(form, true);
+        return;
+    }
+    if (form.matches('[data-folder-rename-form]')) setFolderEditNotice(form, false);
 
     const submit = form.querySelector('button[type="submit"], button:not([type])')
         ?? (form.id ? document.querySelector(`button[type="submit"][form="${form.id}"]`) : null);
@@ -721,15 +760,25 @@ document.addEventListener('submit', async (event) => {
             return;
         }
         if (response.status === 422 && form.matches('[data-folder-rename-form]')) {
-            const message = payload.errors?.display_name?.[0] ?? 'Enter a valid folder name.';
-            const input = form.querySelector('[name="display_name"]');
-            const error = form.querySelector('[role="alert"]');
-            input?.setAttribute('aria-invalid', 'true');
-            if (error) {
-                error.textContent = message;
-                error.hidden = false;
-            }
-            input?.focus();
+            let firstInvalid;
+            form.querySelectorAll('[data-rename-error-for]').forEach((error) => {
+                error.textContent = '';
+                error.hidden = true;
+            });
+            form.querySelectorAll('[data-rename-field]').forEach((field) => field.removeAttribute('aria-invalid'));
+            Object.entries(payload.errors ?? {}).forEach(([fieldName, messages]) => {
+                const field = form.elements.namedItem(fieldName);
+                const error = form.querySelector(`[data-rename-error-for="${fieldName}"]`);
+                if (field instanceof HTMLElement) {
+                    field.setAttribute('aria-invalid', 'true');
+                    firstInvalid ??= field;
+                }
+                if (error) {
+                    error.textContent = messages[0] ?? 'Enter a valid value.';
+                    error.hidden = false;
+                }
+            });
+            firstInvalid?.focus();
             return;
         }
         if (!response.ok) throw new Error(payload.message || 'Folder action failed.');
@@ -746,11 +795,11 @@ document.addEventListener('submit', async (event) => {
             showToast(payload.message);
             browser?.dispatchEvent(new CustomEvent('folder-browser:refresh'));
         } else if (form.matches('[data-folder-rename-form]')) {
-            dialog?.close();
             if (payload.no_change) {
-                showToast(payload.message, 'info', 3500);
+                setFolderEditNotice(form, true);
                 return;
             }
+            dialog?.close();
             const folderId = form.dataset.folderId;
             const newName = payload.folder.display_name;
             document.querySelectorAll(`[data-folder-name-for="${folderId}"]`).forEach((element) => {
@@ -765,7 +814,6 @@ document.addEventListener('submit', async (event) => {
             });
             const tile = document.querySelector(`[data-folder-shell][data-folder-id="${folderId}"] [data-folder-tile]`);
             if (tile) tile.setAttribute('aria-label', tile.getAttribute('aria-label').replace(/^.*?(?=, (?:On Progress|Completed),)/, newName));
-            form.querySelector('[name="display_name"]').value = newName;
             showToast(payload.message);
             // AUTO-UPDATE Folder History: the name patches above are an instant visual echo, but
             // the authoritative "Renamed" entry the rename action just persisted to AuditLog only
@@ -1016,6 +1064,7 @@ document.addEventListener('click', (event) => {
         closeFolderMenus();
         const dialog = document.getElementById(modalTrigger.dataset.modalOpen);
         if (dialog instanceof HTMLDialogElement) {
+            setFolderEditNotice(dialog.querySelector('[data-folder-rename-form]'), false);
             if (dialog.matches('[data-add-business-dialog]') && modalTrigger.dataset.businessTemplateBaseUrl) {
                 dialog.dataset.businessReportBaseUrl = modalTrigger.dataset.businessTemplateBaseUrl;
             }
@@ -1051,6 +1100,10 @@ document.addEventListener('click', (event) => {
             const titleHeading = dialog.querySelector('[data-check-report-title-heading]');
             if (titleHeading) {
                 titleHeading.textContent = modalTrigger.dataset.checkReportTitle || titleHeading.dataset.checkReportDefaultTitle || titleHeading.textContent;
+            }
+            const cibiTitleHeading = dialog.querySelector('[data-cibi-report-title-heading]');
+            if (cibiTitleHeading) {
+                cibiTitleHeading.textContent = modalTrigger.dataset.modalTitle || cibiTitleHeading.dataset.cibiReportDefaultTitle || cibiTitleHeading.textContent;
             }
             dialog.dataset.returnFocus = modalTrigger.id || '';
             // A closed <dialog> is display:none, so it is never in the rendering tree and a
@@ -1119,7 +1172,11 @@ document.addEventListener('click', (event) => {
     }
 
     const modalClose = event.target.closest('[data-modal-close]');
-    if (modalClose) modalClose.closest('dialog')?.close();
+    if (modalClose) {
+        const dialog = modalClose.closest('dialog');
+        setFolderEditNotice(dialog?.querySelector('[data-folder-rename-form]'), false);
+        dialog?.close();
+    }
 
     // CI/BI Reassign Signatory: two-step flow — the data-entry dialog's "Reassign Signatory"
     // button never submits directly. It validates the form, copies the current/new signatory
@@ -3465,22 +3522,115 @@ document.querySelectorAll('[data-reports-tabs]').forEach((tabs) => {
     window.addEventListener('popstate', () => syncFilterState(window.location.href));
 });
 
+// Reports filters share the same async listing path as tabs, sorting, pagination and client-name
+// search. Each change rebuilds the URL from the whole form, so changing one restriction preserves
+// every other active restriction and resets only pagination. The ordinary GET submit and real
+// Clear links remain as accessible no-JavaScript fallbacks.
+document.querySelectorAll('[data-reports-filters]').forEach((form) => {
+    const region = document.querySelector('[data-reports-listing]');
+    if (!(form instanceof HTMLFormElement) || !region) return;
+
+    const dateRange = form.querySelector('[data-reports-date-range]');
+    const dateSummary = dateRange?.querySelector('summary');
+    const dateLabel = dateSummary?.querySelector('span');
+    const clearFilters = form.querySelector('[data-reports-clear-filters]');
+
+    const buildUrl = () => {
+        const url = new URL(form.action, window.location.origin);
+        new FormData(form).forEach((value, key) => {
+            if (typeof value === 'string' && value !== '') url.searchParams.set(key, value);
+        });
+        url.searchParams.delete('page');
+        return url;
+    };
+    const validDateRange = () => {
+        const from = form.elements.namedItem('from');
+        const to = form.elements.namedItem('to');
+        if (!(from instanceof HTMLInputElement) || !(to instanceof HTMLInputElement)) return true;
+        if (!from.checkValidity() || !to.checkValidity()) return false;
+        return !from.value || !to.value || from.value <= to.value;
+    };
+    const displayDate = (value, includeYear = true) => {
+        if (!value) return '';
+        return new Date(`${value}T00:00:00`).toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', ...(includeYear ? { year: 'numeric' } : {}),
+        });
+    };
+    const syncFilterChrome = (url) => {
+        const params = new URL(url, window.location.origin).searchParams;
+        ['search', 'client_folder_id', 'report_type', 'person', 'tab', 'from', 'to'].forEach((name) => {
+            const control = form.elements.namedItem(name);
+            if (control instanceof HTMLInputElement || control instanceof HTMLSelectElement) {
+                control.value = params.get(name) ?? (name === 'tab' ? 'all' : '');
+            }
+        });
+
+        const from = params.get('from') ?? '';
+        const to = params.get('to') ?? '';
+        let label = 'Select Date Range';
+        if (from && to) {
+            label = `${displayDate(from, from.slice(0, 4) !== to.slice(0, 4))} – ${displayDate(to)}`;
+        } else if (from) label = `From ${displayDate(from)}`;
+        else if (to) label = `Until ${displayDate(to)}`;
+        if (dateLabel) dateLabel.textContent = label;
+        if (dateSummary) {
+            dateSummary.title = label;
+            dateSummary.setAttribute('aria-label', `Date range: ${label}`);
+            dateSummary.classList.toggle('border-brand-primary', Boolean(from || to));
+            dateSummary.classList.toggle('text-brand-primary', Boolean(from || to));
+        }
+
+        if (clearFilters instanceof HTMLAnchorElement) {
+            const reset = new URL(form.action, window.location.origin);
+            clearFilters.href = reset.toString();
+        }
+    };
+    const refresh = (url = buildUrl()) => {
+        region.dispatchEvent(new CustomEvent('async-list:load', {
+            detail: { url: url.toString(), history: 'push' },
+        }));
+    };
+
+    form.addEventListener('change', (event) => {
+        if (!(event.target instanceof Element) || !event.target.matches('[data-reports-auto-filter]')) return;
+        if (!validDateRange()) return;
+        const url = buildUrl();
+        syncFilterChrome(url);
+        refresh(url);
+    });
+
+    form.addEventListener('click', (event) => {
+        const link = event.target instanceof Element ? event.target.closest('a') : null;
+        if (!(link instanceof HTMLAnchorElement) || link !== clearFilters) return;
+        event.preventDefault();
+        const url = new URL(link.href);
+        syncFilterChrome(url);
+        refresh(url);
+    });
+
+    region.addEventListener('async-list:loaded', (event) => syncFilterChrome(event.detail?.url ?? window.location.href));
+    region.addEventListener('async-list:error', () => syncFilterChrome(window.location.href));
+    syncFilterChrome(window.location.href);
+});
+
 document.querySelectorAll('[data-ci-activities-listing]').forEach((region) => {
     initAsyncListRegion(region, '[data-ci-activities-pagination] a[href]');
 });
 
-// Reports client-name search: an accessible combobox over the authorized client list. It borrows
+// Reports and Global CI Activities client-name search: one accessible combobox implementation over
+// the authorized client list. It borrows
 // the Client Folders live-search contract — a short debounce, one in-flight request at a time with
 // AbortController so a slower earlier keystroke can never overwrite a later one, and an
 // AUTO-UPDATE of just the results region instead of a page navigation. The input stays an ordinary
 // GET field, so with JavaScript unavailable the same search still works by submitting the form.
 function initReportsClientSearch(container) {
-    const input = container.querySelector('[data-reports-client-input]');
+    const isCiActivities = container.matches('[data-ci-client-search]');
+    const input = container.querySelector('[data-reports-client-input], [data-ci-client-input]');
     const hiddenId = container.querySelector('[data-reports-client-id]');
-    const list = container.querySelector('[data-reports-client-suggestions]');
+    const list = container.querySelector('[data-reports-client-suggestions], [data-ci-client-suggestions]');
     const endpoint = container.dataset.suggestUrl;
     const form = input?.closest('form');
-    if (!input || !hiddenId || !list || !endpoint || !form) return;
+    if (!input || !list || !endpoint || !form) return;
 
     // Suggestions need two characters to be worth offering (the endpoint enforces the same floor),
     // but the table itself filters from the first character — exactly like the Client Folders live
@@ -3518,11 +3668,11 @@ function initReportsClientSearch(container) {
     };
 
     // Results AUTO-UPDATE through the same region contract pagination and sorting already use, so
-    // the Client Name field needs no Apply Filters click. `page` is never carried, so a changed
+    // the Client Name field updates without another action. `page` is never carried, so a changed
     // search always starts at the first page; every other filter, the tab and the active sort come
     // straight off the form and are preserved untouched.
     const runSearch = (historyMode) => {
-        const region = document.querySelector('[data-reports-listing]');
+        const region = document.querySelector(isCiActivities ? '[data-ci-activities-listing]' : '[data-reports-listing]');
         const url = new URL(form.getAttribute('action'), window.location.origin);
         new FormData(form).forEach((value, key) => {
             if (typeof value === 'string' && value !== '') url.searchParams.set(key, value);
@@ -3536,7 +3686,7 @@ function initReportsClientSearch(container) {
 
     const choose = (option) => {
         input.value = option.dataset.name;
-        hiddenId.value = option.dataset.id;
+        if (hiddenId) hiddenId.value = option.dataset.id;
         close();
         // A deliberate selection is worth a history entry; typing is not.
         runSearch('push');
@@ -3546,7 +3696,7 @@ function initReportsClientSearch(container) {
     // and is built from text nodes so a client name can never inject markup.
     const renderOption = (suggestion, index, term) => {
         const option = document.createElement('li');
-        option.id = `reports-client-suggestion-${index}`;
+        option.id = `${isCiActivities ? 'global-ci' : 'reports'}-client-suggestion-${index}`;
         option.setAttribute('role', 'option');
         option.setAttribute('aria-selected', 'false');
         option.className = 'client-folder-menu-item cursor-pointer';
@@ -3603,11 +3753,15 @@ function initReportsClientSearch(container) {
     };
 
     // One debounced pass drives both halves of the same typed query: the suggestion list and the
-    // results themselves. The user never has to pick a suggestion — or press Apply Filters — for
+    // results themselves. The user never has to pick a suggestion for
     // the table to follow along.
     input.addEventListener('input', () => {
         // Typing again means the pinned exact client no longer applies.
-        hiddenId.value = '';
+        if (hiddenId) hiddenId.value = '';
+        if (input.value.trim().length < SUGGEST_MIN_LENGTH) {
+            activeRequest?.abort();
+            close();
+        }
         clearTimeout(debounceTimer);
         debounceTimer = window.setTimeout(() => {
             suggest();
@@ -3620,7 +3774,7 @@ function initReportsClientSearch(container) {
     input.addEventListener('search', () => {
         if (input.value.trim() !== '') return;
         clearTimeout(debounceTimer);
-        hiddenId.value = '';
+        if (hiddenId) hiddenId.value = '';
         close();
         runSearch('replace');
     });
@@ -3666,7 +3820,7 @@ function initReportsClientSearch(container) {
     });
 }
 
-document.querySelectorAll('[data-reports-client-search]').forEach(initReportsClientSearch);
+document.querySelectorAll('[data-reports-client-search], [data-ci-client-search]').forEach(initReportsClientSearch);
 
 // Business / Income Sources: instant client-side search over the Saved Businesses table — matches
 // business name or address, reusing the same data-sort-business_name/data-sort-address values
