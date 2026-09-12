@@ -40,7 +40,7 @@
             'hint' => 'Completed in '.$today->format('F'),
             'modal' => $summary['completed_this_month'] > 0 ? 'dashboard-completed-month-dialog' : null],
         ['label' => 'Reports Ready', 'value' => $summary['reports_ready'], 'icon' => 'report', 'tone' => 'violet',
-            'hint' => $summary['reports_ready'] === 0 ? 'No completed reports yet' : 'Ready for release',
+            'hint' => $summary['reports_ready'] === 0 ? 'No completed reports yet' : 'Completed Reports',
             'modal' => $summary['reports_ready'] > 0 ? 'dashboard-reports-ready-dialog' : null],
     ];
 
@@ -374,7 +374,7 @@
                         :badge="$folder['progress'] ? $folder['progress']['percent'].'% complete' : null"
                         :badge-class="$folder['status'] === 'Completed' ? 'bg-success-soft text-success' : 'bg-brand-soft text-brand-primary'"
                         :label="$folder['client'].', '.$folder['status'].'. Open client folder'" data-kpi-detail-row>
-                        <p class="mt-1 text-xs leading-5 text-text-muted">{{ $folder['status'] }}@if($folder['ci']) <span aria-hidden="true">&bull;</span> {{ $folder['ci'] }}@endif @if($folder['updated'])<span aria-hidden="true">&bull;</span> Updated {{ $folder['updated'] }}@endif</p>
+                        <p class="mt-1 text-xs leading-5 text-text-muted">{{ $folder['status'] }}@if($folder['ci']) <span aria-hidden="true">&bull;</span> <span class="font-semibold tracking-tight text-text-main">{{ $folder['ci'] }}</span>@endif @if($folder['updated'])<span aria-hidden="true">&bull;</span> Updated {{ $folder['updated'] }}@endif</p>
                     </x-ui.detail-row>
                 @endforeach
             </ul>
@@ -409,7 +409,7 @@
                 @foreach($kpiDetails['completed_this_month'] as $folder)
                     <x-ui.detail-row :url="$folder['url']" :title="$folder['client']" icon="check-circle" badge="Completed" badge-class="bg-success-soft text-success"
                         :label="$folder['client'].', completed '.$folder['completed_on'].'. Open client folder'" data-kpi-detail-row>
-                        <p class="mt-1 text-xs leading-5 text-text-muted">Completed {{ $folder['completed_on'] }}@if($folder['ci']) <span aria-hidden="true">&bull;</span> {{ $folder['ci'] }}@endif</p>
+                        <p class="mt-1 text-xs leading-5 text-text-muted">Completed {{ $folder['completed_on'] }}@if($folder['ci']) <span aria-hidden="true">&bull;</span> <span class="font-semibold tracking-tight text-text-main">{{ $folder['ci'] }}</span>@endif</p>
                     </x-ui.detail-row>
                 @endforeach
             </ul>
@@ -431,7 +431,10 @@
                             <p class="border-b border-ui-border bg-surface px-3.5 pb-1 pt-2.5 text-xs font-bold uppercase tracking-wide text-text-subtle" data-reports-ready-person>{{ $person['person'] }}</p>
                             <ul class="divide-y divide-ui-border border-b border-ui-border last:border-b-0">
                                 @foreach($person['reports'] as $report)
-                                    <x-ui.detail-row :url="$report['url']" :title="$report['label']" :icon="$report['icon']" badge="Completed" badge-class="bg-success-soft text-success"
+                                    {{-- The report's web output opens beside the Dashboard, so this
+                                         modal is still open behind it. --}}
+                                    <x-ui.detail-row :url="$report['url']" :method="$report['method']" :fields="$report['fields']" :new-tab="true"
+                                        :title="$report['label']" :icon="$report['icon']" badge="Completed" badge-class="bg-success-soft text-success"
                                         :label="$report['label'].', '.$person['person'].', completed '.$report['completed'].'. Open report'" data-kpi-detail-row>
                                         @if($report['completed'])<p class="mt-1 text-xs leading-5 text-text-muted">Completed {{ $report['completed'] }}</p>@endif
                                     </x-ui.detail-row>

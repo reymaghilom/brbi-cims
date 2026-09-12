@@ -3448,8 +3448,28 @@ document.querySelectorAll('[data-reports-tabs]').forEach((tabs) => {
         const value = new URL(url, window.location.origin).searchParams.get('tab') ?? 'all';
         return validTabs.includes(value) ? value : 'all';
     };
+    // The KPI cards live in their own [data-reports-summary] row, a sibling of this nav — which is
+    // exactly why they were never interactive: the click handler below is bound to `tabs`, so a
+    // card click never reached it and fell through to a plain full-page navigation that also threw
+    // away every other active filter.
+    const summaryRow = document.querySelector('[data-reports-summary]');
+    // A card's view is its tab AND its date range: Completed This Month is the completed tab with
+    // this month's range, plain Completed is the same tab without one. Blade stamps the identical
+    // key on each card (see reports/_kpis.blade.php), so the two can never drift apart.
+    const viewKey = (url) => {
+        const params = new URL(url, window.location.origin).searchParams;
+        return [tabFromUrl(url), params.get('from') ?? '', params.get('to') ?? ''].join('|');
+    };
+    const syncKpiState = (url) => {
+        const activeKey = viewKey(url);
+        summaryRow?.querySelectorAll('[data-reports-kpi-key]').forEach((card) => {
+            if (card.dataset.reportsKpiKey === activeKey) card.setAttribute('aria-current', 'page');
+            else card.removeAttribute('aria-current');
+        });
+    };
     const syncTabState = (url) => {
         const activeTab = tabFromUrl(url);
+        syncKpiState(url);
         tabs.querySelectorAll('[data-reports-tab]').forEach((link) => {
             const active = link.dataset.reportsTab === activeTab;
             link.classList.toggle('border-brand-primary', active);
@@ -3508,6 +3528,31 @@ document.querySelectorAll('[data-reports-tabs]').forEach((tabs) => {
         syncTabState(url);
         region.dispatchEvent(new CustomEvent('async-list:load', {
             detail: { url: url.toString(), history: returningToCurrent ? null : 'push' },
+        }));
+    });
+
+    // Delegated on the summary row itself, not on the cards: a save replaces that row's innerHTML
+    // with freshly counted cards, and a listener on the container survives that swap.
+    summaryRow?.addEventListener('click', (event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        const card = event.target.closest('[data-reports-kpi]');
+        if (!card || !summaryRow.contains(card)) return;
+
+        event.preventDefault();
+        // The card's own href is already authoritative — Blade built it from the same filters the
+        // tab links carry — so it is reused rather than rebuilt here. Only the page is dropped.
+        const url = new URL(card.href, window.location.origin);
+        url.searchParams.delete('page');
+        const requested = url.toString();
+        if (pendingTab === requested) return;
+        const current = new URL(window.location.href);
+        const returningToCurrent = viewKey(url) === viewKey(current) && !current.searchParams.has('page');
+        if (pendingTab === null && returningToCurrent) return;
+
+        pendingTab = requested;
+        syncTabState(url);
+        region.dispatchEvent(new CustomEvent('async-list:load', {
+            detail: { url: requested, history: returningToCurrent ? null : 'push' },
         }));
     });
 

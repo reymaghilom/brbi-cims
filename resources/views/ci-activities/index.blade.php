@@ -8,6 +8,11 @@
     $scheduleOptions = ['all' => 'All Dates', 'today' => 'Today', 'tomorrow' => 'Tomorrow', 'this_week' => 'This Week', 'overdue' => 'Overdue'];
     $sortOptions = ['earliest_schedule' => 'Earliest Schedule', 'latest_schedule' => 'Latest Schedule', 'recently_updated' => 'Recently Updated', 'client_name' => 'Client Name'];
     $tabOptions = ['all' => 'All Activities', 'due_today' => 'Due Today', 'scheduled' => 'Scheduled', 'follow_up' => 'Follow-up', 'completed' => 'Completed'];
+
+    // One expression for "the URL that selects this tab", used by both the KPI cards and the tab
+    // strip below, so a KPI card can never drift from the tab it stands for. It is the exact URL
+    // the tabs already built inline: every active filter rides along and only the page resets.
+    $tabUrl = fn (string $value): string => route('ci-activities.index', array_merge(request()->query(), ['tab' => $value, 'page' => null]));
 @endphp
 
 @section('content')
@@ -16,12 +21,16 @@
         <x-slot:description>Manage and monitor your investigation activities across all clients.</x-slot:description>
     </x-ui.page-header>
 
+    {{-- Each KPI is a real link to the tab it already counts — the same $counts entry the tab
+         strip shows and the same URL the tab link builds, so this adds no second filtering system
+         and no second count query. The card matching the open tab carries aria-current="page",
+         which is also what drives its active styling. --}}
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <x-ui.summary-card label="Due Today" :value="$counts['due_today']" :hint="'Overdue: '.$counts['overdue']" icon="bell" tone="red" />
-        <x-ui.summary-card label="Scheduled" :value="$counts['scheduled']" hint="Today & upcoming" icon="calendar" tone="folder" />
-        <x-ui.summary-card label="Follow-up" :value="$counts['follow_up']" hint="Need follow-up" icon="clock" tone="amber" />
-        <x-ui.summary-card label="Completed" :value="$counts['completed']" hint="This month" icon="check-circle" tone="green" />
-        <x-ui.summary-card label="All Activities" :value="$counts['all']" hint="Total activities" icon="activity" tone="violet" />
+        <x-ui.summary-card label="Due Today" :value="$counts['due_today']" :hint="'Overdue: '.$counts['overdue']" icon="bell" tone="red" :url="$tabUrl('due_today')" :active="$filters['tab'] === 'due_today'" />
+        <x-ui.summary-card label="Scheduled" :value="$counts['scheduled']" hint="Today & upcoming" icon="calendar" tone="folder" :url="$tabUrl('scheduled')" :active="$filters['tab'] === 'scheduled'" />
+        <x-ui.summary-card label="Follow-up" :value="$counts['follow_up']" hint="Need follow-up" icon="clock" tone="amber" :url="$tabUrl('follow_up')" :active="$filters['tab'] === 'follow_up'" />
+        <x-ui.summary-card label="Completed" :value="$counts['completed']" hint="This month" icon="check-circle" tone="green" :url="$tabUrl('completed')" :active="$filters['tab'] === 'completed'" />
+        <x-ui.summary-card label="All Activities" :value="$counts['all']" hint="Total activities" icon="activity" tone="violet" :url="$tabUrl('all')" :active="$filters['tab'] === 'all'" />
     </div>
 
     <section class="mt-6 ui-panel overflow-hidden">
@@ -79,11 +88,8 @@
         <div class="flex flex-col gap-3 border-b border-ui-border px-4 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div role="tablist" aria-label="CI Activity tabs" class="flex gap-1 overflow-x-auto">
                 @foreach($tabOptions as $value => $label)
-                    @php
-                        $tabQuery = array_merge(request()->query(), ['tab' => $value, 'page' => null]);
-                        $tabCount = $counts[$value] ?? $counts['all'];
-                    @endphp
-                    <a href="{{ route('ci-activities.index', $tabQuery) }}" role="tab" aria-selected="{{ $filters['tab'] === $value ? 'true' : 'false' }}" class="flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-semibold transition aria-selected:border-brand-primary aria-selected:text-brand-primary aria-[selected=false]:border-transparent aria-[selected=false]:text-text-muted">
+                    @php $tabCount = $counts[$value] ?? $counts['all']; @endphp
+                    <a href="{{ $tabUrl($value) }}" role="tab" aria-selected="{{ $filters['tab'] === $value ? 'true' : 'false' }}" class="flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-semibold transition aria-selected:border-brand-primary aria-selected:text-brand-primary aria-[selected=false]:border-transparent aria-[selected=false]:text-text-muted">
                         {{ $label }}
                         <span @class(['rounded-full px-2 py-0.5 text-xs font-bold', 'bg-brand-primary text-white' => $filters['tab'] === $value, 'bg-surface-muted text-text-muted' => $filters['tab'] !== $value])>{{ $tabCount }}</span>
                     </a>

@@ -98,18 +98,20 @@ class DashboardKpiDetailsTest extends TestCase
         $details = collect($response->viewData('kpiDetails')['in_progress'])->keyBy('client');
         $modal = $this->modal($response->getContent(), 'dashboard-in-progress-dialog');
 
-        $this->assertSame(2, $response->viewData('summary')['in_progress']);
-        $this->assertSame(['OBASA, REYNALDO SSS', 'EMPTY, CLIENT'], $details->keys()->sort()->reverse()->values()->all());
+        // EMPTY, CLIENT has not started: 0 of 7 mandatory requirements met, so In Progress does
+        // not claim it. Only the part-finished folder is listed.
+        $this->assertSame(1, $response->viewData('summary')['in_progress']);
+        $this->assertSame(['OBASA, REYNALDO SSS'], $details->keys()->all());
         $obasa = $details['OBASA, REYNALDO SSS']['progress'];
         $this->assertSame(['completed' => 14, 'total' => 15, 'percent' => 93, 'missing' => ['Co-Maker: JUAN DELA CRUZ — Neighbor Check']], $obasa);
-        $this->assertSame(array_values(MandatoryInvestigationRequirements::APPLICANT), $details['EMPTY, CLIENT']['progress']['missing']);
-        $this->assertStringContainsString('2 client folders with incomplete mandatory requirements', $modal);
+        $this->assertStringContainsString('1 client folder with incomplete mandatory requirements', $modal);
         $this->assertStringContainsString('Co-Maker: JUAN DELA CRUZ — Neighbor Check', $modal);
         $this->assertStringContainsString('14 of 15 mandatory requirements complete', $modal);
         $this->assertStringNotContainsString('MARIA SANTOS', $modal);
         $this->assertStringNotContainsString('>Asset Check<', $modal);
-        $this->assertStringContainsString('href="'.route('client-folders.show', $empty).'"', $modal);
-        $this->assertInteractiveCard($response->getContent(), 'dashboard-in-progress-dialog', 'In Progress: 2, view details');
+        $this->assertStringNotContainsString('href="'.route('client-folders.show', $empty).'"', $modal);
+        $this->assertSame(array_values(MandatoryInvestigationRequirements::APPLICANT), $response->viewData('kpiDetails')['active'][0]['progress']['missing'] ?? []);
+        $this->assertInteractiveCard($response->getContent(), 'dashboard-in-progress-dialog', 'In Progress: 1, view details');
     }
 
     public function test_completed_this_month_lists_only_this_months_completions_newest_first(): void

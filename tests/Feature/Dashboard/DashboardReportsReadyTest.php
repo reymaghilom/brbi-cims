@@ -101,6 +101,30 @@ class DashboardReportsReadyTest extends TestCase
         $this->assertReady(1);
     }
 
+    /**
+     * The card's own copy. The title stays "Reports Ready"; only its subtitle changed, and the
+     * zero-state line is untouched. The count itself is asserted against the authoritative Global
+     * Reports Completed total by assertReady() throughout this suite.
+     */
+    public function test_the_card_subtitle_reads_completed_reports(): void
+    {
+        $empty = $this->actingAs($this->ci)->get(route('home'))->assertOk();
+        $this->assertSame(0, $empty->viewData('summary')['reports_ready']);
+        $empty->assertSee('Reports Ready')
+            ->assertSee('No completed reports yet')
+            ->assertDontSee('Completed Reports')
+            ->assertDontSee('Ready for release');
+
+        $this->cibi($this->folder(), null, RecordState::Complete);
+
+        $response = $this->actingAs($this->ci)->get(route('home'))->assertOk();
+        $this->assertReady(1);
+        $response->assertSee('Reports Ready')
+            ->assertSee('Completed Reports')
+            ->assertDontSee('Ready for release')
+            ->assertDontSee('No completed reports yet');
+    }
+
     private function assertReady(int $expected): void
     {
         $dashboard = app(DashboardData::class)->for($this->ci)['summary']['reports_ready'];

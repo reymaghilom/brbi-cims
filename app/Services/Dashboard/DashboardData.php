@@ -78,7 +78,7 @@ class DashboardData
         $mandatory = $this->mandatoryProgress($folderIds);
         $readyReports = $this->reports->completedItems($user);
         $needsAttention = $this->needsAttention($folderIds, $now, $timezone);
-        $workload = $this->workload($folders, $folderIds, $needsAttention['folder_ids']);
+        $workload = $this->workload($folders, $mandatory);
         $recentActivity = $this->recentActivity($folderIds, $timezone);
         $trends = collect(self::TREND_RANGES)
             ->map(fn (string $label, string $key): array => $this->trend($user, $key, $now, $timezone))
@@ -126,34 +126,42 @@ class DashboardData
     }
 
     /**
-     * Four mutually exclusive buckets over the same folder set, so the donut's slices always add up
+     * The three PROGRESS STATUSES of a Client Folder, as one mutually exclusive distribution over
+     * the same active-folder set the Active Client Folders KPI counts - so the slices always add up
      * to the folder total and every percentage is that slice over that same total.
      *
-     * Needs Attention is the exact folder set behind the Needs Attention KPI (needsAttention()), so
-     * the slice and the card always agree. It takes priority - including over a Completed folder
-     * that still holds overdue work - so overdue work is never buried in another slice.
+     * All three read one authoritative source, mandatoryProgress(), and nothing else:
+     *
+     * - Not Started: 0% - no mandatory requirement met yet. A brand-new folder lives here,
+     *   auto-generated pristine Barangay / Neighbor rows included, since those satisfy nothing.
+     * - In Progress: isInProgress(), the IDENTICAL predicate the In Progress KPI is counted with,
+     *   applied to the identical array. The slice and the card are therefore the same folder set,
+     *   not two formulas that happen to agree.
+     * - Completed: 100% - every mandatory requirement met. Deliberately the progress result rather
+     *   than the stored ClientFolderStatus: the two are kept in step by
+     *   ClientProgressService::recalculate(), and where they ever disagree the calculation is the
+     *   authority this chart reports.
+     *
+     * Needs Attention is deliberately NOT a slice here. It is an overdue FLAG that cuts across all
+     * three statuses - a folder can be half-finished and overdue, or finished and overdue on
+     * optional Asset work - so making it a mutually exclusive bucket was what pulled overdue
+     * folders out of the In Progress slice and broke agreement with the In Progress KPI. It keeps
+     * its own KPI card, its own count and its own detail modal; see needsAttention().
      *
      * @param  Collection<int, ClientFolder>  $folders
-     * @param  Collection<int, int>  $folderIds
-     * @param  list<int>  $needsAttentionFolderIds
+     * @param  array<int, array{completed: int, total: int, percent: int, missing: list<string>}>  $mandatory
      */
-    private function workload(Collection $folders, Collection $folderIds, array $needsAttentionFolderIds): array
+    private function workload(Collection $folders, array $mandatory): array
     {
-        $startedFolderIds = CiActivity::query()
-            ->whereIn('client_folder_id', $folderIds)
-            ->where('status', '!=', ActivityStatus::Pending)
-            ->distinct()
-            ->pluck('client_folder_id')
-            ->all();
-
-        $buckets = ['in_progress' => 0, 'pending' => 0, 'needs_attention' => 0, 'completed' => 0];
+        $buckets = ['not_started' => 0, 'in_progress' => 0, 'completed' => 0];
 
         foreach ($folders as $folder) {
+            $progress = $mandatory[$folder->id] ?? null;
+
             $bucket = match (true) {
-                in_array($folder->id, $needsAttentionFolderIds, true) => 'needs_attention',
-                $folder->status === ClientFolderStatus::Completed => 'completed',
-                in_array($folder->id, $startedFolderIds, true) => 'in_progress',
-                default => 'pending',
+                $this->isInProgress($progress) => 'in_progress',
+                $progress !== null && $progress['missing'] === [] => 'completed',
+                default => 'not_started',
             };
             $buckets[$bucket]++;
         }
@@ -163,9 +171,8 @@ class DashboardData
         return [
             'total' => $total,
             'segments' => collect([
+                ['key' => 'not_started', 'label' => 'Not Started', 'tone' => 'amber'],
                 ['key' => 'in_progress', 'label' => 'In Progress', 'tone' => 'brand'],
-                ['key' => 'pending', 'label' => 'Pending', 'tone' => 'amber'],
-                ['key' => 'needs_attention', 'label' => 'Needs Attention', 'tone' => 'danger'],
                 ['key' => 'completed', 'label' => 'Completed', 'tone' => 'success'],
             ])->map(fn (array $segment): array => $segment + [
                 'count' => $buckets[$segment['key']],
@@ -298,8 +305,8 @@ class DashboardData
     {
         return [
             'assigned' => $folders->count(),
-            // Unique folders whose mandatory investigation work is not all complete.
-            'in_progress' => collect($mandatory)->filter(fn (array $folder): bool => $folder['missing'] !== [])->count(),
+            // Unique folders whose mandatory investigation work has started but is not finished.
+            'in_progress' => collect($mandatory)->filter(fn (array $folder): bool => $this->isInProgress($folder))->count(),
             // Unique folders holding overdue work (each once), plus how many overdue items they hold.
             'needs_attention' => $needsAttention['folder_count'],
             'needs_attention_items' => $needsAttention['item_count'],
@@ -396,7 +403,7 @@ class DashboardData
 
         return [
             'active' => $folders->map($folderRow)->values()->all(),
-            'in_progress' => $folders->filter(fn (ClientFolder $folder): bool => ($mandatory[$folder->id]['missing'] ?? []) !== [])
+            'in_progress' => $folders->filter(fn (ClientFolder $folder): bool => $this->isInProgress($mandatory[$folder->id] ?? null))
                 ->map($folderRow)->values()->all(),
             'completed_this_month' => $this->completedThisMonth($folders, $now, $timezone)
                 ->sortByDesc(fn (ClientFolder $folder) => $folder->completed_at->getTimestamp())
@@ -407,14 +414,26 @@ class DashboardData
                 'client' => $items->first()->clientName,
                 'people' => $items->groupBy(fn (ReportWorkItem $item) => $item->coMakerId ?? 0)->sortKeys()->map(fn (Collection $personItems): array => [
                     'person' => $personItems->first()->coMakerId === null ? 'Applicant' : 'Co-Maker: '.$personItems->first()->personName,
-                    'reports' => $personItems->map(fn (ReportWorkItem $item): array => [
-                        'label' => $item->typeLabel().($item->businessName ? ' — '.$item->businessName : ''),
-                        'icon' => $item->typeIcon(),
-                        // A read-only preview where one is a plain link; otherwise the exact person's folder.
-                        // Never a generate/download action.
-                        'url' => ($preview = $item->previewAction()) && $preview['method'] === 'GET' ? $preview['url'] : $item->folderUrl(),
-                        'completed' => $item->lastUpdatedAt?->timezone($timezone)->format('M j, Y'),
-                    ])->values()->all(),
+                    'reports' => $personItems->map(function (ReportWorkItem $item) use ($timezone): array {
+                        // The report's OWN existing web output, reached exactly as Global Reports
+                        // reaches it: CI / BI and Business Report are GET preview links carrying
+                        // the exact person and the exact income source, and the two photo checks
+                        // keep the shared POST batch-preview endpoint addressed by this one
+                        // check's own id under that same person. Read-only navigation either way -
+                        // it never generates a file, never downloads one and never writes a
+                        // GeneratedReport row. A completed item always has a preview; the folder
+                        // is only a defensive fallback.
+                        $preview = $item->previewAction();
+
+                        return [
+                            'label' => $item->typeLabel().($item->businessName ? ' — '.$item->businessName : ''),
+                            'icon' => $item->typeIcon(),
+                            'url' => $preview['url'] ?? $item->folderUrl(),
+                            'method' => $preview['method'] ?? 'GET',
+                            'fields' => $preview['fields'] ?? [],
+                            'completed' => $item->lastUpdatedAt?->timezone($timezone)->format('M j, Y'),
+                        ];
+                    })->values()->all(),
                 ])->values()->all(),
                 'count' => $items->count(),
             ])->values()->all(),
@@ -480,8 +499,38 @@ class DashboardData
     {
         $folderCount = $folderIds->count();
 
-        $cibiTotal = CibiReport::query()->whereIn('client_folder_id', $folderIds)->count();
-        $cibiComplete = CibiReport::query()->whereIn('client_folder_id', $folderIds)->where('state', RecordState::Complete)->count();
+        // A CI/BI Report is required once PER PERSON - the Applicant of every folder in scope, plus
+        // every existing Co-Maker (MandatoryInvestigationRequirements lists 'cibi' under both). The
+        // denominator therefore counts people, not rows: a person whose report has not been created
+        // yet is exactly the outstanding work this bar exists to show. Counting existing
+        // cibi_reports rows instead made the bar read "11 of 11 = 100%" whenever every report that
+        // happened to exist was finished, however many folders had none at all.
+        //
+        // Generated PDF/Excel output lives in generated_reports and is not consulted here at all.
+        $cibiRequired = $folderCount + CoMaker::query()->whereIn('client_folder_id', $folderIds)->count();
+
+        // The numerator follows the identical person-level rule, so it is counted per LOGICAL
+        // PERSON rather than per row. A plain row count is NOT safe here, and the composite unique
+        // index on (client_folder_id, co_maker_id) does not make it safe: SQL treats NULLs as
+        // distinct inside a UNIQUE index, so that index constrains Co-Maker rows but lets one
+        // folder hold any number of APPLICANT rows, every one of them with co_maker_id IS NULL.
+        // GROUP BY is the opposite - it groups NULLs together - so one group per (folder, person)
+        // is exactly the rule this bar needs, and it behaves identically on SQLite, MySQL and
+        // PostgreSQL. Counting those groups through a subquery keeps this to a single query with
+        // no model hydration.
+        //
+        // Nothing else can slip in: cibi_reports has no soft deletes, so a deleted report leaves
+        // no countable row behind, and co_maker_id is a cascadeOnDelete foreign key, so a report
+        // can never outlive the Co-Maker it belongs to and stand for a person no longer in scope.
+        $cibiComplete = DB::query()->fromSub(
+            CibiReport::query()
+                ->whereIn('client_folder_id', $folderIds)
+                ->where('state', RecordState::Complete)
+                ->groupBy('client_folder_id', 'co_maker_id')
+                ->select('client_folder_id', 'co_maker_id')
+                ->toBase(),
+            'completed_cibi'
+        )->count();
 
         $residenceChecked = ResidenceCheck::query()->whereIn('client_folder_id', $folderIds)->distinct()->count('client_folder_id');
 
@@ -499,7 +548,7 @@ class DashboardData
         $activityComplete = (clone $requiredActivities)->where('status', ActivityStatus::Completed)->count();
 
         return [
-            $this->progressBar('CIBI Investigation', $cibiComplete, $cibiTotal, 'CI/BI records'),
+            $this->progressBar('CI/BI Report', $cibiComplete, $cibiRequired, 'CI/BI Reports'),
             $this->progressBar('Residence Check', $residenceChecked, $folderCount, 'assigned clients'),
             $this->progressBar('Business Check', $businessChecked, $businessTotal, 'businesses'),
             $this->progressBar('CI Activities (Supporting Proof)', $activityComplete, $activityTotal, 'required activities'),
@@ -515,6 +564,28 @@ class DashboardData
             'unit' => $unit,
             'percent' => $this->percent($completed, $applicable),
         ];
+    }
+
+    /**
+     * THE In Progress rule, in one place: investigation work has actually STARTED but is not yet
+     * finished - mandatory progress strictly between 0% and 100%. Every reader of "In Progress"
+     * (the KPI, its detail modal and the Workload chart's slice) calls this, so the three can never
+     * describe different folder sets.
+     *
+     * It compares `completed` against `total` rather than the rounded `percent`, which is the same
+     * question asked exactly: a folder with one requirement met out of a very long list would round
+     * to 0%, and one with a single requirement left would round to 100%, yet neither has actually
+     * started-but-finished or finished. The display percentage stays exactly as it was.
+     *
+     * A 0% folder is deliberately NOT In Progress: being active, incomplete, or merely holding
+     * auto-generated pristine activity rows is not the same as having started. Those folders are
+     * the Workload chart's existing Pending slice.
+     *
+     * @param  array{completed: int, total: int, percent: int, missing: list<string>}|null  $progress
+     */
+    private function isInProgress(?array $progress): bool
+    {
+        return $progress !== null && $progress['completed'] > 0 && $progress['missing'] !== [];
     }
 
     private function percent(int $value, int $total): int

@@ -78,7 +78,9 @@ class CreditInvestigatorDashboardTest extends TestCase
             $hour >= 12 && $hour < 18 => 'Good Afternoon',
             default => 'Good Evening',
         };
-        $response->assertSee($greeting.', Rey C. Maghilom');
+        // The name is its own element now — it carries the stronger weight against the muted
+        // greeting label — so the two halves are asserted separately.
+        $response->assertSee($greeting.',')->assertSee('Rey C. Maghilom');
 
         // The folder grid, its selection panel and its search moved back to Client Folders.
         $response->assertDontSee('data-folder-browser-layout', false)
@@ -135,16 +137,20 @@ class CreditInvestigatorDashboardTest extends TestCase
 
         $this->assertSame(5, $summary['assigned']);
         $this->assertSame(2, $summary['needs_attention'], 'Both overdue folders count, whoever they are assigned to.');
-        // In Progress = folders with unfinished mandatory work; none of these five has any of it.
-        $this->assertSame(5, $summary['in_progress']);
+        // In Progress = folders whose mandatory work has STARTED but is unfinished. None of these
+        // five has completed a single mandatory requirement, so none has started.
+        $this->assertSame(0, $summary['in_progress']);
         $this->assertSame(1, $summary['completed_this_month']);
 
         // The four buckets are mutually exclusive and their percentages describe the same total.
         $this->assertSame(5, $workload['total']);
         $this->assertSame(5, collect($workload['segments'])->sum('count'));
         $this->assertSame(100, collect($workload['segments'])->sum('percent'));
+        // Progress statuses only. None of the five has met a single mandatory requirement, so all
+        // five are Not Started - including the two overdue ones, which stay counted by the
+        // Needs Attention KPI above rather than being pulled out of their progress status.
         $this->assertSame(
-            ['in_progress' => 1, 'pending' => 1, 'needs_attention' => 2, 'completed' => 1],
+            ['not_started' => 5, 'in_progress' => 0, 'completed' => 0],
             collect($workload['segments'])->pluck('count', 'key')->all(),
         );
 
@@ -232,7 +238,8 @@ class CreditInvestigatorDashboardTest extends TestCase
 
         $bars = collect($this->actingAs($ci)->get(route('home'))->assertOk()->viewData('activityProgress'))->keyBy('label');
 
-        $this->assertSame(50, $bars['CIBI Investigation']['percent'], '1 complete of 2 CI/BI records.');
+        // Two folders, no Co-Makers: two required person-level CI/BI Reports, one of them done.
+        $this->assertSame(50, $bars['CI/BI Report']['percent'], '1 complete of 2 required CI/BI Reports.');
         $this->assertSame(50, $bars['Residence Check']['percent'], '1 checked of 2 assigned clients.');
         $this->assertSame(50, $bars['CI Activities (Supporting Proof)']['percent'], '1 complete of 2 required activities.');
 
@@ -424,7 +431,10 @@ class CreditInvestigatorDashboardTest extends TestCase
             $response = $this->actingAs($ci)->get(route('home'))->assertOk();
 
             $this->assertSame(1, $response->viewData('summary')['needs_attention'], 'The KPI counts folders, not activities.');
-            $this->assertSame(1, collect($response->viewData('workload')['segments'])->firstWhere('key', 'needs_attention')['count']);
+            // Overdue work is a flag, not a progress status: the chart classifies this folder by
+            // its progress (nothing mandatory met yet) and leaves the count to the KPI card.
+            $this->assertNull(collect($response->viewData('workload')['segments'])->firstWhere('key', 'needs_attention'));
+            $this->assertSame(1, collect($response->viewData('workload')['segments'])->firstWhere('key', 'not_started')['count']);
             $this->assertSame(3, $response->viewData('summary')['needs_attention_items']);
             $response->assertSee('1 client folder • 3 overdue activities');
         } finally {

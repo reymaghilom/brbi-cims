@@ -35,6 +35,7 @@
     --radius-card: 0.9rem;
     --radius-panel: 1.25rem;
     --shadow-card: 0 1px 2px rgb(15 45 80 / 0.035), 0 6px 18px rgb(15 45 80 / 0.035);
+    --shadow-card-hover: 0 1px 2px rgb(15 45 80 / 0.05), 0 8px 20px rgb(15 45 80 / 0.06);
     --shadow-float: 0 18px 45px rgb(12 35 68 / 0.18);
 
     --spacing-page: 1.5rem;
@@ -56,6 +57,35 @@
 @layer components {
     .ui-card { @apply rounded-card bg-surface shadow-card; }
     .ui-panel { @apply rounded-panel bg-surface shadow-card; }
+    /* A summary/KPI card that is itself a link to the tab or filter it counts (Global Reports and
+       Global CI Activities). Separation comes from a SOFT HAIRLINE BORDER over the card surface,
+       never from an outline ring: the previous treatment tinted a 1px brand ring on hover and drew
+       a 2px brand ring when active, which read as a hard saturated rectangle drawn around the
+       card. The border exists at rest and only ever changes COLOUR, so neither hover nor the
+       active state can shift the layout by a pixel.
+
+       Expressed as one component class rather than a string of hover:/active: utilities. That is
+       deliberate: Tailwind utilities always beat @layer components on layer precedence alone, so
+       an "active card" utility could never outrank a hover: utility, and the current card would
+       lose its state the moment the pointer touched it. Written here, the active rule simply comes
+       last and wins. Focus stays the app-wide :focus-visible outline (a low-opacity brand colour
+       at a 2px offset) - an outline rather than a ring, so it still reads clearly over the active
+       border. Scoped to .ui-kpi-card, so .ui-card itself, and with it the Dashboard's own KPI
+       cards, are untouched. */
+    .ui-kpi-card { @apply block w-full cursor-pointer border border-ui-border/70 text-left transition duration-150; }
+    @media (hover: hover) {
+        .ui-kpi-card:hover { @apply border-ui-border-strong bg-surface-muted/70 shadow-card-hover; }
+    }
+    .ui-kpi-card:active { @apply border-ui-border-strong bg-surface-muted; }
+    @media (prefers-reduced-motion: no-preference) {
+        @media (hover: hover) { .ui-kpi-card:hover { translate: 0 -1px; } }
+        .ui-kpi-card:active { translate: 0 0; }
+    }
+    /* Active outranks hover: declared afterwards and at higher specificity, so the card matching
+       the open tab keeps reading as the current one even while the pointer is over it. A brand
+       hairline over a light brand surface - emphasis by hue rather than by weight, so it is
+       clearly stronger than the neutral hover without becoming a saturated frame. */
+    .ui-kpi-card[aria-current="page"] { @apply border-brand-primary/35 bg-brand-soft/70 shadow-card-hover; }
     .ui-label { @apply mb-2 block text-sm font-medium text-text-main; }
     .ui-help { @apply mt-2 text-sm leading-5 text-text-muted; }
     .ui-control { @apply block min-h-11 w-full rounded-control border border-ui-border-strong bg-surface px-3.5 py-2.5 text-sm text-text-main shadow-sm transition placeholder:text-text-subtle hover:border-brand-primary focus:border-brand-primary focus:outline-none focus:ring-3 focus:ring-brand-primary/15 disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-subtle; }
@@ -100,8 +130,18 @@
     [data-reports-listing][data-refreshing="true"], [data-ci-activities-listing][data-refreshing="true"], [data-checks-listing][data-refreshing="true"] { opacity: .65; pointer-events: none; }
     .client-folder-grid { @apply grid gap-2.5; grid-template-columns: repeat(auto-fill, minmax(9.25rem, 1fr)); }
     .client-folder-tile-shell { @apply relative min-w-0; }
-    .client-folder-tile { @apply relative flex min-h-36 cursor-default select-none flex-col items-center rounded-card bg-surface-muted/65 px-2.5 pb-2.5 pt-4 text-center transition hover:bg-brand-soft/45 focus-visible:outline-none; }
-    .client-folder-tile[aria-selected="true"] { @apply border-brand-primary bg-brand-soft/55 shadow-card ring-1 ring-brand-primary/25; }
+    /* Interaction language reused from the clickable Dashboard KPI cards (pointer cursor, a
+       transparent ring that tints on hover, a 1px motion-safe lift, a 150ms transition): only the
+       affordance changes here — the tile's layout, tones, contents and selection behavior are
+       untouched. Tailwind v4 already wraps every `hover:` utility in `@media (hover: hover)`, so
+       touch devices never get a sticky hover state and rely on the `active:` press feedback
+       instead. Focus is deliberately NOT suppressed any more: the app-wide `:focus-visible`
+       outline at the top of this file is the project's focus treatment, and because it is an
+       outline rather than a ring it stays visible on an already-selected tile. */
+    .client-folder-tile { @apply relative flex min-h-36 cursor-pointer select-none flex-col items-center rounded-card bg-surface-muted/65 px-2.5 pb-2.5 pt-4 text-center ring-1 ring-transparent transition duration-150 hover:bg-brand-soft/45 hover:shadow-sm hover:ring-brand-primary/20 active:bg-brand-soft/60 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0; }
+    /* Selected stays clearly stronger than hover (heavier ring + the full card shadow) and is
+       declared after the hover rule, so a hovered selected tile keeps reading as selected. */
+    .client-folder-tile[aria-selected="true"] { @apply border-brand-primary bg-brand-soft/55 shadow-card ring-2 ring-brand-primary/45; }
     .client-folder-name { @apply mt-2 line-clamp-2 min-h-9 w-full text-[0.8rem] font-semibold leading-[1.1rem] text-text-main; }
     .client-folder-selection { @apply absolute left-2.5 top-2.5 hidden size-5 place-items-center rounded-full border border-brand-primary bg-brand-primary text-white; }
     .client-folder-tile[aria-selected="true"] .client-folder-selection { @apply grid; }

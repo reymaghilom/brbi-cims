@@ -21,10 +21,11 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
- * Dashboard "In Progress" = Client Folders with unfinished MANDATORY investigation work, each
- * folder counted once. Applicant: CIBI, Business Report, Residence Check, Business Check, Barangay,
- * Neighbor and Bank / Coop. Each existing Co-Maker: CIBI, Residence Check, Barangay and Neighbor.
- * Asset Check is optional.
+ * Dashboard "In Progress" = Client Folders whose MANDATORY investigation work has STARTED but is
+ * not finished - strictly between 0% and 100% - each folder counted once. A folder with nothing
+ * done yet has not started and is not In Progress; a folder at 100% is finished. Applicant: CIBI,
+ * Business Report, Residence Check, Business Check, Barangay, Neighbor and Bank / Coop. Each
+ * existing Co-Maker: CIBI, Residence Check, Barangay and Neighbor. Asset Check is optional.
  */
 class DashboardInProgressKpiTest extends TestCase
 {
@@ -77,12 +78,17 @@ class DashboardInProgressKpiTest extends TestCase
     public function test_one_folder_with_many_unfinished_requirements_is_counted_once(): void
     {
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $this->ci->id, 'created_by' => $this->ci->id]);
-        foreach ([ActivityDefinition::BARANGAY_CHECK_CODE, ActivityDefinition::NEIGHBOR_CHECK_CODE, ActivityDefinition::BANK_COOP_CHECK_CODE] as $code) {
+        // One requirement genuinely met, so the folder has started; the rest are outstanding.
+        $this->activity($folder, ActivityDefinition::BARANGAY_CHECK_CODE, ActivityStatus::Completed);
+        foreach ([ActivityDefinition::NEIGHBOR_CHECK_CODE, ActivityDefinition::BANK_COOP_CHECK_CODE] as $code) {
             $this->activity($folder, $code, ActivityStatus::Pending);
         }
         CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Unfinished Co-Maker']);
 
-        $this->assertSame(1, $this->inProgress());
+        $progress = $this->progressOf($folder);
+        $this->assertSame(1, $progress['completed']);
+        $this->assertGreaterThan(1, count($progress['missing']), 'Many requirements are still outstanding.');
+        $this->assertSame(1, $this->inProgress(), 'One folder, however many unfinished requirements.');
     }
 
     public function test_co_maker_needs_only_cibi_residence_barangay_and_neighbor(): void
@@ -150,7 +156,13 @@ class DashboardInProgressKpiTest extends TestCase
 
     public function test_the_card_shows_active_investigations(): void
     {
+        // A brand-new folder has not started: 0 of 7, so the KPI stays at zero...
         ClientFolder::factory()->create(['assigned_ci_id' => $this->ci->id, 'created_by' => $this->ci->id]);
+        $this->assertSame(0, $this->inProgress());
+
+        // ...and one part-finished folder is what the card actually counts.
+        $partial = $this->completeFolder();
+        $this->setStatus($partial, ActivityDefinition::BARANGAY_CHECK_CODE, ActivityStatus::Pending);
 
         $response = $this->actingAs($this->ci)->get(route('home'))->assertOk();
 
@@ -158,9 +170,89 @@ class DashboardInProgressKpiTest extends TestCase
         $this->assertSame(1, $response->viewData('summary')['in_progress']);
     }
 
+    /**
+     * The rule is the percentage itself, so the boundaries are pinned explicitly. Auto-generated
+     * pristine Barangay / Neighbor rows satisfy no requirement, so they never make a brand-new
+     * folder look started.
+     */
+    public function test_zero_percent_is_not_started_and_one_completed_requirement_starts_it(): void
+    {
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $this->ci->id, 'created_by' => $this->ci->id]);
+        $this->activity($folder, ActivityDefinition::BARANGAY_CHECK_CODE, ActivityStatus::Pending);
+        $this->activity($folder, ActivityDefinition::NEIGHBOR_CHECK_CODE, ActivityStatus::Pending);
+
+        $this->assertSame(0, $this->progressOf($folder)['completed']);
+        $this->assertSame(0, $this->inProgress(), '0 of 7 is not started.');
+
+        // One genuinely completed mandatory requirement: 1 of 7 = 14%.
+        $this->setStatus($folder, ActivityDefinition::BARANGAY_CHECK_CODE, ActivityStatus::Completed);
+        $this->assertSame(['completed' => 1, 'total' => 7, 'percent' => 14], $this->progressWithoutMissing($folder));
+        $this->assertSame(1, $this->inProgress());
+    }
+
+    public function test_one_hundred_percent_is_not_in_progress(): void
+    {
+        $folder = $this->completeFolder();
+
+        $this->assertSame(['completed' => 7, 'total' => 7, 'percent' => 100], $this->progressWithoutMissing($folder));
+        $this->assertSame(0, $this->inProgress());
+    }
+
+    public function test_a_co_maker_moves_the_boundaries_to_eleven_requirements(): void
+    {
+        // 0 of 11: not started.
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $this->ci->id, 'created_by' => $this->ci->id]);
+        CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Fresh Co-Maker']);
+        $this->assertSame(['completed' => 0, 'total' => 11, 'percent' => 0], $this->progressWithoutMissing($folder));
+        $this->assertSame(0, $this->inProgress());
+
+        // 1 of 11 = 9%: started.
+        $this->activity($folder, ActivityDefinition::BARANGAY_CHECK_CODE, ActivityStatus::Completed);
+        $this->assertSame(['completed' => 1, 'total' => 11, 'percent' => 9], $this->progressWithoutMissing($folder));
+        $this->assertSame(1, $this->inProgress());
+
+        // 10 of 11 = 91%: still started, still unfinished.
+        $complete = $this->completeFolder();
+        $coMaker = $this->completeCoMaker($complete);
+        $this->setStatus($complete, ActivityDefinition::NEIGHBOR_CHECK_CODE, ActivityStatus::Pending, $coMaker->id);
+        $this->assertSame(['completed' => 10, 'total' => 11, 'percent' => 91], $this->progressWithoutMissing($complete));
+        $this->assertSame(2, $this->inProgress());
+
+        // 11 of 11 = 100%: finished, so it leaves the KPI again.
+        $this->setStatus($complete, ActivityDefinition::NEIGHBOR_CHECK_CODE, ActivityStatus::Completed, $coMaker->id);
+        $this->assertSame(100, $this->progressOf($complete)['percent']);
+        $this->assertSame(1, $this->inProgress());
+    }
+
+    /** An optional Asset Check never moves the percentage, so it cannot start a 0% folder. */
+    public function test_an_optional_asset_check_alone_never_starts_a_folder(): void
+    {
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $this->ci->id, 'created_by' => $this->ci->id]);
+        $this->activity($folder, ActivityDefinition::ASSET_CHECK_CODE, ActivityStatus::Completed);
+
+        $this->assertSame(['completed' => 0, 'total' => 7, 'percent' => 0], $this->progressWithoutMissing($folder));
+        $this->assertSame(0, $this->inProgress());
+    }
+
     private function inProgress(): int
     {
         return app(DashboardData::class)->for($this->ci)['summary']['in_progress'];
+    }
+
+    /** One folder's authoritative mandatory progress, as the Dashboard itself computed it. */
+    private function progressOf(ClientFolder $folder): array
+    {
+        $row = collect(app(DashboardData::class)->for($this->ci)['kpiDetails']['active'])
+            ->firstWhere('url', route('client-folders.show', $folder->id));
+
+        $this->assertNotNull($row, 'The folder is missing from the Active Client Folders list.');
+
+        return $row['progress'];
+    }
+
+    private function progressWithoutMissing(ClientFolder $folder): array
+    {
+        return collect($this->progressOf($folder))->except('missing')->all();
     }
 
     private function completeFolder(): ClientFolder

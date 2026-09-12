@@ -471,7 +471,12 @@ class GlobalLayoutTest extends TestCase
         try {
             foreach ($expectations as [$utcTime, $greeting]) {
                 Carbon::setTestNow(Carbon::parse($utcTime, 'UTC'));
-                $this->actingAs($user)->get(route('home'))->assertOk()->assertSee($greeting);
+                // The name is its own element now (it carries the stronger weight), so the
+                // greeting label and the name are asserted separately.
+                [$label, $name] = explode(', ', $greeting, 2);
+                $this->actingAs($user)->get(route('home'))->assertOk()
+                    ->assertSee($label.',')
+                    ->assertSee($name);
             }
         } finally {
             Carbon::setTestNow();

@@ -88,7 +88,16 @@
             <div class="flex min-h-16 items-center justify-between gap-3 px-4 py-2 sm:px-6 lg:px-8">
                 <div class="flex min-w-0 items-center gap-3">
                     <button type="button" data-drawer-toggle class="ui-icon-button -ml-2" aria-controls="primary-sidebar" aria-expanded="false" aria-label="Open navigation"><x-ui.icon name="menu" /></button>
-                    <p class="min-w-0 text-sm font-semibold leading-5 tracking-[-0.01em] sm:text-base lg:text-[1.05rem]">{{ $greeting }}, {{ $currentUser->full_name }}</p>
+                    {{-- The name is the subject of this line, so it carries the weight and the
+                         full text colour while the time-of-day label steps back as a muted
+                         semibold prefix. tracking-tight + leading-tight keep it compact.
+
+                         The size ramp is deliberately held to 16 / 18 / 20px rather than the
+                         hero scale: this greeting lives in the STICKY 64px-tall topbar between
+                         the drawer toggle and the notification/account controls, so a hero-sized
+                         line would wrap to two or three lines on a phone and push the sticky
+                         header taller on every page. --}}
+                    <p class="min-w-0 text-base font-semibold leading-tight tracking-tight text-text-muted sm:text-lg lg:text-xl">{{ $greeting }}, <span class="font-bold text-text-main">{{ $currentUser->full_name }}</span></p>
                 </div>
                 <div class="flex shrink-0 items-center gap-1 sm:gap-2">
                     @if($currentUser->role->worksAsCreditInvestigator())
@@ -113,8 +122,8 @@
                                     <span class="grid size-9 shrink-0 place-items-center rounded-full bg-brand-primary text-xs font-bold text-white" aria-hidden="true">{{ $userInitials }}</span>
                                 @endif
                                 <span class="hidden min-w-0 text-left sm:block">
-                                    <span class="block max-w-44 truncate text-sm font-bold text-text-main">{{ $currentUser->full_name }}</span>
-                                    <span class="block text-xs text-text-muted">{{ $roleLabel }}</span>
+                                    <span class="block max-w-44 truncate text-sm font-semibold tracking-tight text-text-main" title="{{ $currentUser->full_name }}">{{ $currentUser->full_name }}</span>
+                                    <span class="block text-xs leading-4 text-text-muted">{{ $roleLabel }}</span>
                                 </span>
                                 <x-ui.icon name="chevron-down" size="size-4" class="text-text-muted" />
                             </span>

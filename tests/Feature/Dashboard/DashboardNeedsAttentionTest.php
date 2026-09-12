@@ -160,14 +160,18 @@ class DashboardNeedsAttentionTest extends TestCase
         $barangay = $this->activity($folder, ActivityDefinition::BARANGAY_CHECK_CODE, ActivityStatus::Scheduled, '2026-09-03');
         $before = $this->home();
         $this->assertSame(1, $before->viewData('summary')['needs_attention']);
-        $inProgress = $before->viewData('summary')['in_progress'];
+        // Nothing mandatory is met yet, so the folder has not started.
+        $this->assertSame(0, $before->viewData('summary')['in_progress']);
 
         $this->putJson(route('client-folders.activities.update', [$folder, $barangay]), ['co_maker_id' => null, 'status' => ActivityStatus::Completed->value])->assertOk();
 
         $after = $this->home();
         $this->assertSame(0, $after->viewData('summary')['needs_attention']);
         $this->assertSame([], $after->viewData('needsAttention'));
-        $this->assertSame($inProgress, $after->viewData('summary')['in_progress'], 'One completed activity does not finish the folder.');
+        // The Barangay Check is now genuinely met: 1 of 7, so the folder has started but is not
+        // finished — In Progress, not Completed.
+        $this->assertSame(1, $after->viewData('summary')['in_progress'], 'One completed activity starts the folder without finishing it.');
+        $this->assertSame(14, $after->viewData('kpiDetails')['in_progress'][0]['progress']['percent']);
     }
 
     public function test_the_card_is_an_interactive_button_only_when_something_is_overdue(): void
@@ -236,7 +240,12 @@ class DashboardNeedsAttentionTest extends TestCase
         $this->assertMatchesRegularExpression('/bg-progress-soft text-progress" data-overdue-badge>Overdue by 1 day</', $modal);
     }
 
-    public function test_the_workload_needs_attention_slice_equals_the_kpi_even_for_a_completed_folder(): void
+    /**
+     * Needs Attention is an overdue FLAG, not a progress status, so it is no longer one of the
+     * Workload by Status slices. A folder keeps its own progress status and is counted by the
+     * Needs Attention KPI at the same time - the two metrics measure different things.
+     */
+    public function test_an_overdue_folder_keeps_its_progress_status_and_its_needs_attention_count(): void
     {
         $open = $this->folder('OPEN, CLIENT');
         $this->activity($open, ActivityDefinition::BARANGAY_CHECK_CODE, ActivityStatus::Scheduled, '2026-09-02');
@@ -251,9 +260,15 @@ class DashboardNeedsAttentionTest extends TestCase
         $response = $this->home();
         $segments = collect($response->viewData('workload')['segments'])->pluck('count', 'key');
 
+        // Both overdue folders are still counted by the KPI...
         $this->assertSame(2, $response->viewData('summary')['needs_attention']);
-        $this->assertSame($response->viewData('summary')['needs_attention'], $segments['needs_attention']);
+        // ...while the chart reports only progress statuses, and no longer carries an overdue one.
+        $this->assertSame(['not_started', 'in_progress', 'completed'], $segments->keys()->all());
         $this->assertSame(3, $segments->sum(), 'Slices stay mutually exclusive and add up to the folder total.');
+        // None of the three has met a single mandatory requirement, DONE included: its stored
+        // status was written directly, and the chart reports the authoritative calculation rather
+        // than that flag. Its overdue OPTIONAL Asset office changes neither thing.
+        $this->assertSame(['not_started' => 3, 'in_progress' => 0, 'completed' => 0], $segments->all());
     }
 
     private function home()
