@@ -18,4 +18,11 @@ enum ActivityStatus: string
             self::Completed => 'Completed',
         };
     }
+
+    public static function requiresScheduledDate(mixed $status): bool
+    {
+        $value = $status instanceof self ? $status->value : $status;
+
+        return in_array($value, [self::Scheduled->value, self::FollowUp->value], true);
+    }
 }

@@ -1,5 +1,9 @@
 @extends('layouts.app')
 
+@if(request()->boolean('dashboard_modal'))
+    @section('html-class', 'dashboard-activity-embedded')
+@endif
+
 @section('title', $activity->display_name)
 
 @section('content')
@@ -19,7 +23,7 @@
 
     <x-ui.page-header :title="$activity->display_name">
         <x-slot:description>{{ $contextLabel }}</x-slot:description>
-        <x-slot:actions><a href="{{ route('client-folders.activities.index', [$clientFolder] + $personParams) }}" class="ui-button-secondary">All Activities</a></x-slot:actions>
+        <x-slot:actions><a href="{{ route('client-folders.activities.index', [$clientFolder] + $personParams) }}" class="ui-button-secondary"><x-ui.icon name="activity" size="size-4" />All Activities</a></x-slot:actions>
     </x-ui.page-header>
 
     <div
@@ -64,9 +68,9 @@
                         </select>
                     </div>
                     <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,0.55fr)]">
-                        <div><label for="default-check-date-{{ $activity->id }}" class="ui-label">Schedule / Follow-up Date <x-form.schedule-date-indicator :required="$activity->status === App\Enums\ActivityStatus::Scheduled" /></label><input id="default-check-date-{{ $activity->id }}" name="scheduled_at" type="date" value="{{ $supportsSchedule ? $localSchedule?->format('Y-m-d') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-default-check-date data-schedule-date @disabled(! $supportsSchedule)></div>
+                        <div><label for="default-check-date-{{ $activity->id }}" class="ui-label">Schedule / Follow-up Date <x-form.schedule-date-indicator :required="$supportsSchedule" /></label><input id="default-check-date-{{ $activity->id }}" name="scheduled_at" type="date" value="{{ $supportsSchedule ? $localSchedule?->format('Y-m-d') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-default-check-date data-schedule-date @required($supportsSchedule) @disabled(! $supportsSchedule)></div>
                         <div><label for="default-check-time-{{ $activity->id }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="default-check-time-{{ $activity->id }}" name="scheduled_time" type="time" value="{{ $supportsSchedule && $activity->scheduled_has_time ? $localSchedule?->format('H:i') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-default-check-time @disabled(! $supportsSchedule || ! $localSchedule)></div>
-                        <p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled activities. Time is optional.</p>
+                        <p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled and For Follow-up activities. Time is optional.</p>
                     </div>
                     <div class="sm:col-span-2"><label for="default-check-remarks-{{ $activity->id }}" class="ui-label">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="default-check-remarks-{{ $activity->id }}" name="remarks" rows="4" class="ui-control" data-default-check-remarks>{{ $activity->remarks }}</textarea></div>
                 </div>
@@ -76,7 +80,7 @@
                     <p class="flex items-start gap-1.5 rounded-control border border-progress/30 bg-progress-soft px-3 py-2 text-sm font-semibold text-progress" data-default-check-no-changes role="status" aria-live="polite" hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected. Nothing needs to be updated.</p>
                     <div class="flex flex-col-reverse gap-2.5 sm:ml-auto sm:flex-row">
                         <button type="button" class="ui-button-secondary w-full sm:w-auto" data-default-check-cancel><x-ui.icon name="close" size="size-4" />Cancel</button>
-                        <button type="submit" class="ui-button-primary w-full sm:w-auto" data-default-check-submit><x-ui.icon name="check" size="size-4" />Save Changes</button>
+                        <button type="submit" class="ui-button-primary w-full sm:w-auto" data-default-check-submit><x-ui.icon name="check" size="size-4" /><span data-default-check-submit-label>Save Changes</span></button>
                     </div>
                 </div>
             </form>
@@ -91,7 +95,7 @@
         <dialog class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-default-check-discard-confirm aria-labelledby="default-check-discard-title-{{ $activity->id }}">
             <div class="border-b border-ui-border px-5 py-4"><h2 id="default-check-discard-title-{{ $activity->id }}" class="text-lg font-bold text-brand-sidebar">Discard unsaved changes?</h2></div>
             <div class="px-5 py-5 text-sm leading-6 text-text-muted">Your changes have not been saved.</div>
-            <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-default-check-discard-keep>Keep Editing</button><button type="button" class="ui-button-danger" data-default-check-discard-confirm-button>Discard Changes</button></div>
+            <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-default-check-discard-keep><x-ui.icon name="edit" size="size-4" />Keep Editing</button><button type="button" class="ui-button-danger" data-default-check-discard-confirm-button><x-ui.icon name="trash" size="size-4" />Discard Changes</button></div>
         </dialog>
     </div>
 
@@ -107,7 +111,7 @@
             const completion = source.querySelector('[data-default-check-completion]');
             const discard = source.querySelector('[data-default-check-discard-confirm]');
             if (!(status instanceof HTMLSelectElement) || !(date instanceof HTMLInputElement) || !(time instanceof HTMLInputElement)) return;
-            const sync = () => { const enabled = ['scheduled', 'follow_up'].includes(status.value); if (! enabled) { date.value = ''; time.value = ''; } date.disabled = ! enabled; if (! enabled || date.value === '') time.value = ''; time.disabled = ! enabled || date.value === ''; };
+            const sync = () => { const enabled = ['scheduled', 'follow_up'].includes(status.value); if (! enabled) { date.value = ''; time.value = ''; } date.disabled = ! enabled; date.required = enabled; if (! enabled || date.value === '') time.value = ''; time.disabled = ! enabled || date.value === ''; };
             status.addEventListener('change', sync); date.addEventListener('input', sync); sync();
 
             const readValues = () => ({

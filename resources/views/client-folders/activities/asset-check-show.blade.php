@@ -1,5 +1,9 @@
 @extends('layouts.app')
 
+@if(request()->boolean('dashboard_modal'))
+    @section('html-class', 'dashboard-activity-embedded')
+@endif
+
 @section('title', 'Asset Check')
 
 @section('content')
@@ -19,7 +23,7 @@
     ]" />
 
     <x-ui.page-header title="Asset Check" :description="$context">
-        <x-slot:actions><button type="button" class="ui-button-primary" data-modal-open="add-asset-target"><x-ui.icon name="plus" size="size-4" />Add Assessor</button><a href="{{ route('client-folders.activities.index', [$clientFolder] + $personParams) }}" class="ui-button-secondary">All Activities</a></x-slot:actions>
+        <x-slot:actions><button type="button" class="ui-button-primary" data-modal-open="add-asset-target"><x-ui.icon name="plus" size="size-4" />Add Assessor</button><a href="{{ route('client-folders.activities.index', [$clientFolder] + $personParams) }}" class="ui-button-secondary"><x-ui.icon name="activity" size="size-4" />All Activities</a></x-slot:actions>
     </x-ui.page-header>
 
     <div
@@ -102,7 +106,7 @@
         </dialog>
 
         @foreach($activity->assetTargets as $target)
-            <dialog id="complete-asset-target-{{ $target->id }}" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45"><form method="POST" action="{{ route('client-folders.activities.asset-targets.complete', [$clientFolder, $activity, $target]) }}" data-asset-target-form>@csrf @method('PATCH')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><div class="p-5 sm:p-6"><h2 class="text-lg font-bold text-brand-sidebar">Mark as completed?</h2><p class="mt-3 break-words text-sm text-text-muted">Mark <span class="font-semibold text-text-main">{{ $target->assessorLabel() }} — {{ $target->office_location }}</span> as completed?</p><div class="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-asset-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary"><x-ui.icon name="check" size="size-4" />Mark Completed</button></div></div></form></dialog>
+            <x-ui.asset-target-completion-modal :$target :$clientFolder :$activity :$activePerson />
             <dialog id="edit-asset-target-{{ $target->id }}" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45"><form method="POST" action="{{ route('client-folders.activities.asset-targets.update', [$clientFolder, $activity, $target]) }}" class="flex max-h-[calc(100dvh-2rem)] flex-col" data-asset-target-form data-no-change-guard>@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><div class="flex items-start justify-between border-b border-ui-border px-5 py-4 sm:px-6"><h2 class="text-lg font-bold text-brand-sidebar">Edit Asset Check</h2><button type="button" class="ui-icon-button" data-asset-modal-close aria-label="Close"><x-ui.icon name="close" size="size-5" /></button></div><div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6"><p class="mb-4 flex items-start gap-1.5 rounded-control border border-progress/30 bg-progress-soft px-3 py-2 text-sm font-semibold text-progress" data-no-change-message role="status" aria-live="polite" hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected. Nothing needs to be updated.</p>@include('client-folders.activities.partials.asset-target-fields', ['prefix' => 'edit-'.$target->id, 'target' => $target])</div><div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-asset-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary"><x-ui.icon name="check" size="size-4" />Save Changes</button></div></form></dialog>
             <dialog id="delete-asset-target-{{ $target->id }}" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45"><form method="POST" action="{{ route('client-folders.activities.asset-targets.destroy', [$clientFolder, $activity, $target]) }}" data-asset-target-form>@csrf @method('DELETE')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><div class="p-5 sm:p-6"><h2 class="text-lg font-bold text-brand-sidebar">Delete Assessor Target?</h2><p class="mt-3 break-words text-sm text-text-muted">This removes only <span class="font-semibold text-text-main">{{ $target->assessorLabel() }} — {{ $target->office_location }}</span>. The Asset Check activity will remain.</p><div class="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-asset-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-danger"><x-ui.icon name="trash" size="size-4" />Delete Target</button></div></div></form></dialog>
         @endforeach
@@ -113,7 +117,7 @@
             const bind = (form) => {
                 const status = form.querySelector('[data-asset-detail-status]'); const date = form.querySelector('[data-asset-detail-date]'); const time = form.querySelector('[data-asset-detail-time]');
                 if (!(status instanceof HTMLSelectElement) || !(date instanceof HTMLInputElement) || !(time instanceof HTMLInputElement)) return;
-                const sync = () => { const enabled = ['scheduled', 'follow_up'].includes(status.value); if (! enabled) { date.value = ''; time.value = ''; } date.disabled = ! enabled; if (! enabled || date.value === '') time.value = ''; time.disabled = ! enabled || date.value === ''; };
+                const sync = () => { const enabled = ['scheduled', 'follow_up'].includes(status.value); if (! enabled) { date.value = ''; time.value = ''; } date.disabled = ! enabled; date.required = enabled; if (! enabled || date.value === '') time.value = ''; time.disabled = ! enabled || date.value === ''; };
                 status.addEventListener('change', sync); date.addEventListener('input', sync); sync();
             };
             document.querySelectorAll('[data-asset-target-form]').forEach((form) => bind(form));

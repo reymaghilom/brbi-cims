@@ -26,6 +26,13 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
  */
 class MandatoryInvestigationRequirements
 {
+    /** Mandatory requirements whose completion is represented by a CI Activity row. */
+    public const CI_ACTIVITY_CODES = [
+        'barangay_check' => ActivityDefinition::BARANGAY_CHECK_CODE,
+        'neighbor_check' => ActivityDefinition::NEIGHBOR_CHECK_CODE,
+        'bank_coop_check' => ActivityDefinition::BANK_COOP_CHECK_CODE,
+    ];
+
     public const APPLICANT = [
         'cibi' => 'CI / BI Report',
         'business_report' => 'Business Report',
@@ -83,6 +90,20 @@ class MandatoryInvestigationRequirements
     }
 
     /**
+     * The CI Activity obligations applicable to the requested kind of person, projected directly
+     * from the authoritative Applicant / Co-Maker requirement maps above.
+     *
+     * @return array<string, string> requirement key => ActivityDefinition code
+     */
+    public static function ciActivityRequirements(int|string|null $coMaker): array
+    {
+        return array_intersect_key(
+            self::CI_ACTIVITY_CODES,
+            $coMaker === null ? self::APPLICANT : self::CO_MAKER,
+        );
+    }
+
+    /**
      * Fills $record with the correlated record lookup for one requirement and person (from, joins and
      * wheres against `client_folders.id`). whereMet() wraps it in EXISTS; the Dashboard selects it
      * as a per-folder flag so every folder is evaluated in one query with these same predicates.
@@ -116,9 +137,7 @@ class MandatoryInvestigationRequirements
                 ->whereColumn('residence_checks.client_folder_id', 'client_folders.id'), 'residence_checks.co_maker_id'),
             'business_check' => $person($record->from('business_checks')
                 ->whereColumn('business_checks.client_folder_id', 'client_folders.id'), 'business_checks.co_maker_id'),
-            'barangay_check' => $completedActivity(ActivityDefinition::BARANGAY_CHECK_CODE),
-            'neighbor_check' => $completedActivity(ActivityDefinition::NEIGHBOR_CHECK_CODE),
-            'bank_coop_check' => $completedActivity(ActivityDefinition::BANK_COOP_CHECK_CODE),
+            'barangay_check', 'neighbor_check', 'bank_coop_check' => $completedActivity(self::CI_ACTIVITY_CODES[$requirement]),
         };
     }
 

@@ -342,11 +342,14 @@ class CiActivityDefaultTrackerTest extends TestCase
         $this->assertTrue($activity->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-06 14:30', 'Asia/Manila')->utc()));
         $this->assertTrue($activity->scheduled_has_time);
 
-        $this->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::FollowUp))->assertRedirect();
+        $followUpBaseline = $activity->scheduled_at->copy();
+        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::FollowUp))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['scheduled_at' => 'Please select a scheduled date.']);
         $activity->refresh();
-        $this->assertSame(ActivityStatus::FollowUp, $activity->status);
-        $this->assertNull($activity->scheduled_at);
-        $this->assertFalse($activity->scheduled_has_time);
+        $this->assertSame(ActivityStatus::Scheduled, $activity->status);
+        $this->assertTrue($activity->scheduled_at->equalTo($followUpBaseline));
+        $this->assertTrue($activity->scheduled_has_time);
 
         $this->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::FollowUp, '2026-09-07', '09:15'))->assertRedirect();
         $activity->refresh();

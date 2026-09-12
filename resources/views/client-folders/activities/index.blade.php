@@ -348,14 +348,14 @@
                                                     <div class="my-1 border-t border-ui-border"></div>
                                                     <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
                                                 @else
-                                                    <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#notes-title" role="menuitem" class="client-folder-menu-item">View notes</a>
-                                                    <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#media-title" role="menuitem" class="client-folder-menu-item">Manage proof</a>
+                                                    <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#notes-title" role="menuitem" class="client-folder-menu-item"><x-ui.icon name="edit" size="size-4" class="text-text-muted" />View notes</a>
+                                                    <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#media-title" role="menuitem" class="client-folder-menu-item"><x-ui.icon name="attachment" size="size-4" class="text-text-muted" />Manage proof</a>
                                                     @if($activity->status === App\Enums\ActivityStatus::Completed)
-                                                        <button type="button" role="menuitem" class="client-folder-menu-item" data-modal-open="reopen-activity-{{ $activity->id }}">Reopen Activity</button>
+                                                        <button type="button" role="menuitem" class="client-folder-menu-item" data-modal-open="reopen-activity-{{ $activity->id }}"><x-ui.icon name="open" size="size-4" class="text-text-muted" />Reopen Activity</button>
                                                     @endif
                                                     @unless($isMandatoryDefault)
                                                         <div class="my-1 border-t border-ui-border"></div>
-                                                        <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}">Delete Activity</button>
+                                                        <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}"><x-ui.icon name="trash" size="size-4" />Delete Activity</button>
                                                     @endunless
                                                 @endif
                                             </x-ui.context-menu>
@@ -398,25 +398,7 @@
                 </div>
             </dialog>
 
-            <dialog id="quick-complete-activity-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-quick-complete-modal aria-labelledby="quick-complete-activity-title">
-                <div class="border-b border-ui-border px-5 py-4">
-                    <h2 id="quick-complete-activity-title" class="break-words text-lg font-bold text-brand-sidebar" data-quick-complete-title></h2>
-                    <p class="mt-0.5 flex items-center gap-1.5 text-sm text-text-muted"><x-ui.icon name="check-circle" size="size-4" class="shrink-0 text-success" />Complete this activity?</p>
-                </div>
-                <div class="space-y-3 px-5 py-5 text-sm leading-6 text-text-muted">
-                    <div data-quick-complete-schedule-block hidden>
-                        <p class="text-xs font-bold uppercase tracking-wide text-text-muted">Schedule</p>
-                        <p class="mt-0.5 font-semibold text-text-main" data-quick-complete-schedule></p>
-                    </div>
-                    <div data-quick-complete-remarks-block hidden>
-                        <p class="text-xs font-bold uppercase tracking-wide text-text-muted">Remarks</p>
-                        <p class="mt-0.5 break-words text-text-main" data-quick-complete-remarks></p>
-                    </div>
-                    <p class="text-xs text-text-muted">The schedule and time will be cleared. This completion will be recorded in Recent Activity under the user who confirms it.</p>
-                    <p class="rounded-control border border-danger/25 bg-danger-soft px-3 py-2 font-semibold text-danger" role="alert" data-quick-complete-error hidden></p>
-                </div>
-                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-secondary w-full sm:w-auto" data-quick-complete-edit><x-ui.icon name="edit" size="size-4" />Edit</button><button type="button" class="ui-button-primary w-full sm:w-auto" data-quick-complete-confirm><x-ui.icon name="check" size="size-4" /><span data-quick-complete-confirm-label>Mark as Completed</span></button></div>
-            </dialog>
+            <x-ui.ci-activity-completion-modal />
 
             <dialog id="remove-submission-proof-modal" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-remove-submission-proof-modal aria-labelledby="remove-submission-proof-title">
                 <div class="border-b border-ui-border px-5 py-4"><h2 id="remove-submission-proof-title" class="break-words text-lg font-bold text-brand-sidebar">Remove Supporting Proof?</h2></div>
@@ -424,7 +406,7 @@
                     <p>This will permanently remove the attached proof from this activity. The activity and its submission record will remain unchanged.</p>
                     <p class="rounded-control border border-danger/25 bg-danger-soft px-3 py-2 font-semibold text-danger" role="alert" data-remove-submission-proof-error hidden></p>
                 </div>
-                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-remove-submission-proof-cancel>Cancel</button><button type="button" class="ui-button-danger w-full sm:w-auto" data-remove-submission-proof-confirm>Remove Proof</button></div>
+                <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary w-full sm:w-auto" data-remove-submission-proof-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-danger w-full sm:w-auto" data-remove-submission-proof-confirm><x-ui.icon name="trash" size="size-4" /><span data-remove-submission-proof-confirm-label>Remove Proof</span></button></div>
             </dialog>
 
             @foreach($activities as $activity)
@@ -442,14 +424,14 @@
                                     <span class="grid size-9 shrink-0 place-items-center rounded-control bg-brand-soft text-brand-primary"><x-ui.icon name="{{ Str::startsWith($proof->mime_type, 'image/') ? 'media' : (Str::startsWith($proof->mime_type, 'video/') ? 'video' : 'report') }}" size="size-4" /></span>
                                     <span class="min-w-0 flex-1 break-words text-sm font-semibold leading-5 text-text-main" title="{{ $proof->file_name }}">{{ $proof->file_name }}</span>
                                     @if($proofIsPreviewable)
-                                        <button type="button" class="ui-button-secondary-compact shrink-0" data-modal-open="ci-proof-preview-{{ $activity->id }}-{{ $proof->id }}" aria-label="View {{ $proof->file_name }}">View</button>
+                                        <button type="button" class="ui-button-secondary-compact shrink-0" data-modal-open="ci-proof-preview-{{ $activity->id }}-{{ $proof->id }}" aria-label="View {{ $proof->file_name }}"><x-ui.icon name="eye" size="size-3.5" />View</button>
                                     @else
-                                        <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof] + $personParams) }}" target="_blank" rel="noopener" class="ui-button-secondary-compact shrink-0" aria-label="View {{ $proof->file_name }}">View</a>
+                                        <a href="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof] + $personParams) }}" target="_blank" rel="noopener" class="ui-button-secondary-compact shrink-0" aria-label="View {{ $proof->file_name }}"><x-ui.icon name="eye" size="size-3.5" />View</a>
                                     @endif
                                 </li>
                             @endforeach
                         </ul>
-                        <x-slot:footer><button type="button" data-modal-close class="ui-button-secondary">Close</button></x-slot:footer>
+                        <x-slot:footer><button type="button" data-modal-close class="ui-button-secondary"><x-ui.icon name="close" size="size-4" />Close</button></x-slot:footer>
                     </x-ui.modal>
                 @endif
 
@@ -463,7 +445,7 @@
                                     <video controls preload="none" class="mx-auto max-h-[65vh] w-full bg-black" aria-label="{{ $proof->file_name }}"><source src="{{ route('client-folders.activities.proof.content', [$clientFolder, $activity, $proof] + $personParams) }}" type="{{ $proof->mime_type }}">Your browser does not support this video format.</video>
                                 @endif
                             </div>
-                            <x-slot:footer><button type="button" data-modal-close class="ui-button-primary">Close</button></x-slot:footer>
+                            <x-slot:footer><button type="button" data-modal-close class="ui-button-primary"><x-ui.icon name="close" size="size-4" />Close</button></x-slot:footer>
                         </x-ui.modal>
                     @endif
                 @endforeach
@@ -523,10 +505,10 @@
                                 </div>
                                 @if($errors->submission->has('submission_activity_id'))<p class="flex items-start gap-1.5 text-sm font-medium text-danger" role="alert"><x-ui.icon name="warning" size="mt-0.5 size-4" />{{ $errors->submission->first('submission_activity_id') }}</p>@endif
                             </div>
-                            <div class="flex shrink-0 flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-3.5 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary-compact !min-h-9 w-full sm:w-auto" data-modal-close>{{ $activity->submitted_at ? 'Close' : 'Cancel' }}</button><button type="submit" class="ui-button-primary !min-h-9 !px-3 !py-1.5 !text-xs w-full sm:w-auto"><x-ui.icon name="check-circle" size="size-3.5" />{{ $activity->submitted_at ? 'Update Submission' : 'Mark as Submitted' }}</button></div>
+                            <div class="flex shrink-0 flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-3.5 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary-compact !min-h-9 w-full sm:w-auto" data-modal-close><x-ui.icon name="close" size="size-3.5" />{{ $activity->submitted_at ? 'Close' : 'Cancel' }}</button><button type="submit" class="ui-button-primary !min-h-9 !px-3 !py-1.5 !text-xs w-full sm:w-auto"><x-ui.icon name="check-circle" size="size-3.5" />{{ $activity->submitted_at ? 'Update Submission' : 'Mark as Submitted' }}</button></div>
                         </form>
                     </dialog>
-                    <x-ui.confirmation-dialog id="reopen-activity-{{ $activity->id }}" title="Reopen Activity?" :action="route('client-folders.activities.update', [$clientFolder, $activity])" method="PUT" confirm-label="Reopen Activity">
+                    <x-ui.confirmation-dialog id="reopen-activity-{{ $activity->id }}" title="Reopen Activity?" :action="route('client-folders.activities.update', [$clientFolder, $activity])" method="PUT" confirm-label="Reopen Activity" cancel-icon="close" confirm-icon="open">
                         <p>This activity will be returned to Pending. The previous completion will remain visible in Recent Activity.</p>
                         <x-slot:formFields>
                             <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
@@ -536,7 +518,7 @@
                         </x-slot:formFields>
                     </x-ui.confirmation-dialog>
                 @unless($activity->isMandatoryDefault())
-                    <x-ui.confirmation-dialog id="delete-activity-{{ $activity->id }}" :title="'Permanently delete '.$activity->display_name.'?'" :action="route('client-folders.activities.destroy', [$clientFolder, $activity])" method="DELETE" :confirm-label="$activity->definition?->isCustom() ? 'Delete' : 'Permanently Delete'" :cancel-icon="$activity->definition?->isCustom() ? 'close' : null" :confirm-icon="$activity->definition?->isCustom() ? 'trash' : null" destructive>
+                    <x-ui.confirmation-dialog id="delete-activity-{{ $activity->id }}" :title="'Permanently delete '.$activity->display_name.'?'" :action="route('client-folders.activities.destroy', [$clientFolder, $activity])" method="DELETE" :confirm-label="$activity->definition?->isCustom() ? 'Delete' : 'Permanently Delete'" cancel-icon="close" confirm-icon="trash" destructive>
                         <p>This action cannot be undone.</p>
                         <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
                     </x-ui.confirmation-dialog>
@@ -763,10 +745,10 @@
                     <x-form.validation-message for="new_activity_type" />
                     <p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-new-activity-type-error hidden>Please enter an Activity Type name.</p>
                 </div>
-                <div data-standard-activity-field @if($addingNewActivityType || $addingBankCoopCheck) hidden @endif><label for="activity-status" class="ui-label">Status</label><select id="activity-status" name="status" class="ui-control" @if(! $addingNewActivityType && ! $addingBankCoopCheck) required @else disabled @endif data-ci-activity-status><option value="pending" @selected($addActivityStatus === 'pending')>Pending</option><option value="scheduled" @selected($addActivityStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($addActivityStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($addActivityStatus === 'completed')>Completed</option></select><x-form.validation-message for="status" /><p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-activity-status-error hidden>Please select a Status.</p></div>
+                <div data-standard-activity-field @if($addingNewActivityType || $addingBankCoopCheck) hidden @endif><label for="activity-status" class="ui-label">Status</label><select id="activity-status" name="status" class="ui-control" @if(! $addingNewActivityType && ! $addingBankCoopCheck) required @else disabled @endif data-ci-activity-status data-schedule-status><option value="pending" @selected($addActivityStatus === 'pending')>Pending</option><option value="scheduled" @selected($addActivityStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($addActivityStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($addActivityStatus === 'completed')>Completed</option></select><x-form.validation-message for="status" /><p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-activity-status-error hidden>Please select a Status.</p></div>
                 <div class="sm:col-span-2" data-standard-activity-field @if($addingNewActivityType || $addingBankCoopCheck) hidden @endif>
                     <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,0.55fr)]">
-                        <div><label for="activity-schedule" class="ui-label">Schedule / Follow-up Date</label><input id="activity-schedule" name="scheduled_at" type="date" value="{{ $addScheduleEnabled ? old('scheduled_at') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-activity-schedule @disabled(! $addScheduleEnabled) aria-disabled="{{ $addScheduleEnabled ? 'false' : 'true' }}"><x-form.validation-message for="scheduled_at" /><p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-activity-schedule-error hidden>Please select a scheduled date.</p></div>
+                        <div><label for="activity-schedule" class="ui-label">Schedule / Follow-up Date <x-form.schedule-date-indicator :required="$addScheduleEnabled" /></label><input id="activity-schedule" name="scheduled_at" type="date" value="{{ $addScheduleEnabled ? old('scheduled_at') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-activity-schedule data-schedule-date @required($addScheduleEnabled) @disabled(! $addScheduleEnabled) aria-disabled="{{ $addScheduleEnabled ? 'false' : 'true' }}"><x-form.validation-message for="scheduled_at" /><p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-activity-schedule-error hidden>Please select a scheduled date.</p></div>
                         <div><label for="activity-schedule-time" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="activity-schedule-time" name="scheduled_time" type="time" value="{{ $addScheduleEnabled ? old('scheduled_time') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-activity-schedule-time @disabled(! $addScheduleEnabled) aria-disabled="{{ $addScheduleEnabled ? 'false' : 'true' }}"><x-form.validation-message for="scheduled_time" /></div>
                     </div>
                     <p class="ui-help" data-ci-schedule-help>{{ $addScheduleEnabled ? 'Time is optional. Without one, the creator is reminded at 8:00 AM on the selected date.' : 'Available when the status is Scheduled or For Follow-up.' }}</p>
@@ -788,7 +770,7 @@
                                     <div><label for="bank-target-name-{{ $index }}" class="ui-label">Bank / Coop Name</label><input id="bank-target-name-{{ $index }}" name="bank_targets[{{ $index }}][institution_name]" value="{{ $target['institution_name'] ?? '' }}" class="ui-control" maxlength="255" required data-bank-target-control @disabled(! $addingBankCoopCheck)>@error('bank_targets.'.$index.'.institution_name')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror<p class="mt-1.5 text-sm font-semibold text-danger" data-bank-target-name-error hidden>Enter the Bank / Coop name.</p></div>
                                     <div data-bank-target-branch-field @if($targetInquiryType === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY) hidden @endif><label for="bank-target-branch-{{ $index }}" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-branch-{{ $index }}" name="bank_targets[{{ $index }}][branch_location]" value="{{ $targetInquiryType === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY ? '' : ($target['branch_location'] ?? '') }}" class="ui-control" maxlength="255" data-bank-target-branch data-bank-target-control @disabled(! $addingBankCoopCheck || $targetInquiryType === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY)>@error('bank_targets.'.$index.'.branch_location')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
                                     <div><label for="bank-target-status-{{ $index }}" class="ui-label">Status</label><select id="bank-target-status-{{ $index }}" name="bank_targets[{{ $index }}][status]" class="ui-control" required data-bank-target-status data-schedule-status data-bank-target-control @disabled(! $addingBankCoopCheck)><option value="pending" @selected($targetStatus === 'pending')>Pending</option><option value="scheduled" @selected($targetStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($targetStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($targetStatus === 'completed')>Completed</option></select>@error('bank_targets.'.$index.'.status')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
-                                    <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label for="bank-target-date-{{ $index }}" class="ui-label">Schedule Date <x-form.schedule-date-indicator :required="$targetStatus === 'scheduled'" /></label><input id="bank-target-date-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_at]" type="date" value="{{ $targetSupportsSchedule ? ($target['scheduled_at'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-schedule-date data-bank-target-control @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule)>@error('bank_targets.'.$index.'.scheduled_at')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><div><label for="bank-target-time-{{ $index }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_time]" type="time" value="{{ $targetSupportsSchedule ? ($target['scheduled_time'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule || blank($target['scheduled_at'] ?? null))>@error('bank_targets.'.$index.'.scheduled_time')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled activities. Time is optional.</p></div>
+                                    <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label for="bank-target-date-{{ $index }}" class="ui-label">Schedule Date <x-form.schedule-date-indicator :required="$targetSupportsSchedule" /></label><input id="bank-target-date-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_at]" type="date" value="{{ $targetSupportsSchedule ? ($target['scheduled_at'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-schedule-date data-bank-target-control @required($addingBankCoopCheck && $targetSupportsSchedule) @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule)>@error('bank_targets.'.$index.'.scheduled_at')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><div><label for="bank-target-time-{{ $index }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-{{ $index }}" name="bank_targets[{{ $index }}][scheduled_time]" type="time" value="{{ $targetSupportsSchedule ? ($target['scheduled_time'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control @disabled(! $addingBankCoopCheck || ! $targetSupportsSchedule || blank($target['scheduled_at'] ?? null))>@error('bank_targets.'.$index.'.scheduled_time')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled and For Follow-up activities. Time is optional.</p></div>
                                     <div class="sm:col-span-2"><label for="bank-target-remarks-{{ $index }}" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="bank-target-remarks-{{ $index }}" name="bank_targets[{{ $index }}][remarks]" rows="2" class="ui-control" data-bank-target-control @disabled(! $addingBankCoopCheck)>{{ $target['remarks'] ?? '' }}</textarea>@error('bank_targets.'.$index.'.remarks')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
                                 </div>
                             </article>
@@ -804,7 +786,7 @@
                                 <div><label for="bank-target-name-__INDEX__" class="ui-label">Bank / Coop Name</label><input id="bank-target-name-__INDEX__" name="bank_targets[__INDEX__][institution_name]" class="ui-control" maxlength="255" required data-bank-target-control><p class="mt-1.5 text-sm font-semibold text-danger" data-bank-target-name-error hidden>Enter the Bank / Coop name.</p></div>
                                 <div data-bank-target-branch-field><label for="bank-target-branch-__INDEX__" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-branch-__INDEX__" name="bank_targets[__INDEX__][branch_location]" class="ui-control" maxlength="255" data-bank-target-branch data-bank-target-control></div>
                                 <div><label for="bank-target-status-__INDEX__" class="ui-label">Status</label><select id="bank-target-status-__INDEX__" name="bank_targets[__INDEX__][status]" class="ui-control" required data-bank-target-status data-schedule-status data-bank-target-control><option value="pending">Pending</option><option value="scheduled">Scheduled</option><option value="follow_up">For Follow-up</option><option value="completed">Completed</option></select></div>
-                                <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label for="bank-target-date-__INDEX__" class="ui-label">Schedule Date <x-form.schedule-date-indicator /></label><input id="bank-target-date-__INDEX__" name="bank_targets[__INDEX__][scheduled_at]" type="date" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-schedule-date data-bank-target-control disabled></div><div><label for="bank-target-time-__INDEX__" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-__INDEX__" name="bank_targets[__INDEX__][scheduled_time]" type="time" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control disabled></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled activities. Time is optional.</p></div>
+                                <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label for="bank-target-date-__INDEX__" class="ui-label">Schedule Date <x-form.schedule-date-indicator /></label><input id="bank-target-date-__INDEX__" name="bank_targets[__INDEX__][scheduled_at]" type="date" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-date data-schedule-date data-bank-target-control disabled></div><div><label for="bank-target-time-__INDEX__" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="bank-target-time-__INDEX__" name="bank_targets[__INDEX__][scheduled_time]" type="time" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-bank-target-time data-bank-target-control disabled></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled and For Follow-up activities. Time is optional.</p></div>
                                 <div class="sm:col-span-2"><label for="bank-target-remarks-__INDEX__" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="bank-target-remarks-__INDEX__" name="bank_targets[__INDEX__][remarks]" rows="2" class="ui-control" data-bank-target-control></textarea></div>
                             </div>
                         </article>
@@ -824,7 +806,7 @@
                                     <div><label class="ui-label" for="asset-target-type-{{ $index }}">Assessor Office / Type</label><select id="asset-target-type-{{ $index }}" name="asset_targets[{{ $index }}][assessor_type]" class="ui-control" required data-asset-target-control @disabled(! $addingAssetCheck)><option value="">Select assessor office</option>@foreach(App\Models\CiActivityAssetTarget::ASSESSOR_TYPES as $value => $label)<option value="{{ $value }}" @selected(($target['assessor_type'] ?? '') === $value)>{{ $label }}</option>@endforeach</select>@error('asset_targets.'.$index.'.assessor_type')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
                                     <div><label class="ui-label" for="asset-target-location-{{ $index }}">Office / Municipality / City / Location</label><input id="asset-target-location-{{ $index }}" name="asset_targets[{{ $index }}][office_location]" value="{{ $target['office_location'] ?? '' }}" class="ui-control" maxlength="255" required data-asset-target-location data-asset-target-control @disabled(! $addingAssetCheck)>@error('asset_targets.'.$index.'.office_location')<p class="mt-1.5 text-sm font-semibold text-danger">{{ $message }}</p>@enderror</div>
                                     <div><label class="ui-label" for="asset-target-status-{{ $index }}">Status</label><select id="asset-target-status-{{ $index }}" name="asset_targets[{{ $index }}][status]" class="ui-control" required data-asset-target-status data-schedule-status data-asset-target-control @disabled(! $addingAssetCheck)><option value="pending" @selected($assetStatus === 'pending')>Pending</option><option value="scheduled" @selected($assetStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($assetStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($assetStatus === 'completed')>Completed</option></select></div>
-                                    <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label class="ui-label" for="asset-target-date-{{ $index }}">Schedule / Follow-up Date <x-form.schedule-date-indicator :required="$assetStatus === 'scheduled'" /></label><input id="asset-target-date-{{ $index }}" name="asset_targets[{{ $index }}][scheduled_at]" type="date" value="{{ $assetSupportsSchedule ? ($target['scheduled_at'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-date data-schedule-date data-asset-target-control @disabled(! $addingAssetCheck || ! $assetSupportsSchedule)></div><div><label class="ui-label" for="asset-target-time-{{ $index }}">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-time-{{ $index }}" name="asset_targets[{{ $index }}][scheduled_time]" type="time" value="{{ $assetSupportsSchedule ? ($target['scheduled_time'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-time data-asset-target-control @disabled(! $addingAssetCheck || ! $assetSupportsSchedule || blank($target['scheduled_at'] ?? null))></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled activities. Time is optional.</p></div>
+                                    <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label class="ui-label" for="asset-target-date-{{ $index }}">Schedule / Follow-up Date <x-form.schedule-date-indicator :required="$assetSupportsSchedule" /></label><input id="asset-target-date-{{ $index }}" name="asset_targets[{{ $index }}][scheduled_at]" type="date" value="{{ $assetSupportsSchedule ? ($target['scheduled_at'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-date data-schedule-date data-asset-target-control @required($addingAssetCheck && $assetSupportsSchedule) @disabled(! $addingAssetCheck || ! $assetSupportsSchedule)></div><div><label class="ui-label" for="asset-target-time-{{ $index }}">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-time-{{ $index }}" name="asset_targets[{{ $index }}][scheduled_time]" type="time" value="{{ $assetSupportsSchedule ? ($target['scheduled_time'] ?? '') : '' }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-time data-asset-target-control @disabled(! $addingAssetCheck || ! $assetSupportsSchedule || blank($target['scheduled_at'] ?? null))></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled and For Follow-up activities. Time is optional.</p></div>
                                     <div class="sm:col-span-2"><label class="ui-label" for="asset-target-remarks-{{ $index }}">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="asset-target-remarks-{{ $index }}" name="asset_targets[{{ $index }}][remarks]" rows="2" class="ui-control" data-asset-target-control @disabled(! $addingAssetCheck)>{{ $target['remarks'] ?? '' }}</textarea></div>
                                 </div>
                             </article>
@@ -839,7 +821,7 @@
                                 <div><label class="ui-label" for="asset-target-type-__INDEX__">Assessor Office / Type</label><select id="asset-target-type-__INDEX__" name="asset_targets[__INDEX__][assessor_type]" class="ui-control" required data-asset-target-control><option value="">Select assessor office</option>@foreach(App\Models\CiActivityAssetTarget::ASSESSOR_TYPES as $value => $label)<option value="{{ $value }}">{{ $label }}</option>@endforeach</select></div>
                                 <div><label class="ui-label" for="asset-target-location-__INDEX__">Office / Municipality / City / Location</label><input id="asset-target-location-__INDEX__" name="asset_targets[__INDEX__][office_location]" class="ui-control" maxlength="255" required data-asset-target-location data-asset-target-control></div>
                                 <div><label class="ui-label" for="asset-target-status-__INDEX__">Status</label><select id="asset-target-status-__INDEX__" name="asset_targets[__INDEX__][status]" class="ui-control" required data-asset-target-status data-schedule-status data-asset-target-control><option value="pending">Pending</option><option value="scheduled">Scheduled</option><option value="follow_up">For Follow-up</option><option value="completed">Completed</option></select></div>
-                                <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label class="ui-label" for="asset-target-date-__INDEX__">Schedule / Follow-up Date <x-form.schedule-date-indicator /></label><input id="asset-target-date-__INDEX__" name="asset_targets[__INDEX__][scheduled_at]" type="date" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-date data-schedule-date data-asset-target-control disabled></div><div><label class="ui-label" for="asset-target-time-__INDEX__">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-time-__INDEX__" name="asset_targets[__INDEX__][scheduled_time]" type="time" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-time data-asset-target-control disabled></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled activities. Time is optional.</p></div>
+                                <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]"><div><label class="ui-label" for="asset-target-date-__INDEX__">Schedule / Follow-up Date <x-form.schedule-date-indicator /></label><input id="asset-target-date-__INDEX__" name="asset_targets[__INDEX__][scheduled_at]" type="date" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-date data-schedule-date data-asset-target-control disabled></div><div><label class="ui-label" for="asset-target-time-__INDEX__">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="asset-target-time-__INDEX__" name="asset_targets[__INDEX__][scheduled_time]" type="time" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70" data-asset-target-time data-asset-target-control disabled></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled and For Follow-up activities. Time is optional.</p></div>
                                 <div class="sm:col-span-2"><label class="ui-label" for="asset-target-remarks-__INDEX__">Short Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="asset-target-remarks-__INDEX__" name="asset_targets[__INDEX__][remarks]" rows="2" class="ui-control" data-asset-target-control></textarea></div>
                             </div>
                         </article>
@@ -863,7 +845,7 @@
     <dialog id="asset-target-remove-dialog" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45" data-asset-target-remove-dialog aria-labelledby="asset-target-remove-title">
         <div class="border-b border-ui-border px-5 py-4"><h2 id="asset-target-remove-title" class="text-lg font-bold text-brand-sidebar">Remove this Assessor entry?</h2></div>
         <div class="px-5 py-5 text-sm leading-6 text-text-muted">This row already contains information. Removing it will discard the data entered in this row.</div>
-        <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-asset-target-remove-cancel>Cancel</button><button type="button" class="ui-button-danger" data-asset-target-remove-confirm>Remove Entry</button></div>
+        <div class="flex flex-col-reverse gap-2.5 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-asset-target-remove-cancel><x-ui.icon name="close" size="size-4" />Cancel</button><button type="button" class="ui-button-danger" data-asset-target-remove-confirm><x-ui.icon name="trash" size="size-4" />Remove Entry</button></div>
     </dialog>
 
 
@@ -1226,6 +1208,7 @@
                 const supportsSchedule = ['scheduled', 'follow_up'].includes(targetStatus.value);
                 if (! supportsSchedule) { date.value = ''; time.value = ''; }
                 date.disabled = ! active || ! supportsSchedule;
+                date.required = active && supportsSchedule;
                 if (! active || ! supportsSchedule || date.value === '') time.value = '';
                 time.disabled = ! active || ! supportsSchedule || date.value === '';
             };
@@ -1335,7 +1318,7 @@
                     timeControl.value = '';
                 }
                 dateControl.disabled = ! active || ! supportsSchedule;
-                dateControl.required = false;
+                dateControl.required = active && supportsSchedule;
                 const timeEnabled = active && supportsSchedule && dateControl.value !== '';
                 if (! timeEnabled) timeControl.value = '';
                 timeControl.disabled = ! timeEnabled;
@@ -1526,7 +1509,7 @@
                 }
                 schedule.disabled = ! enabled;
                 scheduleTime.disabled = ! enabled;
-                schedule.required = parentFieldsEnabled && status.value === 'scheduled';
+                schedule.required = parentFieldsEnabled && ['scheduled', 'follow_up'].includes(status.value);
                 schedule.setAttribute('aria-disabled', enabled ? 'false' : 'true');
                 scheduleTime.setAttribute('aria-disabled', enabled ? 'false' : 'true');
                 if (scheduleHelp) scheduleHelp.textContent = enabled
@@ -1724,7 +1707,7 @@
                 const missingActivityType = activityType.value === '';
                 const missingNewActivityType = addingActivityType && newActivityType.value.trim() === '';
                 const missingStatus = ! addingActivityType && ! addingMultiTargetActivity && status.value === '';
-                const missingSchedule = ! addingActivityType && ! addingMultiTargetActivity && status.value === 'scheduled' && schedule.value === '';
+                const missingSchedule = ! addingActivityType && ! addingMultiTargetActivity && ['scheduled', 'follow_up'].includes(status.value) && schedule.value === '';
                 let firstInvalidBankTarget = null;
                 let firstInvalidAssetTarget = null;
 
@@ -1791,7 +1774,7 @@
             newActivityType.addEventListener('input', () => setInvalid(newActivityType, newActivityTypeError, false));
             status.addEventListener('change', () => {
                 setInvalid(status, statusError, false);
-                if (status.value !== 'scheduled') setInvalid(schedule, scheduleError, false);
+                if (! ['scheduled', 'follow_up'].includes(status.value)) setInvalid(schedule, scheduleError, false);
             });
             schedule.addEventListener('input', () => setInvalid(schedule, scheduleError, false));
             form.addEventListener('input', (event) => {
@@ -2393,6 +2376,7 @@
             const error = modal?.querySelector('[data-remove-submission-proof-error]');
             const cancel = modal?.querySelector('[data-remove-submission-proof-cancel]');
             const confirm = modal?.querySelector('[data-remove-submission-proof-confirm]');
+            const confirmLabel = confirm?.querySelector('[data-remove-submission-proof-confirm-label]');
             if (!(modal instanceof HTMLDialogElement)
                 || !(error instanceof HTMLElement)
                 || !(cancel instanceof HTMLButtonElement)
@@ -2405,7 +2389,7 @@
                 error.hidden = true;
                 error.textContent = '';
                 confirm.disabled = false;
-                confirm.textContent = 'Remove Proof';
+                if (confirmLabel instanceof HTMLElement) confirmLabel.textContent = 'Remove Proof';
             };
 
             document.addEventListener('click', (event) => {
@@ -2430,7 +2414,7 @@
             confirm.addEventListener('click', async () => {
                 if (! pendingUrl) return;
                 confirm.disabled = true;
-                confirm.textContent = 'Removing…';
+                if (confirmLabel instanceof HTMLElement) confirmLabel.textContent = 'Removing…';
                 error.hidden = true;
 
                 try {
@@ -2455,7 +2439,7 @@
                     error.textContent = requestError instanceof Error ? requestError.message : 'Unable to remove this proof attachment.';
                     error.hidden = false;
                     confirm.disabled = false;
-                    confirm.textContent = 'Remove Proof';
+                    if (confirmLabel instanceof HTMLElement) confirmLabel.textContent = 'Remove Proof';
                 }
             });
         });
@@ -2582,7 +2566,7 @@
                         time.value = '';
                     }
                     date.disabled = ! supportsSchedule;
-                    date.required = false;
+                    date.required = supportsSchedule;
                     const timeEnabled = supportsSchedule && date.value !== '';
                     if (! timeEnabled) time.value = '';
                     time.disabled = ! timeEnabled;
@@ -3390,6 +3374,7 @@
                     if (form.dataset.submitting === 'true') return;
 
                     const submit = form.querySelector('[data-default-check-submit]');
+                    const submitLabel = submit?.querySelector('[data-default-check-submit-label]');
                     const errors = form.querySelector('[data-default-check-errors]');
                     const success = form.querySelector('[data-default-check-success]');
                     const noChanges = form.querySelector('[data-default-check-no-changes]');
@@ -3415,8 +3400,7 @@
                     if (submit instanceof HTMLButtonElement) {
                         submit.disabled = true;
                         submit.setAttribute('aria-busy', 'true');
-                        submit.dataset.originalLabel = submit.dataset.originalLabel ?? submit.textContent;
-                        submit.textContent = 'Saving Changes…';
+                        if (submitLabel instanceof HTMLElement) submitLabel.textContent = 'Saving Changes…';
                     }
                     if (errors instanceof HTMLElement) { errors.hidden = true; errors.replaceChildren(); }
                     if (success instanceof HTMLElement) { success.hidden = true; window.clearTimeout(successTimeoutId); }
@@ -3470,7 +3454,7 @@
                         if (submit instanceof HTMLButtonElement) {
                             submit.disabled = false;
                             submit.removeAttribute('aria-busy');
-                            submit.textContent = submit.dataset.originalLabel ?? 'Save Changes';
+                            if (submitLabel instanceof HTMLElement) submitLabel.textContent = 'Save Changes';
                         }
                     }
                 });

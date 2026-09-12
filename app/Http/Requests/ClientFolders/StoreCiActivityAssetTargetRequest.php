@@ -34,7 +34,7 @@ class StoreCiActivityAssetTargetRequest extends FormRequest
             'assessor_type' => ['required', Rule::in(array_keys(CiActivityAssetTarget::ASSESSOR_TYPES))],
             'office_location' => ['required', 'string', 'max:255'],
             'status' => ['required', Rule::enum(ActivityStatus::class)],
-            'scheduled_at' => ['nullable', 'date', Rule::requiredIf($this->input('status') === ActivityStatus::Scheduled->value)],
+            'scheduled_at' => ['nullable', 'date', Rule::requiredIf(ActivityStatus::requiresScheduledDate($this->input('status')))],
             'scheduled_time' => ['nullable', 'date_format:H:i'],
             'remarks' => ['nullable', 'string', 'max:20000'],
         ];

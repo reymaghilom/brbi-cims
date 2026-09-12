@@ -78,7 +78,7 @@ class StoreCiActivityRequest extends FormRequest
                 Rule::excludeIf($excludeParentFields),
                 'nullable',
                 'date',
-                Rule::requiredIf($this->input('status') === ActivityStatus::Scheduled->value),
+                Rule::requiredIf(ActivityStatus::requiresScheduledDate($this->input('status'))),
             ],
             'scheduled_time' => [Rule::excludeIf($excludeParentFields), 'nullable', 'date_format:H:i'],
             'remarks' => [Rule::excludeIf($excludeParentFields), 'nullable', 'string', 'max:20000'],
@@ -94,7 +94,7 @@ class StoreCiActivityRequest extends FormRequest
             'bank_targets.*.institution_name' => ['required', 'string', 'max:255'],
             'bank_targets.*.branch_location' => ['nullable', 'string', 'max:255'],
             'bank_targets.*.status' => ['required', Rule::enum(ActivityStatus::class)],
-            'bank_targets.*.scheduled_at' => ['nullable', 'date', 'required_if:bank_targets.*.status,'.ActivityStatus::Scheduled->value],
+            'bank_targets.*.scheduled_at' => ['nullable', 'date', 'required_if:bank_targets.*.status,'.ActivityStatus::Scheduled->value.','.ActivityStatus::FollowUp->value],
             'bank_targets.*.scheduled_time' => ['nullable', 'date_format:H:i'],
             'bank_targets.*.remarks' => ['nullable', 'string', 'max:20000'],
             'asset_targets' => [
@@ -108,7 +108,7 @@ class StoreCiActivityRequest extends FormRequest
             'asset_targets.*.assessor_type' => ['required', Rule::in(array_keys(CiActivityAssetTarget::ASSESSOR_TYPES))],
             'asset_targets.*.office_location' => ['required', 'string', 'max:255'],
             'asset_targets.*.status' => ['required', Rule::enum(ActivityStatus::class)],
-            'asset_targets.*.scheduled_at' => ['nullable', 'date', 'required_if:asset_targets.*.status,'.ActivityStatus::Scheduled->value],
+            'asset_targets.*.scheduled_at' => ['nullable', 'date', 'required_if:asset_targets.*.status,'.ActivityStatus::Scheduled->value.','.ActivityStatus::FollowUp->value],
             'asset_targets.*.scheduled_time' => ['nullable', 'date_format:H:i'],
             'asset_targets.*.remarks' => ['nullable', 'string', 'max:20000'],
         ];

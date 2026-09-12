@@ -1054,3 +1054,21 @@
     opacity: 0; visibility: hidden; transition: opacity .12s ease;
 }
 #sidebar-tooltip[data-visible] { opacity: 1; visibility: visible; }
+
+/* The Dashboard reuses the authoritative CI Activity pages inside its Continue dialog. Only the
+   iframe document receives this class; its application chrome and duplicate page heading step out
+   while the original forms, validation, status controls and target dialogs remain unchanged. */
+html.dashboard-activity-embedded [data-mobile-backdrop],
+html.dashboard-activity-embedded #primary-sidebar,
+html.dashboard-activity-embedded #app-content-wrapper > header,
+html.dashboard-activity-embedded #sidebar-tooltip,
+html.dashboard-activity-embedded #main-content > [data-toast-region],
+html.dashboard-activity-embedded #main-content > nav,
+html.dashboard-activity-embedded #main-content > header { display: none !important; }
+html.dashboard-activity-embedded #app-content-wrapper { padding-left: 0 !important; }
+html.dashboard-activity-embedded,
+html.dashboard-activity-embedded body { overflow-x: hidden; }
+html.dashboard-activity-embedded #main-content { max-width: none; min-width: 0; padding: .75rem; }
+@media (min-width: 640px) {
+    html.dashboard-activity-embedded #main-content { padding: 1rem; }
+}

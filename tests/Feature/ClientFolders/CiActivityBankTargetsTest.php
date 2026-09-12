@@ -225,7 +225,7 @@ class CiActivityBankTargetsTest extends TestCase
             $this->target('Pending Bank', ActivityStatus::Pending, '2026-08-31', '11:00'),
             $this->target('Scheduled Date Only', ActivityStatus::Scheduled, '2026-08-31'),
             $this->target('Scheduled With Time', ActivityStatus::Scheduled, '2026-09-01', '10:15'),
-            $this->target('Follow-up Bank', ActivityStatus::FollowUp),
+            $this->target('Follow-up Bank', ActivityStatus::FollowUp, '2026-09-02'),
             $this->target('Follow-up Date Only', ActivityStatus::FollowUp, '2026-09-02'),
             $this->target('Follow-up With Time', ActivityStatus::FollowUp, '2026-09-03', '14:45'),
             $this->target('Completed Bank', ActivityStatus::Completed, '2026-09-02', '14:00'),
@@ -263,7 +263,7 @@ class CiActivityBankTargetsTest extends TestCase
         $this->assertTrue($withTime->scheduled_has_time);
 
         $followUp = $activity->bankTargets()->where('institution_name', 'Follow-up Bank')->sole();
-        $this->assertNull($followUp->scheduled_at);
+        $this->assertTrue($followUp->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-02 08:00', 'Asia/Manila')->utc()));
         $this->assertFalse($followUp->scheduled_has_time);
 
         $followUpDateOnly = $activity->bankTargets()->where('institution_name', 'Follow-up Date Only')->sole();
@@ -311,7 +311,7 @@ class CiActivityBankTargetsTest extends TestCase
         }
     }
 
-    public function test_scheduled_targets_require_a_date_while_follow_up_stays_optional_and_time_without_date_and_malformed_input_are_rejected(): void
+    public function test_scheduled_and_follow_up_targets_require_a_date_while_time_stays_optional_and_malformed_input_is_rejected(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -322,8 +322,10 @@ class CiActivityBankTargetsTest extends TestCase
                 $this->target('Scheduled Without Date', ActivityStatus::Scheduled),
                 $this->target('Follow-up Without Date', ActivityStatus::FollowUp),
             ]))
-            ->assertSessionHasErrors(['bank_targets.0.scheduled_at' => 'Please select a scheduled date.'])
-            ->assertSessionDoesntHaveErrors('bank_targets.1.scheduled_at');
+            ->assertSessionHasErrors([
+                'bank_targets.0.scheduled_at' => 'Please select a scheduled date.',
+                'bank_targets.1.scheduled_at' => 'Please select a scheduled date.',
+            ]);
         $this->assertDatabaseCount('ci_activities', 0);
         $this->assertDatabaseCount('ci_activity_bank_targets', 0);
 
@@ -331,7 +333,7 @@ class CiActivityBankTargetsTest extends TestCase
             ->from(route('client-folders.activities.index', $folder))
             ->post(route('client-folders.activities.store', $folder), $this->bankActivityPayload([
                 $this->target('Scheduled Date Only', ActivityStatus::Scheduled, '2026-09-15'),
-                $this->target('Follow-up Without Date', ActivityStatus::FollowUp),
+                $this->target('Follow-up Date Only', ActivityStatus::FollowUp, '2026-09-16'),
             ]))
             ->assertRedirect(route('client-folders.activities.index', [$folder, 'status' => 'all']))
             ->assertSessionHasNoErrors();
@@ -339,10 +341,10 @@ class CiActivityBankTargetsTest extends TestCase
         $activity = $folder->activities()->sole();
         $this->assertSame(ActivityStatus::FollowUp, $activity->status);
         $scheduled = $activity->bankTargets()->where('institution_name', 'Scheduled Date Only')->sole();
-        $followUp = $activity->bankTargets()->where('institution_name', 'Follow-up Without Date')->sole();
+        $followUp = $activity->bankTargets()->where('institution_name', 'Follow-up Date Only')->sole();
         $this->assertTrue($scheduled->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-15 08:00', 'Asia/Manila')->utc()));
         $this->assertFalse($scheduled->scheduled_has_time);
-        $this->assertNull($followUp->scheduled_at);
+        $this->assertTrue($followUp->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-16 08:00', 'Asia/Manila')->utc()));
         $this->assertFalse($followUp->scheduled_has_time);
 
         $timeWithoutDateFolder = $this->folderFor($ci);
@@ -509,7 +511,7 @@ class CiActivityBankTargetsTest extends TestCase
         $this->get($detailUrl)
             ->assertOk()
             ->assertSee('Schedule Date')
-            ->assertSee('Date is required for Scheduled activities. Time is optional.')
+            ->assertSee('Date is required for Scheduled and For Follow-up activities. Time is optional.')
             ->assertDontSee('Date and time are optional. Select a date to enable a specific time.');
 
         $folder->update(['assigned_ci_id' => $updater->id]);
@@ -619,9 +621,11 @@ class CiActivityBankTargetsTest extends TestCase
             ->assertSee('Mark as Completed')
             ->assertSee('data-modal-open="complete-bank-target-'.$scheduled->id.'"', false)
             ->assertSee('id="complete-bank-target-'.$scheduled->id.'"', false)
-            ->assertSee('Mark as completed?')
-            ->assertSee('Mark BDO – Carmen Branch as completed?')
-            ->assertSee('This confirms that the Bank / Coop Check for this institution has been completed.')
+            ->assertSee('Complete Bank / Coop Check?')
+            ->assertSee('BDO – Carmen Branch')
+            ->assertSee('Bank / Coop Check')
+            ->assertSee('This will mark this target as completed and record the action in Recent Activity.')
+            ->assertDontSee('Mark BDO – Carmen Branch as completed?')
             ->assertSee('Mark as Completed');
         foreach ([$pending, $scheduled, $followUp] as $incompleteTarget) {
             $this->assertMatchesRegularExpression(
@@ -660,6 +664,8 @@ class CiActivityBankTargetsTest extends TestCase
         $this->assertSame($activity->id, (int) data_get($audit->metadata, 'activity_id'));
         $this->assertSame($scheduled->id, (int) data_get($audit->metadata, 'bank_target_id'));
         $this->assertSame('BDO – Carmen Branch', data_get($audit->metadata, 'bank_target_label'));
+        $this->assertSame(CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK, data_get($audit->metadata, 'bank_target_type'));
+        $this->assertSame('Bank / Coop Check', data_get($audit->metadata, 'bank_target_type_label'));
         $this->assertStringContainsString($completer->full_name, $audit->description);
 
         $completedDetail = $this->get($detailUrl);
@@ -675,7 +681,7 @@ class CiActivityBankTargetsTest extends TestCase
         $index = $this->get(route('client-folders.activities.index', $folder));
         $index->assertOk()
             ->assertSee('4 institutions · 4 completed')
-            ->assertSee('BDO – Carmen Branch completed')
+            ->assertSee('Bank / Coop Check — BDO – Carmen Branch completed')
             ->assertSee($completer->full_name)
             ->assertSee('Mark as Submitted');
 

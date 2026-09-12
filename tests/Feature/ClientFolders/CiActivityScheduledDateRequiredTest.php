@@ -20,7 +20,7 @@ class CiActivityScheduledDateRequiredTest extends TestCase
 
     private const MESSAGE = 'Please select a scheduled date.';
 
-    private const HELP = 'Date is required for Scheduled activities. Time is optional.';
+    private const HELP = 'Date is required for Scheduled and For Follow-up activities. Time is optional.';
 
     private const OLD_HELP = 'Date and time are optional. Select a date to enable a specific time.';
 
@@ -30,7 +30,7 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $this->seed(ReferenceDataSeeder::class);
     }
 
-    public function test_applicant_default_check_requires_a_date_only_when_scheduled_and_time_stays_optional(): void
+    public function test_applicant_default_check_requires_a_date_when_scheduled_or_for_follow_up_and_time_stays_optional(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -58,9 +58,18 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $this->assertTrue($activity->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-15 09:30', 'Asia/Manila')->utc()));
         $this->assertTrue($activity->scheduled_has_time);
 
-        foreach ([ActivityStatus::FollowUp, ActivityStatus::Pending, ActivityStatus::Completed] as $status) {
+        $this->putJson($url, $this->payload(ActivityStatus::FollowUp))->assertUnprocessable()
+            ->assertJsonValidationErrors(['scheduled_at' => self::MESSAGE]);
+        $this->assertSame(ActivityStatus::Scheduled, $activity->fresh()->status);
+
+        $this->putJson($url, $this->payload(ActivityStatus::FollowUp, '2026-09-16'))->assertOk();
+        $this->assertSame(ActivityStatus::FollowUp, $activity->fresh()->status);
+        $this->assertFalse($activity->fresh()->scheduled_has_time);
+
+        foreach ([ActivityStatus::Pending, ActivityStatus::Completed] as $status) {
             $this->putJson($url, $this->payload($status))->assertOk();
             $this->assertSame($status, $activity->fresh()->status);
+            $this->assertNull($activity->fresh()->scheduled_at);
         }
     }
 
@@ -75,20 +84,20 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $forB = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, $makerB->id);
         $urlA = route('client-folders.activities.update', [$folder, $forA]);
 
-        $this->actingAs($ci)->putJson($urlA, array_replace($this->payload(ActivityStatus::Scheduled), ['co_maker_id' => $makerA->id]))
+        $this->actingAs($ci)->putJson($urlA, array_replace($this->payload(ActivityStatus::FollowUp), ['co_maker_id' => $makerA->id]))
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['scheduled_at' => self::MESSAGE]);
         $this->assertSame(ActivityStatus::Pending, $forA->fresh()->status);
 
         // A dated save aimed at Maker A's activity under Maker B's context is still refused.
-        $this->putJson($urlA, array_replace($this->payload(ActivityStatus::Scheduled, '2026-09-15'), ['co_maker_id' => $makerB->id]))
+        $this->putJson($urlA, array_replace($this->payload(ActivityStatus::FollowUp, '2026-09-15'), ['co_maker_id' => $makerB->id]))
             ->assertForbidden();
         $this->assertSame(ActivityStatus::Pending, $forA->fresh()->status);
 
-        $this->putJson($urlA, array_replace($this->payload(ActivityStatus::Scheduled, '2026-09-15'), ['co_maker_id' => $makerA->id]))
+        $this->putJson($urlA, array_replace($this->payload(ActivityStatus::FollowUp, '2026-09-15'), ['co_maker_id' => $makerA->id]))
             ->assertOk();
 
-        $this->assertSame(ActivityStatus::Scheduled, $forA->fresh()->status);
+        $this->assertSame(ActivityStatus::FollowUp, $forA->fresh()->status);
         $this->assertNotNull($forA->fresh()->scheduled_at);
         foreach ([$applicant, $forB] as $untouched) {
             $untouched->refresh();
@@ -146,7 +155,7 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $this->assertNotNull($activity->fresh()->scheduled_at);
     }
 
-    public function test_bank_and_asset_target_updates_require_a_date_when_scheduled(): void
+    public function test_bank_and_asset_target_updates_require_a_date_when_scheduled_or_for_follow_up(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -163,6 +172,22 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $assetTarget = $asset->assetTargets()->create([
             'assessor_type' => 'city_assessor',
             'office_location' => 'Cagayan de Oro',
+            'status' => ActivityStatus::Pending,
+            'scheduled_has_time' => false,
+            'created_by' => $ci->id,
+            'updated_by' => $ci->id,
+        ]);
+        $otherBankTarget = $bank->bankTargets()->create([
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY,
+            'institution_name' => 'Untouched Loan Inquiry',
+            'status' => ActivityStatus::Pending,
+            'scheduled_has_time' => false,
+            'created_by' => $ci->id,
+            'updated_by' => $ci->id,
+        ]);
+        $otherAssetTarget = $asset->assetTargets()->create([
+            'assessor_type' => 'provincial_assessor',
+            'office_location' => 'Untouched Provincial Office',
             'status' => ActivityStatus::Pending,
             'scheduled_has_time' => false,
             'created_by' => $ci->id,
@@ -185,12 +210,35 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $this->assertSame(ActivityStatus::Scheduled, $assetTarget->fresh()->status);
         $this->assertTrue($assetTarget->fresh()->scheduled_has_time);
 
-        foreach ([ActivityStatus::FollowUp, ActivityStatus::Pending] as $status) {
-            $this->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), ['status' => $status->value] + $bankPayload)->assertSessionHasNoErrors();
-            $this->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), ['status' => $status->value] + $assetPayload)->assertSessionHasNoErrors();
-            $this->assertSame($status, $bankTarget->fresh()->status);
-            $this->assertSame($status, $assetTarget->fresh()->status);
-        }
+        $followUpBankPayload = ['status' => ActivityStatus::FollowUp->value] + $bankPayload;
+        $followUpAssetPayload = ['status' => ActivityStatus::FollowUp->value] + $assetPayload;
+        $this->putJson(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), $followUpBankPayload)
+            ->assertUnprocessable()->assertJsonValidationErrors(['scheduled_at' => self::MESSAGE]);
+        $this->putJson(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), $followUpAssetPayload)
+            ->assertUnprocessable()->assertJsonValidationErrors(['scheduled_at' => self::MESSAGE]);
+        $this->assertSame(ActivityStatus::Scheduled, $bankTarget->fresh()->status);
+        $this->assertSame(ActivityStatus::Scheduled, $assetTarget->fresh()->status);
+
+        $this->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), ['scheduled_at' => '2026-09-16'] + $followUpBankPayload)->assertSessionHasNoErrors();
+        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), ['scheduled_at' => '2026-09-16'] + $followUpAssetPayload)->assertSessionHasNoErrors();
+        $this->assertSame(ActivityStatus::FollowUp, $bankTarget->fresh()->status);
+        $this->assertFalse($bankTarget->fresh()->scheduled_has_time);
+        $this->assertSame(ActivityStatus::FollowUp, $assetTarget->fresh()->status);
+        $this->assertFalse($assetTarget->fresh()->scheduled_has_time);
+        $this->assertSame(ActivityStatus::FollowUp, $bank->fresh()->status);
+        $this->assertSame(ActivityStatus::FollowUp, $asset->fresh()->status);
+
+        $this->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), ['status' => ActivityStatus::Pending->value] + $bankPayload)->assertSessionHasNoErrors();
+        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), ['status' => ActivityStatus::Pending->value] + $assetPayload)->assertSessionHasNoErrors();
+        $this->assertSame(ActivityStatus::Pending, $bankTarget->fresh()->status);
+        $this->assertSame(ActivityStatus::Pending, $assetTarget->fresh()->status);
+        $this->assertSame(ActivityStatus::Pending, $bank->fresh()->status);
+        $this->assertSame(ActivityStatus::Pending, $asset->fresh()->status);
+        $this->assertSame(CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY, $otherBankTarget->fresh()->inquiry_type);
+        $this->assertSame('Untouched Loan Inquiry', $otherBankTarget->fresh()->institution_name);
+        $this->assertSame(ActivityStatus::Pending, $otherBankTarget->fresh()->status);
+        $this->assertSame('Untouched Provincial Office', $otherAssetTarget->fresh()->office_location);
+        $this->assertSame(ActivityStatus::Pending, $otherAssetTarget->fresh()->status);
     }
 
     public function test_schedule_forms_show_the_required_wording_and_live_required_indicator(): void
@@ -200,6 +248,9 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $scheduled = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
         $scheduled->update(['status' => ActivityStatus::Scheduled, 'scheduled_at' => now()->addDay()]);
         $pending = $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE);
+        $maker = $this->coMaker($folder, 'Follow Up Maker');
+        $followUp = $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE, $maker->id);
+        $followUp->update(['status' => ActivityStatus::FollowUp, 'scheduled_at' => now()->addDays(2)]);
 
         $scheduledPage = $this->actingAs($ci)->get(route('client-folders.activities.default-check.show', [$folder, $scheduled]));
         $scheduledPage->assertOk()->assertSee(self::HELP)->assertDontSee(self::OLD_HELP)
@@ -207,6 +258,10 @@ class CiActivityScheduledDateRequiredTest extends TestCase
             ->assertSee('data-schedule-date', false);
         $this->assertMatchesRegularExpression('/data-schedule-date-optional\s+hidden\s*>\(optional\)/', $scheduledPage->getContent());
         $this->assertMatchesRegularExpression('/data-schedule-date-required\s*><span class="text-danger" aria-hidden="true">\*<\/span>/', $scheduledPage->getContent());
+
+        $followUpPage = $this->get(route('client-folders.activities.default-check.show', [$folder, $followUp, 'person' => 'co-maker', 'co_maker_id' => $maker->id]));
+        $followUpPage->assertOk()->assertSee(self::HELP)->assertSee('name="scheduled_at"', false)->assertSee('required', false);
+        $this->assertMatchesRegularExpression('/data-schedule-date-required\s*><span class="text-danger" aria-hidden="true">\*<\/span>/', $followUpPage->getContent());
 
         $pendingPage = $this->get(route('client-folders.activities.default-check.show', [$folder, $pending]));
         $pendingPage->assertOk()->assertSee(self::HELP);

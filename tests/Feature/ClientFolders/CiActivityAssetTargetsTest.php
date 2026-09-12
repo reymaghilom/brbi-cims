@@ -72,7 +72,7 @@ class CiActivityAssetTargetsTest extends TestCase
             $this->target('city_assessor', 'Pending Office', ActivityStatus::Pending, '2026-09-03', '09:00'),
             $this->target('provincial_assessor', 'Scheduled Date', ActivityStatus::Scheduled, '2026-09-04'),
             $this->target('other', 'Scheduled Time', ActivityStatus::Scheduled, '2026-09-05', '14:30'),
-            $this->target('city_assessor', 'Follow-up Optional', ActivityStatus::FollowUp),
+            $this->target('city_assessor', 'Follow-up Date', ActivityStatus::FollowUp, '2026-09-07'),
             $this->target('provincial_assessor', 'Completed Office', ActivityStatus::Completed, '2026-09-06', '15:00'),
         ]))->assertSessionHasNoErrors();
 
@@ -98,9 +98,11 @@ class CiActivityAssetTargetsTest extends TestCase
         $scheduledWithoutDateFolder = $this->folderFor($ci);
         $this->from(route('client-folders.activities.index', $scheduledWithoutDateFolder))->post(route('client-folders.activities.store', $scheduledWithoutDateFolder), $this->payload([
             $this->target('municipal_assessor', 'Scheduled Without Date', ActivityStatus::Scheduled),
-            $this->target('city_assessor', 'Follow-up Optional', ActivityStatus::FollowUp),
-        ]))->assertSessionHasErrors(['asset_targets.0.scheduled_at' => 'Please select a scheduled date.'])
-            ->assertSessionDoesntHaveErrors('asset_targets.1.scheduled_at');
+            $this->target('city_assessor', 'Follow-up Without Date', ActivityStatus::FollowUp),
+        ]))->assertSessionHasErrors([
+            'asset_targets.0.scheduled_at' => 'Please select a scheduled date.',
+            'asset_targets.1.scheduled_at' => 'Please select a scheduled date.',
+        ]);
         $this->assertSame(0, $scheduledWithoutDateFolder->activities()->count());
 
         $this->assertSame(ActivityStatus::Pending, CiActivityAssetTarget::deriveParentStatus([]));

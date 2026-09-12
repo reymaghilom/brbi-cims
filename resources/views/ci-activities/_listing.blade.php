@@ -37,7 +37,7 @@
                                     <span class="block font-semibold text-text-main">{{ $row->updatedAt?->timezone(config('cims.display_timezone'))->format('M j, Y') }}</span>
                                     <span class="block text-text-muted">{{ $row->updatedAt?->timezone(config('cims.display_timezone'))->format('g:i A') }}</span>
                                 </td>
-                                <td class="px-3 py-3"><a href="{{ $row->openUrl }}" class="ui-button-secondary-compact">Open</a></td>
+                                <td class="px-3 py-3"><a href="{{ $row->openUrl }}" class="ui-button-secondary-compact"><x-ui.icon name="open" size="size-3.5" data-ci-action-icon />Open</a></td>
                             </tr>
                         @endforeach
                     </tbody>
@@ -70,7 +70,7 @@
                                 <p class="font-semibold text-text-muted">Updated</p>
                                 <p>{{ $row->updatedAt?->timezone(config('cims.display_timezone'))->format('M j, Y \\a\\t g:i A') }}</p>
                             </div>
-                            <a href="{{ $row->openUrl }}" class="ui-button-primary-compact">Open Activity</a>
+                            <a href="{{ $row->openUrl }}" class="ui-button-primary-compact"><x-ui.icon name="open" size="size-3.5" data-ci-action-icon />Open Activity</a>
                         </div>
                     </div>
                 @endforeach
@@ -79,17 +79,7 @@
             <div class="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p class="text-sm text-text-muted">Showing {{ $rows->firstItem() ?? 0 }} to {{ $rows->lastItem() ?? 0 }} of {{ $rows->total() }} activities</p>
                 <div class="flex items-center gap-3">
-                    <nav class="flex items-center gap-1" aria-label="CI activities pagination" data-ci-activities-pagination>
-                        <a href="{{ $rows->previousPageUrl() ?? '#' }}" @class(['ui-action-icon-button', 'pointer-events-none opacity-40' => ! $rows->previousPageUrl()]) @if(! $rows->previousPageUrl()) aria-disabled="true" @endif aria-label="Previous page"><x-ui.icon name="chevron-right" size="size-4" class="rotate-180" /></a>
-                        @foreach($rows->getUrlRange(1, $rows->lastPage()) as $page => $url)
-                            @if($page === 1 || $page === $rows->lastPage() || abs($page - $rows->currentPage()) <= 1)
-                                <a href="{{ $url }}" @if($page === $rows->currentPage()) aria-current="page" @endif @class(['inline-flex size-9 items-center justify-center rounded-control text-sm font-semibold', 'bg-brand-primary text-white' => $page === $rows->currentPage(), 'text-text-main hover:bg-surface-muted' => $page !== $rows->currentPage()])>{{ $page }}</a>
-                            @elseif(abs($page - $rows->currentPage()) === 2)
-                                <span class="px-1 text-text-muted">&hellip;</span>
-                            @endif
-                        @endforeach
-                        <a href="{{ $rows->nextPageUrl() ?? '#' }}" @class(['ui-action-icon-button', 'pointer-events-none opacity-40' => ! $rows->nextPageUrl()]) @if(! $rows->nextPageUrl()) aria-disabled="true" @endif aria-label="Next page"><x-ui.icon name="chevron-right" size="size-4" /></a>
-                    </nav>
+                    <x-ui.compact-pagination :paginator="$rows" aria-label="CI activities pagination" data-ci-activities-pagination />
                     <select name="per_page" form="global-ci-secondary-filter" class="ui-control min-h-9 w-28 py-1.5 text-sm" onchange="this.form.submit()">
                         @foreach($perPageOptions as $option)
                             <option value="{{ $option }}" @selected($filters['per_page'] === $option)>{{ $option }} / page</option>

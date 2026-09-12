@@ -18,6 +18,7 @@ use App\Models\IncomeSource;
 use App\Models\ResidenceCheck;
 use App\Models\User;
 use App\Services\ClientFolders\ActivePersonResolver;
+use App\Services\ClientFolders\CiActivityHistoryFeed;
 use App\Services\ClientFolders\ClientFolderOverview;
 use App\Services\Progress\MandatoryInvestigationRequirements;
 use App\Services\Reports\ReportWorkItem;
@@ -25,6 +26,7 @@ use App\Services\Reports\ReportWorkspaceQuery;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -54,13 +56,13 @@ class DashboardData
 
     public const DEFAULT_TREND_RANGE = '7d';
 
-    private const WORK_LIST_LIMIT = 6;
+    private const WORK_PAGE_SIZE = 5;
 
     private const RECENT_ACTIVITY_LIMIT = 3;
 
     public function __construct(private readonly ReportWorkspaceQuery $reports) {}
 
-    public function for(User $user, ?string $trendRange = null): array
+    public function for(User $user, ?string $trendRange = null, mixed $workPage = null): array
     {
         $trendRange = array_key_exists((string) $trendRange, self::TREND_RANGES) ? (string) $trendRange : self::DEFAULT_TREND_RANGE;
         $timezone = (string) config('cims.display_timezone');
@@ -100,7 +102,7 @@ class DashboardData
             'trendRange' => $trendRange,
             'trendRanges' => self::TREND_RANGES,
             'activityProgress' => $this->activityProgress($folderIds),
-            'workToday' => $this->workToday($user, $folderIds, $now),
+            'workToday' => $this->workToday($user, $folderIds, $now, max(1, (int) $workPage), $trendRange),
             'recentActivity' => $recentActivity['events'],
             'recentActivityHasMore' => $recentActivity['hasMore'],
             'recentActivityAll' => $recentActivity['allEvents'],
@@ -283,7 +285,7 @@ class DashboardData
     }
 
     /** The same rule as the query above, applied to one already-loaded activity. */
-    private function isOverdue(CiActivity $activity, CarbonImmutable $now): bool
+    private function isOverdue(CiActivity|CiActivityBankTarget|CiActivityAssetTarget $activity, CarbonImmutable $now): bool
     {
         if ($activity->scheduled_at === null || $activity->status === ActivityStatus::Completed) {
             return false;
@@ -488,10 +490,10 @@ class DashboardData
     }
 
     /**
-     * Each bar is completed-over-applicable, and "applicable" is deliberately narrow: a client with
-     * no business income source does not drag the Business Check bar down, and a folder with no
-     * CI/BI record yet is not counted as an unfinished CI/BI. A category with no applicable work at
-     * all reports 0% and says so in the view rather than inventing a denominator.
+     * Each bar is completed-over-applicable using that module's authoritative obligation: CI/BI,
+     * Residence and CI Activities include required people/work even before a row exists, while a
+     * client with no business income source does not create a Business Check obligation. A category
+     * with no applicable work reports 0% and says so in the view.
      *
      * @param  Collection<int, int>  $folderIds
      */
@@ -507,7 +509,8 @@ class DashboardData
         // happened to exist was finished, however many folders had none at all.
         //
         // Generated PDF/Excel output lives in generated_reports and is not consulted here at all.
-        $cibiRequired = $folderCount + CoMaker::query()->whereIn('client_folder_id', $folderIds)->count();
+        $coMakerCount = CoMaker::query()->whereIn('client_folder_id', $folderIds)->count();
+        $cibiRequired = $folderCount + $coMakerCount;
 
         // The numerator follows the identical person-level rule, so it is counted per LOGICAL
         // PERSON rather than per row. A plain row count is NOT safe here, and the composite unique
@@ -532,7 +535,28 @@ class DashboardData
             'completed_cibi'
         )->count();
 
-        $residenceChecked = ResidenceCheck::query()->whereIn('client_folder_id', $folderIds)->distinct()->count('client_folder_id');
+        // Residence Check uses the same saved-row completion predicate and exact-person identity as
+        // MandatoryInvestigationRequirements: one requirement for every Applicant plus one for
+        // every Co-Maker belonging to an in-scope folder. Missing rows remain in the denominator.
+        // Grouping nullable co_maker_id deliberately collapses duplicate Applicant rows as well as
+        // duplicate Co-Maker rows, while the EXISTS guard prevents a malformed cross-folder
+        // co_maker_id from representing a person who is not actually required by that folder.
+        $residenceRequired = $folderCount + $coMakerCount;
+        $residenceChecked = DB::query()->fromSub(
+            ResidenceCheck::query()
+                ->whereIn('client_folder_id', $folderIds)
+                ->where(fn (Builder $person) => $person
+                    ->whereNull('co_maker_id')
+                    ->orWhereExists(fn (QueryBuilder $coMaker) => $coMaker
+                        ->selectRaw('1')
+                        ->from('co_makers')
+                        ->whereColumn('co_makers.id', 'residence_checks.co_maker_id')
+                        ->whereColumn('co_makers.client_folder_id', 'residence_checks.client_folder_id')))
+                ->groupBy('client_folder_id', 'co_maker_id')
+                ->select('client_folder_id', 'co_maker_id')
+                ->toBase(),
+            'completed_residence_checks'
+        )->count();
 
         $businessTotal = IncomeSource::query()->whereIn('client_folder_id', $folderIds)->count();
         $businessChecked = BusinessCheck::query()
@@ -541,17 +565,63 @@ class DashboardData
             ->distinct()
             ->count('income_source_id');
 
-        $requiredActivities = CiActivity::query()
-            ->whereIn('client_folder_id', $folderIds)
-            ->whereHas('definition', fn (Builder $query) => $query->where('is_active', true)->where('is_required', true));
-        $activityTotal = (clone $requiredActivities)->count();
-        $activityComplete = (clone $requiredActivities)->where('status', ActivityStatus::Completed)->count();
+        $activities = $this->mandatoryActivityProgress($folderIds, $coMakerCount);
 
         return [
             $this->progressBar('CI/BI Report', $cibiComplete, $cibiRequired, 'CI/BI Reports'),
-            $this->progressBar('Residence Check', $residenceChecked, $folderCount, 'assigned clients'),
+            $this->progressBar('Residence Check', $residenceChecked, $residenceRequired, 'required Residence Checks'),
             $this->progressBar('Business Check', $businessChecked, $businessTotal, 'businesses'),
-            $this->progressBar('CI Activities (Supporting Proof)', $activityComplete, $activityTotal, 'required activities'),
+            $this->progressBar('CI Activities', $activities['completed'], $activities['total'], 'required activities'),
+        ];
+    }
+
+    /**
+     * Counts mandatory CI Activity obligations, including those with no row yet, using the exact
+     * applicability and completion predicates owned by MandatoryInvestigationRequirements.
+     * Applicant requirements are Barangay, Neighbor and one Bank / Coop parent; Co-Makers require
+     * only Barangay and Neighbor. EXISTS flags make duplicate rows count once and preserve exact
+     * Applicant / Co-Maker identity. Asset and every custom activity are outside these maps.
+     *
+     * @param  Collection<int, int>  $folderIds
+     * @return array{completed: int, total: int}
+     */
+    private function mandatoryActivityProgress(Collection $folderIds, int $coMakerCount): array
+    {
+        $applicantRequirements = MandatoryInvestigationRequirements::ciActivityRequirements(null);
+        $coMakerRequirements = MandatoryInvestigationRequirements::ciActivityRequirements('co_makers.id');
+        $total = ($folderIds->count() * count($applicantRequirements))
+            + ($coMakerCount * count($coMakerRequirements));
+
+        if ($folderIds->isEmpty()) {
+            return ['completed' => 0, 'total' => $total];
+        }
+
+        $flag = fn (string $requirement, ?string $coMakerColumn) => fn (QueryBuilder $record) => MandatoryInvestigationRequirements::recordQuery($record, $requirement, $coMakerColumn)->selectRaw('1')->limit(1);
+        $sumFlags = fn (Collection $people, array $requirements): int => (int) $people->sum(
+            fn (object $person): int => collect(array_keys($requirements))->sum(
+                fn (string $requirement): int => (int) (bool) $person->{'met_'.$requirement}
+            )
+        );
+
+        $applicants = DB::table('client_folders')
+            ->whereIn('client_folders.id', $folderIds)
+            ->select('client_folders.id');
+        foreach (array_keys($applicantRequirements) as $requirement) {
+            $applicants->selectSub($flag($requirement, null), 'met_'.$requirement);
+        }
+
+        $coMakers = DB::table('co_makers')
+            ->join('client_folders', 'client_folders.id', '=', 'co_makers.client_folder_id')
+            ->whereIn('client_folders.id', $folderIds)
+            ->select('co_makers.id');
+        foreach (array_keys($coMakerRequirements) as $requirement) {
+            $coMakers->selectSub($flag($requirement, 'co_makers.id'), 'met_'.$requirement);
+        }
+
+        return [
+            'completed' => $sumFlags($applicants->get(), $applicantRequirements)
+                + $sumFlags($coMakers->get(), $coMakerRequirements),
+            'total' => $total,
         ];
     }
 
@@ -602,39 +672,179 @@ class DashboardData
      *
      * @param  Collection<int, int>  $folderIds
      */
-    private function workToday(User $user, Collection $folderIds, CarbonImmutable $now): array
+    private function workToday(User $user, Collection $folderIds, CarbonImmutable $now, int $requestedPage, string $trendRange): LengthAwarePaginator
     {
-        return CiActivity::query()
+        $activities = CiActivity::query()
             ->whereIn('client_folder_id', $folderIds)
             ->where('creator_id', $user->id)
             ->where('status', '!=', ActivityStatus::Completed)
-            ->with(['clientFolder:id,display_name', 'coMaker:id,full_name'])
-            ->orderByRaw('CASE WHEN scheduled_at IS NOT NULL AND scheduled_at < ? THEN 0 ELSE 1 END', [$now->utc()])
-            ->orderByRaw('CASE status WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END', [ActivityStatus::FollowUp->value, ActivityStatus::Scheduled->value])
-            ->orderBy('updated_at')
-            ->limit(self::WORK_LIST_LIMIT)
+            ->with([
+                'clientFolder:id,display_name',
+                'coMaker:id,full_name',
+                'definition:id,name,code',
+                'bankTargets' => fn ($query) => $query->where('status', '!=', ActivityStatus::Completed)->oldest('updated_at'),
+                'assetTargets' => fn ($query) => $query->where('status', '!=', ActivityStatus::Completed)->oldest('updated_at'),
+            ])
             ->get()
-            ->map(function (CiActivity $activity) use ($now): array {
-                $isOverdue = $this->isOverdue($activity, $now);
+            ->flatMap(function (CiActivity $activity) use ($now): array {
+                $code = $activity->definition?->code;
+                $personParams = ActivePersonResolver::queryParamsForId($activity->co_maker_id);
 
-                return [
-                    'id' => $activity->id,
-                    'client' => $activity->clientFolder?->display_name ?? 'Unnamed client',
-                    'person' => $activity->coMaker?->full_name,
-                    'activity' => $activity->name,
-                    'status' => $isOverdue ? 'Overdue' : str($activity->status->value)->replace('_', ' ')->title()->toString(),
-                    'tone' => $isOverdue ? 'danger' : match ($activity->status) {
-                        ActivityStatus::FollowUp => 'amber',
-                        ActivityStatus::Scheduled => 'brand',
-                        default => 'neutral',
-                    },
-                    'updated_at' => $activity->updated_at,
-                    'url' => route('client-folders.activities.edit', [$activity->client_folder_id, $activity->id]
-                        + ($activity->co_maker_id ? ['person' => 'co-maker', 'co_maker_id' => $activity->co_maker_id] : [])),
-                    'action' => $activity->status === ActivityStatus::Pending ? 'Open' : 'Continue',
-                ];
+                if ($code === ActivityDefinition::BANK_COOP_CHECK_CODE) {
+                    $url = route('client-folders.activities.bank-coop.show', [$activity->client_folder_id, $activity->id] + $personParams);
+
+                    return $activity->bankTargets->isEmpty()
+                        ? [$this->workTodayItem($activity, $activity, $url, 'bank', null, $now)]
+                        : $activity->bankTargets->map(fn (CiActivityBankTarget $target): array => $this->workTodayItem(
+                            $activity,
+                            $target,
+                            $url,
+                            'bank',
+                            $target->institution_name.($target->branch_location ? ' — '.$target->branch_location : ''),
+                            $now,
+                            $target->id,
+                            $target->inquiry_type,
+                        ))->all();
+                }
+
+                if ($code === ActivityDefinition::ASSET_CHECK_CODE) {
+                    $url = route('client-folders.activities.asset-check.show', [$activity->client_folder_id, $activity->id] + $personParams);
+
+                    return $activity->assetTargets->isEmpty()
+                        ? [$this->workTodayItem($activity, $activity, $url, 'asset', null, $now)]
+                        : $activity->assetTargets->map(fn (CiActivityAssetTarget $target): array => $this->workTodayItem(
+                            $activity,
+                            $target,
+                            $url,
+                            'asset',
+                            $target->assessorLabel().' — '.$target->office_location,
+                            $now,
+                            $target->id,
+                        ))->all();
+                }
+
+                $isDefaultCheck = in_array($code, ActivityDefinition::MANDATORY_DEFAULT_CODES, true);
+                $url = route(
+                    $isDefaultCheck ? 'client-folders.activities.default-check.show' : 'client-folders.activities.edit',
+                    [$activity->client_folder_id, $activity->id] + $personParams,
+                );
+
+                return [$this->workTodayItem($activity, $activity, $url, $isDefaultCheck ? 'default' : null, null, $now)];
             })
-            ->all();
+            ->sort(function (array $left, array $right): int {
+                return [$left['sort_priority'], $left['sort_schedule'], $left['sort_updated']]
+                    <=> [$right['sort_priority'], $right['sort_schedule'], $right['sort_updated']];
+            })
+            ->map(function (array $item): array {
+                unset($item['sort_priority'], $item['sort_schedule'], $item['sort_updated']);
+
+                return $item;
+            })
+            ->values();
+
+        $lastPage = max(1, (int) ceil($activities->count() / self::WORK_PAGE_SIZE));
+        $page = min($requestedPage, $lastPage);
+
+        return new LengthAwarePaginator(
+            $activities->forPage($page, self::WORK_PAGE_SIZE)->values(),
+            $activities->count(),
+            self::WORK_PAGE_SIZE,
+            $page,
+            [
+                'path' => route('home'),
+                'query' => ['range' => $trendRange],
+                'pageName' => 'work_page',
+            ],
+        );
+    }
+
+    /**
+     * @param  CiActivity|CiActivityBankTarget|CiActivityAssetTarget  $work  Parent activity for
+     *                                                                       regular/default checks, or the exact target for target-derived checks.
+     */
+    private function workTodayItem(
+        CiActivity $activity,
+        CiActivity|CiActivityBankTarget|CiActivityAssetTarget $work,
+        string $url,
+        ?string $modalKind,
+        ?string $target,
+        CarbonImmutable $now,
+        ?int $targetId = null,
+        ?string $targetType = null,
+    ): array {
+        $isOverdue = $this->isOverdue($work, $now);
+        $status = $work->status;
+        $directCompletion = $isOverdue && (($modalKind === 'default'
+            && in_array($activity->definition?->code, [
+                ActivityDefinition::BARANGAY_CHECK_CODE,
+                ActivityDefinition::NEIGHBOR_CHECK_CODE,
+            ], true))
+            || ($modalKind === 'asset' && $work instanceof CiActivityAssetTarget)
+            || ($modalKind === 'bank' && $work instanceof CiActivityBankTarget));
+        $modalUrl = $modalKind === null ? null : $url.((str_contains($url, '?')) ? '&' : '?').http_build_query([
+            'dashboard_modal' => 1,
+            'dashboard_kind' => $modalKind,
+            'dashboard_target_id' => $targetId,
+        ]);
+
+        $clientUrl = route(
+            'client-folders.activities.index',
+            [$activity->client_folder_id] + ActivePersonResolver::queryParamsForId($activity->co_maker_id),
+        ).'#activity-'.$activity->id;
+
+        return [
+            'id' => $activity->id,
+            'target_id' => $targetId,
+            'target_type' => $targetType,
+            'client' => $activity->clientFolder?->display_name ?? 'Unnamed client',
+            'client_url' => $clientUrl,
+            'person' => $activity->coMaker?->full_name,
+            'activity' => $activity->name,
+            'target' => $target,
+            'status' => $isOverdue ? 'Overdue' : $status->label(),
+            'status_value' => $status->value,
+            'tone' => $isOverdue ? 'danger' : match ($status) {
+                ActivityStatus::FollowUp => 'amber',
+                ActivityStatus::Scheduled => 'brand',
+                default => 'neutral',
+            },
+            'updated_at' => $work->updated_at,
+            'url' => $isOverdue ? $url : $clientUrl,
+            'modal_url' => $modalUrl,
+            'modal_kind' => $modalKind,
+            'direct_completion' => $directCompletion,
+            'completion_modal_id' => match (true) {
+                $directCompletion && $modalKind === 'asset' => 'dashboard-overdue-asset-complete-modal',
+                $directCompletion && $modalKind === 'bank' => 'dashboard-overdue-bank-complete-modal',
+                default => 'dashboard-overdue-complete-activity-modal',
+            },
+            'completion_target' => $directCompletion && in_array($modalKind, ['asset', 'bank'], true) ? $target : null,
+            'completion_target_type' => $directCompletion && $work instanceof CiActivityBankTarget ? $work->inquiryTypeLabel() : null,
+            'completion_method' => $directCompletion && in_array($modalKind, ['asset', 'bank'], true) ? 'PATCH' : 'PUT',
+            'completion_url' => $directCompletion
+                ? match ($modalKind) {
+                    'asset' => route('client-folders.activities.asset-targets.complete', [$activity->client_folder_id, $activity->id, $work->id]),
+                    'bank' => route('client-folders.activities.bank-targets.complete', [$activity->client_folder_id, $activity->id, $work->id]),
+                    default => route('client-folders.activities.update', [$activity->client_folder_id, $activity->id]),
+                }
+                : null,
+            'completion_co_maker_id' => $directCompletion ? $activity->co_maker_id : null,
+            'completion_expected_updated_at' => $directCompletion ? $work->updated_at->toISOString() : null,
+            'completion_schedule' => $directCompletion && $work->scheduled_at
+                ? $work->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y').' · '.($work->scheduled_has_time ? $work->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time')
+                : null,
+            'completion_remarks' => $directCompletion ? $work->remarks : null,
+            'action' => $isOverdue ? 'Continue' : 'Open',
+            'sort_priority' => match (true) {
+                $isOverdue => 0,
+                $status === ActivityStatus::Scheduled => 1,
+                $status === ActivityStatus::FollowUp => 2,
+                $status === ActivityStatus::Pending => 3,
+                default => 4,
+            },
+            'sort_schedule' => $work->scheduled_at?->getTimestamp() ?? PHP_INT_MAX,
+            'sort_updated' => $work->updated_at?->getTimestamp() ?? 0,
+        ];
     }
 
     /**
@@ -655,14 +865,17 @@ class DashboardData
             ->with(['clientFolder:id,display_name', 'user:id,full_name'])
             ->latest('created_at')
             ->latest('id')
-            ->get(['id', 'user_id', 'client_folder_id', 'action', 'created_at']);
+            ->get(['id', 'user_id', 'client_folder_id', 'action', 'metadata', 'created_at']);
 
         $mappedEvents = $events
             ->map(function (AuditLog $event) use ($timezone): array {
                 $definition = ClientFolderOverview::activityLabel($event->action);
+                $metadata = (array) $event->metadata;
 
                 return [
-                    'label' => $definition['label'],
+                    'label' => str_starts_with($event->action, 'ci_activity.')
+                        ? CiActivityHistoryFeed::labelFor($event->action, $metadata)
+                        : $definition['label'],
                     'icon' => $definition['icon'],
                     'client' => $event->clientFolder?->display_name ?? 'Unnamed client',
                     'user' => $event->user?->full_name,

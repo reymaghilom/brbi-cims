@@ -41,7 +41,7 @@ class UpdateCiActivityRequest extends FormRequest
             'expected_updated_at' => ['nullable', 'date'],
             'status' => ['required', Rule::enum(ActivityStatus::class)],
             'scheduled_at' => ['nullable', 'date', Rule::requiredIf(
-                $this->input('status') === ActivityStatus::Scheduled->value
+                ActivityStatus::requiresScheduledDate($this->input('status'))
             )],
             'scheduled_time' => ['nullable', 'date_format:H:i'],
             'visit_date' => ['nullable', 'date', 'before_or_equal:today'],

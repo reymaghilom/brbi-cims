@@ -56,7 +56,7 @@ class CreditInvestigatorDashboardTest extends TestCase
             ->assertSee('Open Pending CI')
             ->assertSee('View Reports')
             ->assertSee(route('client-folders.index'), false)
-            ->assertSee(route('ci-activities.index'), false)
+            ->assertSee('href="'.route('ci-activities.index', ['status' => 'pending']).'"', false)
             ->assertSee(route('reports.index'), false);
 
         $response->assertSee('Stay focused. Every investigation helps build better decisions.')
@@ -241,7 +241,7 @@ class CreditInvestigatorDashboardTest extends TestCase
         // Two folders, no Co-Makers: two required person-level CI/BI Reports, one of them done.
         $this->assertSame(50, $bars['CI/BI Report']['percent'], '1 complete of 2 required CI/BI Reports.');
         $this->assertSame(50, $bars['Residence Check']['percent'], '1 checked of 2 assigned clients.');
-        $this->assertSame(50, $bars['CI Activities (Supporting Proof)']['percent'], '1 complete of 2 required activities.');
+        $this->assertSame(17, $bars['CI Activities']['percent'], '1 complete of 6 required Applicant activities.');
 
         // No business income sources exist, so Business Check has no applicable work and must not
         // be reported as unfinished progress against a denominator it does not have.
@@ -261,15 +261,15 @@ class CreditInvestigatorDashboardTest extends TestCase
         $this->activity($folder, ActivityStatus::Completed);
         $this->activity($this->folder($otherCi, 'ZULU, OTHER CI'), ActivityStatus::Pending);
 
-        $work = collect($this->actingAs($ci)->get(route('home'))->assertOk()->viewData('workToday'));
+        $work = collect($this->actingAs($ci)->get(route('home'))->assertOk()->viewData('workToday')->items());
 
         $this->assertSame([$overdue->id, $coMakerWork->id], $work->pluck('id')->all(), 'Overdue work is surfaced first; completed and unassigned work is excluded.');
         $this->assertSame('Overdue', $work->first()['status']);
 
-        // Each action targets that activity's own edit page, carrying its exact person context.
-        $this->assertSame(route('client-folders.activities.edit', [$folder->id, $overdue->id]), $work->first()['url']);
+        // Each action targets that activity's authoritative check page, carrying its exact person context.
+        $this->assertSame(route('client-folders.activities.default-check.show', [$folder->id, $overdue->id]), $work->first()['url']);
         $this->assertSame(
-            route('client-folders.activities.edit', [$folder->id, $coMakerWork->id, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]),
+            route('client-folders.activities.default-check.show', [$folder->id, $coMakerWork->id, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]),
             $work->last()['url'],
         );
         $this->assertSame($coMaker->full_name, $work->last()['person']);
@@ -384,7 +384,7 @@ class CreditInvestigatorDashboardTest extends TestCase
             $response = $this->actingAs($ci)->get(route('home'))->assertOk();
 
             $this->assertSame($expectedOverdue ? 1 : 0, $response->viewData('summary')['needs_attention']);
-            $badge = collect($response->viewData('workToday'))->firstWhere('id', $activity->id)['status'] ?? null;
+            $badge = collect($response->viewData('workToday')->items())->firstWhere('id', $activity->id)['status'] ?? null;
             if ($expectedOverdue) {
                 $this->assertSame('Overdue', $badge, 'The work list badge must agree with the KPI.');
             } else {
@@ -498,12 +498,12 @@ class CreditInvestigatorDashboardTest extends TestCase
         // The folder itself is fully part of this user's workspace...
         $this->assertSame(1, $response->viewData('summary')['assigned']);
         // ...but only the activity this user is responsible for is on their action list.
-        $this->assertSame([$mine->id], collect($response->viewData('workToday'))->pluck('id')->all());
+        $this->assertSame([$mine->id], collect($response->viewData('workToday')->items())->pluck('id')->all());
 
         // And the colleague sees the mirror image of that.
         $this->assertSame(
             [$theirs->id],
-            collect($this->actingAs($colleague)->get(route('home'))->assertOk()->viewData('workToday'))->pluck('id')->all(),
+            collect($this->actingAs($colleague)->get(route('home'))->assertOk()->viewData('workToday')->items())->pluck('id')->all(),
         );
     }
 
@@ -518,7 +518,7 @@ class CreditInvestigatorDashboardTest extends TestCase
         $firstWork = $this->activity($folder, ActivityStatus::Pending, null, $first->id);
         $secondWork = $this->activity($folder, ActivityStatus::Pending, null, $second->id);
 
-        $work = collect($this->actingAs($ci)->get(route('home'))->assertOk()->viewData('workToday'))->keyBy('id');
+        $work = collect($this->actingAs($ci)->get(route('home'))->assertOk()->viewData('workToday')->items())->keyBy('id');
 
         $this->assertNull($work[$applicantWork->id]['person'], 'Applicant work carries no Co-Maker.');
         $this->assertSame('First Co-Maker', $work[$firstWork->id]['person']);

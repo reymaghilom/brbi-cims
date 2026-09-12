@@ -257,14 +257,70 @@ class GlobalCiActivitiesTest extends TestCase
     {
         $ci = User::factory()->create();
         $pendingFolder = $this->folderFor($ci, ['display_name' => 'Pending Folder Client']);
+        $scheduledFolder = $this->folderFor($ci, ['display_name' => 'Scheduled Folder Client']);
+        $followUpFolder = $this->folderFor($ci, ['display_name' => 'Follow Up Folder Client']);
         $completedFolder = $this->folderFor($ci, ['display_name' => 'Completed Folder Client']);
         $this->simpleActivity($pendingFolder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['status' => ActivityStatus::Pending]);
+        $this->simpleActivity($scheduledFolder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['status' => ActivityStatus::Scheduled, 'scheduled_at' => now()->addDay()]);
+        $this->simpleActivity($followUpFolder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['status' => ActivityStatus::FollowUp]);
         $this->simpleActivity($completedFolder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE, ['status' => ActivityStatus::Completed, 'completed_at' => now()]);
 
-        $content = $this->actingAs($ci)->get(route('ci-activities.index', ['status' => 'pending']))->assertOk()->getContent();
+        $response = $this->actingAs($ci)->get(route('ci-activities.index', ['status' => 'pending']))->assertOk();
+        $content = $response->getContent();
 
+        $this->assertSame('pending', $response->viewData('filters')['status']);
+        $this->assertStringContainsString('<option value="pending" selected>Pending</option>', $content);
         $this->assertStringContainsString('PENDING FOLDER CLIENT', $content);
+        $this->assertStringNotContainsString('SCHEDULED FOLDER CLIENT', $content);
+        $this->assertStringNotContainsString('FOLLOW UP FOLDER CLIENT', $content);
         $this->assertStringNotContainsString('COMPLETED FOLDER CLIENT', $content);
+    }
+
+    public function test_pending_status_filter_paginates_only_pending_results(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+
+        foreach (range(1, 13) as $index) {
+            $this->simpleActivity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, [
+                'name' => 'Pending Activity '.$index,
+                'status' => ActivityStatus::Pending,
+            ]);
+        }
+        foreach ([ActivityStatus::Scheduled, ActivityStatus::FollowUp, ActivityStatus::Completed] as $index => $status) {
+            $this->simpleActivity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE, [
+                'name' => 'Excluded Activity '.$index,
+                'status' => $status,
+                'completed_at' => $status === ActivityStatus::Completed ? now() : null,
+            ]);
+        }
+
+        $response = $this->actingAs($ci)->get(route('ci-activities.index', [
+            'status' => 'pending',
+            'per_page' => 5,
+            'page' => 2,
+        ]))->assertOk();
+        $rows = $response->viewData('rows');
+
+        $this->assertSame(13, $rows->total());
+        $this->assertSame(2, $rows->currentPage());
+        $this->assertCount(5, $rows->items());
+        $this->assertTrue(collect($rows->items())->every(fn ($row) => $row->statusValue === ActivityStatus::Pending->value));
+        $this->assertStringContainsString('status=pending', $response->getContent());
+    }
+
+    public function test_direct_access_keeps_the_default_unfiltered_status(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $this->simpleActivity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['status' => ActivityStatus::Pending]);
+        $this->simpleActivity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE, ['status' => ActivityStatus::Completed, 'completed_at' => now()]);
+
+        $response = $this->actingAs($ci)->get(route('ci-activities.index'))->assertOk();
+
+        $this->assertSame('', $response->viewData('filters')['status']);
+        $this->assertCount(2, $response->viewData('rows')->items());
+        $this->assertStringContainsString('<option value="" selected>All Statuses</option>', $response->getContent());
     }
 
     public function test_status_filter_scheduled(): void
@@ -706,6 +762,58 @@ class GlobalCiActivitiesTest extends TestCase
         // Open lands on the CI Activities table itself, not the Barangay/Neighbor tracker.
         $this->assertStringContainsString(route('client-folders.activities.index', [$folder]).'#activity-'.$activity->id, $content);
         $this->assertStringNotContainsString(route('client-folders.activities.default-check.show', [$folder, $activity]), $content);
+    }
+
+    public function test_open_actions_render_existing_icons_with_text_on_desktop_and_mobile(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $activity = $this->simpleActivity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+
+        $response = $this->actingAs($ci)->get(route('ci-activities.index'))->assertOk()
+            ->assertSee('data-ci-action-icon', false)
+            ->assertSee('Open')
+            ->assertSee('Open Activity');
+        $content = $response->getContent();
+
+        $this->assertGreaterThanOrEqual(2, substr_count($content, 'data-ci-action-icon'));
+        $this->assertSame(2, substr_count($content, 'href="'.route('client-folders.activities.index', [$folder]).'#activity-'.$activity->id.'"'));
+    }
+
+    public function test_target_progress_and_same_institution_inquiry_types_remain_distinct(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $bank = $this->bankActivity($folder, $ci);
+        $asset = $this->assetActivity($folder, $ci);
+        $this->bankTarget($bank, $ci, [
+            'institution_name' => 'BPI',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
+            'status' => ActivityStatus::Completed,
+        ]);
+        $this->bankTarget($bank, $ci, [
+            'institution_name' => 'BPI',
+            'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY,
+            'status' => ActivityStatus::Pending,
+        ]);
+        foreach ([ActivityStatus::Completed, ActivityStatus::Completed, ActivityStatus::Pending] as $index => $status) {
+            $this->assetTarget($asset, $ci, [
+                'office_location' => 'Assessor Office '.($index + 1),
+                'status' => $status,
+            ]);
+        }
+
+        $rows = collect($this->actingAs($ci)->get(route('ci-activities.index'))->assertOk()->viewData('rows')->items())
+            ->keyBy(fn ($row) => $row->activity->id);
+
+        $this->assertSame(1, $rows[$bank->id]->progressNumerator);
+        $this->assertSame(2, $rows[$bank->id]->progressDenominator);
+        $this->assertSame(2, $rows[$asset->id]->progressNumerator);
+        $this->assertSame(3, $rows[$asset->id]->progressDenominator);
+        $this->assertSame(
+            [CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK, CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY],
+            $bank->bankTargets()->orderBy('id')->pluck('inquiry_type')->all(),
+        );
     }
 
     public function test_open_action_for_bank_check_routes_to_the_ci_activities_table_not_the_bank_tracker(): void

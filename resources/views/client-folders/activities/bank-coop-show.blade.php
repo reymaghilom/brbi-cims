@@ -1,5 +1,9 @@
 @extends('layouts.app')
 
+@if(request()->boolean('dashboard_modal'))
+    @section('html-class', 'dashboard-activity-embedded')
+@endif
+
 @section('title', 'Bank / Coop Check')
 
 @section('content')
@@ -23,7 +27,7 @@
         </x-slot:description>
         <x-slot:actions>
             <button type="button" class="ui-button-primary" data-modal-open="add-bank-target"><x-ui.icon name="plus" size="size-4" />Add Bank / Coop</button>
-            <a href="{{ route('client-folders.activities.index', [$clientFolder] + $personParams) }}" class="ui-button-secondary">All Activities</a>
+            <a href="{{ route('client-folders.activities.index', [$clientFolder] + $personParams) }}" class="ui-button-secondary"><x-ui.icon name="activity" size="size-4" />All Activities</a>
         </x-slot:actions>
     </x-ui.page-header>
 
@@ -157,7 +161,7 @@
                     <div><label for="add-institution-name" class="ui-label">Bank / Coop Name</label><input id="add-institution-name" name="institution_name" value="{{ old('institution_name') }}" class="ui-control" maxlength="255" required><x-form.validation-message for="institution_name" /></div>
                     <div data-bank-target-detail-branch-field><label for="add-branch-location" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="add-branch-location" name="branch_location" value="{{ old('branch_location') }}" class="ui-control" maxlength="255" data-bank-target-detail-branch><x-form.validation-message for="branch_location" /></div>
                     <div><label for="add-target-status" class="ui-label">Status</label><select id="add-target-status" name="status" class="ui-control" required data-bank-target-detail-status data-schedule-status>@foreach($statuses as $status)<option value="{{ $status->value }}" @selected(old('status', 'pending') === $status->value)>{{ $status->label() }}</option>@endforeach</select><x-form.validation-message for="status" /></div>
-                    <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]" data-bank-target-detail-schedule><div><label for="add-target-date" class="ui-label">Schedule Date <x-form.schedule-date-indicator :required="old('status') === App\Enums\ActivityStatus::Scheduled->value" /></label><input id="add-target-date" name="scheduled_at" type="date" value="{{ old('scheduled_at') }}" class="ui-control" data-bank-target-detail-date data-schedule-date><x-form.validation-message for="scheduled_at" /></div><div><label for="add-target-time" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="add-target-time" name="scheduled_time" type="time" value="{{ old('scheduled_time') }}" class="ui-control" data-bank-target-detail-time><x-form.validation-message for="scheduled_time" /></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled activities. Time is optional.</p></div>
+                    <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]" data-bank-target-detail-schedule><div><label for="add-target-date" class="ui-label">Schedule Date <x-form.schedule-date-indicator :required="App\Enums\ActivityStatus::requiresScheduledDate(old('status', App\Enums\ActivityStatus::Pending->value))" /></label><input id="add-target-date" name="scheduled_at" type="date" value="{{ old('scheduled_at') }}" class="ui-control" data-bank-target-detail-date data-schedule-date @required(App\Enums\ActivityStatus::requiresScheduledDate(old('status', App\Enums\ActivityStatus::Pending->value)))><x-form.validation-message for="scheduled_at" /></div><div><label for="add-target-time" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="add-target-time" name="scheduled_time" type="time" value="{{ old('scheduled_time') }}" class="ui-control" data-bank-target-detail-time><x-form.validation-message for="scheduled_time" /></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled and For Follow-up activities. Time is optional.</p></div>
                     <div class="sm:col-span-2"><label for="add-target-remarks" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="add-target-remarks" name="remarks" rows="3" class="ui-control">{{ old('remarks') }}</textarea><x-form.validation-message for="remarks" /></div>
                 </div>
             </div>
@@ -166,18 +170,9 @@
     </dialog>
 
     @foreach($activity->bankTargets as $target)
-        @php
-            $editSchedule = $target->scheduled_at?->timezone(config('cims.display_timezone'));
-            $completionLabel = $target->institution_name.($target->branch_location ? ' – '.$target->branch_location : '');
-        @endphp
+        @php $editSchedule = $target->scheduled_at?->timezone(config('cims.display_timezone')); @endphp
         @if($target->status !== App\Enums\ActivityStatus::Completed)
-            <x-ui.confirmation-dialog id="complete-bank-target-{{ $target->id }}" title="Mark as completed?" :action="route('client-folders.activities.bank-targets.complete', [$clientFolder, $activity, $target])" method="PATCH" confirm-label="Mark as Completed" cancel-icon="close" confirm-icon="check">
-                <div class="space-y-2">
-                    <p class="font-semibold text-text-main">Mark {{ $completionLabel }} as completed?</p>
-                    <p>This confirms that the {{ $target->inquiryTypeLabel() }} for this institution has been completed.</p>
-                </div>
-                <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
-            </x-ui.confirmation-dialog>
+            <x-ui.bank-target-completion-modal :$target :$clientFolder :$activity :$activePerson />
         @endif
         <dialog id="edit-bank-target-{{ $target->id }}" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45">
             <form method="POST" action="{{ route('client-folders.activities.bank-targets.update', [$clientFolder, $activity, $target]) }}" class="flex max-h-[calc(100dvh-2rem)] flex-col" data-bank-target-form data-bank-target-edit-form="{{ $target->id }}" data-no-change-guard>
@@ -192,7 +187,7 @@
                         <div><label for="institution-name-{{ $target->id }}" class="ui-label">Bank / Coop Name</label><input id="institution-name-{{ $target->id }}" name="institution_name" value="{{ $target->institution_name }}" class="ui-control" maxlength="255" required></div>
                         <div data-bank-target-detail-branch-field @if($target->inquiry_type === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY) hidden @endif><label for="branch-location-{{ $target->id }}" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="branch-location-{{ $target->id }}" name="branch_location" value="{{ $target->branch_location }}" class="ui-control" maxlength="255" data-bank-target-detail-branch @disabled($target->inquiry_type === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY)></div>
                         <div><label for="target-status-{{ $target->id }}" class="ui-label">Status</label><select id="target-status-{{ $target->id }}" name="status" class="ui-control" required data-bank-target-detail-status data-schedule-status>@foreach($statuses as $status)<option value="{{ $status->value }}" @selected($target->status === $status)>{{ $status->label() }}</option>@endforeach</select></div>
-                        <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]" data-bank-target-detail-schedule><div><label for="target-date-{{ $target->id }}" class="ui-label">Schedule Date <x-form.schedule-date-indicator :required="$target->status === App\Enums\ActivityStatus::Scheduled" /></label><input id="target-date-{{ $target->id }}" name="scheduled_at" type="date" value="{{ $editSchedule?->format('Y-m-d') }}" class="ui-control" data-bank-target-detail-date data-schedule-date></div><div><label for="target-time-{{ $target->id }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="target-time-{{ $target->id }}" name="scheduled_time" type="time" value="{{ $target->scheduled_has_time ? $editSchedule?->format('H:i') : '' }}" class="ui-control" data-bank-target-detail-time></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled activities. Time is optional.</p></div>
+                        <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]" data-bank-target-detail-schedule><div><label for="target-date-{{ $target->id }}" class="ui-label">Schedule Date <x-form.schedule-date-indicator :required="App\Enums\ActivityStatus::requiresScheduledDate($target->status)" /></label><input id="target-date-{{ $target->id }}" name="scheduled_at" type="date" value="{{ $editSchedule?->format('Y-m-d') }}" class="ui-control" data-bank-target-detail-date data-schedule-date @required(App\Enums\ActivityStatus::requiresScheduledDate($target->status))></div><div><label for="target-time-{{ $target->id }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="target-time-{{ $target->id }}" name="scheduled_time" type="time" value="{{ $target->scheduled_has_time ? $editSchedule?->format('H:i') : '' }}" class="ui-control" data-bank-target-detail-time></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled and For Follow-up activities. Time is optional.</p></div>
                         <div class="sm:col-span-2"><label for="target-remarks-{{ $target->id }}" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="target-remarks-{{ $target->id }}" name="remarks" rows="3" class="ui-control">{{ $target->remarks }}</textarea></div>
                     </div>
                 </div>
@@ -230,7 +225,7 @@
                         time.value = '';
                     }
                     date.disabled = ! supportsSchedule;
-                    date.required = false;
+                    date.required = supportsSchedule;
                     const timeEnabled = supportsSchedule && date.value !== '';
                     if (! timeEnabled) time.value = '';
                     time.disabled = ! timeEnabled;

@@ -180,6 +180,285 @@ function showToast(message, type = 'success', duration = 4500) {
     window.setTimeout(() => toast.remove(), duration);
 }
 
+const dashboardActivityModalParams = new URLSearchParams(window.location.search);
+const isDashboardActivityModalDocument = window.parent !== window && dashboardActivityModalParams.get('dashboard_modal') === '1';
+
+function dashboardActivityModalForm() {
+    if (!isDashboardActivityModalDocument) return null;
+    const kind = dashboardActivityModalParams.get('dashboard_kind');
+    const targetId = dashboardActivityModalParams.get('dashboard_target_id');
+
+    if (kind === 'default') return document.querySelector('[data-default-check-form]');
+    if (kind === 'bank') {
+        return targetId
+            ? document.querySelector(`[data-bank-target-edit-form="${CSS.escape(targetId)}"]`)
+            : document.querySelector('[data-bank-target-form]');
+    }
+    if (kind === 'asset') {
+        return targetId
+            ? document.querySelector(`#edit-asset-target-${CSS.escape(targetId)} [data-asset-target-form]`)
+            : document.querySelector('[data-asset-target-form]');
+    }
+
+    return null;
+}
+
+function clearDashboardActivityModalErrors(form) {
+    form.querySelectorAll('[data-dashboard-activity-error]').forEach((error) => error.remove());
+    form.querySelectorAll('[aria-invalid="true"]').forEach((field) => {
+        field.removeAttribute('aria-invalid');
+        field.removeAttribute('aria-describedby');
+    });
+}
+
+function showDashboardActivityModalErrors(form, errors, fallback) {
+    clearDashboardActivityModalErrors(form);
+    const summary = document.createElement('div');
+    summary.dataset.dashboardActivityError = '';
+    summary.className = 'mb-4 rounded-control border border-danger/25 bg-danger-soft px-3.5 py-3 text-sm font-semibold text-danger';
+    summary.setAttribute('role', 'alert');
+    summary.tabIndex = -1;
+    summary.textContent = Object.values(errors ?? {}).flat().find((message) => typeof message === 'string') || fallback;
+    form.prepend(summary);
+
+    Object.entries(errors ?? {}).forEach(([name, messages], index) => {
+        const field = form.querySelector(`[name="${CSS.escape(name)}"]`);
+        if (!(field instanceof HTMLElement)) return;
+        const message = Array.isArray(messages) ? messages[0] : messages;
+        if (typeof message !== 'string') return;
+        const id = `dashboard-activity-error-${index}`;
+        const error = document.createElement('p');
+        error.id = id;
+        error.dataset.dashboardActivityError = '';
+        error.className = 'mt-2 text-sm font-semibold text-danger';
+        error.setAttribute('role', 'alert');
+        error.textContent = message;
+        field.setAttribute('aria-invalid', 'true');
+        field.setAttribute('aria-describedby', id);
+        field.insertAdjacentElement('afterend', error);
+    });
+
+    summary.focus();
+}
+
+if (isDashboardActivityModalDocument) {
+    document.addEventListener('DOMContentLoaded', () => {
+        const kind = dashboardActivityModalParams.get('dashboard_kind');
+        const targetId = dashboardActivityModalParams.get('dashboard_target_id');
+        const targetDialog = kind === 'bank' && targetId
+            ? document.getElementById(`edit-bank-target-${targetId}`)
+            : (kind === 'asset' && targetId ? document.getElementById(`edit-asset-target-${targetId}`) : null);
+        if (targetDialog instanceof HTMLDialogElement) {
+            targetDialog.showModal();
+            targetDialog.querySelector('input:not([type="hidden"]), select, textarea, button')?.focus();
+        }
+    });
+
+    document.addEventListener('submit', async (event) => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || form !== dashboardActivityModalForm() || event.defaultPrevented) return;
+        if (form.matches('[data-no-change-guard]') && !noChangeGuardIsDirty(form)) return;
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        clearDashboardActivityModalErrors(form);
+        const submitter = event.submitter instanceof HTMLButtonElement ? event.submitter : form.querySelector('[type="submit"]');
+        const originalLabel = submitter?.textContent ?? '';
+        if (submitter instanceof HTMLButtonElement) {
+            submitter.disabled = true;
+            submitter.setAttribute('aria-busy', 'true');
+            submitter.textContent = 'Saving…';
+        }
+
+        try {
+            const response = await fetch(form.action, {
+                method: form.method,
+                body: new FormData(form),
+                credentials: 'same-origin',
+                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const contentType = response.headers.get('content-type') ?? '';
+            const payload = contentType.includes('application/json') ? await response.json().catch(() => ({})) : {};
+            if (!response.ok) {
+                showDashboardActivityModalErrors(form, payload.errors, payload.message || 'Unable to save this CI Activity. Please try again.');
+                return;
+            }
+
+            const kind = dashboardActivityModalParams.get('dashboard_kind');
+            const status = form.querySelector('[name="status"]')?.value;
+            const defaultTitle = document.querySelector('[data-default-check-modal-source] #default-check-title span')?.textContent?.replace(/^Edit\s+/, '') || 'CI Activity';
+            const message = kind === 'bank'
+                ? 'Bank / Coop Check updated successfully.'
+                : (kind === 'asset'
+                    ? 'Asset Check updated successfully.'
+                    : (status === 'completed' ? `${defaultTitle} marked as completed.` : `${defaultTitle} updated successfully.`));
+
+            window.parent.postMessage({
+                type: 'brbi:dashboard-activity-saved',
+                activityId: document.querySelector('[data-default-check-activity-id]')?.dataset.defaultCheckActivityId
+                    ?? document.querySelector('[data-bank-coop-activity-id]')?.dataset.bankCoopActivityId
+                    ?? document.querySelector('[data-asset-activity-id]')?.dataset.assetActivityId,
+                targetId: dashboardActivityModalParams.get('dashboard_target_id'),
+                message,
+            }, window.location.origin);
+        } catch {
+            showDashboardActivityModalErrors(form, {}, 'Unable to save this CI Activity. Check your connection and try again.');
+        } finally {
+            if (submitter instanceof HTMLButtonElement && submitter.isConnected) {
+                submitter.disabled = false;
+                submitter.removeAttribute('aria-busy');
+                submitter.textContent = originalLabel;
+            }
+        }
+    });
+}
+
+let dashboardRefreshSequence = 0;
+
+async function refreshDashboard() {
+    const refreshSequence = ++dashboardRefreshSequence;
+    const regions = [...document.querySelectorAll('[data-dashboard-refresh-region]')];
+    if (regions.length === 0) return null;
+    const response = await fetch(window.location.href, {
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'text/html',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-Dashboard-Refresh': '1',
+        },
+    });
+    if (!response.ok) throw new Error('The Dashboard could not be refreshed.');
+    const html = await response.text();
+    const page = new DOMParser().parseFromString(html, 'text/html');
+    if (refreshSequence !== dashboardRefreshSequence) return document.querySelector('[data-work-today-region]');
+
+    regions.forEach((current) => {
+        const name = current.dataset.dashboardRefreshRegion;
+        const fresh = name ? page.querySelector(`[data-dashboard-refresh-region="${name}"]`) : null;
+        if (fresh instanceof HTMLElement) current.innerHTML = fresh.innerHTML;
+    });
+
+    const region = document.querySelector('[data-work-today-region]');
+    const renderedPage = Number(region?.querySelector('[data-work-today-page]')?.dataset.workTodayPage ?? 1);
+    const url = new URL(window.location.href);
+    const requestedPage = Math.max(1, Number(url.searchParams.get('work_page') ?? 1));
+    if (Number.isInteger(renderedPage) && renderedPage > 0 && renderedPage !== requestedPage) {
+        if (renderedPage === 1) url.searchParams.delete('work_page');
+        else url.searchParams.set('work_page', String(renderedPage));
+        window.history.replaceState(window.history.state, '', url);
+    }
+
+    return region;
+}
+
+document.querySelectorAll('[data-dashboard-completion-modal]').forEach((dashboardCompletionModal) => {
+    if (!(dashboardCompletionModal instanceof HTMLDialogElement)) return;
+    const title = dashboardCompletionModal.querySelector('[data-dashboard-completion-title]');
+    const target = dashboardCompletionModal.querySelector('[data-dashboard-completion-target]');
+    const targetType = dashboardCompletionModal.querySelector('[data-dashboard-completion-target-type]');
+    const scheduleBlock = dashboardCompletionModal.querySelector('[data-dashboard-overdue-complete-schedule-block]');
+    const scheduleText = dashboardCompletionModal.querySelector('[data-dashboard-overdue-complete-schedule]');
+    const remarksBlock = dashboardCompletionModal.querySelector('[data-dashboard-overdue-complete-remarks-block]');
+    const remarksText = dashboardCompletionModal.querySelector('[data-dashboard-overdue-complete-remarks]');
+    const error = dashboardCompletionModal.querySelector('[data-dashboard-completion-error]');
+    const cancel = dashboardCompletionModal.querySelector('[data-dashboard-completion-cancel]');
+    const confirm = dashboardCompletionModal.querySelector('[data-dashboard-completion-confirm]');
+    const confirmLabel = dashboardCompletionModal.querySelector('[data-dashboard-completion-confirm-label]');
+    const readyLabel = confirmLabel?.textContent ?? 'Mark as Completed';
+    let activeTrigger = null;
+
+    const reset = () => {
+        if (error instanceof HTMLElement) {
+            error.hidden = true;
+            error.textContent = '';
+        }
+        if (confirm instanceof HTMLButtonElement) confirm.disabled = false;
+        if (confirmLabel instanceof HTMLElement) confirmLabel.textContent = readyLabel;
+    };
+
+    document.addEventListener('click', (event) => {
+        const trigger = event.target.closest(`[data-modal-open="${dashboardCompletionModal.id}"]`);
+        if (!(trigger instanceof HTMLElement)) return;
+        activeTrigger = trigger;
+        reset();
+        if (title instanceof HTMLElement) title.textContent = trigger.dataset.dashboardCompletionName || 'Activity';
+        if (target instanceof HTMLElement) target.textContent = trigger.dataset.dashboardCompletionTarget || 'this target';
+        if (targetType instanceof HTMLElement) targetType.textContent = trigger.dataset.dashboardCompletionTargetType || 'Target';
+        const schedule = trigger.dataset.dashboardCompletionSchedule || '';
+        if (scheduleBlock instanceof HTMLElement) scheduleBlock.hidden = schedule === '';
+        if (scheduleText instanceof HTMLElement) scheduleText.textContent = schedule;
+        const remarks = (trigger.dataset.dashboardCompletionRemarks || '').trim();
+        if (remarksBlock instanceof HTMLElement) remarksBlock.hidden = remarks === '';
+        if (remarksText instanceof HTMLElement) remarksText.textContent = remarks;
+    });
+
+    cancel?.addEventListener('click', () => dashboardCompletionModal.close());
+    dashboardCompletionModal.addEventListener('close', () => {
+        activeTrigger = null;
+        reset();
+    });
+
+    confirm?.addEventListener('click', async () => {
+        const trigger = activeTrigger;
+        if (!(trigger instanceof HTMLElement) || !(confirm instanceof HTMLButtonElement) || !(confirmLabel instanceof HTMLElement)) return;
+        const activityName = trigger.dataset.dashboardCompletionName || 'CI Activity';
+        const targetName = trigger.dataset.dashboardCompletionTarget || '';
+        const formData = new FormData();
+        formData.set('_method', trigger.dataset.dashboardCompletionMethod || 'PUT');
+        formData.set('_token', document.querySelector('meta[name="csrf-token"]')?.content ?? '');
+        formData.set('co_maker_id', trigger.dataset.dashboardCompletionCoMakerId ?? '');
+        formData.set('expected_updated_at', trigger.dataset.dashboardCompletionExpectedUpdatedAt ?? '');
+        formData.set('status', 'completed');
+        formData.set('intent', 'return');
+        confirm.disabled = true;
+        confirmLabel.textContent = 'Completing…';
+        if (error instanceof HTMLElement) error.hidden = true;
+
+        try {
+            const response = await fetch(trigger.dataset.dashboardCompletionUpdateUrl ?? '', {
+                method: 'POST',
+                body: formData,
+                credentials: 'same-origin',
+                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(Object.values(payload.errors ?? {}).flat().join(' ') || payload.message || 'Unable to complete this activity.');
+            }
+
+            dashboardCompletionModal.close();
+            showToast(targetName ? `${activityName} — ${targetName} marked as completed.` : `${activityName} marked as completed.`, 'success');
+            refreshDashboard()
+                .then((region) => region?.focus())
+                .catch(() => showToast('The activity was completed, but the Dashboard could not be refreshed. Refresh the page to see the latest values.', 'error'));
+        } catch (requestError) {
+            if (error instanceof HTMLElement) {
+                error.textContent = requestError instanceof Error ? requestError.message : 'Unable to complete this activity.';
+                error.hidden = false;
+                error.focus();
+            }
+            confirm.disabled = false;
+            confirmLabel.textContent = readyLabel;
+        }
+    });
+});
+
+window.addEventListener('message', (event) => {
+    if (event.origin !== window.location.origin || event.data?.type !== 'brbi:dashboard-activity-saved') return;
+    const dialog = document.querySelector('[data-dashboard-activity-dialog][open]');
+    if (!(dialog instanceof HTMLDialogElement)) return;
+
+    if (event.data.message) showToast(event.data.message, 'success');
+    dialog.close();
+    const frame = dialog.querySelector('[data-dashboard-activity-frame]');
+    window.setTimeout(() => {
+        if (frame instanceof HTMLIFrameElement) frame.removeAttribute('src');
+    }, 0);
+    refreshDashboardWorkToday()
+        .then((region) => region?.focus())
+        .catch(() => showToast('The activity was saved, but My Work Today could not be refreshed. Refresh the Dashboard to see the latest list.', 'error'));
+});
+
 const FOLDER_PREVIEW_COLLAPSED_STORAGE_KEY = 'brbi-folder-preview-collapsed';
 
 // The collapsed
@@ -1068,9 +1347,9 @@ document.addEventListener('click', (event) => {
             if (dialog.matches('[data-add-business-dialog]') && modalTrigger.dataset.businessTemplateBaseUrl) {
                 dialog.dataset.businessReportBaseUrl = modalTrigger.dataset.businessTemplateBaseUrl;
             }
-            const cibiFrame = dialog.querySelector('[data-cibi-report-frame]') || dialog.querySelector('[data-business-report-frame]') || dialog.querySelector('[data-check-report-frame]');
-            const cibiLoading = dialog.querySelector('[data-cibi-report-loading]') || dialog.querySelector('[data-business-report-loading]') || dialog.querySelector('[data-check-report-loading]');
-            const cibiUrl = modalTrigger.dataset.cibiReportUrl || modalTrigger.dataset.businessReportUrl || modalTrigger.dataset.checkReportUrl;
+            const cibiFrame = dialog.querySelector('[data-cibi-report-frame]') || dialog.querySelector('[data-business-report-frame]') || dialog.querySelector('[data-check-report-frame]') || dialog.querySelector('[data-dashboard-activity-frame]');
+            const cibiLoading = dialog.querySelector('[data-cibi-report-loading]') || dialog.querySelector('[data-business-report-loading]') || dialog.querySelector('[data-check-report-loading]') || dialog.querySelector('[data-dashboard-activity-loading]');
+            const cibiUrl = modalTrigger.dataset.cibiReportUrl || modalTrigger.dataset.businessReportUrl || modalTrigger.dataset.checkReportUrl || modalTrigger.dataset.dashboardActivityUrl;
             if (cibiFrame instanceof HTMLIFrameElement && cibiUrl) {
                 const requestedUrl = new URL(cibiUrl, window.location.href).href;
                 // The CI/BI dialog reloads on EVERY open, like the Business and Check dialogs. Its
@@ -1079,7 +1358,7 @@ document.addEventListener('click', (event) => {
             // left a freshly created report reopening into its cached "Save CIBI Report" document
             // instead of the server's "Update CIBI Report". Re-navigating keeps the persisted
             // report authoritative on the FIRST reopen, with no full-page reload.
-            const alwaysReload = dialog.matches('[data-cibi-report-dialog]') || dialog.matches('[data-business-report-dialog]') || dialog.matches('[data-check-report-dialog]');
+            const alwaysReload = dialog.matches('[data-cibi-report-dialog]') || dialog.matches('[data-business-report-dialog]') || dialog.matches('[data-check-report-dialog]') || dialog.matches('[data-dashboard-activity-dialog]');
                 const sameUrl = cibiFrame.src === requestedUrl;
                 if (alwaysReload || !sameUrl) {
                     if (cibiLoading) cibiLoading.hidden = false;
@@ -1105,6 +1384,10 @@ document.addEventListener('click', (event) => {
             if (cibiTitleHeading) {
                 cibiTitleHeading.textContent = modalTrigger.dataset.modalTitle || cibiTitleHeading.dataset.cibiReportDefaultTitle || cibiTitleHeading.textContent;
             }
+            const dashboardActivityTitle = dialog.querySelector('[data-dashboard-activity-title]');
+            const dashboardActivityContext = dialog.querySelector('[data-dashboard-activity-context]');
+            if (dashboardActivityTitle) dashboardActivityTitle.textContent = modalTrigger.dataset.dashboardActivityTitle || 'CI Activity';
+            if (dashboardActivityContext) dashboardActivityContext.textContent = modalTrigger.dataset.dashboardActivityContext || 'Exact activity context';
             dialog.dataset.returnFocus = modalTrigger.id || '';
             // A closed <dialog> is display:none, so it is never in the rendering tree and a
             // loading="lazy" image inside it has nothing to intersect with. Opening the dialog does
@@ -3662,6 +3945,10 @@ document.querySelectorAll('[data-ci-activities-listing]').forEach((region) => {
     initAsyncListRegion(region, '[data-ci-activities-pagination] a[href]');
 });
 
+document.querySelectorAll('[data-work-today-region]').forEach((region) => {
+    initAsyncListRegion(region, '[data-work-today-pagination] a[href]');
+});
+
 // Reports and Global CI Activities client-name search: one accessible combobox implementation over
 // the authorized client list. It borrows
 // the Client Folders live-search contract — a short debounce, one in-flight request at a time with
@@ -4772,7 +5059,8 @@ document.addEventListener('change', (event) => {
     if (message instanceof HTMLElement) message.hidden = true;
 });
 
-// A Scheduled CI Activity (or Bank / Coop / Asset target) needs a date; time stays optional.
+// Scheduled and For Follow-up CI Activities (or Bank / Coop / Asset targets) need a date;
+// time stays optional.
 // Each [data-schedule-date] input is paired with the [data-schedule-status] select in its nearest
 // [data-schedule-scope] (a repeater row), else in its form. Registered after the no-change guard
 // and in the capture phase for the same reason: it runs before page-level submit handlers —
@@ -4805,10 +5093,11 @@ function syncScheduleDateRequirement(status) {
     const scope = status.closest('[data-schedule-scope]') ?? status.form;
     scope?.querySelectorAll('[data-schedule-date]').forEach((date) => {
         if (!(date instanceof HTMLInputElement) || scheduleStatusFor(date) !== status) return;
-        const required = status.value === 'scheduled';
+        const required = !status.disabled && ['scheduled', 'follow_up'].includes(status.value);
         const label = date.labels?.[0] ?? date.parentElement?.querySelector('label');
         label?.querySelector('[data-schedule-date-optional]')?.toggleAttribute('hidden', required);
         label?.querySelector('[data-schedule-date-required]')?.toggleAttribute('hidden', !required);
+        date.required = required;
         date.setAttribute('aria-required', required ? 'true' : 'false');
         if (!required) setScheduleDateInvalid(date, false);
     });
@@ -4820,7 +5109,7 @@ document.addEventListener('submit', (event) => {
     const missing = [...form.querySelectorAll('[data-schedule-date]')].filter((date) => {
         if (!(date instanceof HTMLInputElement) || date.closest('[hidden]')) return false;
         const status = scheduleStatusFor(date);
-        return status instanceof HTMLSelectElement && !status.disabled && status.value === 'scheduled' && date.value === '';
+        return status instanceof HTMLSelectElement && !status.disabled && ['scheduled', 'follow_up'].includes(status.value) && date.value === '';
     });
     if (missing.length === 0) return;
 

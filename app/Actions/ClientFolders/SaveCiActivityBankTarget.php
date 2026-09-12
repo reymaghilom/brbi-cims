@@ -110,6 +110,8 @@ class SaveCiActivityBankTarget
                     'activity_title' => $activity->name,
                     'bank_target_id' => $lockedTarget->id,
                     'bank_target_label' => $targetLabel,
+                    'bank_target_type' => $lockedTarget->inquiry_type,
+                    'bank_target_type_label' => $lockedTarget->inquiryTypeLabel(),
                     'co_maker_id' => $activity->co_maker_id,
                 ],
                 'ip_address' => request()?->ip(),

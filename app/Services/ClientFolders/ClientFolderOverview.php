@@ -271,6 +271,7 @@ class ClientFolderOverview
 
                 $detail = match (true) {
                     $event->action === 'cibi_report.signatory_reassigned' => $this->signatoryReassignmentDetail($metadata),
+                    str_starts_with($event->action, 'ci_activity.') => null,
                     isset($definition['detail']) => data_get($metadata, $definition['detail']),
                     default => null,
                 };
@@ -278,6 +279,7 @@ class ClientFolderOverview
                 return (object) [
                     'label' => match (true) {
                         in_array($event->action, self::MEDIA_ACTIONS, true) => $this->mediaActivityLabel($event->action, $metadata),
+                        str_starts_with($event->action, 'ci_activity.') => CiActivityHistoryFeed::labelFor($event->action, $metadata),
                         default => $definition['label'],
                     },
                     // The administrative reassignment reason is captured in metadata for the full

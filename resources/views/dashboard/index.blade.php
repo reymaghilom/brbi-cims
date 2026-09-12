@@ -88,7 +88,7 @@
     </section>
 
     {{-- KPI row ------------------------------------------------------------------------------- --}}
-    <section class="mt-5" aria-labelledby="dashboard-kpi-title">
+    <section class="mt-5" aria-labelledby="dashboard-kpi-title" data-dashboard-refresh-region="kpis">
         <h2 id="dashboard-kpi-title" class="sr-only">Workload summary</h2>
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             @foreach($kpis as $kpi)
@@ -150,7 +150,7 @@
             @endforeach
         </article>
 
-        <article class="ui-card p-4 sm:p-5 xl:col-span-3" aria-labelledby="workload-title">
+        <article class="ui-card p-4 sm:p-5 xl:col-span-3" aria-labelledby="workload-title" data-dashboard-refresh-region="workload">
             <div class="flex items-start gap-2.5">
                 <span class="grid size-8 shrink-0 place-items-center rounded-control bg-brand-soft text-brand-primary" aria-hidden="true"><x-ui.icon name="chart" size="size-4" /></span>
                 <h3 id="workload-title" class="font-bold text-text-main">Workload by Status</h3>
@@ -162,7 +162,7 @@
             @endif
         </article>
 
-        <article class="ui-card p-4 sm:p-5 xl:col-span-3" aria-labelledby="progress-title">
+        <article class="ui-card p-4 sm:p-5 xl:col-span-3" aria-labelledby="progress-title" data-dashboard-refresh-region="activity-progress">
             <div class="flex items-start gap-2.5">
                 <span class="grid size-8 shrink-0 place-items-center rounded-control bg-brand-soft text-brand-primary" aria-hidden="true"><x-ui.icon name="activity" size="size-4" /></span>
                 <h3 id="progress-title" class="font-bold text-text-main">CI Activity Progress</h3>
@@ -195,71 +195,11 @@
     <section class="mt-4 grid gap-3 xl:grid-cols-12" aria-labelledby="dashboard-work-title">
         <h2 id="dashboard-work-title" class="sr-only">Today's work</h2>
 
-        <article class="ui-card overflow-hidden xl:col-span-8" aria-labelledby="work-today-title">
-            <header class="flex flex-wrap items-start justify-between gap-3 border-b border-ui-border p-4 sm:p-5">
-                <div class="flex min-w-0 items-start gap-2.5">
-                    <span class="grid size-8 shrink-0 place-items-center rounded-control bg-brand-soft text-brand-primary" aria-hidden="true"><x-ui.icon name="activity" size="size-4" /></span>
-                    <div class="min-w-0">
-                        <h3 id="work-today-title" class="font-bold text-text-main">My Work Today</h3>
-                        <p class="text-xs text-text-muted">Your CI activities that need action</p>
-                    </div>
-                </div>
-                <a href="{{ route('ci-activities.index') }}" class="ui-button-secondary-compact shrink-0">View All</a>
-            </header>
-
-            @if($workToday === [])
-                <x-ui.empty-state class="m-4 sm:m-5" title="You're all caught up" description="No items need your attention right now." icon="check-circle" />
-            @else
-                {{-- Table from md up; the same rows become stacked cards below that so a narrow
-                     screen never has to scroll sideways to reach the action. --}}
-                <div class="hidden md:block">
-                    <table class="ui-table">
-                        <thead>
-                            <tr>
-                                <th scope="col">Client Name</th>
-                                <th scope="col">Pending Activity</th>
-                                <th scope="col">Status</th>
-                                <th scope="col">Last Activity</th>
-                                <th scope="col"><span class="sr-only">Action</span></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach($workToday as $item)
-                                <tr>
-                                    <td>
-                                        <p class="font-bold text-text-main">{{ $item['client'] }}</p>
-                                        @if($item['person'])<p class="text-xs text-text-muted">Co-Maker: {{ $item['person'] }}</p>@endif
-                                    </td>
-                                    <td class="text-text-muted">{{ $item['activity'] }}</td>
-                                    <td><span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold {{ $statusTones[$item['tone']] }}">{{ $item['status'] }}</span></td>
-                                    <td class="whitespace-nowrap text-xs text-text-muted">{{ $item['updated_at']?->timezone(config('cims.display_timezone'))->format('M j, Y g:i A') }}</td>
-                                    <td class="text-right"><a href="{{ $item['url'] }}" class="ui-button-secondary-compact">{{ $item['action'] }}</a></td>
-                                </tr>
-                            @endforeach
-                        </tbody>
-                    </table>
-                </div>
-
-                <ul class="divide-y divide-ui-border md:hidden">
-                    @foreach($workToday as $item)
-                        <li class="p-4">
-                            <div class="flex items-start justify-between gap-3">
-                                <div class="min-w-0">
-                                    <p class="truncate font-bold text-text-main">{{ $item['client'] }}</p>
-                                    @if($item['person'])<p class="truncate text-xs text-text-muted">Co-Maker: {{ $item['person'] }}</p>@endif
-                                </div>
-                                <span class="inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs font-bold {{ $statusTones[$item['tone']] }}">{{ $item['status'] }}</span>
-                            </div>
-                            <p class="mt-2 text-sm text-text-muted">{{ $item['activity'] }}</p>
-                            <p class="mt-1 text-xs text-text-subtle">{{ $item['updated_at']?->timezone(config('cims.display_timezone'))->format('M j, Y g:i A') }}</p>
-                            <a href="{{ $item['url'] }}" class="ui-button-secondary mt-3 w-full">{{ $item['action'] }}</a>
-                        </li>
-                    @endforeach
-                </ul>
-            @endif
+        <article class="ui-card overflow-hidden xl:col-span-8" aria-labelledby="work-today-title" data-work-today-region data-dashboard-refresh-region="work-today" tabindex="-1">
+            @include('dashboard._work-today')
         </article>
 
-        <article class="ui-card p-4 sm:p-5 xl:col-span-4" aria-labelledby="recent-activity-title">
+        <article class="ui-card p-4 sm:p-5 xl:col-span-4" aria-labelledby="recent-activity-title" data-dashboard-refresh-region="recent-activity">
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="flex min-w-0 items-start gap-2.5">
                     <span class="grid size-8 shrink-0 place-items-center rounded-control bg-brand-soft text-brand-primary" aria-hidden="true"><x-ui.icon name="clock" size="size-4" /></span>
@@ -299,6 +239,11 @@
         </article>
     </section>
 
+    <x-ui.ci-activity-completion-modal :dashboard="true" />
+    <x-ui.asset-target-completion-modal :dashboard="true" />
+    <x-ui.bank-target-completion-modal :dashboard="true" />
+    <x-ui.dashboard-activity-modal />
+
     {{-- Quick actions ------------------------------------------------------------------------- --}}
     <section class="ui-card mt-4 flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between" aria-labelledby="quick-actions-title">
         <div class="flex min-w-0 items-start gap-2.5">
@@ -312,11 +257,12 @@
             @can('create', ClientFolder::class)
                 <a href="{{ route('client-folders.index') }}" class="ui-button-primary w-full lg:w-auto"><x-ui.icon name="plus" size="size-4" />New Client Folder</a>
             @endcan
-            <a href="{{ route('ci-activities.index') }}" class="ui-button-secondary w-full lg:w-auto"><x-ui.icon name="clock" size="size-4" />Open Pending CI</a>
+            <a href="{{ route('ci-activities.index', ['status' => 'pending']) }}" class="ui-button-secondary w-full lg:w-auto"><x-ui.icon name="clock" size="size-4" />Open Pending CI</a>
             <a href="{{ route('reports.index') }}" class="ui-button-secondary w-full lg:w-auto"><x-ui.icon name="report" size="size-4" />View Reports</a>
         </div>
     </section>
 
+    <div data-dashboard-refresh-region="detail-modals">
     @if($needsAttention !== [])
         {{-- Needs Attention detail: every overdue activity / Bank / Coop institution / Asset office,
              grouped by Client Folder, oldest due first. Same modal pattern as Recent Activity. --}}
@@ -469,4 +415,5 @@
             </ol>
         </x-ui.modal>
     @endif
+    </div>
 @endsection

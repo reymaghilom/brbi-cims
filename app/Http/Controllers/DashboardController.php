@@ -14,8 +14,16 @@ class DashboardController extends Controller
     {
         Gate::authorize('viewAny', ClientFolder::class);
 
-        // The only input this page takes is the trend window; DashboardData ignores anything that
-        // is not one of its own range keys, so no unvalidated value ever reaches a query.
-        return view('dashboard.index', $dashboard->for($request->user(), $request->query('range')));
+        $data = $dashboard->for(
+            $request->user(),
+            $request->query('range'),
+            $request->query('work_page'),
+        );
+
+        if ($request->ajax() && ! $request->header('X-Dashboard-Refresh')) {
+            return view('dashboard._work-today', $data);
+        }
+
+        return view('dashboard.index', $data);
     }
 }

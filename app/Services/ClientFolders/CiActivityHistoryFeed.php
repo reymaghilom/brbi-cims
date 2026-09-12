@@ -94,28 +94,7 @@ class CiActivityHistoryFeed
 
         return (object) [
             'id' => $event->id,
-            'label' => match ($event->action) {
-                'ci_activity.created' => data_get($metadata, 'activity_title').' created',
-                'ci_activity.scheduled' => data_get($metadata, 'activity_title').' scheduled',
-                'ci_activity.rescheduled' => data_get($metadata, 'activity_title').' rescheduled',
-                'ci_activity.completed' => data_get($metadata, 'activity_title').' completed',
-                'ci_activity.bank_target_completed' => data_get($metadata, 'bank_target_label', 'Bank / Coop target').' completed',
-                'ci_activity.asset_target_completed' => data_get($metadata, 'asset_target_label', 'Asset target').' completed',
-                'ci_activity.asset_target_created' => data_get($metadata, 'asset_target_label', 'Asset target').' added',
-                'ci_activity.asset_target_updated' => data_get($metadata, 'asset_target_label', 'Asset target').' updated',
-                'ci_activity.asset_target_deleted' => data_get($metadata, 'asset_target_label', 'Asset target').' deleted',
-                'ci_activity.submitted' => data_get($metadata, 'activity_title').' submitted to Credit Analyst',
-                'ci_activity.reopened' => data_get($metadata, 'activity_title').' reopened',
-                'ci_activity.deleted' => data_get($metadata, 'activity_title').' deleted',
-                'ci_activity.assignment_changed' => data_get($metadata, 'activity_title', 'CI Activity').' assignment updated',
-                'activity_definition.created' => 'Created Activity Type "'.data_get($metadata, 'activity_title').'"',
-                'activity_definition.renamed' => 'Updated Activity Type from "'.data_get($metadata, 'previous_name').'" to "'.data_get($metadata, 'activity_title').'"',
-                'activity_definition.activated' => 'Activated Activity Type "'.data_get($metadata, 'activity_title').'"',
-                'activity_definition.deactivated' => 'Deactivated Activity Type "'.data_get($metadata, 'activity_title').'"',
-                'activity_definition.deleted' => 'Deleted Activity Type "'.data_get($metadata, 'activity_title').'"',
-                'media.uploaded' => 'Proof uploaded',
-                default => data_get($metadata, 'activity_title', 'CI Activity').' updated',
-            },
+            'label' => self::labelFor($event->action, $metadata),
             'detail' => match ($event->action) {
                 'media.uploaded' => $proofName,
                 'ci_activity.submitted' => collect([
@@ -132,6 +111,71 @@ class CiActivityHistoryFeed
             'user' => $event->user,
             'created_at' => $event->created_at,
         ];
+    }
+
+    /**
+     * Resolve event wording only from metadata captured with that audit row. Missing historical
+     * context deliberately falls back to the established generic wording instead of consulting a
+     * mutable live activity/target or guessing which subtype an old Bank / Coop target represented.
+     *
+     * @param  array<string, mixed>  $metadata
+     */
+    public static function labelFor(string $action, array $metadata): string
+    {
+        $activityTitle = filled(data_get($metadata, 'activity_title'))
+            ? (string) data_get($metadata, 'activity_title')
+            : null;
+        $assetTarget = filled(data_get($metadata, 'asset_target_label'))
+            ? (string) data_get($metadata, 'asset_target_label')
+            : null;
+        $bankTarget = filled(data_get($metadata, 'bank_target_label'))
+            ? (string) data_get($metadata, 'bank_target_label')
+            : null;
+        $bankTargetType = filled(data_get($metadata, 'bank_target_type_label'))
+            ? (string) data_get($metadata, 'bank_target_type_label')
+            : null;
+
+        return match ($action) {
+            'ci_activity.created' => ($activityTitle ?? 'CI Activity').' created',
+            'ci_activity.scheduled' => ($activityTitle ?? 'CI Activity').' scheduled',
+            'ci_activity.rescheduled' => ($activityTitle ?? 'CI Activity').' rescheduled',
+            'ci_activity.completed' => ($activityTitle ?? 'CI Activity').' completed',
+            'ci_activity.bank_target_completed' => self::targetEventLabel($bankTargetType, $bankTarget, 'completed', 'CI Activity completed'),
+            'ci_activity.asset_target_completed' => self::targetEventLabel($activityTitle, $assetTarget, 'completed', 'CI Activity completed'),
+            'ci_activity.asset_target_created' => self::targetEventLabel($activityTitle, $assetTarget, 'added', 'CI Activity updated'),
+            'ci_activity.asset_target_updated' => self::targetEventLabel($activityTitle, $assetTarget, 'updated', 'CI Activity updated'),
+            'ci_activity.asset_target_deleted' => self::targetEventLabel($activityTitle, $assetTarget, 'deleted', 'CI Activity updated'),
+            'ci_activity.submitted' => ($activityTitle ?? 'CI Activity').' submitted to Credit Analyst',
+            'ci_activity.reopened' => ($activityTitle ?? 'CI Activity').' reopened',
+            'ci_activity.deleted' => ($activityTitle ?? 'CI Activity').' deleted',
+            'ci_activity.assignment_changed' => ($activityTitle ?? 'CI Activity').' assignment updated',
+            'activity_definition.created' => 'Created Activity Type "'.data_get($metadata, 'activity_title').'"',
+            'activity_definition.renamed' => 'Updated Activity Type from "'.data_get($metadata, 'previous_name').'" to "'.data_get($metadata, 'activity_title').'"',
+            'activity_definition.activated' => 'Activated Activity Type "'.data_get($metadata, 'activity_title').'"',
+            'activity_definition.deactivated' => 'Deactivated Activity Type "'.data_get($metadata, 'activity_title').'"',
+            'activity_definition.deleted' => 'Deleted Activity Type "'.data_get($metadata, 'activity_title').'"',
+            'media.uploaded' => 'Proof uploaded',
+            default => ($activityTitle ?? 'CI Activity').' updated',
+        };
+    }
+
+    private static function targetEventLabel(?string $activityTitle, ?string $target, string $verb, string $fallback): string
+    {
+        if ($activityTitle && $target) {
+            return $activityTitle.' — '.$target.' '.$verb;
+        }
+
+        if ($activityTitle) {
+            return $activityTitle.' '.$verb;
+        }
+
+        // A saved target name is still exact context, even when an older row has no trustworthy
+        // activity/subtype label. Preserve it without fabricating the missing type.
+        if ($target) {
+            return $target.' '.$verb;
+        }
+
+        return $fallback;
     }
 
     /**
