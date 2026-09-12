@@ -197,17 +197,36 @@ class EvidenceStorageUploadTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->folder($ci);
         $coMaker = $folder->coMakers()->create(['full_name' => 'Maria Santos', 'first_name' => 'Maria', 'last_name' => 'Santos']);
+        $otherCoMaker = $folder->coMakers()->create(['full_name' => 'Pedro Santos', 'first_name' => 'Pedro', 'last_name' => 'Santos']);
         $activity = $this->activity($folder, $ci, 'CO-MAKER PROOF', $coMaker->id);
         $documents = app(CiTeamDocumentStorage::class);
+        $this->mock(CloudinaryCiActivityProofStorage::class)->shouldNotReceive('store');
 
-        $this->actingAs($ci)->post(route('client-folders.activities.proof.store', [$folder, $activity]), [
+        $this->actingAs($ci)->post(route('client-folders.activities.proof.store', [
+            $folder,
+            $activity,
+            'person' => 'co-maker',
+            'co_maker_id' => $coMaker->id,
+        ]), [
             'photos' => [UploadedFile::fake()->image('Proof.jpg', 900, 700)->size(400)],
-        ])->assertSessionHasNoErrors();
+        ])->assertRedirect();
 
         $media = $activity->mediaReferences()->sole();
+        $this->assertSame($media->id, $activity->mediaReferences()->sole()->id);
         $this->assertSame($coMaker->id, $media->co_maker_id);
+        $this->assertNotSame($otherCoMaker->id, $media->co_maker_id);
         $this->assertStringStartsWith($documents->ciActivityProofDirectory($folder, $coMaker).'/', $media->temporary_local_path);
         $this->assertStringNotContainsString($documents->personDirectory($folder).'/CI Activities', $media->temporary_local_path);
+
+        $this->actingAs($ci)->post(route('client-folders.activities.proof.store', [
+            $folder,
+            $activity,
+            'person' => 'co-maker',
+            'co_maker_id' => $otherCoMaker->id,
+        ]), [
+            'photos' => [UploadedFile::fake()->image('Forged.jpg', 900, 700)->size(400)],
+        ])->assertNotFound();
+        $this->assertSame(1, $activity->mediaReferences()->count());
     }
 
     // ---------------------------------------------------------------- Switching and mixed history

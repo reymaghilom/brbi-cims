@@ -69,7 +69,10 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertSame($investigator->id, $folder->assigned_ci_id);
         $this->assertSame($administrator->id, $folder->created_by);
         $this->assertMatchesRegularExpression('/^BRBI-CI-\d{4}-00001$/', $folder->folder_number);
-        $this->assertCount(2, $folder->activities);
+        // Barangay Check and Neighbor Check are no longer generated on creation — they are
+        // built-in Activity Types a CI adds manually, which is what makes the adding CI their
+        // Creator. The folder starts with an empty CI Activities checklist.
+        $this->assertCount(0, $folder->activities);
         $this->assertDatabaseHas('audit_logs', ['action' => 'client_folder.created', 'client_folder_id' => $folder->id, 'user_id' => $administrator->id]);
     }
 

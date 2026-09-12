@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\ClientFolders;
 
-use App\Actions\ClientFolders\SeedCiActivities;
 use App\Enums\ActivityStatus;
 use App\Models\ActivityDefinition;
 use App\Models\CiActivity;
@@ -11,11 +10,12 @@ use App\Models\CoMaker;
 use App\Models\User;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\CreatesDefaultCiActivities;
 use Tests\TestCase;
 
 class ResetDefaultCiActivitiesCommandTest extends TestCase
 {
-    use RefreshDatabase;
+    use CreatesDefaultCiActivities, RefreshDatabase;
 
     protected function setUp(): void
     {
@@ -28,8 +28,8 @@ class ResetDefaultCiActivitiesCommandTest extends TestCase
         $actor = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $actor->id]);
         $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $actor->id]);
-        app(SeedCiActivities::class)->execute($folder, actor: $actor);
-        app(SeedCiActivities::class)->execute($otherFolder, actor: $actor);
+        $this->createDefaultCiActivities($folder, actor: $actor);
+        $this->createDefaultCiActivities($otherFolder, actor: $actor);
         $defaults = $this->defaults($folder, null);
         $originalIds = $defaults->pluck('id')->all();
         $originalOwnership = $defaults->map->only(['client_folder_id', 'co_maker_id', 'activity_definition_id', 'creator_id', 'assigned_ci_id'])->all();
@@ -82,9 +82,9 @@ class ResetDefaultCiActivitiesCommandTest extends TestCase
         $makerA = $this->coMaker($folder, 'Alpha Maker');
         $makerB = $this->coMaker($folder, 'Beta Maker');
         $foreignMaker = $this->coMaker($otherFolder, 'Foreign Maker');
-        app(SeedCiActivities::class)->execute($folder, actor: $actor);
-        app(SeedCiActivities::class)->execute($folder, $makerA, $actor);
-        app(SeedCiActivities::class)->execute($folder, $makerB, $actor);
+        $this->createDefaultCiActivities($folder, actor: $actor);
+        $this->createDefaultCiActivities($folder, $makerA, $actor);
+        $this->createDefaultCiActivities($folder, $makerB, $actor);
 
         CiActivity::query()->whereIn('id', $this->defaults($folder, null)->pluck('id')->merge($this->defaults($folder, $makerA)->pluck('id'))->merge($this->defaults($folder, $makerB)->pluck('id')))
             ->update(['status' => ActivityStatus::Completed->value, 'completed_at' => now(), 'remarks' => 'Scoped completion']);

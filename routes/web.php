@@ -4,6 +4,7 @@ use App\Http\Controllers\ActivityDefinitionController;
 use App\Http\Controllers\ActivityNoteController;
 use App\Http\Controllers\Admin\AdminSectionController;
 use App\Http\Controllers\Admin\EvidenceStorageSettingController;
+use App\Http\Controllers\Admin\ResetOperationalDataController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\UserPasswordResetController;
 use App\Http\Controllers\Admin\UserStatusController;
@@ -271,6 +272,9 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
             Route::post('users/{user}/reset-password', [UserPasswordResetController::class, 'store'])->name('users.password.reset');
             Route::get('settings', [AdminSectionController::class, 'settings'])->name('settings.index');
             Route::post('settings/evidence-storage', [EvidenceStorageSettingController::class, 'update'])->name('settings.evidence-storage.update');
+            // Destructive, so POST only and never reachable by GET; the controller redirects
+            // afterwards so a refresh cannot repeat it.
+            Route::post('settings/reset-operational-data', [ResetOperationalDataController::class, 'store'])->name('settings.reset-operational-data');
             Route::get('audit-logs', [AdminSectionController::class, 'auditLogs'])->name('audit-logs.index');
             Route::get('ui-foundation', [AdminSectionController::class, 'uiFoundation'])->name('ui-foundation.show');
         });

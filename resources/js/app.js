@@ -5370,3 +5370,38 @@ document.addEventListener('input', (event) => {
         window.history.replaceState({}, '', url);
     });
 })();
+
+/* ------------------------------------------------------------------------------------------------
+ * Admin - Reset Operational Data confirmation.
+ *
+ * The destructive submit stays disabled until the typed phrase matches exactly. This is a
+ * convenience guard only: the same phrase is validated on the server, so a forged request that
+ * skips this check still fails.
+ * ---------------------------------------------------------------------------------------------- */
+(() => {
+    const input = document.querySelector('[data-reset-confirmation-input]');
+    const submit = document.querySelector('[data-reset-confirmation-submit]');
+    if (!input || !submit) return;
+
+    const phrase = input.dataset.resetConfirmationPhrase ?? '';
+    const sync = () => {
+        submit.disabled = input.value.trim() !== phrase;
+    };
+
+    const dialog = input.closest('dialog');
+
+    input.addEventListener('input', sync);
+    // Clear the field whenever the dialog closes, so a previous confirmation is never reusable.
+    dialog?.addEventListener('close', () => {
+        input.value = '';
+        sync();
+    });
+    sync();
+
+    // A rejected confirmation phrase redirects back with the dialog closed, which would hide the
+    // validation message. Reopen it so the Administrator sees why nothing happened.
+    if (dialog?.hasAttribute('data-reset-reopen')) {
+        dialog.showModal();
+        input.focus();
+    }
+})();

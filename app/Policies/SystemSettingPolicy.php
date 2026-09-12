@@ -34,4 +34,14 @@ class SystemSettingPolicy
     {
         return $this->isAdministrator($user);
     }
+
+    /**
+     * Clearing the operational workspace. Stated as its own ability rather than borrowed from
+     * viewAny/update so the destructive action reads explicitly at every call site; it grants
+     * nothing wider - Administrator only, exactly like every other ability here.
+     */
+    public function resetOperationalData(User $user): bool
+    {
+        return $this->isAdministrator($user);
+    }
 }

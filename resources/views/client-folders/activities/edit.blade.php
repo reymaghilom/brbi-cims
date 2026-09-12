@@ -48,7 +48,7 @@
                 <div><label for="scheduled_time" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="scheduled_time" name="scheduled_time" type="time" value="{{ $editScheduleTimeValue }}" class="ui-control disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75" data-ci-edit-schedule-time @disabled(! $editScheduleEnabled) aria-disabled="{{ $editScheduleEnabled ? 'false' : 'true' }}"><p class="ui-help" data-ci-edit-schedule-help>{{ $editScheduleEnabled ? 'Without a time, the creator is reminded at 8:00 AM on the selected date.' : 'Available when the status is Scheduled or For Follow-up.' }}</p><x-form.validation-message for="scheduled_time" /></div>
                 <div class="space-y-1.5 rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted sm:col-span-2">
                     <p class="text-sm"><span class="font-semibold text-text-main">Creator:</span> {{ $activity->creator?->full_name ?? 'System-created' }} <span class="ml-1">(locked)</span></p>
-                    <p>The original Creator remains unchanged. Scheduled and follow-up notifications will continue to be sent only to {{ $activity->creator?->full_name ?? 'the original Creator' }}. Other authorized CI users may still update or complete this activity.</p>
+                    <p>The original Creator remains unchanged. Scheduled reminders continue to be sent only to {{ $activity->creator?->full_name ?? 'the original Creator' }}. Other authorized CI users may still update or complete this activity.</p>
                     <p>Proof is optional and can be attached in the Supporting Proof section below after creation.</p>
                 </div>
             </x-ui.form-section>

@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\ClientFolders;
 
-use App\Actions\ClientFolders\SeedCiActivities;
 use App\Enums\ActivityStatus;
 use App\Enums\ClientFolderStatus;
 use App\Models\ActivityDefinition;
@@ -23,11 +22,12 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
+use Tests\Concerns\CreatesDefaultCiActivities;
 use Tests\TestCase;
 
 class CiActivitiesTest extends TestCase
 {
-    use RefreshDatabase;
+    use CreatesDefaultCiActivities, RefreshDatabase;
 
     protected function setUp(): void
     {
@@ -330,9 +330,9 @@ class CiActivitiesTest extends TestCase
         $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'ALPHA MAKER', 'first_name' => 'Alpha', 'last_name' => 'Maker']);
         $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'BETA MAKER', 'first_name' => 'Beta', 'last_name' => 'Maker']);
 
-        app(SeedCiActivities::class)->execute($folder);
-        app(SeedCiActivities::class)->execute($folder, $coMakerA);
-        app(SeedCiActivities::class)->execute($folder, $coMakerB);
+        $this->createDefaultCiActivities($folder);
+        $this->createDefaultCiActivities($folder, $coMakerA);
+        $this->createDefaultCiActivities($folder, $coMakerB);
         $this->assertSame(6, $folder->activities()->count());
 
         $applicantResponse = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
@@ -352,10 +352,10 @@ class CiActivitiesTest extends TestCase
                 ]);
         }
 
-        app(SeedCiActivities::class)->execute($folder);
-        app(SeedCiActivities::class)->execute($folder, $coMakerA);
-        app(SeedCiActivities::class)->execute($folder, $coMakerB);
-        $this->assertSame(6, $folder->activities()->count());
+        // The re-seeding idempotency this used to assert belonged to the retired
+        // SeedCiActivities action. Nothing generates these rows any more, and the equivalent
+        // guarantee now lives in CreateCiActivity::ensureNotAlreadyAdded() - covered by
+        // ManualBarangayNeighborActivityTest.
     }
 
     public function test_target_is_absent_from_add_and_edit_while_forged_input_is_ignored_and_historical_data_is_preserved(): void
@@ -592,11 +592,17 @@ class CiActivitiesTest extends TestCase
             ->count());
     }
 
-    public function test_mandatory_defaults_hide_delete_actions_and_reject_direct_and_bulk_deletion_atomically(): void
+    /**
+     * Barangay Check and Neighbor Check are manually added built-ins now, so they are deletable
+     * like any other activity - the requirement stays mandatory and simply reads incomplete again.
+     * What is still true, and still asserted here, is that the bulk-selection UI does not offer
+     * them and that deleting one never touches the other rows.
+     */
+    public function test_mandatory_defaults_are_deletable_without_the_bulk_selection_ui(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        app(SeedCiActivities::class)->execute($folder);
+        $this->createDefaultCiActivities($folder);
         $barangay = $folder->activities()->whereHas('definition', fn ($query) => $query->where('code', ActivityDefinition::BARANGAY_CHECK_CODE))->sole();
         $neighbor = $folder->activities()->whereHas('definition', fn ($query) => $query->where('code', ActivityDefinition::NEIGHBOR_CHECK_CODE))->sole();
         $mandatoryOnlyPage = $this->actingAs($ci)->get(route('client-folders.activities.index', [$folder, 'status' => 'all']));
@@ -627,25 +633,31 @@ class CiActivitiesTest extends TestCase
             ->assertDontSee('data-ci-activity-select', false)
             ->assertDontSee('data-ci-select-all', false)
             ->assertDontSee('Delete Selected')
-            ->assertDontSee('id="delete-activity-'.$barangay->id.'"', false)
-            ->assertDontSee('id="delete-activity-'.$neighbor->id.'"', false)
+            ->assertSee('id="delete-activity-'.$barangay->id.'"', false)
+            ->assertSee('id="delete-activity-'.$neighbor->id.'"', false)
             ->assertSee('id="delete-activity-'.$bank->id.'"', false)
             ->assertSee('id="delete-activity-'.$asset->id.'"', false);
         preg_match_all('/<input[^>]+data-ci-activity-select/', $page->getContent(), $selectionInputs);
         $this->assertCount(0, $selectionInputs[0]);
 
-        foreach ([$barangay, $neighbor] as $mandatory) {
-            $this->delete(route('client-folders.activities.destroy', [$folder, $mandatory]), ['co_maker_id' => null])
-                ->assertSessionHasErrors('activity');
-            $this->assertDatabaseHas('ci_activities', ['id' => $mandatory->id]);
-        }
-
-        $this->delete(route('client-folders.activities.bulk-destroy', $folder), [
-            'activity_ids' => [$asset->id, $barangay->id],
-            'status' => 'all',
-        ])->assertSessionHasErrors('activity');
+        // Each default deletes on its own, leaving every other row alone.
+        $this->delete(route('client-folders.activities.destroy', [$folder, $barangay]), ['co_maker_id' => null])
+            ->assertSessionHasNoErrors();
+        $this->assertDatabaseMissing('ci_activities', ['id' => $barangay->id]);
+        $this->assertDatabaseHas('ci_activities', ['id' => $neighbor->id]);
+        $this->assertDatabaseHas('ci_activities', ['id' => $bank->id]);
         $this->assertDatabaseHas('ci_activities', ['id' => $asset->id]);
-        $this->assertDatabaseHas('ci_activities', ['id' => $barangay->id]);
+
+        $this->delete(route('client-folders.activities.destroy', [$folder, $neighbor]), ['co_maker_id' => null])
+            ->assertSessionHasNoErrors();
+        $this->assertDatabaseMissing('ci_activities', ['id' => $neighbor->id]);
+        $this->assertDatabaseHas('ci_activities', ['id' => $bank->id]);
+        $this->assertDatabaseHas('ci_activities', ['id' => $asset->id]);
+
+        // The built-in definitions survive: only the person's activity instances were removed.
+        foreach ([ActivityDefinition::BARANGAY_CHECK_CODE, ActivityDefinition::NEIGHBOR_CHECK_CODE] as $code) {
+            $this->assertTrue(ActivityDefinition::query()->where('code', $code)->where('is_active', true)->exists());
+        }
     }
 
     public function test_optional_activity_hard_delete_cascades_only_its_bank_and_asset_targets(): void
@@ -1239,7 +1251,7 @@ class CiActivitiesTest extends TestCase
 
         $newFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $this->actingAs($ci);
-        app(SeedCiActivities::class)->execute($newFolder);
+        $this->createDefaultCiActivities($newFolder);
         $this->assertSame(0, $newFolder->activities()->where('status', 'not_started')->count());
         $this->assertSame(2, $newFolder->activities()->where('status', 'pending')->count());
     }
@@ -1304,7 +1316,7 @@ class CiActivitiesTest extends TestCase
         ])->id);
 
         $this->actingAs($ci);
-        app(SeedCiActivities::class)->execute($folder);
+        $this->createDefaultCiActivities($folder);
 
         $response = $this->get(route('client-folders.activities.index', [$folder, 'status' => 'all']))->assertOk();
         $response->assertDontSee('Residence Check')->assertDontSee('Business Check');
@@ -1318,7 +1330,7 @@ class CiActivitiesTest extends TestCase
         ])->assertSessionHasErrors('activity_definition_id');
 
         $newFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        app(SeedCiActivities::class)->execute($newFolder);
+        $this->createDefaultCiActivities($newFolder);
         $this->assertSame(0, $newFolder->activities()->whereIn('activity_definition_id', $definitions->pluck('id'))->count());
     }
 

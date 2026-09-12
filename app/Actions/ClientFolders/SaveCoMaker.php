@@ -13,7 +13,6 @@ use Illuminate\Support\Facades\DB;
 class SaveCoMaker
 {
     public function __construct(
-        private readonly SeedCiActivities $seedActivities,
         private readonly ClientProgressService $progress,
     ) {}
 
@@ -60,10 +59,9 @@ class SaveCoMaker
                 $coMaker->save();
             } else {
                 $coMaker = $folder->coMakers()->create($fields);
-                // A brand-new co-maker needs their own CI Activities checklist immediately,
-                // mirroring how the Applicant's is seeded when the folder itself is created —
-                // there is no "add activity" UI, so without this a new co-maker would have none.
-                $this->seedActivities->execute($folder, $coMaker, $actor);
+                // No CI Activities are seeded for a new Co-Maker. Their Barangay Check and
+                // Neighbor Check are added manually through CI Activities -> Add Activity under
+                // this exact Co-Maker, which is what makes the adding CI their Creator.
                 // A new Co-Maker adds their own four mandatory requirements to the folder.
                 $this->progress->recalculate($folder);
             }

@@ -10,6 +10,8 @@
         $selectedActivityDefinitionId = $addingNewActivityType ? App\Models\ActivityDefinition::NEW_TYPE_VALUE : (string) old('activity_definition_id', '');
         $selectedActivityDefinition = $definitions->firstWhere('id', (int) $selectedActivityDefinitionId);
         $addableActivityLabels = [
+            App\Models\ActivityDefinition::BARANGAY_CHECK_CODE => 'Barangay Check',
+            App\Models\ActivityDefinition::NEIGHBOR_CHECK_CODE => 'Neighbor Check',
             App\Models\ActivityDefinition::ASSET_CHECK_CODE => 'Asset Check',
             App\Models\ActivityDefinition::BANK_COOP_CHECK_CODE => 'Bank/Coop Check',
         ];
@@ -328,10 +330,17 @@
                                             @if($activity->status !== App\Enums\ActivityStatus::Completed)<form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}">@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at->toISOString() }}"><input type="hidden" name="status" value="completed"><input type="hidden" name="intent" value="return"><button type="submit" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Complete {{ $activity->display_name }}" title="Complete"><x-ui.icon name="check-circle" size="size-4" /></button></form>@endif
                                         @endif
                                         @if($isDefaultCheck)
-                                            {{-- Barangay / Neighbor Check has exactly one row action (Edit) — a 3-dot menu
-                                                 just to hold a single item would be an extra click for no reason, so it's
-                                                 shown directly instead. --}}
-                                            <button type="button" class="ui-button-secondary-compact" data-default-check-open="{{ $activity->id }}" data-default-check-url="{{ route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}" aria-label="Edit {{ $activity->display_name }}"><x-ui.icon name="edit" size="size-3.5" />Edit</button>
+                                            {{-- Barangay / Neighbor Check are manually added now, so they can also be
+                                                 removed again. They carry the identical 3-dot Actions menu Asset Check
+                                                 uses — same trigger, same menu items, same icons, same destructive
+                                                 treatment. Open keeps the existing default-check hook and route, so it
+                                                 still opens the same encoding modal the old single Edit button did. --}}
+                                            <x-ui.context-menu :label="'Actions for '.$activity->display_name">
+                                                <x-slot:trigger><span class="ui-dots-trigger !size-8"><x-ui.icon name="more-vertical" size="size-4" /></span></x-slot:trigger>
+                                                <button type="button" role="menuitem" class="client-folder-menu-item" data-default-check-open="{{ $activity->id }}" data-default-check-url="{{ route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}"><x-ui.icon name="folder" size="size-4" class="text-text-muted" />Open</button>
+                                                <div class="my-1 border-t border-ui-border"></div>
+                                                <button type="button" role="menuitem" class="client-folder-menu-item text-danger" data-modal-open="delete-activity-{{ $activity->id }}"><x-ui.icon name="trash" size="size-4" />Delete</button>
+                                            </x-ui.context-menu>
                                         @else
                                             <x-ui.context-menu :label="'Actions for '.$activity->display_name">
                                                 <x-slot:trigger><span class="ui-dots-trigger !size-8"><x-ui.icon name="more-vertical" size="size-4" /></span></x-slot:trigger>
@@ -517,12 +526,22 @@
                             <input type="hidden" name="intent" value="return">
                         </x-slot:formFields>
                     </x-ui.confirmation-dialog>
-                @unless($activity->isMandatoryDefault())
-                    <x-ui.confirmation-dialog id="delete-activity-{{ $activity->id }}" :title="'Permanently delete '.$activity->display_name.'?'" :action="route('client-folders.activities.destroy', [$clientFolder, $activity])" method="DELETE" :confirm-label="$activity->definition?->isCustom() ? 'Delete' : 'Permanently Delete'" cancel-icon="close" confirm-icon="trash" destructive>
-                        <p>This action cannot be undone.</p>
-                        <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
-                    </x-ui.confirmation-dialog>
-                @endunless
+                @php
+                    // Barangay / Neighbor read as their canonical requirement name, so a legacy row
+                    // stored as "Applicant Barangay Check" still names the requirement it belongs to.
+                    $deleteRequirementLabel = $activity->definition?->name ?? $activity->display_name;
+                    $deletePersonLabel = $activePerson ? 'this Co-Maker' : 'this Applicant';
+                @endphp
+                <x-ui.confirmation-dialog id="delete-activity-{{ $activity->id }}" :title="$activity->isMandatoryDefault() ? 'Delete '.$deleteRequirementLabel.'?' : 'Permanently delete '.$activity->display_name.'?'" :action="route('client-folders.activities.destroy', [$clientFolder, $activity])" method="DELETE" :confirm-label="$activity->isMandatoryDefault() || $activity->definition?->isCustom() ? 'Delete' : 'Permanently Delete'" cancel-icon="close" confirm-icon="trash" destructive>
+                    @if($activity->isMandatoryDefault())
+                        {{-- Deleting the row does not remove the requirement: it stays mandatory and
+                             simply goes back to incomplete until someone adds and completes it again.
+                             The person wording follows the active Applicant / Co-Maker context. --}}
+                        <p>Removing this activity will make {{ $deleteRequirementLabel }} incomplete for {{ $deletePersonLabel }} until it is added and completed again.</p>
+                    @endif
+                    <p>This action cannot be undone.</p>
+                    <x-slot:formFields><input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"></x-slot:formFields>
+                </x-ui.confirmation-dialog>
             @endforeach
 
             <div class="mt-4 flex items-start gap-2 rounded-control border border-progress/20 bg-progress-soft/70 px-4 py-3 text-sm text-[#76520c]"><x-ui.icon name="warning" size="size-4" class="mt-0.5" /><p>Only the activity creator receives scheduled notifications. Other authorized CI users may view and update the activity as needed.</p></div>

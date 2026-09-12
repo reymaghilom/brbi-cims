@@ -517,7 +517,7 @@ class CiActivityUiPolishTest extends TestCase
         $this->assertStringContainsString('Delete</button>', $menuSource);
     }
 
-    public function test_barangay_action_menu_offers_only_edit_no_duplicate_or_delete(): void
+    public function test_barangay_action_menu_offers_open_and_delete_without_duplicating_the_type(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -529,11 +529,14 @@ class CiActivityUiPolishTest extends TestCase
         $this->assertNotFalse($menuStart);
         $menuSource = substr($content, $menuStart, 800);
 
-        $this->assertStringContainsString('Edit</button>', $menuSource);
-        $this->assertStringNotContainsString('delete-activity-'.$barangay->id, $menuSource);
+        // Manually added built-ins can be removed again, so the menu carries the same Open +
+        // Delete pair Asset Check has. Delete targets this one activity, never the definition.
+        $this->assertStringContainsString('Open</button>', $menuSource);
+        $this->assertStringContainsString('delete-activity-'.$barangay->id, $menuSource);
+        $this->assertStringNotContainsString('Duplicate', $menuSource);
     }
 
-    public function test_neighbor_action_menu_offers_only_edit_no_duplicate_or_delete(): void
+    public function test_neighbor_action_menu_offers_open_and_delete_without_duplicating_the_type(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -545,8 +548,11 @@ class CiActivityUiPolishTest extends TestCase
         $this->assertNotFalse($menuStart);
         $menuSource = substr($content, $menuStart, 800);
 
-        $this->assertStringContainsString('Edit</button>', $menuSource);
-        $this->assertStringNotContainsString('delete-activity-'.$neighbor->id, $menuSource);
+        // Manually added built-ins can be removed again, so the menu carries the same Open +
+        // Delete pair Asset Check has. Delete targets this one activity, never the definition.
+        $this->assertStringContainsString('Open</button>', $menuSource);
+        $this->assertStringContainsString('delete-activity-'.$neighbor->id, $menuSource);
+        $this->assertStringNotContainsString('Duplicate', $menuSource);
     }
 
     public function test_applicant_and_co_maker_action_menus_stay_isolated_per_context(): void
@@ -557,13 +563,16 @@ class CiActivityUiPolishTest extends TestCase
         $applicantBarangay = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['co_maker_id' => null, 'name' => 'Applicant Barangay Check']);
         $coMakerBarangay = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['co_maker_id' => $coMaker->id, 'name' => 'Co-Maker Barangay Check']);
 
+        // The row's action affordance is the shared 3-dot menu now, labelled the way Asset Check
+        // labels its own. What this test is about — one person's menu never appearing in the
+        // other's view — is unchanged.
         $applicantContent = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
-        $this->assertStringContainsString('aria-label="Edit Applicant Barangay Check"', $applicantContent);
-        $this->assertStringNotContainsString('aria-label="Edit Co-Maker Barangay Check"', $applicantContent);
+        $this->assertStringContainsString('aria-label="Actions for Applicant Barangay Check"', $applicantContent);
+        $this->assertStringNotContainsString('aria-label="Actions for Co-Maker Barangay Check"', $applicantContent);
 
         $coMakerContent = $this->actingAs($ci)->get(route('client-folders.activities.index', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]))->assertOk()->getContent();
-        $this->assertStringContainsString('aria-label="Edit Co-Maker Barangay Check"', $coMakerContent);
-        $this->assertStringNotContainsString('aria-label="Edit Applicant Barangay Check"', $coMakerContent);
+        $this->assertStringContainsString('aria-label="Actions for Co-Maker Barangay Check"', $coMakerContent);
+        $this->assertStringNotContainsString('aria-label="Actions for Applicant Barangay Check"', $coMakerContent);
     }
 
     // ==================================================

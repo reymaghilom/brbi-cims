@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Actions\ClientFolders\CreateCiActivity;
 use App\Actions\ClientFolders\DeactivateActivityDefinition;
 use App\Actions\ClientFolders\DeleteCiActivity;
-use App\Actions\ClientFolders\SeedCiActivities;
 use App\Actions\ClientFolders\SubmitCiActivities;
 use App\Actions\ClientFolders\SubmitCiActivity;
 use App\Actions\ClientFolders\UpdateCiActivity;
@@ -50,11 +49,12 @@ class CiActivityController extends Controller
     public function index(
         ClientFolder $clientFolder,
         BankInstitutionPrefill $prefill,
-        SeedCiActivities $seedActivities,
     ): View {
         Gate::authorize('view', $clientFolder);
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
-        $seedActivities->execute($clientFolder, $activePerson, request()->user());
+        // Opening this page no longer creates anything. Barangay Check and Neighbor Check are
+        // added manually like every other Activity Type, so merely viewing the folder can never
+        // author a record on the viewer's behalf.
 
         $activities = $clientFolder->activities()
             ->where('ci_activities.co_maker_id', $activePerson?->id)
@@ -177,7 +177,14 @@ class CiActivityController extends Controller
                 ->where('is_active', true)
                 ->where(function ($query): void {
                     $query
+                        // Barangay Check and Neighbor Check join the addable built-ins now that
+                        // nothing generates them. The existing per-person "Already Added" state
+                        // (driven by existingDefinitionIds below) disables one the exact person
+                        // already holds, and CreateCiActivity::ensureNotAlreadyAdded() rejects a
+                        // forged or stale duplicate under a row lock regardless.
                         ->whereIn('code', [
+                            ActivityDefinition::BARANGAY_CHECK_CODE,
+                            ActivityDefinition::NEIGHBOR_CHECK_CODE,
                             ActivityDefinition::ASSET_CHECK_CODE,
                             ActivityDefinition::BANK_COOP_CHECK_CODE,
                         ])

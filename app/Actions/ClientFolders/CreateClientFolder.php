@@ -15,7 +15,6 @@ class CreateClientFolder
     public function __construct(
         private readonly FolderNumberGenerator $numbers,
         private readonly ClientNameFormatter $names,
-        private readonly SeedCiActivities $seedActivities,
     ) {}
 
     public function execute(User $actor, array $data): ClientFolder
@@ -39,7 +38,11 @@ class CreateClientFolder
                 'progress_percent' => 0,
             ]);
 
-            $this->seedActivities->execute($folder, actor: $actor);
+            // Barangay Check and Neighbor Check are no longer generated here. They are ordinary
+            // built-in Activity Types the CI adds through CI Activities -> Add Activity, so the
+            // person who adds one becomes its Creator instead of whoever happened to create the
+            // folder. They remain mandatory investigation requirements either way: until one is
+            // added and completed, MandatoryInvestigationRequirements reports it missing.
 
             AuditLog::create([
                 'user_id' => $actor->id,

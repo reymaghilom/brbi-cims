@@ -93,6 +93,65 @@
         </form>
     </section>
 
+    {{-- Data Management ----------------------------------------------------------------- --}}
+    <section class="ui-panel mt-6 overflow-hidden" aria-labelledby="data-management-title">
+        <header class="border-b border-ui-border px-5 py-5 sm:px-6">
+            <h2 id="data-management-title" class="ui-section-title">Data Management</h2>
+        </header>
+
+        <div class="flex flex-col gap-4 px-5 py-5 sm:px-6 lg:flex-row lg:items-start lg:justify-between lg:gap-8">
+            <div class="min-w-0">
+                <h3 class="text-sm font-bold text-text-main">Reset Operational Data</h3>
+                <p class="ui-help !mt-1.5 max-w-2xl">Permanently remove all client and investigation records while keeping user accounts and system master data intact.</p>
+                <p class="ui-help !mt-2 max-w-2xl">Use this option only when you need to clear the current operational workspace and start with a clean set of client records.</p>
+            </div>
+            <button type="button" class="ui-button-danger w-full shrink-0 lg:w-auto" data-modal-open="reset-operational-data-dialog">
+                <x-ui.icon name="trash" size="size-4" />Reset Operational Data
+            </button>
+        </div>
+    </section>
+
+    <x-ui.modal id="reset-operational-data-dialog" title="Reset Operational Data?" size="max-w-lg"
+        :data-reset-reopen="$errors->has('confirmation') ? 'true' : false">
+        {{-- The form lives here so the confirmation input sits with its own label and instruction;
+             the footer button joins it through the form attribute, the same pattern the Client
+             Folder rename modal uses. --}}
+        <form id="reset-operational-data-form" method="POST" action="{{ route('admin.settings.reset-operational-data') }}" data-reset-operational-form>
+            @csrf
+            <p class="text-sm leading-6 text-text-main">This will permanently remove all client, investigation, activity, report, and other related operational records.</p>
+            <p class="mt-2 text-sm leading-6 text-text-muted">User accounts, roles, permissions, and system master data will remain unchanged.</p>
+
+            @if(collect($operationalSummary)->sum() > 0)
+                <dl class="mt-4 divide-y divide-ui-border rounded-card border border-ui-border">
+                    @foreach($operationalSummary as $label => $count)
+                        <div class="flex items-center justify-between gap-4 px-3.5 py-2 text-sm">
+                            <dt class="min-w-0 text-text-muted">{{ $label }}</dt>
+                            <dd class="shrink-0 font-bold tabular-nums text-text-main">{{ $count }}</dd>
+                        </div>
+                    @endforeach
+                </dl>
+            @endif
+
+            <p class="mt-4 flex items-start gap-2 rounded-control border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-sm font-semibold text-danger" role="alert">
+                <x-ui.icon name="warning" size="size-4" class="mt-0.5 shrink-0" />This action cannot be undone.
+            </p>
+
+            <label for="reset-operational-data-confirmation" class="ui-label mt-4">To continue, type RESET DATA below.</label>
+            <input id="reset-operational-data-confirmation" name="confirmation" type="text" class="ui-control" placeholder="Type RESET DATA"
+                   autocomplete="off" spellcheck="false" required
+                   data-reset-confirmation-input data-reset-confirmation-phrase="RESET DATA"
+                   aria-describedby="reset-operational-data-confirmation-help">
+            <p id="reset-operational-data-confirmation-help" class="ui-help">The reset stays disabled until the phrase matches exactly.</p>
+            <x-form.validation-message for="confirmation" />
+        </form>
+        <x-slot:footer>
+            <button type="button" data-modal-close class="ui-button-secondary"><x-ui.icon name="close" size="size-4" />Cancel</button>
+            <button type="submit" form="reset-operational-data-form" class="ui-button-danger" data-reset-confirmation-submit disabled>
+                <x-ui.icon name="trash" size="size-4" />Reset Operational Data
+            </button>
+        </x-slot:footer>
+    </x-ui.modal>
+
     @foreach($options as $value => $option)
         <x-ui.confirmation-dialog
             :id="'switch-file-storage-'.$value"

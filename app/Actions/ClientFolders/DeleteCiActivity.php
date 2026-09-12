@@ -10,7 +10,6 @@ use App\Models\User;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 
 class DeleteCiActivity
 {
@@ -28,13 +27,12 @@ class DeleteCiActivity
     /** @param iterable<CiActivity> $activities */
     public function executeMany(User $actor, ClientFolder $folder, iterable $activities): void
     {
+        // Barangay Check and Neighbor Check used to be undeletable, because nothing but the
+        // retired auto-seeding could put them back. They are manually added built-in types now, so
+        // deleting one is an ordinary, reversible action: the requirement itself stays mandatory
+        // and simply reads incomplete again until the type is re-added and completed. Progress and
+        // folder status are recalculated authoritatively below, exactly as for any other activity.
         $activities = collect($activities)->values();
-
-        if ($activities->contains(fn (CiActivity $activity): bool => $activity->isMandatoryDefault())) {
-            throw ValidationException::withMessages([
-                'activity' => 'Barangay Check and Neighbor Check are mandatory and cannot be deleted.',
-            ]);
-        }
 
         $cleanups = DB::transaction(function () use ($actor, $folder, $activities): array {
             $cleanups = [];

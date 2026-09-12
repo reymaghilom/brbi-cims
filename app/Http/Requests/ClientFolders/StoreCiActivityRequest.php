@@ -33,16 +33,6 @@ class StoreCiActivityRequest extends FormRequest
                 Rule::requiredIf(! $this->boolean('create_new_activity_type')),
                 'integer',
                 Rule::exists('activity_definitions', 'id')->where('is_active', true),
-                function (string $attribute, mixed $value, Closure $fail): void {
-                    if ($this->boolean('create_new_activity_type') || ! ctype_digit((string) $value)) {
-                        return;
-                    }
-
-                    $code = ActivityDefinition::query()->whereKey((int) $value)->value('code');
-                    if (ActivityDefinition::isMandatoryDefaultCode($code)) {
-                        $fail('Barangay Check and Neighbor Check are added automatically and cannot be added manually.');
-                    }
-                },
             ],
             'create_new_activity_type' => ['required', 'boolean'],
             'new_activity_type' => [

@@ -4,7 +4,6 @@ namespace Tests\Feature\ClientFolders;
 
 use App\Actions\ClientFolders\CreateClientFolder;
 use App\Actions\ClientFolders\SaveCoMaker;
-use App\Actions\ClientFolders\SeedCiActivities;
 use App\Enums\ActivityStatus;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
@@ -13,13 +12,13 @@ use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\User;
 use Database\Seeders\ReferenceDataSeeder;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\CreatesDefaultCiActivities;
 use Tests\TestCase;
 
 class CiActivityDefaultActivitiesTest extends TestCase
 {
-    use RefreshDatabase;
+    use CreatesDefaultCiActivities, RefreshDatabase;
 
     protected function setUp(): void
     {
@@ -27,44 +26,36 @@ class CiActivityDefaultActivitiesTest extends TestCase
         $this->seed(ReferenceDataSeeder::class);
     }
 
-    public function test_folder_and_co_maker_creation_seed_only_the_two_exact_pending_defaults_once(): void
+    /**
+     * Barangay Check and Neighbor Check are ordinary built-in Activity Types now: nothing creates
+     * them on the user's behalf. Creating a folder, adding a Co-Maker and opening the CI Activities
+     * page must all leave the person with an empty checklist until a CI adds one manually.
+     */
+    public function test_creating_a_folder_or_co_maker_no_longer_generates_any_activity(): void
     {
         $actor = User::factory()->administrator()->create();
         $assignedCi = User::factory()->create();
-        $folder = $this->createFolder($actor, $assignedCi);
+        $folder = $this->createFolder($actor, $assignedCi, seed: false);
 
-        $this->assertExactDefaults($folder, null, $actor, $assignedCi);
+        $this->assertSame(0, $folder->activities()->count(), 'Folder creation creates no activity.');
 
         $coMakerA = app(SaveCoMaker::class)->execute($actor, $folder, [
-            'co_maker_id' => null,
-            'first_name' => 'Alpha',
-            'middle_name' => null,
-            'last_name' => 'Maker',
-            'suffix' => null,
-            'address' => 'Alpha address',
+            'co_maker_id' => null, 'first_name' => 'Alpha', 'middle_name' => null,
+            'last_name' => 'Maker', 'suffix' => null, 'address' => 'Alpha address',
         ]);
         $coMakerB = app(SaveCoMaker::class)->execute($actor, $folder, [
-            'co_maker_id' => null,
-            'first_name' => 'Beta',
-            'middle_name' => null,
-            'last_name' => 'Maker',
-            'suffix' => null,
-            'address' => 'Beta address',
+            'co_maker_id' => null, 'first_name' => 'Beta', 'middle_name' => null,
+            'last_name' => 'Maker', 'suffix' => null, 'address' => 'Beta address',
         ]);
 
-        $this->assertExactDefaults($folder, $coMakerA, $actor, $assignedCi);
-        $this->assertExactDefaults($folder, $coMakerB, $actor, $assignedCi);
+        $this->assertSame(0, $folder->activities()->count(), 'Co-Maker creation creates none either.');
+        $this->assertNotNull($coMakerA->id);
+        $this->assertNotNull($coMakerB->id);
 
-        $seed = app(SeedCiActivities::class);
-        $seed->execute($folder, actor: $actor);
-        $seed->execute($folder, $coMakerA, $actor);
-        $seed->execute($folder, $coMakerB, $actor);
-        $this->assertSame(6, $folder->activities()->count());
-
-        $otherFolder = $this->createFolder($actor, $assignedCi, 'Other');
-        $this->assertExactDefaults($otherFolder, null, $actor, $assignedCi);
-        $this->expectException(ModelNotFoundException::class);
-        $seed->execute($otherFolder, $coMakerA, $actor);
+        // Opening the page is read-only: viewing a folder must never author a record.
+        $this->actingAs($actor)->get(route('client-folders.activities.index', $folder))->assertOk();
+        $this->actingAs($actor)->get(route('client-folders.activities.index', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMakerA->id]))->assertOk();
+        $this->assertSame(0, $folder->activities()->count(), 'Opening CI Activities backfills nothing.');
     }
 
     public function test_default_activities_complete_through_existing_update_audit_and_history_flow(): void
@@ -80,6 +71,9 @@ class CiActivityDefaultActivitiesTest extends TestCase
             'suffix' => null,
             'address' => 'Exact address',
         ]);
+        // Adding a Co-Maker no longer seeds their checklist, so this test asks for the two rows
+        // it is about to complete. What it covers is the update/audit/history flow, not creation.
+        $this->createDefaultCiActivities($folder, $coMaker, $creator);
 
         $barangay = $this->activity($folder, null, ActivityDefinition::BARANGAY_CHECK_CODE);
         $neighbor = $this->activity($folder, $coMaker, ActivityDefinition::NEIGHBOR_CHECK_CODE);
@@ -142,15 +136,23 @@ class CiActivityDefaultActivitiesTest extends TestCase
         $this->assertSame(2, $response->viewData('activities')->count());
     }
 
-    private function createFolder(User $actor, User $assignedCi, string $prefix = 'Default'): ClientFolder
+    private function createFolder(User $actor, User $assignedCi, string $prefix = 'Default', bool $seed = true): ClientFolder
     {
-        return app(CreateClientFolder::class)->execute($actor, [
+        $folder = app(CreateClientFolder::class)->execute($actor, [
             'last_name' => $prefix.' Applicant',
             'first_name' => 'Test',
             'middle_name' => null,
             'suffix' => null,
             'assigned_ci_id' => $assignedCi->id,
         ]);
+
+        // Creation no longer seeds the two defaults. The tests below are about what happens to
+        // those rows once they exist, so they ask for them explicitly.
+        if ($seed) {
+            $this->createDefaultCiActivities($folder, actor: $actor);
+        }
+
+        return $folder;
     }
 
     private function assertExactDefaults(ClientFolder $folder, ?CoMaker $person, User $actor, User $assignedCi): void
