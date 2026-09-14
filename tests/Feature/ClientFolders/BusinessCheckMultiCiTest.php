@@ -220,8 +220,11 @@ class BusinessCheckMultiCiTest extends TestCase
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), $payload)->assertSessionHas('statusType', 'success');
         $updatedAtBefore = $check->fresh()->updated_at;
 
+        // Rebuilt so it carries the revision the first save advanced to — exactly what the reloaded
+        // form would render. Reusing the original payload would now be a stale-edit conflict, which
+        // is a different outcome from the no-change probe this test is about.
         $this->actingAs($ci)
-            ->post(route('client-folders.business-checks.store', $folder), $payload)
+            ->post(route('client-folders.business-checks.store', $folder), $this->businessCheckPayload($check->fresh()) + ['contributor_ids_present' => '1', 'contributor_ids' => [$mark->id]])
             ->assertRedirect()
             ->assertSessionHas('statusType', 'info')
             ->assertSessionHas('status', 'Nothing changed. No updates were saved to the database.');
@@ -272,7 +275,7 @@ class BusinessCheckMultiCiTest extends TestCase
         $mark = User::factory()->create();
 
         // ci_date is required — omitting it fails validation before the save Action ever runs.
-        $payload = ['income_source_id' => $source->id, 'location' => 'Poblacion, San Miguel, Bulacan', 'check_id' => $check->id, 'contributor_ids_present' => '1', 'contributor_ids' => [$mark->id]];
+        $payload = ['income_source_id' => $source->id, 'location' => 'Poblacion, San Miguel, Bulacan', 'check_id' => $check->id, 'expected_revision' => BusinessCheck::query()->whereKey($check->id)->value('revision'), 'contributor_ids_present' => '1', 'contributor_ids' => [$mark->id]];
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), $payload)->assertSessionHasErrors('ci_date');
 
         $this->assertSame(0, $check->fresh()->contributors()->count());
@@ -390,6 +393,7 @@ class BusinessCheckMultiCiTest extends TestCase
     {
         return array_merge([
             'check_id' => $check->id,
+            'expected_revision' => BusinessCheck::query()->whereKey($check->id)->value('revision'),
             'income_source_id' => $check->income_source_id,
             'ci_date' => $check->ci_date->toDateString(),
             'location' => $check->location,

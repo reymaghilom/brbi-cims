@@ -86,6 +86,7 @@ class ResidenceCheckAjaxSaveTest extends TestCase
 
         $response = $this->ajaxPost($ci, $folder, [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'photos' => [UploadedFile::fake()->image('Second.jpg', 900, 700)->size(500)],
         ]);
 
@@ -119,6 +120,7 @@ class ResidenceCheckAjaxSaveTest extends TestCase
 
         $response = $this->ajaxPost($ci, $folder, [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'map_screenshot' => UploadedFile::fake()->image('Map.png', 800, 600)->size(400),
         ]);
 
@@ -190,7 +192,7 @@ class ResidenceCheckAjaxSaveTest extends TestCase
         ]);
         $check = $folder->residenceChecks()->firstOrFail();
 
-        $response = $this->ajaxPost($ci, $folder, ['check_id' => $check->id, 'remarks' => 'Residence verified.']);
+        $response = $this->ajaxPost($ci, $folder, ['check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.']);
 
         $response->assertOk()->assertJson([
             'result' => 'no_change',

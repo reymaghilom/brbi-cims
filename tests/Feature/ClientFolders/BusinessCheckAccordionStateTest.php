@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\ClientFolders;
 
+use App\Models\BusinessCheck;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
@@ -108,7 +109,7 @@ class BusinessCheckAccordionStateTest extends TestCase
         [$ci, $folder, , $check] = $this->createCheckWithOnePhoto();
 
         $content = $this->actingAs($ci)->from(route('client-folders.business-checks.edit', [$folder, $check]))->followingRedirects()->post(route('client-folders.business-checks.store', $folder), [
-            'check_id' => $check->id, 'income_source_id' => $check->income_source_id,
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'income_source_id' => $check->income_source_id,
             'ci_date' => $check->ci_date->toDateString(), 'location' => $check->location,
             'photo_groups' => [['id' => $check->photoGroups()->firstOrFail()->id, 'removed_photo_ids' => [$check->photos()->firstOrFail()->id]]],
         ])->getContent();
@@ -135,7 +136,7 @@ class BusinessCheckAccordionStateTest extends TestCase
         $this->assertStringContainsString('The file extension does not match its verified media type.', $content);
     }
 
-    /** @return array{0: User, 1: ClientFolder, 2: IncomeSource, 3: \App\Models\BusinessCheck} */
+    /** @return array{0: User, 1: ClientFolder, 2: IncomeSource, 3: BusinessCheck} */
     private function createCheckWithOnePhoto(): array
     {
         [$ci, $folder, $source] = $this->setUpBusiness();

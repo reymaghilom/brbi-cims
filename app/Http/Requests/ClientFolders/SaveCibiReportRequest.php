@@ -13,6 +13,8 @@ class SaveCibiReportRequest extends FormRequest
 {
     private const PURPOSE_CODES = ['working_capital', 'business_expansion', 'buyout_debt_consolidation', 'chattel_property_acquisition', 'building_construction_home_renovation', 'real_estate_property_acquisition', 'personal', 'others'];
 
+    private const LOAN_AMOUNT_TEXT_FIELDS = ['original_amount', 'remaining_balance', 'amortization_amount'];
+
     public function authorize(): bool
     {
         return $this->user()->can('update', $this->route('clientFolder'));
@@ -109,9 +111,9 @@ class SaveCibiReportRequest extends FormRequest
             'bank_accounts.*.relevant_remarks' => ['nullable', 'string', 'max:10000'],
             'loan_records.*' => ['array:id,_delete,institution,original_amount,remaining_balance,amortization_amount,granted_date,maturity_date,cycle_number,cycle_label,security_type,payment_performance,combined_findings,remarks'],
             'loan_records.*.institution' => ['nullable', 'string', 'max:255'],
-            'loan_records.*.original_amount' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'],
-            'loan_records.*.remaining_balance' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'],
-            'loan_records.*.amortization_amount' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'],
+            'loan_records.*.original_amount' => ['nullable', 'string', 'max:255'],
+            'loan_records.*.remaining_balance' => ['nullable', 'string', 'max:255'],
+            'loan_records.*.amortization_amount' => ['nullable', 'string', 'max:255'],
             'loan_records.*.granted_date' => ['nullable', 'date', 'before_or_equal:today'],
             'loan_records.*.maturity_date' => ['nullable', 'date'],
             'loan_records.*.cycle_number' => ['nullable', 'integer', 'min:0', 'max:65535'],
@@ -217,8 +219,16 @@ class SaveCibiReportRequest extends FormRequest
                 continue;
             }
             $normalized[$section] = collect((array) $this->input($section))->map(function ($row) use ($section): array {
-                $row = collect((array) $row)->map(fn ($value, $key) => in_array($key, ['_delete', 'is_declared'], true) ? filter_var($value, FILTER_VALIDATE_BOOL) : (is_string($value) ? $this->normalize($value) : $value))->all();
-                foreach (['original_amount', 'remaining_balance', 'amortization_amount', 'monthly_amount', 'capital_share_amount'] as $field) {
+                $row = collect((array) $row)->map(function ($value, $key) use ($section) {
+                    if ($section === 'loan_records' && in_array($key, self::LOAN_AMOUNT_TEXT_FIELDS, true)) {
+                        return $this->loanAmountText($value);
+                    }
+
+                    return in_array($key, ['_delete', 'is_declared'], true)
+                        ? filter_var($value, FILTER_VALIDATE_BOOL)
+                        : (is_string($value) ? $this->normalize($value) : $value);
+                })->all();
+                foreach (['monthly_amount', 'capital_share_amount'] as $field) {
                     if (array_key_exists($field, $row)) {
                         $row[$field] = $this->number($row[$field]);
                     }
@@ -275,5 +285,16 @@ class SaveCibiReportRequest extends FormRequest
     private function number(mixed $value): mixed
     {
         return is_string($value) ? str_replace(',', '', trim($value)) : $value;
+    }
+
+    private function loanAmountText(mixed $value): ?string
+    {
+        if (! is_string($value) && ! is_numeric($value)) {
+            return null;
+        }
+
+        $value = (string) $value;
+
+        return trim($value) === '' ? null : $value;
     }
 }

@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Actions\ClientFolders\SaveCiActivityBankTarget;
 use App\Enums\ActivityStatus;
+use App\Exceptions\CiActivityBankTargetConflictException;
+use App\Exceptions\DuplicateCiActivityBankTargetException;
 use App\Http\Requests\ClientFolders\StoreCiActivityBankTargetRequest;
 use App\Http\Requests\ClientFolders\UpdateCiActivityBankTargetRequest;
 use App\Models\ActivityDefinition;
@@ -14,6 +16,7 @@ use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\BankInstitutionPrefill;
 use App\Services\ClientFolders\CiActivityHistoryFeed;
 use App\Services\ClientFolders\CiActivityScheduleSummary;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -63,9 +66,29 @@ class CiActivityBankTargetController extends Controller
         ClientFolder $clientFolder,
         CiActivity $ciActivity,
         SaveCiActivityBankTarget $save,
-    ): RedirectResponse {
+    ): JsonResponse|RedirectResponse {
         $watermark = CiActivityHistoryFeed::watermark();
-        $save->create($request->user(), $clientFolder, $ciActivity, $request->validated());
+
+        try {
+            $save->create($request->user(), $clientFolder, $ciActivity, $request->validated());
+        } catch (DuplicateCiActivityBankTargetException $e) {
+            // Advisory, not an error: nothing was created. The entered values come back through
+            // withInput(), the tracker reopens the Add dialog on this flash and offers Continue
+            // Anyway, which resubmits the same values with allow_duplicate=1 — the CI never
+            // retypes the target.
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'result' => 'duplicate_exists',
+                    'message' => $e->getMessage(),
+                    'status_type' => 'warning',
+                    'existing_target_id' => $e->existingTargetId,
+                ], 409);
+            }
+
+            return $this->redirectToDetail($clientFolder, $ciActivity, $e->getMessage(), $watermark, 'warning')
+                ->withInput()
+                ->with('bank_target_duplicate', $e->getMessage());
+        }
 
         return $this->redirectToDetail($clientFolder, $ciActivity, 'Bank / Coop target added successfully.', $watermark);
     }
@@ -76,9 +99,27 @@ class CiActivityBankTargetController extends Controller
         CiActivity $ciActivity,
         CiActivityBankTarget $bankTarget,
         SaveCiActivityBankTarget $save,
-    ): RedirectResponse {
+    ): JsonResponse|RedirectResponse {
         $watermark = CiActivityHistoryFeed::watermark();
-        $save->update($request->user(), $clientFolder, $ciActivity, $bankTarget, $request->validated());
+
+        try {
+            $save->update($request->user(), $clientFolder, $ciActivity, $bankTarget, $request->validated());
+        } catch (CiActivityBankTargetConflictException $e) {
+            // Nothing was saved — the transaction rolled back before any field change, parent
+            // synchronization, progress recalculation, audit row or reminder. Same 409 + payload
+            // shape the Residence, Business and CI Activity conflict paths already use; the tracker
+            // is a normal full-page form today, so the redirect below is the path actually taken.
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'result' => 'conflict',
+                    'message' => $e->getMessage(),
+                    'status_type' => 'error',
+                ], 409);
+            }
+
+            return $this->redirectToDetail($clientFolder, $ciActivity, $e->getMessage(), $watermark, 'error')
+                ->withInput();
+        }
 
         return $this->redirectToDetail($clientFolder, $ciActivity, 'Bank / Coop target updated successfully.', $watermark);
     }
@@ -160,13 +201,15 @@ class CiActivityBankTargetController extends Controller
         abort_unless($activity->definition()->where('code', ActivityDefinition::BANK_COOP_CHECK_CODE)->exists(), 404);
     }
 
-    private function redirectToDetail(ClientFolder $folder, CiActivity $activity, string $message, int $historyWatermark): RedirectResponse
+    private function redirectToDetail(ClientFolder $folder, CiActivity $activity, string $message, int $historyWatermark, ?string $statusType = null): RedirectResponse
     {
         $activePerson = ActivePersonResolver::resolve($folder, $activity->co_maker_id);
 
-        return redirect()->route(
+        $redirect = redirect()->route(
             'client-folders.activities.bank-coop.show',
             [$folder, $activity] + ActivePersonResolver::queryParams($activePerson),
         )->with('status', $message)->with('ci_history_watermark', $historyWatermark);
+
+        return $statusType === null ? $redirect : $redirect->with('statusType', $statusType);
     }
 }

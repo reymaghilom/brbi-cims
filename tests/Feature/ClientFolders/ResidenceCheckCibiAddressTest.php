@@ -129,6 +129,7 @@ class ResidenceCheckCibiAddressTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'ci_date' => now()->toDateString(),
             'location' => 'Residence Edit Corrected Address',
             'remarks' => 'updated with location',

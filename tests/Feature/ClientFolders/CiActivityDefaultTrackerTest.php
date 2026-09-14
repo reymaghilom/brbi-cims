@@ -80,8 +80,8 @@ class CiActivityDefaultTrackerTest extends TestCase
         $bankRemarks = 'Bank target remarks remain attached to this institution.';
         $assetRemarks = 'Asset remarks remain attached to this assessor office.';
 
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $barangay]), $this->payload(ActivityStatus::Pending, remarks: $longRemarks))->assertRedirect();
-        $this->put(route('client-folders.activities.update', [$folder, $neighbor]), $this->payload(ActivityStatus::Pending, remarks: $neighborRemarks))->assertRedirect();
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $barangay]), $this->payload(ActivityStatus::Pending, remarks: $longRemarks) + ['expected_revision' => $barangay->fresh()->revision])->assertRedirect();
+        $this->put(route('client-folders.activities.update', [$folder, $neighbor]), $this->payload(ActivityStatus::Pending, remarks: $neighborRemarks) + ['expected_revision' => $neighbor->fresh()->revision])->assertRedirect();
         $this->post(route('client-folders.activities.bank-targets.store', [$folder, $bank]), [
             'co_maker_id' => null,
             'inquiry_type' => 'bank_coop_check',
@@ -317,14 +317,14 @@ class CiActivityDefaultTrackerTest extends TestCase
         $activity = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
 
         $activity->update(['scheduled_at' => now()->addDay(), 'scheduled_has_time' => true]);
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Pending, null, null, 'Pending remarks.'))->assertRedirect();
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Pending, null, null, 'Pending remarks.') + ['expected_revision' => $activity->fresh()->revision])->assertRedirect();
         $activity->refresh();
         $this->assertSame(ActivityStatus::Pending, $activity->status);
         $this->assertNull($activity->scheduled_at);
         $this->assertFalse($activity->scheduled_has_time);
 
         // Scheduled requires a date — it is rejected as a whole, so the status never lands as Scheduled.
-        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled))
+        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled) + ['expected_revision' => $activity->fresh()->revision])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['scheduled_at' => 'Please select a scheduled date.']);
         $activity->refresh();
@@ -332,18 +332,18 @@ class CiActivityDefaultTrackerTest extends TestCase
         $this->assertNull($activity->scheduled_at);
         $this->assertFalse($activity->scheduled_has_time);
 
-        $this->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled, '2026-09-05'))->assertRedirect();
+        $this->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled, '2026-09-05') + ['expected_revision' => $activity->fresh()->revision])->assertRedirect();
         $activity->refresh();
         $this->assertTrue($activity->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-05 08:00', 'Asia/Manila')->utc()));
         $this->assertFalse($activity->scheduled_has_time);
 
-        $this->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled, '2026-09-06', '14:30'))->assertRedirect();
+        $this->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled, '2026-09-06', '14:30') + ['expected_revision' => $activity->fresh()->revision])->assertRedirect();
         $activity->refresh();
         $this->assertTrue($activity->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-06 14:30', 'Asia/Manila')->utc()));
         $this->assertTrue($activity->scheduled_has_time);
 
         $followUpBaseline = $activity->scheduled_at->copy();
-        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::FollowUp))
+        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::FollowUp) + ['expected_revision' => $activity->fresh()->revision])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['scheduled_at' => 'Please select a scheduled date.']);
         $activity->refresh();
@@ -351,12 +351,12 @@ class CiActivityDefaultTrackerTest extends TestCase
         $this->assertTrue($activity->scheduled_at->equalTo($followUpBaseline));
         $this->assertTrue($activity->scheduled_has_time);
 
-        $this->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::FollowUp, '2026-09-07', '09:15'))->assertRedirect();
+        $this->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::FollowUp, '2026-09-07', '09:15') + ['expected_revision' => $activity->fresh()->revision])->assertRedirect();
         $activity->refresh();
         $baseline = $activity->scheduled_at->copy();
         $this->assertTrue($activity->scheduled_has_time);
 
-        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::FollowUp, null, '10:45'))
+        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::FollowUp, null, '10:45') + ['expected_revision' => $activity->fresh()->revision])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('scheduled_time');
         $this->assertTrue($activity->fresh()->scheduled_at->equalTo($baseline));
@@ -426,9 +426,9 @@ class CiActivityDefaultTrackerTest extends TestCase
         $this->get(route('client-folders.activities.default-check.show', [$folder, $makerActivity, 'person' => 'co-maker', 'co_maker_id' => $makerB->id]))->assertNotFound();
         $this->get(route('client-folders.activities.default-check.show', [$otherFolder, $applicant]))->assertNotFound();
 
-        $this->put(route('client-folders.activities.update', [$folder, $applicant]), array_replace($this->payload(ActivityStatus::Completed), ['co_maker_id' => $makerA->id]))->assertForbidden();
-        $this->put(route('client-folders.activities.update', [$folder, $makerActivity]), $this->payload(ActivityStatus::Completed))->assertForbidden();
-        $this->put(route('client-folders.activities.update', [$folder, $makerActivity]), array_replace($this->payload(ActivityStatus::Completed), ['co_maker_id' => $makerB->id]))->assertForbidden();
+        $this->put(route('client-folders.activities.update', [$folder, $applicant]), array_replace($this->payload(ActivityStatus::Completed), ['co_maker_id' => $makerA->id]) + ['expected_revision' => $applicant->fresh()->revision])->assertForbidden();
+        $this->put(route('client-folders.activities.update', [$folder, $makerActivity]), $this->payload(ActivityStatus::Completed) + ['expected_revision' => $makerActivity->fresh()->revision])->assertForbidden();
+        $this->put(route('client-folders.activities.update', [$folder, $makerActivity]), array_replace($this->payload(ActivityStatus::Completed), ['co_maker_id' => $makerB->id]) + ['expected_revision' => $makerActivity->fresh()->revision])->assertForbidden();
         $this->put(route('client-folders.activities.update', [$otherFolder, $applicant]), $this->payload(ActivityStatus::Completed))->assertNotFound();
         $this->assertSame(ActivityStatus::Pending, $applicant->fresh()->status);
         $this->assertSame(ActivityStatus::Pending, $makerActivity->fresh()->status);

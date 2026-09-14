@@ -98,7 +98,7 @@ class CustomCiActivityWorkflowUiTest extends TestCase
 
         $this->actingAs($ci)->putJson(route('client-folders.activities.update', [$folder, $activity]), [
             'co_maker_id' => null,
-            'expected_updated_at' => $activity->updated_at->toISOString(),
+            'expected_revision' => $activity->fresh()->revision,
             'status' => ActivityStatus::Scheduled->value,
             'scheduled_at' => $scheduledDate,
             'scheduled_time' => '09:45',
@@ -145,7 +145,7 @@ class CustomCiActivityWorkflowUiTest extends TestCase
 
         $this->putJson(route('client-folders.activities.update', [$folder, $activity]), [
             'co_maker_id' => null,
-            'expected_updated_at' => $activity->fresh()->updated_at->toISOString(),
+            'expected_revision' => $activity->fresh()->revision,
             'status' => ActivityStatus::Completed->value,
             'intent' => 'return',
         ])->assertOk();
@@ -176,15 +176,15 @@ class CustomCiActivityWorkflowUiTest extends TestCase
             ->assertOk()
             ->assertSee('Co-Maker: ALPHA MAKER');
 
-        $this->put(route('client-folders.activities.update', [$folder, $activityA]), ['co_maker_id' => $coMakerB->id, 'status' => 'completed'])->assertForbidden();
+        $this->put(route('client-folders.activities.update', [$folder, $activityA]), ['co_maker_id' => $coMakerB->id, 'status' => 'completed'] + ['expected_revision' => $activityA->fresh()->revision])->assertForbidden();
         $this->assertSame(ActivityStatus::Pending, $activityA->fresh()->status);
 
-        $this->put(route('client-folders.activities.update', [$folder, $applicant]), ['co_maker_id' => null, 'status' => 'completed'])->assertRedirect();
+        $this->put(route('client-folders.activities.update', [$folder, $applicant]), ['co_maker_id' => null, 'status' => 'completed'] + ['expected_revision' => $applicant->fresh()->revision])->assertRedirect();
         $this->assertSame(ActivityStatus::Completed, $applicant->fresh()->status);
         $this->assertSame(ActivityStatus::Pending, $activityA->fresh()->status);
         $this->assertSame(ActivityStatus::Pending, $activityB->fresh()->status);
 
-        $this->put(route('client-folders.activities.update', [$folder, $activityA]), ['co_maker_id' => $coMakerA->id, 'status' => 'completed'])->assertRedirect();
+        $this->put(route('client-folders.activities.update', [$folder, $activityA]), ['co_maker_id' => $coMakerA->id, 'status' => 'completed'] + ['expected_revision' => $activityA->fresh()->revision])->assertRedirect();
         $this->assertSame(ActivityStatus::Completed, $activityA->fresh()->status);
         $this->assertSame(ActivityStatus::Pending, $activityB->fresh()->status);
 
@@ -240,8 +240,8 @@ class CustomCiActivityWorkflowUiTest extends TestCase
         $dialog = substr($content, $start, strpos($content, '</dialog>', $start) - $start);
 
         $this->assertStringContainsString('action="'.route('client-folders.activities.destroy', [$folder, $activity]).'"', $dialog);
-        $this->assertMatchesRegularExpression('/data-modal-close class="ui-button-secondary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $dialog);
-        $this->assertMatchesRegularExpression('/class="ui-button-danger"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Delete<\/button>/s', $dialog);
+        $this->assertMatchesRegularExpression('/data-modal-close class="ui-button-secondary[^"]*"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $dialog);
+        $this->assertMatchesRegularExpression('/class="ui-button-danger[^"]*"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Delete<\/button>/s', $dialog);
         $this->assertStringNotContainsString('Permanently Delete</button>', $dialog);
     }
 

@@ -38,7 +38,9 @@ class UpdateCiActivityRequest extends FormRequest
                     ->where('role', UserRole::CreditInvestigator->value)
                     ->where('status', UserStatus::Active->value)),
             ],
-            'expected_updated_at' => ['nullable', 'date'],
+            // Required, never optional: omitting it must not be a way around stale-save protection.
+            // A monotonic token, unlike updated_at, cannot repeat for two saves in one second.
+            'expected_revision' => ['required', 'integer', 'min:1'],
             'status' => ['required', Rule::enum(ActivityStatus::class)],
             'scheduled_at' => ['nullable', 'date', Rule::requiredIf(
                 ActivityStatus::requiresScheduledDate($this->input('status'))

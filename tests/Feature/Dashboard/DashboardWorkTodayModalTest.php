@@ -105,8 +105,8 @@ class DashboardWorkTodayModalTest extends TestCase
         $this->assertSame('Continue', $overdueWork[$remaining->id]['action']);
         $this->assertNull($overdueWork[$applicant->id]['completion_co_maker_id']);
         $this->assertSame($coMaker->id, $overdueWork[$remaining->id]['completion_co_maker_id']);
-        $this->assertSame(route('client-folders.activities.update', [$folder, $applicant]), $overdueWork[$applicant->id]['completion_url']);
-        $this->assertSame(route('client-folders.activities.update', [$folder, $remaining]), $overdueWork[$remaining->id]['completion_url']);
+        $this->assertSame(route('client-folders.activities.update', [$folder, $applicant]), $overdueWork[$applicant->id]['completion_url'] + ['expected_revision' => $applicant->fresh()->revision]);
+        $this->assertSame(route('client-folders.activities.update', [$folder, $remaining]), $overdueWork[$remaining->id]['completion_url'] + ['expected_revision' => $remaining->fresh()->revision]);
         $this->assertStringNotContainsString('co_maker_id', $overdueWork[$applicant->id]['modal_url']);
         $this->assertStringContainsString('co_maker_id='.$coMaker->id, $overdueWork[$remaining->id]['modal_url']);
         $this->assertSame(4, substr_count($dashboard->getContent(), 'data-modal-open="dashboard-overdue-complete-activity-modal"'));
@@ -141,7 +141,7 @@ class DashboardWorkTodayModalTest extends TestCase
 
         $this->put(route('client-folders.activities.update', [$folder, $applicant]), [
             'co_maker_id' => null,
-            'expected_updated_at' => $applicant->updated_at->toISOString(),
+            'expected_revision' => $applicant->fresh()->revision,
             'status' => ActivityStatus::Completed->value,
             'remarks' => 'Completed from Dashboard.',
         ], $headers)->assertOk()->assertJson(['updated' => true]);
@@ -155,7 +155,7 @@ class DashboardWorkTodayModalTest extends TestCase
 
         $this->put(route('client-folders.activities.update', [$folder, $remaining]), [
             'co_maker_id' => $coMaker->id,
-            'expected_updated_at' => $remaining->updated_at->toISOString(),
+            'expected_revision' => $remaining->fresh()->revision,
             'status' => ActivityStatus::Completed->value,
             'remarks' => 'Exact Co-Maker Neighbor completed from Dashboard.',
         ], $headers)->assertOk()->assertJson(['updated' => true]);
@@ -388,6 +388,7 @@ class DashboardWorkTodayModalTest extends TestCase
         $assetRemaining = $this->assetTarget($asset, $ci, 'Remaining Assessor');
 
         $this->actingAs($ci)->putJson(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankFirst]), [
+            'expected_revision' => $bankFirst->fresh()->revision,
             'co_maker_id' => null,
             'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'First Bank',
@@ -396,12 +397,14 @@ class DashboardWorkTodayModalTest extends TestCase
         $this->assertSame(ActivityStatus::Pending, $bankFirst->fresh()->status);
 
         $this->actingAs($ci)->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankFirst]), [
+            'expected_revision' => $bankFirst->fresh()->revision,
             'co_maker_id' => null,
             'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'First Bank Updated',
             'status' => ActivityStatus::Completed->value,
         ])->assertRedirect();
         $this->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetFirst]), [
+            'expected_revision' => $assetFirst->fresh()->revision,
             'co_maker_id' => null,
             'assessor_type' => 'city_assessor',
             'office_location' => 'First Assessor Updated',

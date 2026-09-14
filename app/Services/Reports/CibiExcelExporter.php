@@ -7,6 +7,7 @@ use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -157,9 +158,9 @@ class CibiExcelExporter
             $institutionKey = mb_strtolower(trim((string) $loan->institution));
             $this->value($sheet, 'C'.$row, $institutionKey !== '' && $institutionKey === $previousInstitution ? '' : $this->na($loan->institution));
             $previousInstitution = $institutionKey;
-            $this->value($sheet, 'G'.$row, $this->numberOrBlank($loan->original_amount));
-            $this->value($sheet, 'J'.$row, $this->numberOrBlank($loan->remaining_balance));
-            $this->value($sheet, 'M'.$row, $this->numberOrBlank($loan->amortization_amount));
+            $this->textValue($sheet, 'G'.$row, $loan->original_amount);
+            $this->textValue($sheet, 'J'.$row, $loan->remaining_balance);
+            $this->textValue($sheet, 'M'.$row, $loan->amortization_amount);
             $this->value($sheet, 'P'.$row, $this->joinedOrBlank([$this->dateTextOrBlank($loan->granted_date), $this->dateTextOrBlank($loan->maturity_date)], ' - '));
             $this->value($sheet, 'S'.$row, $this->textOrBlank($loan->cycle_label ?: $loan->cycle_number));
             $this->value($sheet, 'T'.$row, $this->textOrBlank($loan->security_type));
@@ -171,9 +172,9 @@ class CibiExcelExporter
         }
         $loanEndRow = $loanStartRow + $loanVisibleRows - 1;
         $monetaryTotalRow = $loanEndRow + 1;
-        $sheet->setCellValue('G'.$monetaryTotalRow, "=SUM(G{$loanStartRow}:I{$loanEndRow})");
-        $sheet->setCellValue('J'.$monetaryTotalRow, "=SUM(J{$loanStartRow}:L{$loanEndRow})");
-        $sheet->setCellValue('M'.$monetaryTotalRow, "=SUM(M{$loanStartRow}:O{$loanEndRow})");
+        $this->value($sheet, 'G'.$monetaryTotalRow, null);
+        $this->value($sheet, 'J'.$monetaryTotalRow, null);
+        $this->value($sheet, 'M'.$monetaryTotalRow, null);
         $totals = $report->summary_totals ?? [];
         $this->value($sheet, 'H'.(52 + $downstreamRowDelta), (int) ($totals['institutions_checked'] ?? $report->creditChecks()->whereNotNull('institution')->count()));
         $this->value($sheet, 'H'.(53 + $downstreamRowDelta), (int) ($totals['institutions_declared'] ?? $report->creditChecks()->where('is_declared', true)->count()));
@@ -289,6 +290,11 @@ class CibiExcelExporter
         $sheet->setCellValue($coordinate, $value);
     }
 
+    private function textValue(Worksheet $sheet, string $coordinate, mixed $value): void
+    {
+        $sheet->setCellValueExplicit($coordinate, $this->textOrBlank($value) ?? '', DataType::TYPE_STRING);
+    }
+
     private function date(Worksheet $sheet, string $coordinate, mixed $value): void
     {
         $this->value($sheet, $coordinate, $value ? ExcelDate::dateTimeToExcel($value) : 'N/A');
@@ -350,11 +356,6 @@ class CibiExcelExporter
     private function numberOrNa(mixed $value): float|string
     {
         return filled($value) ? (float) $value : 'N/A';
-    }
-
-    private function numberOrBlank(mixed $value): ?float
-    {
-        return filled($value) ? (float) $value : null;
     }
 
     private function formattedNumberOrBlank(mixed $value): ?float

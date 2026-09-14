@@ -17,7 +17,7 @@ class ResidenceCheck extends Model implements HasCiParticipants
 
     protected function casts(): array
     {
-        return ['ci_date' => 'date', 'latitude' => 'decimal:7', 'longitude' => 'decimal:7'];
+        return ['ci_date' => 'date', 'latitude' => 'decimal:7', 'longitude' => 'decimal:7', 'revision' => 'integer'];
     }
 
     public function clientFolder(): BelongsTo

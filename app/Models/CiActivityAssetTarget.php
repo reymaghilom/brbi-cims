@@ -29,6 +29,7 @@ class CiActivityAssetTarget extends Model
             'scheduled_at' => 'datetime',
             'scheduled_has_time' => 'boolean',
             'reminder_sent_at' => 'datetime',
+            'revision' => 'integer',
         ];
     }
 

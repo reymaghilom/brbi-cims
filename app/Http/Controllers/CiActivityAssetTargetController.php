@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Actions\ClientFolders\SaveCiActivityAssetTarget;
 use App\Enums\ActivityStatus;
+use App\Exceptions\CiActivityAssetTargetConflictException;
+use App\Exceptions\DuplicateCiActivityAssetTargetException;
 use App\Http\Requests\ClientFolders\StoreCiActivityAssetTargetRequest;
 use App\Http\Requests\ClientFolders\UpdateCiActivityAssetTargetRequest;
 use App\Models\ActivityDefinition;
@@ -13,6 +15,7 @@ use App\Models\ClientFolder;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CiActivityHistoryFeed;
 use App\Services\ClientFolders\CiActivityScheduleSummary;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -50,18 +53,57 @@ class CiActivityAssetTargetController extends Controller
         ]);
     }
 
-    public function store(StoreCiActivityAssetTargetRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, SaveCiActivityAssetTarget $save): RedirectResponse
+    public function store(StoreCiActivityAssetTargetRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, SaveCiActivityAssetTarget $save): JsonResponse|RedirectResponse
     {
         $watermark = CiActivityHistoryFeed::watermark();
-        $save->create($request->user(), $clientFolder, $ciActivity, $request->validated());
+
+        try {
+            $save->create($request->user(), $clientFolder, $ciActivity, $request->validated());
+        } catch (DuplicateCiActivityAssetTargetException $e) {
+            // Advisory, not an error: nothing was created. The entered values come back through
+            // withInput(), the tracker reopens the Add dialog on this flash and offers Continue
+            // Anyway, which resubmits the same values with allow_duplicate=1 — the CI never
+            // retypes the target. The embedded modal handles the 409 in its own submit handler.
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'result' => 'duplicate_exists',
+                    'message' => $e->getMessage(),
+                    'status_type' => 'warning',
+                    'existing_target_id' => $e->existingTargetId,
+                ], 409);
+            }
+
+            return $this->redirectToDetail($clientFolder, $ciActivity, $e->getMessage(), $watermark, 'warning')
+                ->withInput()
+                ->with('asset_target_duplicate', $e->getMessage());
+        }
 
         return $this->redirectToDetail($clientFolder, $ciActivity, 'Assessor target added successfully.', $watermark);
     }
 
-    public function update(UpdateCiActivityAssetTargetRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, CiActivityAssetTarget $assetTarget, SaveCiActivityAssetTarget $save): RedirectResponse
+    public function update(UpdateCiActivityAssetTargetRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, CiActivityAssetTarget $assetTarget, SaveCiActivityAssetTarget $save): JsonResponse|RedirectResponse
     {
         $watermark = CiActivityHistoryFeed::watermark();
-        $save->update($request->user(), $clientFolder, $ciActivity, $assetTarget, $request->validated());
+
+        try {
+            $save->update($request->user(), $clientFolder, $ciActivity, $assetTarget, $request->validated());
+        } catch (CiActivityAssetTargetConflictException $e) {
+            // Nothing was saved — the transaction rolled back before any field change, audit row,
+            // reminder, parent synchronization or progress recalculation. Same 409 + payload shape
+            // the Residence, Business, CI Activity and Bank / Coop conflict paths already use; the
+            // embedded Asset tracker modal submits with Accept: application/json and renders this
+            // payload, while the standalone page takes the redirect below.
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'result' => 'conflict',
+                    'message' => $e->getMessage(),
+                    'status_type' => 'error',
+                ], 409);
+            }
+
+            return $this->redirectToDetail($clientFolder, $ciActivity, $e->getMessage(), $watermark, 'error')
+                ->withInput();
+        }
 
         return $this->redirectToDetail($clientFolder, $ciActivity, 'Assessor target updated successfully.', $watermark);
     }
@@ -135,13 +177,15 @@ class CiActivityAssetTargetController extends Controller
         abort_unless($activity->definition()->where('code', ActivityDefinition::ASSET_CHECK_CODE)->exists(), 404);
     }
 
-    private function redirectToDetail(ClientFolder $folder, CiActivity $activity, string $message, int $historyWatermark): RedirectResponse
+    private function redirectToDetail(ClientFolder $folder, CiActivity $activity, string $message, int $historyWatermark, ?string $statusType = null): RedirectResponse
     {
         $activePerson = ActivePersonResolver::resolve($folder, $activity->co_maker_id);
 
-        return redirect()->route(
+        $redirect = redirect()->route(
             'client-folders.activities.asset-check.show',
             [$folder, $activity] + ActivePersonResolver::queryParams($activePerson),
         )->with('status', $message)->with('ci_history_watermark', $historyWatermark);
+
+        return $statusType === null ? $redirect : $redirect->with('statusType', $statusType);
     }
 }

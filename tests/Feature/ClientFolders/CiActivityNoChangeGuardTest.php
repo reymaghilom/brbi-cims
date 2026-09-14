@@ -67,6 +67,7 @@ class CiActivityNoChangeGuardTest extends TestCase
         ]);
 
         $this->actingAs($ci)->put(route('client-folders.activities.bank-targets.update', [$folder, $activity, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => null,
             'inquiry_type' => 'bank_coop_check',
             'institution_name' => 'BPI Divisoria',
@@ -117,6 +118,7 @@ class CiActivityNoChangeGuardTest extends TestCase
         ]);
 
         $this->actingAs($ci)->put(route('client-folders.activities.asset-targets.update', [$folder, $activity, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => null,
             'assessor_type' => 'city_assessor',
             'office_location' => 'Provincial Assessor Office',

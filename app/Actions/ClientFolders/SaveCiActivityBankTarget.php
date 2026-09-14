@@ -3,6 +3,8 @@
 namespace App\Actions\ClientFolders;
 
 use App\Enums\ActivityStatus;
+use App\Exceptions\CiActivityBankTargetConflictException;
+use App\Exceptions\DuplicateCiActivityBankTargetException;
 use App\Models\AuditLog;
 use App\Models\CiActivity;
 use App\Models\CiActivityBankTarget;
@@ -24,7 +26,25 @@ class SaveCiActivityBankTarget
     {
         return DB::transaction(function () use ($actor, $folder, $activity, $data): CiActivityBankTarget {
             $activity = $this->lockExactParent($folder, $activity);
-            $target = $activity->bankTargets()->create($this->attributes($actor, $data) + [
+            $attributes = $this->attributes($actor, $data);
+
+            // Checked AFTER the parent lock is held and against the rows as they exist inside this
+            // transaction, never against a snapshot read before it. That ordering is what makes an
+            // accidental double-submit — and two CIs pressing Add at once — warn instead of
+            // silently inserting a second row: the later request waits for the lock, re-reads, and
+            // only then sees the row the earlier one committed.
+            if (! (bool) ($data['allow_duplicate'] ?? false)) {
+                $existing = $this->findDuplicate($activity, $attributes);
+
+                if ($existing !== null) {
+                    // Thrown before the insert, so there is no target row, no parent status change,
+                    // no completion evaluation, no progress recalculation, no audit and no schedule
+                    // notification — the transaction rolls back with nothing in it.
+                    throw new DuplicateCiActivityBankTargetException($existing->id, $existing->targetLabel());
+                }
+            }
+
+            $target = $activity->bankTargets()->create($attributes + [
                 'created_by' => $actor->id,
             ]);
 
@@ -43,6 +63,16 @@ class SaveCiActivityBankTarget
         return DB::transaction(function () use ($actor, $folder, $activity, $target, $data): CiActivityBankTarget {
             $activity = $this->lockExactParent($folder, $activity);
             $lockedTarget = $activity->bankTargets()->lockForUpdate()->findOrFail($target->id);
+
+            // Compared against the AUTHORITATIVE locked row, not the route-bound snapshot, and
+            // thrown before any field change, schedule change, reminder bookkeeping, parent
+            // synchronization, completion evaluation or progress recalculation — a refused stale
+            // save rolls the whole transaction back and leaves nothing behind, not even a
+            // notification row (the database channel writes on this same connection).
+            if ((int) ($data['expected_revision'] ?? 0) !== $lockedTarget->revision) {
+                throw new CiActivityBankTargetConflictException;
+            }
+
             $previousStatus = $lockedTarget->status;
             $previousScheduledAt = $lockedTarget->scheduled_at?->copy();
             $previousScheduledHasTime = $lockedTarget->scheduled_has_time;
@@ -54,6 +84,10 @@ class SaveCiActivityBankTarget
             $attributes['reminder_sent_at'] = $scheduleChanged || $attributes['status'] !== ActivityStatus::Scheduled
                 ? null
                 : $lockedTarget->reminder_sent_at;
+
+            // Advanced on every successful update, so the token a form was rendered with can never
+            // be replayed. A save that rolls back rolls this back with it.
+            $attributes['revision'] = $lockedTarget->revision + 1;
 
             $lockedTarget->update($attributes);
 
@@ -90,12 +124,17 @@ class SaveCiActivityBankTarget
                 return $lockedTarget;
             }
 
+            // Completion mutates the target, so it advances the token too — an edit form opened
+            // before the completion must fail as stale rather than silently overwrite the
+            // Completed state. The already-Completed short-circuit above returns first, so a
+            // repeated completion neither advances the revision again nor writes a second audit.
             $lockedTarget->update([
                 'status' => ActivityStatus::Completed,
                 'scheduled_at' => null,
                 'scheduled_has_time' => false,
                 'reminder_sent_at' => null,
                 'updated_by' => $actor->id,
+                'revision' => $lockedTarget->revision + 1,
             ]);
 
             $targetLabel = $lockedTarget->targetLabel();
@@ -140,6 +179,29 @@ class SaveCiActivityBankTarget
         ])->save();
 
         return $status;
+    }
+
+    /**
+     * Duplicate identity is inquiry type + normalized institution + normalized branch, scoped to
+     * this ONE parent activity's own rows, so the same bank under another person, another parent
+     * activity or another folder is never involved. Branch is already NULL for a Loan Inquiry, so
+     * that type compares on institution alone. Status, schedule, remarks and actors are not part
+     * of identity.
+     *
+     * Compared in PHP rather than in SQL on purpose: the answer must not depend on the database's
+     * collation, which differs between the SQLite test connection and MySQL. A parent holds a
+     * handful of targets, so reading them is cheap.
+     */
+    private function findDuplicate(CiActivity $activity, array $attributes): ?CiActivityBankTarget
+    {
+        $institution = CiActivityBankTarget::normalizeIdentity($attributes['institution_name']);
+        $branch = CiActivityBankTarget::normalizeIdentity($attributes['branch_location']);
+
+        return $activity->bankTargets()
+            ->where('inquiry_type', $attributes['inquiry_type'])
+            ->get()
+            ->first(fn (CiActivityBankTarget $target): bool => CiActivityBankTarget::normalizeIdentity($target->institution_name) === $institution
+                && CiActivityBankTarget::normalizeIdentity($target->branch_location) === $branch);
     }
 
     private function attributes(User $actor, array $data): array

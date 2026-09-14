@@ -195,7 +195,7 @@ class StandaloneBusinessCheckDeleteAndActivityLabelsTest extends TestCase
 
         // A real change, by a different user.
         $this->actingAs($b)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'location' => 'Purok 1', 'ci_date' => '2026-01-01', 'remarks' => 'CHANGED BY B',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'location' => 'Purok 1', 'ci_date' => '2026-01-01', 'remarks' => 'CHANGED BY B',
         ])->assertSessionHasNoErrors();
 
         $this->actingAs($a)->get(route('client-folders.show', $folder))->assertOk()
@@ -229,7 +229,7 @@ class StandaloneBusinessCheckDeleteAndActivityLabelsTest extends TestCase
             ->assertDontSee('Business Check updated');
 
         $this->actingAs($b)->post(route('client-folders.business-checks.store', $folder), [
-            'check_id' => $check->id, 'business_name' => 'MANUAL STORE', 'location' => 'Purok 3',
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'business_name' => 'MANUAL STORE', 'location' => 'Purok 3',
             'ci_date' => '2026-02-10', 'remarks' => 'EDITED BY B',
         ])->assertSessionHasNoErrors();
 
@@ -258,7 +258,7 @@ class StandaloneBusinessCheckDeleteAndActivityLabelsTest extends TestCase
         ])->assertSessionHasNoErrors();
         $check = $folder->residenceChecks()->sole();
         $this->actingAs($b)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'location' => 'Purok 1', 'ci_date' => '2026-01-01', 'remarks' => 'REAL CHANGE',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'location' => 'Purok 1', 'ci_date' => '2026-01-01', 'remarks' => 'REAL CHANGE',
         ])->assertSessionHasNoErrors();
 
         $this->assertDatabaseHas('audit_logs', ['action' => 'residence_check.created', 'user_id' => $a->id]);
@@ -281,7 +281,7 @@ class StandaloneBusinessCheckDeleteAndActivityLabelsTest extends TestCase
         $check = $folder->residenceChecks()->sole();
 
         $this->actingAs($a)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'location' => 'Purok 1', 'ci_date' => '2026-01-01', 'remarks' => 'same',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'location' => 'Purok 1', 'ci_date' => '2026-01-01', 'remarks' => 'same',
         ]);
 
         $this->assertSame(0, AuditLog::where('action', 'residence_check.updated')->count());
@@ -301,7 +301,7 @@ class StandaloneBusinessCheckDeleteAndActivityLabelsTest extends TestCase
         $check = $folder->businessChecks()->sole();
 
         $this->actingAs($a)->post(route('client-folders.business-checks.store', $folder), [
-            'check_id' => $check->id, 'business_name' => 'MANUAL STORE', 'location' => 'Purok 3',
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'business_name' => 'MANUAL STORE', 'location' => 'Purok 3',
             'ci_date' => '2026-02-10', 'remarks' => 'same',
         ]);
 

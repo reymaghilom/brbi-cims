@@ -37,7 +37,7 @@ class SaveResidenceCheckRequest extends FormRequest
             // twice" (double-click, a retried request) apart from a genuinely separate Add action —
             // which always reloads the form and gets its own new token.
             'request_token' => ['nullable', 'string', 'max:100'],
-            'expected_updated_at' => ['nullable', 'date'],
+            'expected_revision' => ['required_with:check_id', 'nullable', 'integer', 'min:1'],
             'ci_date' => ['nullable', 'date', 'before_or_equal:today'],
             'location' => ['nullable', 'string', 'max:2000'],
             'remarks' => ['nullable', 'string', 'max:10000'],
@@ -84,7 +84,16 @@ class SaveResidenceCheckRequest extends FormRequest
 
     public function messages(): array
     {
-        return ['photos.max' => 'A maximum of 10 residence pictures is allowed.'];
+        return [
+            'photos.max' => 'A maximum of 10 residence pictures is allowed.',
+            // Only reachable when check_id was submitted (so this is an edit of an existing check)
+            // and the rule above finds no such Residence Check for this exact folder + person — in
+            // practice, the record was deleted while this form was still open. Scoped to this
+            // request class and this one rule, so Laravel's default "selected ... is invalid"
+            // wording is untouched everywhere else. The save still fails exactly as before; only
+            // the sentence the CI reads changes.
+            'check_id.exists' => 'This Residence Check was deleted by another user while you were working on it. Please return to the Residence & Business Report page.',
+        ];
     }
 
     private function remainingExistingResidencePhotoCount(): int

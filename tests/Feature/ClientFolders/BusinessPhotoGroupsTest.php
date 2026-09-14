@@ -681,7 +681,7 @@ class BusinessPhotoGroupsTest extends TestCase
 
         $docxPath = tempnam(sys_get_temp_dir(), 'docx').'.docx';
         file_put_contents($docxPath, $docxResponse->streamedContent());
-        $zip = new \ZipArchive();
+        $zip = new \ZipArchive;
         $zip->open($docxPath);
         $documentXml = $zip->getFromName('word/document.xml');
         $zip->close();
@@ -730,7 +730,7 @@ class BusinessPhotoGroupsTest extends TestCase
 
         $docxPath = tempnam(sys_get_temp_dir(), 'docx').'.docx';
         file_put_contents($docxPath, $docxResponse->streamedContent());
-        $zip = new \ZipArchive();
+        $zip = new \ZipArchive;
         $zip->open($docxPath);
         $documentXml = $zip->getFromName('word/document.xml');
         $zip->close();
@@ -812,6 +812,7 @@ class BusinessPhotoGroupsTest extends TestCase
     {
         return [
             'check_id' => $check->id,
+            'expected_revision' => BusinessCheck::query()->whereKey($check->id)->value('revision'),
             'income_source_id' => $check->income_source_id,
             'ci_date' => $check->ci_date->toDateString(),
             'location' => $check->location,

@@ -39,7 +39,7 @@
         data-default-check-updated-date="{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('M j, Y') }}"
         data-default-check-updated-detail="{{ $activity->updated_at->timezone(config('cims.display_timezone'))->format('g:i A') }}{{ $activity->updater ? ' · '.$activity->updater->full_name : '' }}"
         data-default-check-updated-timestamp="{{ $activity->updated_at->timestamp }}"
-        data-default-check-updated-iso="{{ $activity->updated_at->toISOString() }}"
+        data-default-check-revision="{{ $activity->revision }}"
     >
         <section class="ui-panel mx-auto max-w-3xl overflow-hidden" aria-labelledby="default-check-title">
             <div class="flex flex-col gap-3 border-b border-ui-border px-5 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6">
@@ -53,7 +53,7 @@
                 @csrf
                 @method('PUT')
                 <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
-                <input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at->toISOString() }}">
+                <input type="hidden" name="expected_revision" value="{{ $activity->revision }}">
                 <input type="hidden" name="intent" value="return">
 
                 <div class="mb-4 rounded-control border border-danger/25 bg-danger-soft px-3.5 py-3 text-sm text-danger" data-default-check-errors hidden></div>

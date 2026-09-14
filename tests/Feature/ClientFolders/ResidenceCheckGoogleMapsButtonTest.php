@@ -127,7 +127,7 @@ class ResidenceCheckGoogleMapsButtonTest extends TestCase
 
         // Removing an (absent) screenshot on update must not block the save either.
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence re-verified.', 'remove_map_screenshot' => '1',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence re-verified.', 'remove_map_screenshot' => '1',
         ])->assertRedirect()->assertSessionDoesntHaveErrors();
     }
 

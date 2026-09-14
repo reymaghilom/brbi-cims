@@ -829,7 +829,7 @@ class DashboardData
                 }
                 : null,
             'completion_co_maker_id' => $directCompletion ? $activity->co_maker_id : null,
-            'completion_expected_updated_at' => $directCompletion ? $work->updated_at->toISOString() : null,
+            'completion_expected_revision' => $directCompletion ? $work->revision : null,
             'completion_schedule' => $directCompletion && $work->scheduled_at
                 ? $work->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y').' · '.($work->scheduled_has_time ? $work->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time')
                 : null,

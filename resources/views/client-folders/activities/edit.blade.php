@@ -34,7 +34,8 @@
             @csrf
             @method('PUT')
             <input type="hidden" name="co_maker_id" value="{{ $activePerson->id ?? '' }}">
-            <input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at?->toISOString() }}">
+            {{-- A monotonic edit token; unlike updated_at, it cannot repeat for two saves in one second. --}}
+            <input type="hidden" name="expected_revision" value="{{ $activity->revision }}">
 
             <div data-editing-presence data-editing-type="ci_activity" data-editing-id="{{ $activity->id }}" data-editing-label="Activity">
                 <div data-editing-presence-banner hidden role="status" class="flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft p-3 text-sm text-progress"><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" /><span data-editing-presence-text></span></div>

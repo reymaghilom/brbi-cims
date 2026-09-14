@@ -102,7 +102,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
 
         // A later Check edit changes nothing on that form either.
         app(SaveBusinessCheck::class)->execute($ci, $folder, [
-            'check_id' => $check->id, 'co_maker_id' => null, 'income_source_id' => $source->id,
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'co_maker_id' => null, 'income_source_id' => $source->id,
             'ci_date' => '2026-09-05', 'location' => 'Lapasan',
         ]);
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
@@ -115,7 +115,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         $this->assertSame(2, $source->fresh()->revision);
 
         app(SaveBusinessCheck::class)->execute($ci, $folder, [
-            'check_id' => $check->id, 'co_maker_id' => null, 'income_source_id' => $source->id,
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'co_maker_id' => null, 'income_source_id' => $source->id,
             'ci_date' => '2026-09-09', 'location' => 'Bulua',
         ]);
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
@@ -302,7 +302,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
 
         // Business Check is later edited (its own saved snapshot changes, not the Report's).
         app(SaveBusinessCheck::class)->execute($ci, $folder, [
-            'check_id' => $check->id, 'co_maker_id' => null, 'income_source_id' => $source->id,
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'co_maker_id' => null, 'income_source_id' => $source->id,
             'ci_date' => '2026-09-05', 'location' => 'Lapasan',
         ]);
 
@@ -591,7 +591,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))->assertOk()->assertDontSee('value="2026-09-02"', false);
 
         app(SaveBusinessCheck::class)->execute($ci, $folder, [
-            'check_id' => $check->id, 'co_maker_id' => null, 'income_source_id' => $source->id,
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'co_maker_id' => null, 'income_source_id' => $source->id,
             'ci_date' => '2026-09-05', 'location' => 'Carmen',
         ]);
 
@@ -873,7 +873,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         app(SaveBusinessIncomeSource::class)->execute($ci, $folder, $source->fresh(), $this->reportPayload($source, null, 'Rey Store', 'Carmen', '2026-09-02'));
 
         app(SaveBusinessCheck::class)->execute($ci, $folder, [
-            'check_id' => $check->id, 'co_maker_id' => null, 'income_source_id' => $source->id,
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'co_maker_id' => null, 'income_source_id' => $source->id,
             'ci_date' => '2026-09-05', 'location' => 'Lapasan',
         ]);
 
@@ -964,7 +964,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         app(SaveBusinessIncomeSource::class)->execute($ci, $folder, $source, $this->reportPayload($source, null, 'RCM Logistics', 'CDO', '2026-09-05'));
         $this->assertSame('RCM Trucking', $check->fresh()->business_name);
         app(SaveBusinessCheck::class)->execute($ci, $folder, [
-            'check_id' => $check->id, 'co_maker_id' => null, 'income_source_id' => $source->id,
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'co_maker_id' => null, 'income_source_id' => $source->id,
             'ci_date' => '2026-09-09', 'location' => 'Bulua',
         ]);
         $this->assertSame('RCM Logistics', $source->fresh()->businessReport->business_name);
@@ -1023,7 +1023,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         // Later Check edit/delete must not alter the now-saved, independent Report.
         $check = $folder->businessChecks()->firstOrFail();
         app(SaveBusinessCheck::class)->execute($ci, $folder, [
-            'check_id' => $check->id, 'co_maker_id' => null, 'income_source_id' => $source->id,
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'co_maker_id' => null, 'income_source_id' => $source->id,
             'ci_date' => '2026-09-09', 'location' => 'CDO',
         ]);
         $this->assertSame('Opol, Misamis Oriental', $source->fresh()->businessReport->main_business_address);
@@ -1375,7 +1375,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         ]);
 
         app(SaveBusinessCheck::class)->execute($ci, $folder, [
-            'check_id' => $check->id, 'co_maker_id' => null, 'income_source_id' => $source->id,
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'co_maker_id' => null, 'income_source_id' => $source->id,
             'ci_date' => '2026-09-03', 'location' => 'Updated Check Location',
         ]);
 
@@ -1937,7 +1937,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         // A different CI later edits (but does not re-create) the same Check — updated_by changes,
         // ci_user_id (the actual creator) must not.
         app(SaveBusinessCheck::class)->execute($editor, $folder, [
-            'check_id' => $check->id, 'co_maker_id' => null, 'income_source_id' => $source->id,
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'co_maker_id' => null, 'income_source_id' => $source->id,
             'ci_date' => '2026-09-02', 'location' => 'Address',
         ]);
         $this->assertSame($creator->id, $check->fresh()->ci_user_id);

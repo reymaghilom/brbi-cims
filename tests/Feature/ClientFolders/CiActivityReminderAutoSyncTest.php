@@ -37,7 +37,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-03',
             'scheduled_time' => '09:00',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ]);
 
         $response->assertOk();
@@ -63,7 +63,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-03',
             'scheduled_time' => '09:00',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         Notification::assertSentTo($creator, CiActivityScheduledReminder::class);
@@ -87,7 +87,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-04',
             'scheduled_time' => '10:00',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         $this->assertNull($barangay->fresh()->reminder_sent_at, 'the stale reminder watermark must be cleared so the new schedule can fire');
@@ -111,7 +111,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
         $this->actingAs($creator)->putJson(route('client-folders.activities.update', [$folder, $barangay]), [
             'co_maker_id' => '',
             'status' => 'pending',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         $fresh = $barangay->fresh();
@@ -133,7 +133,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
         $this->actingAs($creator)->putJson(route('client-folders.activities.update', [$folder, $barangay]), [
             'co_maker_id' => '',
             'status' => 'completed',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         // The due-reminder command only ever considers status=Scheduled — Completed is excluded outright.
@@ -154,7 +154,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
         $this->actingAs($creator)->putJson(route('client-folders.activities.update', [$folder, $barangay]), [
             'co_maker_id' => '',
             'status' => 'pending',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         $fresh = $barangay->fresh();
@@ -176,7 +176,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
         $this->actingAs($creator)->putJson(route('client-folders.activities.update', [$folder, $barangay]), [
             'co_maker_id' => '',
             'status' => 'pending',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         $reopened = $barangay->fresh();
@@ -185,7 +185,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-05',
             'scheduled_time' => '11:00',
-            'expected_updated_at' => $reopened->updated_at->toISOString(),
+            'expected_revision' => $reopened->fresh()->revision,
         ])->assertOk();
 
         Notification::assertSentToTimes($creator, CiActivityScheduledReminder::class, 1);
@@ -206,7 +206,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-03',
             'scheduled_time' => '09:00',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ]);
         $first->assertOk();
 
@@ -217,7 +217,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-03',
             'scheduled_time' => '09:00',
-            'expected_updated_at' => $barangay->fresh()->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         Notification::assertSentToTimes($creator, CiActivityScheduledReminder::class, 1);
@@ -234,7 +234,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'co_maker_id' => '',
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-03',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         $fresh = $barangay->fresh();
@@ -254,7 +254,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => now()->addMonth()->format('Y-m-d'),
             'scheduled_time' => '09:00',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         Notification::assertSentTo($creator, CiActivityScheduledReminder::class, function ($notification) {
@@ -281,7 +281,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-03',
             'scheduled_time' => '09:00',
-            'expected_updated_at' => $coMakerActivity->updated_at->toISOString(),
+            'expected_revision' => $coMakerActivity->fresh()->revision,
         ])->assertOk();
 
         $this->assertNull($applicantActivity->fresh()->scheduled_at);
@@ -305,7 +305,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-02',
             'scheduled_time' => '08:30',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         Notification::assertSentTo($creator, CiActivityScheduledReminder::class, function ($notification) use ($barangay) {
@@ -333,7 +333,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-03',
             'scheduled_time' => '10:00',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         Notification::assertSentTo($creator, CiActivityScheduledReminder::class, function ($notification) use ($barangay) {
@@ -404,7 +404,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'co_maker_id' => '',
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-03',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         Notification::assertSentTo($creator, CiActivityScheduledReminder::class, function ($notification) use ($barangay) {
@@ -481,7 +481,7 @@ class CiActivityReminderAutoSyncTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => now()->addDay()->format('Y-m-d'),
             'scheduled_time' => '09:30',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         $this->artisan('ci-activities:send-reminders')->assertSuccessful();

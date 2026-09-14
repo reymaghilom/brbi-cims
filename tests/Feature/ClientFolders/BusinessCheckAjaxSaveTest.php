@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\ClientFolders;
 
+use App\Models\BusinessCheck;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
@@ -65,7 +66,7 @@ class BusinessCheckAjaxSaveTest extends TestCase
         $this->assertSame('Poblacion, San Miguel, Bulacan', $check->fresh()->location);
     }
 
-    /** @return array{0: User, 1: ClientFolder, 2: IncomeSource, 3: \App\Models\BusinessCheck} */
+    /** @return array{0: User, 1: ClientFolder, 2: IncomeSource, 3: BusinessCheck} */
     private function createBusinessCheck(): array
     {
         $ci = User::factory()->create();
@@ -103,6 +104,7 @@ class BusinessCheckAjaxSaveTest extends TestCase
     {
         return array_replace([
             'check_id' => $checkId,
+            'expected_revision' => BusinessCheck::query()->whereKey($checkId)->value('revision'),
             'income_source_id' => $source->id,
             'ci_date' => now()->toDateString(),
             'location' => 'Poblacion, San Miguel, Bulacan',

@@ -25,6 +25,19 @@ use Illuminate\Support\Facades\DB;
  * centralized Reports workspace can tell "never had a Business Check" apart from "its Business Check
  * was intentionally deleted" and stop regenerating a Pending work item for the latter. This marker
  * is the Business Check's alone — the Business Report's own state and visibility are untouched.
+ *
+ * Lock order across the Business Check module, kept compatible so no path can deadlock another:
+ *
+ *  - DELETE: the business_checks row first, then (only for a linked check) that exact
+ *    income_sources row for the suppression marker.
+ *  - EDIT (SaveBusinessCheck on an existing check): the business_checks row only. It never takes an
+ *    income_sources lock, so it can never hold one while waiting for a check row.
+ *  - CREATE: the income_sources row first, then it only INSERTs a business_checks row. Its
+ *    duplicate lookup is an ordinary non-locking read, so it never waits on an existing
+ *    business_checks row lock and cannot close a cycle with the two paths above.
+ *  - The client_folders lock used by progress recalculation is never held alongside either:
+ *    ClientProgressService defers to DB::afterCommit() when called inside a transaction, so it runs
+ *    only after this transaction has committed and released its locks.
  */
 class DeleteBusinessCheck
 {
@@ -103,12 +116,23 @@ class DeleteBusinessCheck
         });
     }
 
+    /**
+     * Delete identity is the exact Business Check ROW — its id, inside this exact folder and this
+     * exact person's scope. Never its business name, location, CI date or referenced business, so
+     * two same-named checks can never be confused for one another.
+     *
+     * income_source_id is deliberately NOT part of this lookup even though the route-bound instance
+     * carries one: it is a MUTABLE field (SaveBusinessCheck lets a CI repoint a check at a different
+     * business). Pinning the stale instance's value here meant that when an edit won the race and
+     * repointed the check, the delete could no longer resolve the row it was authorized to delete
+     * and failed as "not found" instead of removing the authoritative record. The id plus the
+     * folder and person scope already identify the row exactly, so nothing is lost by dropping it.
+     */
     private function exactCheckQuery(ClientFolder $folder, BusinessCheck $check): Builder
     {
         return BusinessCheck::query()
             ->whereKey($check->id)
             ->where('client_folder_id', $folder->id)
-            ->where('income_source_id', $check->income_source_id)
             ->when(
                 $check->co_maker_id === null,
                 fn (Builder $query) => $query->whereNull('co_maker_id'),

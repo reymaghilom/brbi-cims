@@ -3,6 +3,7 @@
 namespace App\Actions\ClientFolders;
 
 use App\Enums\ActivityStatus;
+use App\Exceptions\CiActivityConflictException;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\CiActivity;
@@ -12,7 +13,6 @@ use App\Notifications\CiActivityScheduledReminder;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -25,7 +25,32 @@ class UpdateCiActivity
 
     public function execute(User $actor, ClientFolder $folder, CiActivity $activity, array $data): void
     {
-        DB::transaction(function () use ($actor, $folder, $activity, $data): void {
+        // A schedule/reschedule reminder must only ever reach a CI for a change that actually
+        // committed: a rolled-back save, and in particular a stale save refused below, must notify
+        // nobody. Collected inside the transaction and delivered only after it commits.
+        $pendingReminder = null;
+
+        DB::transaction(function () use ($actor, $folder, $activity, $data, &$pendingReminder): void {
+            // The route-bound instance is a snapshot from before this transaction, so it is never
+            // treated as authoritative: the row is re-read and locked first, scoped to this exact
+            // folder and this exact person (co_maker_id NULL = Applicant, an exact id = that
+            // Co-Maker) and this exact activity id. Everything below — the status transition, the
+            // schedule, the reminder bookkeeping, the audit metadata — then reads from that locked
+            // row, and the lock is held through the whole save so the compare and the write are one
+            // atomic step. The previous updated_at comparison read the row without a lock, was
+            // second-precision, and was skipped entirely when the field was simply omitted.
+            $activity = CiActivity::query()
+                ->whereKey($activity->getKey())
+                ->where('client_folder_id', $folder->id)
+                ->when(
+                    $activity->co_maker_id === null,
+                    fn ($query) => $query->whereNull('co_maker_id'),
+                    fn ($query) => $query->where('co_maker_id', $activity->co_maker_id),
+                )
+                ->lockForUpdate()
+                ->firstOrFail();
+            $activity->load('definition');
+
             if (in_array($activity->definition->code, [
                 ActivityDefinition::BANK_COOP_CHECK_CODE,
                 ActivityDefinition::ASSET_CHECK_CODE,
@@ -35,10 +60,10 @@ class UpdateCiActivity
                 ]);
             }
 
-            if (filled($data['expected_updated_at'] ?? null) && ! Carbon::parse($data['expected_updated_at'])->equalTo($activity->updated_at)) {
-                throw ValidationException::withMessages([
-                    'expected_updated_at' => 'This record has been updated by another CI. Please review the latest version before saving.',
-                ]);
+            // Thrown before any field change, status transition, reminder bookkeeping, audit row or
+            // progress recalculation — a refused stale save leaves nothing behind.
+            if ((int) ($data['expected_revision'] ?? 0) !== $activity->revision) {
+                throw new CiActivityConflictException;
             }
 
             $previousStatus = $activity->status;
@@ -63,8 +88,11 @@ class UpdateCiActivity
                 || ($previousSchedule !== null && $nextSchedule !== null && ! $previousSchedule->equalTo($nextSchedule))
                 || $previousScheduleHasTime !== $nextScheduleHasTime;
 
-            $updates = Arr::except($data, ['expected_updated_at', 'scheduled_time']) + [
+            $updates = Arr::except($data, ['expected_revision', 'scheduled_time']) + [
                 'updated_by' => $actor->id,
+                // Advanced on every successful update, so the token a form was rendered with can
+                // never be replayed. A save that rolls back rolls this back with it.
+                'revision' => $activity->revision + 1,
                 'completed_at' => $status === ActivityStatus::Completed ? ($activity->completed_at ?? now()) : null,
                 'reminder_sent_at' => $scheduleChanged || $status !== ActivityStatus::Scheduled
                     ? null
@@ -92,12 +120,14 @@ class UpdateCiActivity
             };
 
             if ($scheduledNow || $rescheduledNow) {
-                $activity->creator?->notify(new CiActivityScheduledReminder(
-                    $activity,
-                    $rescheduledNow
+                // Held back until this transaction commits — see $pendingReminder above.
+                $pendingReminder = [
+                    'recipient' => $activity->creator,
+                    'activity' => $activity,
+                    'purpose' => $rescheduledNow
                         ? CiActivityScheduledReminder::PURPOSE_SCHEDULE_CHANGED
                         : CiActivityScheduledReminder::PURPOSE_SCHEDULE_CREATED,
-                ));
+                ];
             }
 
             AuditLog::create([
@@ -144,5 +174,14 @@ class UpdateCiActivity
                 ]);
             }
         });
+
+        // The transaction has committed, so only a schedule change that actually survived reaches
+        // the CI. The recipient stays the activity's creator and both purposes are unchanged.
+        if ($pendingReminder !== null) {
+            $pendingReminder['recipient']?->notify(new CiActivityScheduledReminder(
+                $pendingReminder['activity'],
+                $pendingReminder['purpose'],
+            ));
+        }
     }
 }

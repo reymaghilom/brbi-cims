@@ -101,7 +101,7 @@ class ResidenceCheckCompanionUiTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($editor)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Updated by a different CI.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Updated by a different CI.',
         ]);
 
         $check->refresh();
@@ -199,7 +199,7 @@ class ResidenceCheckCompanionUiTest extends TestCase
 
         $docxPath = tempnam(sys_get_temp_dir(), 'docx').'.docx';
         file_put_contents($docxPath, $docxResponse->streamedContent());
-        $zip = new \ZipArchive();
+        $zip = new \ZipArchive;
         $zip->open($docxPath);
         $documentXml = $zip->getFromName('word/document.xml');
         $zip->close();
@@ -268,7 +268,7 @@ class ResidenceCheckCompanionUiTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($creator)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address',
             'contributor_ids_present' => '1', 'contributor_ids' => [$mark->id],
         ])->assertSessionHasNoErrors();
 

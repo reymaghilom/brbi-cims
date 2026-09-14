@@ -65,6 +65,7 @@ class ResidencePictureRequiredTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'photos' => $this->photos(3, 'Added'),
         ])->assertSessionHasNoErrors();
 
@@ -79,6 +80,7 @@ class ResidencePictureRequiredTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'photos' => $this->photos(3, 'TooMany'),
         ])->assertSessionHasErrors(['photos' => 'A maximum of 10 residence pictures is allowed.']);
 
@@ -92,6 +94,7 @@ class ResidencePictureRequiredTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'removed_photo_ids' => [$removedId],
             'photos' => $this->photos(3, 'Replacement'),
         ])->assertSessionHasNoErrors();
@@ -108,6 +111,7 @@ class ResidencePictureRequiredTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'removed_photo_ids' => $removedIds,
             'photos' => $this->photos(2, 'Replacement'),
         ])->assertSessionHasNoErrors();
@@ -123,6 +127,7 @@ class ResidencePictureRequiredTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'removed_photo_ids' => $removedIds,
             'photos' => $this->photos(1, 'Replacement'),
         ])->assertSessionHasNoErrors();
@@ -137,6 +142,7 @@ class ResidencePictureRequiredTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'removed_photo_ids' => [$photoId],
         ])->assertSessionHasErrors(['photos' => 'At least one residence picture is required.']);
 

@@ -7,7 +7,9 @@ use App\Actions\ClientFolders\SaveBusinessCheck;
 use App\Actions\ClientFolders\UpdateBusinessCheckContributors;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
+use App\Exceptions\BusinessCheckConflictException;
 use App\Exceptions\NoChangesDetectedException;
+use App\Exceptions\SimilarBusinessCheckExistsException;
 use App\Http\Requests\ClientFolders\SaveBusinessCheckRequest;
 use App\Http\Requests\ClientFolders\UpdateBusinessCheckContributorsRequest;
 use App\Models\BusinessCheck;
@@ -66,6 +68,35 @@ class BusinessCheckController extends Controller
 
         try {
             $check = $save->execute($request->user(), $clientFolder, $request->validated());
+        } catch (SimilarBusinessCheckExistsException $e) {
+            // Advisory only: nothing was created. The AJAX handler opens the similar-check dialog
+            // (Review Existing / Continue Anyway / Cancel) from this payload; Continue Anyway
+            // resubmits the same form with allow_similar_duplicate=1.
+            $existingRoute = route('client-folders.business-checks.edit', [$clientFolder, $e->existingCheckId] + $personParams);
+
+            if ($wantsJson) {
+                return response()->json([
+                    'result' => 'similar_exists',
+                    'message' => $e->getMessage(),
+                    'status_type' => 'warning',
+                    'existing_url' => $existingRoute,
+                ], 409);
+            }
+
+            // Without JS there is no dialog to host the choice, so the CI is sent to the record
+            // they most likely meant; re-adding deliberately is still possible from the form.
+            return redirect()->to($existingRoute)->withInput()->with('status', $e->getMessage())->with('statusType', 'warning');
+        } catch (BusinessCheckConflictException $e) {
+            // Nothing was saved — the whole transaction rolled back before any field, photo, map
+            // screenshot, audit or progress change. Same 409 + payload shape the CI/BI and
+            // Residence conflict paths already use, so the AJAX handler can tell it apart from a
+            // field validation failure without inspecting message text.
+            if ($wantsJson) {
+                return response()->json(['result' => 'conflict', 'message' => $e->getMessage(), 'status_type' => 'error'], 409);
+            }
+
+            return redirect()->route('client-folders.business-checks.edit', [$clientFolder, $request->validated('check_id')] + $personParams)
+                ->withInput()->with('status', $e->getMessage())->with('statusType', 'error');
         } catch (NoChangesDetectedException $e) {
             if ($wantsJson) {
                 return response()->json(['result' => 'no_change', 'message' => $e->getMessage(), 'status_type' => 'info']);

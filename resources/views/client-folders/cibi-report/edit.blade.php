@@ -3,6 +3,7 @@
 @section('title', 'CI / BI Report · '.$clientFolder->display_name)
 
 @section('content')
+    @php($revisionConflict = $errors->first('expected_revision'))
     <form id="cibi-report-form" method="POST" action="{{ route('client-folders.cibi-report.update', $clientFolder) }}" class="cibi-encoding-page w-full" data-cibi-form data-unsaved-form novalidate>
         @csrf
         @method('PUT')
@@ -11,8 +12,8 @@
         <input type="hidden" name="expected_revision" value="{{ $report?->revision }}" data-cibi-expected-revision>
 
         <div class="mb-3 rounded-control border border-danger/30 bg-danger-soft p-3 text-sm text-danger" role="alert" tabindex="-1" data-cibi-error-summary @if(!$errors->any()) hidden @endif>
-            <p class="font-semibold">Please correct the highlighted report fields.</p>
-            <p class="mt-1" data-cibi-error-message>No report changes were saved.</p>
+            <p class="font-semibold" data-cibi-validation-heading @if($revisionConflict) hidden @endif>Please review the highlighted fields.</p>
+            <p class="mt-1" data-cibi-error-message>{{ $revisionConflict ?: 'No report changes were saved.' }}</p>
         </div>
 
         @if($report)

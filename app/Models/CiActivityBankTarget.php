@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 
 class CiActivityBankTarget extends Model
 {
@@ -31,6 +32,7 @@ class CiActivityBankTarget extends Model
             'scheduled_at' => 'datetime',
             'scheduled_has_time' => 'boolean',
             'reminder_sent_at' => 'datetime',
+            'revision' => 'integer',
         ];
     }
 
@@ -52,6 +54,17 @@ class CiActivityBankTarget extends Model
     public function inquiryTypeLabel(): string
     {
         return self::INQUIRY_TYPES[$this->inquiry_type] ?? $this->inquiry_type;
+    }
+
+    /**
+     * Deterministic identity used ONLY for duplicate detection: casing, surrounding whitespace and
+     * repeated internal spaces are harmless formatting differences, so " BDO  Carmen " and
+     * "bdo carmen" are the same target. Nothing fuzzier than that — "BDO" and "BDO Network Bank"
+     * stay different institutions.
+     */
+    public static function normalizeIdentity(?string $value): string
+    {
+        return Str::lower((string) preg_replace('/\s+/u', ' ', trim((string) $value)));
     }
 
     public function targetLabel(): string

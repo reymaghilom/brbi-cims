@@ -112,6 +112,7 @@ class BusinessCheckIndependentArchitectureTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'business_name' => 'MANUAL STORE RENAMED',
             'location' => 'Manual Address Updated',
             'ci_date' => '2026-02-11',

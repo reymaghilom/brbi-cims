@@ -232,7 +232,7 @@ class ResidenceCheckCiDateTest extends TestCase
         $this->saveCibiStartDate($ci, $folder, $cibi, '2026-05-30');
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'touch only remarks', 'location' => $check->location,
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'touch only remarks', 'location' => $check->location,
         ])->assertRedirect();
 
         $check->refresh();
@@ -250,7 +250,7 @@ class ResidenceCheckCiDateTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'location' => $check->location, 'ci_date' => '2026-07-07',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'location' => $check->location, 'ci_date' => '2026-07-07',
         ])->assertRedirect();
 
         $this->assertSame('2026-07-07', $check->fresh()->ci_date->toDateString());
@@ -337,22 +337,28 @@ class ResidenceCheckCiDateTest extends TestCase
         $this->assertTrue($result->fresh()->is_satisfied);
     }
 
-    public function test_a_second_residence_check_for_the_same_person_is_also_unaffected_by_a_cibi_update(): void
+    /**
+     * A person only ever has one Residence Check (SaveResidenceCheck::makeForExactPerson refuses a
+     * second create), so the case this used to cover — "a second check for the same person" — can
+     * no longer exist. What remains worth pinning is that the refused attempt changes nothing: the
+     * one saved check keeps its own original CI Date across both the duplicate attempt and a later
+     * CI/BI start-date change.
+     */
+    public function test_a_refused_duplicate_create_leaves_the_saved_ci_date_untouched(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $folder->addresses()->create(['address_type' => 'present', 'address_line_1' => 'Applicant Address']);
         $cibi = $folder->cibiReports()->create(['ci_in_charge_id' => $ci->id, 'start_date' => '2026-01-10']);
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto())->assertRedirect();
-        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto())->assertRedirect();
-        $checks = $folder->residenceChecks()->whereNull('co_maker_id')->get();
-        $this->assertCount(2, $checks);
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto() + ['ci_date' => '2028-03-03'])->assertRedirect();
+
+        $check = $folder->residenceChecks()->whereNull('co_maker_id')->sole();
+        $this->assertSame('2026-01-10', $check->ci_date->toDateString());
 
         $this->saveCibiStartDate($ci, $folder, $cibi, '2027-02-02');
 
-        foreach ($checks as $check) {
-            $this->assertSame('2026-01-10', $check->fresh()->ci_date->toDateString());
-        }
+        $this->assertSame('2026-01-10', $check->fresh()->ci_date->toDateString());
     }
 
     /**

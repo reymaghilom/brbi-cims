@@ -3,6 +3,8 @@
 namespace App\Actions\ClientFolders;
 
 use App\Exceptions\NoChangesDetectedException;
+use App\Exceptions\ResidenceCheckAlreadyExistsException;
+use App\Exceptions\ResidenceCheckConflictException;
 use App\Models\AuditLog;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
@@ -53,10 +55,10 @@ class SaveResidenceCheck
         // rendered once per page/iframe load — see the hidden input in
         // residence-checks/form.blade.php), never the folder/person/CI. That's what makes this safe
         // to key a lock on: two submits sharing the same token are necessarily the same save
-        // (double-click, a retried request) acted on twice, while two genuinely separate Add
-        // Residence Check actions for the same person — a legitimate, already-supported case (see
-        // test_multiple_residence_checks_for_the_same_applicant_appear_as_separate_rows) — always
-        // reload the form first and so always carry different tokens, never colliding here.
+        // (double-click, a retried request) acted on twice. Two Add forms opened separately for the
+        // same person carry different tokens and never collide here — that case is not this guard's
+        // job at all; makeForExactPerson() below is what enforces the one-check-per-exact-person
+        // invariant for them.
         $lockKey = "residence-check-create:{$requestToken}";
         $resultCacheKey = "residence-check-create-result:{$requestToken}";
 
@@ -79,6 +81,43 @@ class SaveResidenceCheck
         });
     }
 
+    /**
+     * The business invariant for a CREATE: at most one Residence Check per exact person — the
+     * Applicant (co_maker_id NULL) and each individual Co-Maker are separate, independent persons
+     * and each still gets their own one check.
+     *
+     * request_token alone cannot enforce this. It identifies one loaded copy of the Add form, so
+     * two CIs who each opened their own Add form for the same person carry different tokens and
+     * neither request knows about the other — both used to create a row. A plain unique index
+     * cannot take this job either: on MySQL/MariaDB NULLs never collide in a unique index, so
+     * (client_folder_id, co_maker_id) would leave the Applicant — the NULL case — unprotected.
+     *
+     * So the exact person's own owning row is locked first: the Client Folder row for the
+     * Applicant, that exact Co-Maker row for a Co-Maker. Those always exist and stay stable even
+     * when no Residence Check does yet (which is precisely why there is nothing else to lock on a
+     * create), so a concurrent create for the same person blocks here until the winner commits,
+     * and then sees the winner's row in the authoritative lookup below and refuses. Locking is
+     * scoped through $folder's own relations, so a Co-Maker belonging to another folder is never
+     * reachable here and exact-person isolation is unchanged.
+     */
+    private function makeForExactPerson(ClientFolder $folder, ?CoMaker $activePerson): ResidenceCheck
+    {
+        if ($activePerson === null) {
+            ClientFolder::query()->whereKey($folder->getKey())->lockForUpdate()->firstOrFail();
+        } else {
+            $folder->coMakers()->whereKey($activePerson->getKey())->lockForUpdate()->firstOrFail();
+        }
+
+        $existing = $folder->residenceChecks()->where('co_maker_id', $activePerson?->id)->orderBy('id')->first();
+        if ($existing !== null) {
+            // Thrown before any photo/map upload, audit row, completion evaluation or progress
+            // recalculation runs, so a losing create leaves no side effect of any kind behind.
+            throw new ResidenceCheckAlreadyExistsException((int) $existing->id);
+        }
+
+        return $folder->residenceChecks()->make(['co_maker_id' => $activePerson?->id]);
+    }
+
     /** @param  array<string, mixed>  $data */
     private function save(User $actor, ClientFolder $folder, array $data, ?int $checkId, ?CoMaker $activePerson): ResidenceCheck
     {
@@ -97,17 +136,17 @@ class SaveResidenceCheck
 
         try {
             $check = DB::transaction(function () use ($actor, $folder, $data, $checkId, $activePerson, &$storedUploads, &$retiredCloudAssets): ResidenceCheck {
+                // Existing checks are locked before the revision comparison and stay locked through
+                // every parent, contributor, photo, audit and progress mutation in this save.
                 $check = $checkId !== null
-                    ? $folder->residenceChecks()->where('co_maker_id', $activePerson?->id)->findOrFail((int) $checkId)
-                    : $folder->residenceChecks()->make(['co_maker_id' => $activePerson?->id]);
+                    ? $folder->residenceChecks()->where('co_maker_id', $activePerson?->id)->lockForUpdate()->findOrFail((int) $checkId)
+                    : $this->makeForExactPerson($folder, $activePerson);
                 $created = ! $check->exists;
                 $resolvedAddress = PersonAddressResolver::resolve($folder, $activePerson);
                 $resolvedCiDate = PersonCiDateResolver::resolve($folder, $activePerson);
 
-                if (! $created && filled($data['expected_updated_at'] ?? null) && ! Carbon::parse($data['expected_updated_at'])->equalTo($check->updated_at)) {
-                    throw ValidationException::withMessages([
-                        'expected_updated_at' => 'This record has been updated by another CI. Please review the latest version before saving.',
-                    ]);
+                if (! $created && (int) ($data['expected_revision'] ?? 0) !== $check->revision) {
+                    throw new ResidenceCheckConflictException;
                 }
 
                 // Browser forms always submit this required editable field. Older direct callers
@@ -179,6 +218,8 @@ class SaveResidenceCheck
 
                 if ($created) {
                     $check->ci_user_id = $actor->id;
+                } else {
+                    $check->revision++;
                 }
                 $check->updated_by = $actor->id;
                 $check->save();

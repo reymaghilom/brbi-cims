@@ -12,6 +12,21 @@ use App\Services\Media\PrivateMediaStorage;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Lock order across the whole Residence Check module, kept deliberately compatible so edit and
+ * delete can never deadlock each other:
+ *
+ *  - EDIT (SaveResidenceCheck, existing check) and DELETE both take exactly one row lock inside
+ *    their transaction — the residence_checks row itself — and nothing else. Whichever gets it
+ *    first commits; the other waits and then acts on (or fails against) the authoritative result.
+ *  - CREATE takes the client_folders / co_makers row lock and then only INSERTs a residence_checks
+ *    row; it never waits on an existing residence_checks row lock (its existence lookup is an
+ *    ordinary non-locking read), so it cannot close a cycle with the two paths above.
+ *  - The client_folders lock used by progress recalculation is never held at the same time as the
+ *    residence_checks lock: ClientProgressService defers to DB::afterCommit() whenever it is called
+ *    inside a transaction, so that lock is only taken after this transaction has already committed
+ *    and released its row lock.
+ */
 class DeleteResidenceCheck
 {
     public function __construct(
@@ -32,6 +47,27 @@ class DeleteResidenceCheck
         $retiredCloudAssets = [];
 
         DB::transaction(function () use ($actor, $folder, $check, &$retiredCloudAssets): void {
+            // The route-bound instance is a snapshot from before this request's transaction, so it
+            // is never treated as authoritative here: the row is re-read and locked first, exactly
+            // like SaveResidenceCheck's edit path does, and everything below reads from that locked
+            // row. Without this, two overlapping deletes both worked off their own stale copies and
+            // each wrote a "deleted" audit event and retired the same Cloudinary assets, and a
+            // delete overlapping an edit could snapshot the photo list before the edit's new photo
+            // was committed and leave that asset orphaned.
+            //
+            // The scope is the same exact-person scope the rest of the module uses — this folder,
+            // this person (Applicant = co_maker_id NULL, or one exact Co-Maker), this id — so a
+            // locked lookup can never reach another person's or another folder's check.
+            //
+            // firstOrFail() when the row is already gone: a second/concurrent delete gets the same
+            // 404 the route binding itself would have produced had it resolved a moment later, so
+            // it reports no success, writes no audit event and cleans up no storage twice.
+            $check = $folder->residenceChecks()
+                ->where('co_maker_id', $check->co_maker_id)
+                ->whereKey($check->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
             $checkId = $check->id;
             $coMakerId = $check->co_maker_id;
             $location = $check->location;

@@ -81,6 +81,7 @@ class ResidenceCibiPrefillIndependenceTest extends TestCase
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'co_maker_id' => $coMaker->id,
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'ci_date' => '2026-06-03',
             'location' => 'Purok 5, Opol',
         ])->assertSessionHasNoErrors();

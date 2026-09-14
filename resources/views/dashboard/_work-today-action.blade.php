@@ -19,7 +19,7 @@
         data-dashboard-completion-update-url="{{ $item['completion_url'] }}"
         data-dashboard-completion-method="{{ $item['completion_method'] }}"
         data-dashboard-completion-co-maker-id="{{ $item['completion_co_maker_id'] }}"
-        data-dashboard-completion-expected-updated-at="{{ $item['completion_expected_updated_at'] }}"
+        data-dashboard-completion-expected-revision="{{ $item['completion_expected_revision'] }}"
         data-dashboard-completion-schedule="{{ $item['completion_schedule'] }}"
         data-dashboard-completion-remarks="{{ $item['completion_remarks'] }}"
         data-dashboard-activity-url="{{ $item['modal_url'] }}"

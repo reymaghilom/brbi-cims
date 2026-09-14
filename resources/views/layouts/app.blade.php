@@ -4,6 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
+    {{-- Read by every fetch/XHR handler that posts without a rendered <form> — the CI Activities
+         quick-complete checkbox, the Dashboard "Work Today" complete action and the proof upload
+         helpers all do `document.querySelector('meta[name="csrf-token"]')`. Without this tag that
+         lookup returns null, those requests post an EMPTY _token and Laravel answers
+         419 "CSRF token mismatch." Forms rendered with @csrf were never affected, which is why the
+         failure only showed up on the tap-to-complete paths. --}}
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     @include('partials.favicon')
     <title>@yield('title') · BRBI CIMS</title>
     {{-- Must run before any CSS paints: reads the saved desktop sidebar-collapsed preference and

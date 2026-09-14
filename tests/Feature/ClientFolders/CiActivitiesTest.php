@@ -48,7 +48,7 @@ class CiActivitiesTest extends TestCase
         $this->actingAs($assigned)->get(route('client-folders.activities.index', $folder))->assertOk()->assertDontSee('OTHER FOLDER VISITOR');
         $this->actingAs($assigned)->get(route('client-folders.activities.edit', [$folder, $activity]))->assertOk();
         $this->actingAs($other)->get(route('client-folders.activities.index', $folder))->assertOk();
-        $this->actingAs($other)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload())->assertRedirect();
+        $this->actingAs($other)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload($activity) + ['expected_revision' => $activity->fresh()->revision])->assertRedirect();
         $this->assertNotSame($folder->id, $otherFolder->id);
     }
 
@@ -59,7 +59,7 @@ class CiActivitiesTest extends TestCase
         $other = User::factory()->create();
         [$folder, $activity] = $this->folderWithActivities($ci);
 
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload() + ['assigned_ci_id' => $assignee->id])
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload($activity) + ['assigned_ci_id' => $assignee->id] + ['expected_revision' => $activity->fresh()->revision])
             ->assertRedirect();
         $activity->refresh();
         $this->assertSame($assignee->id, $activity->assigned_ci_id);
@@ -69,24 +69,35 @@ class CiActivitiesTest extends TestCase
         $this->actingAs($other)->get(route('client-folders.activities.edit', [$folder, $activity]))->assertOk();
 
         // Saving again without changing the assignment must not fire a second assignment-changed event.
-        $this->actingAs($assignee)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload() + ['assigned_ci_id' => $assignee->id]);
+        $this->actingAs($assignee)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload($activity) + ['assigned_ci_id' => $assignee->id] + ['expected_revision' => $activity->fresh()->revision]);
         $this->assertSame(1, AuditLog::where('action', 'ci_activity.assignment_changed')->count());
     }
 
-    public function test_ci_activity_concurrent_save_with_stale_updated_at_is_rejected(): void
+    /** The monotonic revision replaced expected_updated_at, which was second-precision, unlocked and optional. */
+    public function test_ci_activity_concurrent_save_with_a_stale_revision_is_rejected(): void
     {
         $ci = User::factory()->create();
         $other = User::factory()->create();
-        [$folder, $activity] = $this->folderWithActivities($ci);
-        $staleTimestamp = $activity->updated_at->toISOString();
+        [$folder] = $this->folderWithActivities($ci);
+        // Deliberately NOT a Bank/Coop or Asset parent: their status is target-managed and is
+        // refused before any concurrency check, which would mask the conflict under test.
+        $activity = $folder->activities()->create([
+            'activity_definition_id' => ActivityDefinition::query()->where('code', ActivityDefinition::BARANGAY_CHECK_CODE)->value('id'),
+            'name' => 'Barangay Check',
+            'creator_id' => $ci->id,
+        ]);
+        // Read from the DB: Eloquent does not backfill a column default into the created instance.
+        $staleRevision = $activity->fresh()->revision;
 
-        $this->travel(1)->minutes();
-        $this->actingAs($other)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload() + ['expected_updated_at' => $staleTimestamp])
+        // Both CIs submit the SAME revision. payload() is called without the activity here so it
+        // cannot helpfully refresh the token — that is the whole point of the race.
+        $this->actingAs($other)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload() + ['expected_revision' => $staleRevision])
             ->assertRedirect();
+        $this->assertSame($staleRevision + 1, $activity->fresh()->revision);
 
-        $this->actingAs($ci)->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload() + ['expected_updated_at' => $staleTimestamp])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('expected_updated_at');
+        $this->actingAs($ci)->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload() + ['expected_revision' => $staleRevision])
+            ->assertStatus(409)
+            ->assertJson(['result' => 'conflict']);
     }
 
     public function test_deleted_folder_is_unavailable_and_forged_nested_activity_is_rejected(): void
@@ -96,7 +107,7 @@ class CiActivitiesTest extends TestCase
         [$otherFolder, $otherActivity] = $this->folderWithActivities();
 
         $this->actingAs($admin)->get(route('client-folders.activities.edit', [$folder, $otherActivity]))->assertNotFound();
-        $this->actingAs($admin)->put(route('client-folders.activities.update', [$folder, $otherActivity]), $this->payload())->assertNotFound();
+        $this->actingAs($admin)->put(route('client-folders.activities.update', [$folder, $otherActivity]), $this->payload($otherActivity) + ['expected_revision' => $otherActivity->fresh()->revision])->assertNotFound();
         $folder->delete();
         $this->actingAs($admin)->get(route('client-folders.activities.index', $folder->id))->assertNotFound();
         $this->actingAs($admin)->get(route('client-folders.activities.edit', [$folder->id, $activity->id]))->assertNotFound();
@@ -108,7 +119,7 @@ class CiActivitiesTest extends TestCase
         $ci = User::factory()->create();
         [$folder, $activity] = $this->folderWithActivities($ci);
 
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload())
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload($activity) + ['expected_revision' => $activity->fresh()->revision])
             ->assertRedirect(route('client-folders.activities.edit', [$folder, $activity]))->assertSessionHas('status');
 
         $activity->refresh();
@@ -129,7 +140,7 @@ class CiActivitiesTest extends TestCase
         $activity->forceFill(['scheduled_at' => now()->addHour(), 'reminder_sent_at' => now()])->saveQuietly();
 
         $this->actingAs($creator)->put(route('client-folders.activities.update', [$folder, $activity]), [
-            'expected_updated_at' => $activity->updated_at->toISOString(),
+            'expected_revision' => $activity->fresh()->revision,
             'status' => 'completed',
             'scheduled_at' => $activity->scheduled_at->format('Y-m-d H:i:s'),
         ])->assertRedirect();
@@ -153,7 +164,7 @@ class CiActivitiesTest extends TestCase
         $this->assertEquals($completedAt, $activity->fresh()->completed_at);
 
         $this->put(route('client-folders.activities.update', [$folder, $activity]), [
-            'expected_updated_at' => $activity->updated_at->toISOString(),
+            'expected_revision' => $activity->fresh()->revision,
             'status' => 'pending',
             'intent' => 'return',
         ])->assertRedirect();
@@ -194,12 +205,12 @@ class CiActivitiesTest extends TestCase
             'creator_id' => $ci->id,
         ]);
 
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['co_maker_id' => null, 'status' => 'pending'])->assertForbidden();
-        $this->put(route('client-folders.activities.update', [$folder, $activity]), ['co_maker_id' => $coMakerB->id, 'status' => 'pending'])->assertForbidden();
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['co_maker_id' => null, 'status' => 'pending'] + ['expected_revision' => $activity->fresh()->revision])->assertForbidden();
+        $this->put(route('client-folders.activities.update', [$folder, $activity]), ['co_maker_id' => $coMakerB->id, 'status' => 'pending'] + ['expected_revision' => $activity->fresh()->revision])->assertForbidden();
         $this->put(route('client-folders.activities.update', [$otherFolder, $activity]), ['co_maker_id' => $coMakerA->id, 'status' => 'pending'])->assertNotFound();
         $this->assertSame(ActivityStatus::Completed, $activity->fresh()->status);
 
-        $this->put(route('client-folders.activities.update', [$folder, $activity]), ['co_maker_id' => $coMakerA->id, 'status' => 'pending'])->assertRedirect();
+        $this->put(route('client-folders.activities.update', [$folder, $activity]), ['co_maker_id' => $coMakerA->id, 'status' => 'pending'] + ['expected_revision' => $activity->fresh()->revision])->assertRedirect();
         $this->assertSame(ActivityStatus::Pending, $activity->fresh()->status);
     }
 
@@ -315,7 +326,7 @@ class CiActivitiesTest extends TestCase
             'completed_at' => now(),
         ]);
 
-        $this->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'pending'])
+        $this->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'pending'] + ['expected_revision' => $activity->fresh()->revision])
             ->assertRedirect(route('login'));
         $this->delete(route('client-folders.activities.destroy', [$folder, $activity]), ['co_maker_id' => null])
             ->assertRedirect(route('login'));
@@ -516,9 +527,10 @@ class CiActivitiesTest extends TestCase
         $this->post(route('client-folders.activities.store', $folder), [
             'activity_definition_id' => $custom->id,
             'status' => 'pending',
-        ])->assertSessionHasErrors([
-            'activity_definition_id' => 'This activity already exists for the current Applicant.',
-        ]);
+        ])->assertRedirect()->assertSessionHas(
+            'ci_activity_duplicate',
+            'A similar activity already exists for this Applicant. Another CI may already be working on it. Please review the existing entry before continuing.',
+        );
         $this->assertSame($activityCount, CiActivity::query()->count());
         $this->assertSame($creationAuditCount, AuditLog::query()->where('action', 'ci_activity.created')->count());
         $this->assertSame(ActivityStatus::Completed, $applicantCustom->fresh()->status);
@@ -540,9 +552,13 @@ class CiActivitiesTest extends TestCase
             'co_maker_id' => $coMakerA->id,
             'activity_definition_id' => $custom->id,
             'status' => 'follow_up',
-        ])->assertSessionHasErrors([
-            'activity_definition_id' => 'This activity already exists for this Co-Maker.',
-        ]);
+            // For Follow-up requires a date, so this reaches the duplicate advisory rather than
+            // stopping at schedule validation.
+            'scheduled_at' => '2026-09-20',
+        ])->assertRedirect()->assertSessionHas(
+            'ci_activity_duplicate',
+            'A similar activity already exists for this Co-Maker. Another CI may already be working on it. Please review the existing entry before continuing.',
+        );
         $this->assertSame($activityCount, CiActivity::query()->count());
         $this->assertSame($creationAuditCount, AuditLog::query()->where('action', 'ci_activity.created')->count());
 
@@ -1055,16 +1071,16 @@ class CiActivitiesTest extends TestCase
         $ci = User::factory()->create();
         [$folder, $activity] = $this->folderWithActivities($ci);
 
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'pending'])->assertSessionHasNoErrors();
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'scheduled'])
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'pending'] + ['expected_revision' => $activity->fresh()->revision])->assertSessionHasNoErrors();
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'scheduled'] + ['expected_revision' => $activity->fresh()->revision])
             ->assertSessionHasErrors('scheduled_at');
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'follow_up'])
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'follow_up'] + ['expected_revision' => $activity->fresh()->revision])
             ->assertSessionHasNoErrors();
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'follow_up', 'scheduled_at' => 'not-a-date'])
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'follow_up', 'scheduled_at' => 'not-a-date'] + ['expected_revision' => $activity->fresh()->revision])
             ->assertSessionHasErrors('scheduled_at');
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'completed'])
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'completed'] + ['expected_revision' => $activity->fresh()->revision])
             ->assertSessionHasNoErrors();
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'invalid'])
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'invalid'] + ['expected_revision' => $activity->fresh()->revision])
             ->assertSessionHasErrors('status');
     }
 
@@ -1260,12 +1276,12 @@ class CiActivitiesTest extends TestCase
     {
         $ci = User::factory()->create();
         [$folder, $activity] = $this->folderWithActivities($ci);
-        $payload = $this->payload();
+        $payload = $this->payload($activity);
         $payload['visit_date'] = now()->addDay()->toDateString();
         $payload['time_in'] = '16:00';
         $payload['time_out'] = '08:00';
 
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $payload)
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $payload + ['expected_revision' => $activity->fresh()->revision])
             ->assertSessionHasErrors(['visit_date', 'time_out']);
     }
 
@@ -1771,7 +1787,7 @@ class CiActivitiesTest extends TestCase
         [$folder, $activity] = $this->folderWithActivities($ci);
         $folder->activities()->whereKeyNot($activity->id)->update(['status' => ActivityStatus::Completed, 'completed_at' => now()]);
 
-        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload())->assertRedirect();
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload($activity) + ['expected_revision' => $activity->fresh()->revision])->assertRedirect();
 
         $this->assertDatabaseHas('client_completion_results', ['client_folder_id' => $folder->id, 'is_satisfied' => true, 'explanation_key' => 'required_activities.complete']);
         $folder->refresh();
@@ -2264,7 +2280,7 @@ class CiActivitiesTest extends TestCase
             $this->post(route('notifications.ci-activities.read', $oldNotification->id))->assertRedirect();
 
             $this->actingAs($updater)->put(route('client-folders.activities.update', [$folder, $activity]), [
-                'expected_updated_at' => $activity->updated_at->toISOString(),
+                'expected_revision' => $activity->fresh()->revision,
                 'status' => 'pending',
             ])->assertRedirect();
             $activity->refresh();
@@ -2485,9 +2501,10 @@ class CiActivitiesTest extends TestCase
             ->firstOrFail();
     }
 
-    private function payload(): array
+    /** $activity is passed wherever the payload is an UPDATE: it carries that row's current revision. */
+    private function payload(?CiActivity $activity = null): array
     {
-        return [
+        return ($activity === null ? [] : ['expected_revision' => CiActivity::query()->whereKey($activity->getKey())->value('revision')]) + [
             'status' => 'completed', 'visit_date' => '2026-08-01', 'time_in' => '09:00', 'time_out' => '10:15',
             'visited_by' => ' Assigned  Investigator ', 'person_met_contact' => 'Juan Dela Cruz / 09170000000',
             'remarks' => 'Verified residence and neighborhood details.', 'supporting_reference' => 'Barangay reference BR-10',

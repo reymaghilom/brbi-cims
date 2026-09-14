@@ -122,7 +122,7 @@ class NoChangeDetectionTest extends TestCase
         AuditLog::query()->where('client_folder_id', $folder->id)->delete();
 
         $response = $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.',
         ])->assertRedirect();
 
         $response->assertSessionHas('status', 'Nothing changed. No updates were saved to the database.');
@@ -142,7 +142,7 @@ class NoChangeDetectionTest extends TestCase
 
         $this->travel(1)->minutes();
         $this->actingAs($editor)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.',
         ])->assertSessionHas('statusType', 'info');
 
         $check->refresh();
@@ -165,7 +165,7 @@ class NoChangeDetectionTest extends TestCase
         $storedScreenshotPath = $check->map_screenshot_path;
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.',
         ])->assertSessionHas('statusType', 'info');
 
         $check->refresh();
@@ -187,7 +187,7 @@ class NoChangeDetectionTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified with barangay confirmation.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified with barangay confirmation.',
         ])->assertSessionHas('status', 'Residence Check updated successfully.');
 
         $this->assertDatabaseHas('audit_logs', ['client_folder_id' => $folder->id, 'action' => 'residence_check.updated']);
@@ -204,7 +204,7 @@ class NoChangeDetectionTest extends TestCase
         $photo = UploadedFile::fake()->image('Added.jpg', 900, 700)->size(500);
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified.', 'photos' => [$photo],
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.', 'photos' => [$photo],
         ])->assertSessionHas('status', 'Residence Check updated successfully.');
 
         $this->assertSame(2, $check->photos()->count());
@@ -225,7 +225,7 @@ class NoChangeDetectionTest extends TestCase
         $photoId = $check->photos()->first()->id;
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified.', 'removed_photo_ids' => [$photoId],
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.', 'removed_photo_ids' => [$photoId],
         ])->assertSessionHas('status', 'Residence Check updated successfully.');
 
         $this->assertSame(1, $check->photos()->count());
@@ -244,7 +244,7 @@ class NoChangeDetectionTest extends TestCase
         $originalPath = $check->map_screenshot_path;
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified.', 'map_screenshot' => UploadedFile::fake()->image('Replacement.png', 800, 600)->size(400),
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.', 'map_screenshot' => UploadedFile::fake()->image('Replacement.png', 800, 600)->size(400),
         ])->assertSessionHas('status', 'Residence Check updated successfully.');
 
         $this->assertNotSame($originalPath, $check->fresh()->map_screenshot_path);
@@ -262,7 +262,7 @@ class NoChangeDetectionTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified.', 'remove_map_screenshot' => '1',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.', 'remove_map_screenshot' => '1',
         ])->assertSessionHas('status', 'Residence Check updated successfully.');
 
         $this->assertNull($check->fresh()->map_screenshot_path);

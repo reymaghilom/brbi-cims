@@ -12,6 +12,8 @@ use App\Actions\Media\AddCiActivityProofPhotos;
 use App\Actions\Media\RemoveCiActivityProof;
 use App\Actions\Media\ReplaceCiActivityProof;
 use App\Enums\ActivityStatus;
+use App\Exceptions\CiActivityConflictException;
+use App\Exceptions\DuplicateCiActivityException;
 use App\Http\Requests\ClientFolders\ReplaceCiActivityProofRequest;
 use App\Http\Requests\ClientFolders\StoreCiActivityProofRequest;
 use App\Http\Requests\ClientFolders\StoreCiActivityRequest;
@@ -227,33 +229,34 @@ class CiActivityController extends Controller
             [$clientFolder] + ActivePersonResolver::queryParams($activePerson) + ['status' => 'all'],
         );
 
-        if ($validated['create_new_activity_type']) {
-            $definition = $create->createDefinition($request->user(), $clientFolder, $validated['new_activity_type']);
-            $oldInput = [
-                'activity_definition_id' => $definition->id,
-                'status' => ActivityStatus::Pending->value,
-            ];
-            $message = self::ACTIVITY_TYPE_CREATED_MESSAGE;
-
+        try {
+            $create->execute($request->user(), $clientFolder, $validated);
+        } catch (DuplicateCiActivityException $e) {
+            // Collaborative advisory, not an error: nothing was created. The CI either reviews the
+            // entry another CI may already be working, or resubmits the same values with
+            // allow_duplicate=1 — which creates a second, fully independent activity.
             if ($request->expectsJson()) {
-                $request->session()->flashInput($oldInput);
-                $request->session()->flash('status', $message);
-                $request->session()->flash('ci_activity_modal_open', true);
-
                 return response()->json([
-                    'activity_created' => false,
-                    'redirect' => $destination,
-                ]);
+                    'result' => 'duplicate_exists',
+                    'message' => $e->getMessage(),
+                    'status_type' => 'warning',
+                    'existing_activity_id' => $e->existingActivityId,
+                ], 409);
             }
 
             return redirect($destination)
-                ->withInput($oldInput)
-                ->with('status', $message)
+                ->withInput()
+                ->with('status', $e->getMessage())
+                ->with('statusType', 'warning')
+                ->with('ci_activity_duplicate', $e->getMessage())
                 ->with('ci_activity_modal_open', true);
         }
 
-        $create->execute($request->user(), $clientFolder, $validated);
-        $message = 'Activity added successfully.';
+        // Only claim the Activity Type was created when this request actually created it — typing
+        // the equivalent of an existing active type reuses it and is an ordinary Add.
+        $message = $create->definitionWasCreated
+            ? 'Activity Type created and activity added successfully.'
+            : 'Activity added successfully.';
 
         if ($request->expectsJson()) {
             $request->session()->flash('status', $message);
@@ -387,9 +390,26 @@ class CiActivityController extends Controller
     public function update(UpdateCiActivityRequest $request, ClientFolder $clientFolder, CiActivity $ciActivity, UpdateCiActivity $update): JsonResponse|RedirectResponse
     {
         $watermark = CiActivityHistoryFeed::watermark();
-        $update->execute($request->user(), $clientFolder, $ciActivity, $request->validated());
         $activePerson = ActivePersonResolver::resolve($clientFolder, $request->validated('co_maker_id'));
         $personParams = ActivePersonResolver::queryParams($activePerson);
+
+        try {
+            $update->execute($request->user(), $clientFolder, $ciActivity, $request->validated());
+        } catch (CiActivityConflictException $e) {
+            // Nothing was saved — the whole transaction rolled back before any field change, audit
+            // row, progress recalculation or reminder. Same 409 + payload shape the Residence and
+            // Business conflict paths use, so the existing toast conventions apply unchanged.
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'result' => 'conflict',
+                    'message' => $e->getMessage(),
+                    'status_type' => 'error',
+                ], 409);
+            }
+
+            return redirect()->route('client-folders.activities.edit', [$clientFolder, $ciActivity] + $personParams)
+                ->withInput()->with('status', $e->getMessage())->with('statusType', 'error');
+        }
 
         if ($request->expectsJson()) {
             $history = CiActivityHistoryFeed::since($clientFolder, $watermark, $activePerson?->id);

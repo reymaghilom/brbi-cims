@@ -87,7 +87,7 @@ class ClientFolderDeleteWarningTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->newFolder($ci);
         $barangay = $this->defaultActivity($folder, ActivityDefinition::BARANGAY_CHECK_CODE);
-        $url = route('client-folders.activities.update', [$folder, $barangay]);
+        $url = route('client-folders.activities.update', [$folder, $barangay] + ['expected_revision' => $barangay->fresh()->revision]);
 
         $this->actingAs($ci)->putJson($url, ['co_maker_id' => null, 'status' => ActivityStatus::FollowUp->value])->assertOk();
         $this->putJson($url, ['co_maker_id' => null, 'status' => ActivityStatus::Pending->value])->assertOk();

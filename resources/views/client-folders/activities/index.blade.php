@@ -35,6 +35,9 @@
         $activityModalStatus = session('status');
         $activityTypeCreated = $activityModalStatus === App\Http\Controllers\CiActivityController::ACTIVITY_TYPE_CREATED_MESSAGE;
         $activityModalHasErrors = $errors->getBag('default')->any();
+        // ONE duplicate-state flag, used by the advisory panel, the footer swap and the reopen —
+        // reading the session separately in each spot would let them disagree.
+        $hasCiActivityDuplicate = session()->has('ci_activity_duplicate');
         $activityModalShouldOpen = $activityModalHasErrors || session('ci_activity_modal_open');
         $activityModalSuccess = $activityTypeCreated ? $activityModalStatus : null;
     @endphp
@@ -287,7 +290,7 @@
                                                         data-completion-name="{{ $activity->display_name }}"
                                                         data-completion-update-url="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}"
                                                         data-completion-tracker-url="{{ $isCustomActivity ? route('client-folders.activities.custom-check.show', [$clientFolder, $activity] + $personParams) : route('client-folders.activities.default-check.show', [$clientFolder, $activity] + $personParams) }}"
-                                                        data-completion-expected-updated-at="{{ $activity->updated_at->toISOString() }}"
+                                                        data-completion-expected-revision="{{ $activity->revision }}"
                                                         data-completion-co-maker-id="{{ $activePerson?->id }}"
                                                         data-completion-status-label="{{ $activity->status->label() }}"
                                                         data-completion-schedule-text="{{ $completionScheduleText }}"
@@ -327,7 +330,7 @@
                                         @if(! $isDefaultCheck && ! $isBankCoopCheck && ! $isAssetCheck && ! $isCustomActivity)
                                             <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Update {{ $activity->display_name }}" title="Update"><x-ui.icon name="edit" size="size-4" /></a>
                                             <a href="{{ route('client-folders.activities.edit', [$clientFolder, $activity] + $personParams) }}#schedule" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Schedule or reschedule {{ $activity->display_name }}" title="Schedule / Reschedule"><x-ui.icon name="calendar" size="size-4" /></a>
-                                            @if($activity->status !== App\Enums\ActivityStatus::Completed)<form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}">@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at->toISOString() }}"><input type="hidden" name="status" value="completed"><input type="hidden" name="intent" value="return"><button type="submit" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Complete {{ $activity->display_name }}" title="Complete"><x-ui.icon name="check-circle" size="size-4" /></button></form>@endif
+                                            @if($activity->status !== App\Enums\ActivityStatus::Completed)<form method="POST" action="{{ route('client-folders.activities.update', [$clientFolder, $activity]) }}">@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><input type="hidden" name="expected_revision" value="{{ $activity->revision }}"><input type="hidden" name="status" value="completed"><input type="hidden" name="intent" value="return"><button type="submit" class="ui-button-secondary-compact !size-8 !min-h-8 !px-0" aria-label="Complete {{ $activity->display_name }}" title="Complete"><x-ui.icon name="check-circle" size="size-4" /></button></form>@endif
                                         @endif
                                         @if($isDefaultCheck)
                                             {{-- Barangay / Neighbor Check are manually added now, so they can also be
@@ -521,7 +524,7 @@
                         <p>This activity will be returned to Pending. The previous completion will remain visible in Recent Activity.</p>
                         <x-slot:formFields>
                             <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
-                            <input type="hidden" name="expected_updated_at" value="{{ $activity->updated_at->toISOString() }}">
+                            <input type="hidden" name="expected_revision" value="{{ $activity->revision }}">
                             <input type="hidden" name="status" value="pending">
                             <input type="hidden" name="intent" value="return">
                         </x-slot:formFields>
@@ -716,6 +719,17 @@
                     <div class="mt-4 flex items-center gap-2 rounded-control bg-success-soft px-3 py-2 text-sm font-semibold text-success" role="status" data-ci-activity-success><x-ui.icon name="check-circle" size="size-4" />{{ $activityModalSuccess }}</div>
                 @endif
                 <div class="mt-4 flex items-start gap-2 rounded-control border border-danger/25 bg-danger-soft px-3 py-2 text-sm font-semibold text-danger" role="alert" tabindex="-1" data-ci-activity-request-error hidden><x-ui.icon name="warning" size="mt-0.5 size-4 shrink-0" /><span data-ci-activity-request-error-message></span></div>
+                {{-- Collaborative duplicate advisory. Nothing was created: another CI may already
+                     be working this activity, so the CI reviews the existing entry or deliberately
+                     proceeds. Advisory (progress) tokens, never the danger ones — nothing failed.
+                     Sits outside the scrolling body, so it cannot end up off-screen. --}}
+                <div class="mt-4 flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft px-3 py-3 text-sm" role="alert" tabindex="-1" data-ci-activity-duplicate-warning @if(! $hasCiActivityDuplicate) hidden @endif>
+                    <x-ui.icon name="warning" size="mt-0.5 size-4 shrink-0 text-progress" aria-hidden="true" />
+                    <div class="min-w-0">
+                        <p class="font-semibold leading-5 text-progress" data-ci-activity-duplicate-message>{{ session('ci_activity_duplicate') }}</p>
+                        <p class="mt-1 text-xs leading-5 text-text-muted">Nothing has been added yet and your entries are kept below. Choose <span class="font-semibold text-text-main">Continue Anyway</span> to add a separate activity, or Cancel to review the existing one.</p>
+                    </div>
+                </div>
             </div>
             <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6" data-ci-activity-dialog-body>
                 <div class="grid gap-4 sm:grid-cols-2">
@@ -756,13 +770,18 @@
                         </div>
                     </div>
                     <x-form.validation-message for="activity_definition_id" />
-                    <p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-activity-type-error hidden>Please select an Activity Type.</p>
+                    {{-- One slot, two sources. Laravel's message is rendered here so a full-page
+                         validation redirect explains itself: the modal used to reopen with the old
+                         values and no reason at all. The client-side copy travels in
+                         data-default-message so the JS can put it back once the CI edits the
+                         field, instead of inheriting this request's message as its default. --}}
+                    <p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-activity-type-error data-default-message="Please select an Activity Type." @if(! $errors->has('activity_definition_id')) hidden @endif>{{ $errors->first('activity_definition_id') ?: 'Please select an Activity Type.' }}</p>
                 </div>
                 <div class="sm:col-span-2" data-new-activity-type-fields @if(! $addingNewActivityType) hidden @endif>
                     <label for="new-activity-type" class="ui-label">New Activity Type</label>
                     <input id="new-activity-type" name="new_activity_type" value="{{ old('new_activity_type') }}" class="ui-control" maxlength="255" autocomplete="off" @if($addingNewActivityType) required @else disabled @endif data-new-activity-type-input>
                     <x-form.validation-message for="new_activity_type" />
-                    <p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-new-activity-type-error hidden>Please enter an Activity Type name.</p>
+                    <p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-new-activity-type-error data-default-message="Please enter an Activity Type name." @if(! $errors->has('new_activity_type')) hidden @endif>{{ $errors->first('new_activity_type') ?: 'Please enter an Activity Type name.' }}</p>
                 </div>
                 <div data-standard-activity-field @if($addingNewActivityType || $addingBankCoopCheck) hidden @endif><label for="activity-status" class="ui-label">Status</label><select id="activity-status" name="status" class="ui-control" @if(! $addingNewActivityType && ! $addingBankCoopCheck) required @else disabled @endif data-ci-activity-status data-schedule-status><option value="pending" @selected($addActivityStatus === 'pending')>Pending</option><option value="scheduled" @selected($addActivityStatus === 'scheduled')>Scheduled</option><option value="follow_up" @selected($addActivityStatus === 'follow_up')>For Follow-up</option><option value="completed" @selected($addActivityStatus === 'completed')>Completed</option></select><x-form.validation-message for="status" /><p class="mt-2 text-sm font-semibold text-danger" role="alert" data-ci-activity-status-error hidden>Please select a Status.</p></div>
                 <div class="sm:col-span-2" data-standard-activity-field @if($addingNewActivityType || $addingBankCoopCheck) hidden @endif>
@@ -851,7 +870,7 @@
                 </div>
                 </div>
             </div>
-            <div class="flex shrink-0 flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-ci-activity-dialog-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary" data-ci-activity-submit><x-ui.icon name="plus" size="size-4" /><span data-ci-activity-submit-label>{{ $addingNewActivityType ? 'Add Activity Type' : 'Add Activity' }}</span></button></div>
+            <div class="flex shrink-0 flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-ci-activity-dialog-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary" data-ci-activity-submit @if($hasCiActivityDuplicate) name="allow_duplicate" value="1" data-ci-activity-duplicate-continue @endif><x-ui.icon name="plus" size="size-4" /><span data-ci-activity-submit-label>{{ $hasCiActivityDuplicate ? 'Continue Anyway' : ($addingNewActivityType ? 'Add Activity Type' : 'Add Activity') }}</span></button></div>
         </form>
     </dialog>
 
@@ -1520,7 +1539,7 @@
             };
 
             const syncScheduleAvailability = () => {
-                const parentFieldsEnabled = ! addingNewActivityType() && ! addingBankCoopCheck() && ! addingAssetCheck();
+                const parentFieldsEnabled = ! addingBankCoopCheck() && ! addingAssetCheck();
                 const enabled = parentFieldsEnabled && ['scheduled', 'follow_up'].includes(status.value);
                 if (! enabled) {
                     schedule.value = '';
@@ -1540,7 +1559,11 @@
                 const addingNewType = addingNewActivityType();
                 const bankCoopCheck = ! addingNewType && addingBankCoopCheck();
                 const assetCheck = ! addingNewType && addingAssetCheck();
-                const parentFieldsHidden = addingNewType || bankCoopCheck || assetCheck;
+                // Typing a new Activity Type no longer hides the activity's own fields: one submit
+                // creates the type AND its activity, so status/schedule/remarks stay available
+                // exactly as for any other custom activity. Only Bank / Coop and Asset still
+                // derive their parent state from their targets.
+                const parentFieldsHidden = bankCoopCheck || assetCheck;
                 fields.hidden = ! addingNewType;
                 input.required = addingNewType;
                 input.disabled = ! addingNewType;
@@ -1549,15 +1572,8 @@
                 status.disabled = parentFieldsHidden;
                 status.required = ! parentFieldsHidden;
                 remarks.disabled = parentFieldsHidden;
-                form.dataset.submissionMode = addingNewType ? 'activity-type' : 'activity';
-                if (submitLabel) submitLabel.textContent = addingNewType ? 'Add Activity Type' : 'Add Activity';
-
-                if (addingNewType) {
-                    status.value = 'pending';
-                    schedule.value = '';
-                    scheduleTime.value = '';
-                    remarks.value = '';
-                }
+                form.dataset.submissionMode = 'activity';
+                if (submitLabel && ! submitButton?.dataset.ciActivityDuplicateContinue) submitLabel.textContent = 'Add Activity';
 
                 syncScheduleAvailability();
                 syncBankTargetSection();
@@ -1645,6 +1661,8 @@
             const statusError = form?.querySelector('[data-ci-activity-status-error]');
             const schedule = form?.querySelector('[data-ci-activity-schedule]');
             const scheduleError = form?.querySelector('[data-ci-activity-schedule-error]');
+            const duplicateWarning = form?.querySelector('[data-ci-activity-duplicate-warning]');
+            const duplicateMessage = form?.querySelector('[data-ci-activity-duplicate-message]');
             const requestError = form?.querySelector('[data-ci-activity-request-error]');
             const requestErrorMessage = form?.querySelector('[data-ci-activity-request-error-message]');
             const bankTargetSection = form?.querySelector('[data-bank-targets-section]');
@@ -1669,6 +1687,12 @@
 
             const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             const invalidClasses = ['border-danger', 'ring-2', 'ring-danger/20'];
+            // The two field slots ship with their own "please fill this in" copy. It is read from
+            // data-default-message rather than from textContent, because on a full-page validation
+            // redirect the slot is already rendering Laravel's message — reading textContent here
+            // would make THIS request's validation error the permanent client-side default.
+            const activityTypeErrorDefault = activityTypeError.dataset.defaultMessage ?? activityTypeError.textContent;
+            const newActivityTypeErrorDefault = newActivityTypeError.dataset.defaultMessage ?? newActivityTypeError.textContent;
 
             const stabilizeDialogFrame = () => {
                 if (form.style.height !== '') return;
@@ -1692,9 +1716,42 @@
                 requestErrorMessage.textContent = '';
             };
 
+            // Mirrors exactly what the Blade renders for $hasCiActivityDuplicate: the advisory panel
+            // and the one primary action swapped from Add Activity to Continue Anyway
+            // (allow_duplicate=1). The AJAX path never reaches Blade, so it applies the same state
+            // here rather than leaving the CI with a warning and an Add button that only re-warns.
+            const enterDuplicateState = (message) => {
+                if (duplicateMessage instanceof HTMLElement) duplicateMessage.textContent = message;
+                if (duplicateWarning instanceof HTMLElement) {
+                    duplicateWarning.hidden = false;
+                    duplicateWarning.focus({ preventScroll: true });
+                }
+                submitButton.name = 'allow_duplicate';
+                submitButton.value = '1';
+                submitButton.dataset.ciActivityDuplicateContinue = '';
+                if (submitLabel) submitLabel.textContent = 'Continue Anyway';
+            };
+
+            // Changing the intended target makes the advisory meaningless: the CI is no longer
+            // adding the thing that already existed, so the normal Add action comes back.
+            const leaveDuplicateState = () => {
+                if (duplicateWarning instanceof HTMLElement) duplicateWarning.hidden = true;
+                if (! submitButton.hasAttribute('name')) return;
+                submitButton.removeAttribute('name');
+                submitButton.removeAttribute('value');
+                delete submitButton.dataset.ciActivityDuplicateContinue;
+                if (submitLabel) submitLabel.textContent = form.dataset.submissionMode === 'activity-type'
+                    ? 'Add Activity Type'
+                    : 'Add Activity';
+            };
+
             const showRequestError = (message) => {
                 requestErrorMessage.textContent = message;
                 requestError.hidden = false;
+                // Plain focus on purpose: this banner is a sibling of [data-ci-activity-dialog-body],
+                // not a descendant, so scrolling that container could never move it — it sits in the
+                // dialog's fixed region between the header and the scrolling body and is always on
+                // screen already. revealFirstInvalid() here only yanked the form back to the top.
                 requestError.focus({ preventScroll: true });
             };
 
@@ -1719,12 +1776,16 @@
             };
 
             const validateActivityForm = () => {
-                const addingActivityType = form.dataset.submissionMode === 'activity-type';
-                const addingBankActivity = ! addingActivityType && ! bankTargetSection.hidden;
-                const addingAssetActivity = ! addingActivityType && ! assetTargetSection.hidden;
+                // One submit always creates an activity now, so "activity-type only" is gone: a
+                // typed new type simply also needs its name, and every other rule is the ordinary
+                // custom-activity rule.
+                const addingActivityType = false;
+                const typingNewActivityType = activityType.value === @js(App\Models\ActivityDefinition::NEW_TYPE_VALUE);
+                const addingBankActivity = ! bankTargetSection.hidden;
+                const addingAssetActivity = ! assetTargetSection.hidden;
                 const addingMultiTargetActivity = addingBankActivity || addingAssetActivity;
                 const missingActivityType = activityType.value === '';
-                const missingNewActivityType = addingActivityType && newActivityType.value.trim() === '';
+                const missingNewActivityType = typingNewActivityType && newActivityType.value.trim() === '';
                 const missingStatus = ! addingActivityType && ! addingMultiTargetActivity && status.value === '';
                 const missingSchedule = ! addingActivityType && ! addingMultiTargetActivity && ['scheduled', 'follow_up'].includes(status.value) && schedule.value === '';
                 let firstInvalidBankTarget = null;
@@ -1789,8 +1850,15 @@
                 return null;
             };
 
-            activityType.addEventListener('change', () => setInvalid(activityTypeTrigger, activityTypeError, false));
-            newActivityType.addEventListener('input', () => setInvalid(newActivityType, newActivityTypeError, false));
+            activityType.addEventListener('change', () => {
+                activityTypeError.textContent = activityTypeErrorDefault;
+                setInvalid(activityTypeTrigger, activityTypeError, false);
+                leaveDuplicateState();
+            });
+            newActivityType.addEventListener('input', () => {
+                newActivityTypeError.textContent = newActivityTypeErrorDefault;
+                setInvalid(newActivityType, newActivityTypeError, false);
+            });
             status.addEventListener('change', () => {
                 setInvalid(status, statusError, false);
                 if (! ['scheduled', 'follow_up'].includes(status.value)) setInvalid(schedule, scheduleError, false);
@@ -1837,10 +1905,25 @@
                     ? 'Adding Activity Type…'
                     : 'Adding Activity…';
 
+                // A submit button's own name/value is part of a NATIVE submission but is NOT part
+                // of new FormData(form). No button in this dialog carries one today — the
+                // activity-type vs activity choice rides on form.dataset.submissionMode — so this
+                // changes nothing now. It is a forward guard: the moment a named submit button is
+                // added here, its value would otherwise be dropped silently, which is exactly how
+                // the Bank / Coop and Asset trackers lost theirs.
+                // A submit button's own name/value is part of a NATIVE submission but is NOT part of
+                // new FormData(form). Continue Anyway carries allow_duplicate=1 that way, so without
+                // this the deliberate second activity would post as an ordinary Add and warn again
+                // forever — the loop already fixed once in the Bank / Coop and Asset trackers.
+                const submitter = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
+                const requestBody = new FormData(form);
+                if (submitter?.name) requestBody.append(submitter.name, submitter.value);
+                else if (submitButton.name) requestBody.append(submitButton.name, submitButton.value);
+
                 try {
                     const response = await fetch(form.action, {
                         method: form.method,
-                        body: new FormData(form),
+                        body: requestBody,
                         credentials: 'same-origin',
                         headers: {
                             Accept: 'application/json',
@@ -1849,6 +1932,43 @@
                     });
                     const payload = await response.json().catch(() => ({}));
                     if (! response.ok) {
+                        // The duplicate block ("already been added for this Applicant/Co-Maker")
+                        // comes back as a 422 on activity_definition_id. It used to be funnelled
+                        // into the generic banner at the TOP of the dialog and focused with
+                        // preventScroll, so on a long form the CI never saw it and the Add looked
+                        // like it had silently done nothing. Field errors now land on their own
+                        // field, which is scrolled into view.
+                        const fieldError = (key) => {
+                            const value = payload.errors?.[key];
+                            return Array.isArray(value) ? value.find((message) => typeof message === 'string') : null;
+                        };
+
+                        // Collaborative advisory: nothing was created, the CI's entries are all
+                        // still here, and the choice is theirs. Never the generic error path.
+                        if (response.status === 409 && payload.result === 'duplicate_exists') {
+                            resetSubmissionState();
+                            enterDuplicateState(payload.message ?? '');
+                            return;
+                        }
+
+                        const typeMessage = fieldError('activity_definition_id');
+                        if (typeMessage) {
+                            resetSubmissionState();
+                            activityTypeError.textContent = typeMessage;
+                            setInvalid(activityTypeTrigger, activityTypeError, true);
+                            revealFirstInvalid(activityTypeTrigger);
+                            return;
+                        }
+
+                        const newTypeMessage = fieldError('new_activity_type');
+                        if (newTypeMessage) {
+                            resetSubmissionState();
+                            newActivityTypeError.textContent = newTypeMessage;
+                            setInvalid(newActivityType, newActivityTypeError, true);
+                            revealFirstInvalid(newActivityType);
+                            return;
+                        }
+
                         const validationMessage = Object.values(payload.errors ?? {}).flat().find((message) => typeof message === 'string');
                         throw new Error(validationMessage ?? payload.message ?? 'Unable to add the activity. Please try again.');
                     }
@@ -2118,13 +2238,28 @@
                 }
                 try {
                     await submitAction(urlFor(manager.dataset.activityTypeUpdateUrl, activeRow.dataset.activityTypeId ?? ''), 'PUT', { name });
-                    await refreshFromServer();
-                    editDialog.close();
                 } catch (requestError) {
+                    // The rename itself was refused — duplicate name, reserved name, or a type that
+                    // is no longer available. The dialog stays open with the server's own wording.
                     if (editError instanceof HTMLElement) {
                         editError.textContent = requestError instanceof Error ? requestError.message : 'This activity type could not be updated.';
                         editError.hidden = false;
                     }
+                    return;
+                }
+
+                // Past this point the rename is COMMITTED. Closing first means a refresh problem can
+                // never make a successful save look like a failed one — the previous order left the
+                // dialog open showing "could not be updated" for a type that had in fact been
+                // renamed, which is indistinguishable from Edit being broken.
+                editDialog.close();
+
+                try {
+                    await refreshFromServer();
+                } catch (refreshError) {
+                    showError(refreshError instanceof Error
+                        ? refreshError.message
+                        : 'The activity type was renamed, but the list could not be refreshed. Please reload the page.');
                 }
             });
 
@@ -2226,7 +2361,7 @@
                 formData.set('_method', 'PUT');
                 formData.set('_token', document.querySelector('meta[name="csrf-token"]')?.content ?? '');
                 formData.set('co_maker_id', checkbox.dataset.completionCoMakerId ?? '');
-                formData.set('expected_updated_at', checkbox.dataset.completionExpectedUpdatedAt ?? '');
+                formData.set('expected_revision', checkbox.dataset.completionExpectedRevision ?? '');
                 formData.set('status', 'completed');
                 formData.set('intent', 'return');
                 confirm.disabled = true;
@@ -2244,7 +2379,8 @@
                     });
                     const payload = await response.json().catch(() => ({}));
                     if (! response.ok) {
-                        throw new Error(Object.values(payload.errors ?? {}).flat().join(' ') || 'Unable to complete this activity.');
+                        // A 409 conflict carries `message` (another CI saved first) rather than field errors.
+                        throw new Error(Object.values(payload.errors ?? {}).flat().join(' ') || payload.message || 'Unable to complete this activity.');
                     }
 
                     checkbox.checked = true;
@@ -2847,6 +2983,41 @@
                 if (bulkTarget instanceof HTMLInputElement) syncBulkPanel();
             });
 
+            // Mirrors exactly what bank-coop-show.blade.php renders for $hasBankTargetDuplicate:
+            // the advisory panel above the fields, and the one primary footer action swapped from
+            // Add Bank / Coop to Continue Anyway (allow_duplicate=1). Advisory styling, never the
+            // danger styling — nothing failed here.
+            const applyDuplicateState = (form, message) => {
+                form.querySelector('[data-bank-target-duplicate-warning]')?.remove();
+
+                const body = form.querySelector('[data-bank-target-detail-inquiry-type]')?.closest('.grid') ?? form;
+                const panel = document.createElement('div');
+                panel.dataset.bankTargetDuplicateWarning = '';
+                panel.className = 'mb-4 flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft px-3 py-3';
+                panel.setAttribute('role', 'alert');
+                panel.tabIndex = -1;
+                const text = document.createElement('p');
+                text.className = 'text-sm font-semibold leading-5 text-progress';
+                text.textContent = message;
+                panel.append(text);
+                body.before(panel);
+
+                const primary = [...form.querySelectorAll('button[type="submit"]')].pop();
+                if (primary instanceof HTMLButtonElement) {
+                    primary.name = 'allow_duplicate';
+                    primary.value = '1';
+                    primary.dataset.bankTargetDuplicateContinue = '';
+                    const label = [...primary.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '');
+                    if (label) {
+                        label.textContent = 'Continue Anyway';
+                    } else {
+                        primary.textContent = 'Continue Anyway';
+                    }
+                }
+
+                panel.focus();
+            };
+
             modalBody.addEventListener('submit', async (event) => {
                 const form = event.target;
                 if (!(form instanceof HTMLFormElement)) return;
@@ -2857,15 +3028,33 @@
                 submitter?.setAttribute('disabled', 'disabled');
                 form.querySelector('[data-bank-coop-form-error]')?.remove();
 
+                // A submit button's own name/value is part of a NATIVE submission but is NOT part of
+                // new FormData(form). Continue Anyway carries allow_duplicate=1 that way, so without
+                // this the deliberate duplicate would post as an ordinary Add and warn all over again.
+                const body = new FormData(form);
+                if (submitter?.name) body.append(submitter.name, submitter.value);
+
                 try {
                     const response = await fetch(form.action, {
                         method: form.method,
-                        body: new FormData(form),
+                        body,
                         credentials: 'same-origin',
                         headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                     });
                     if (! response.ok) {
                         const payload = await response.json().catch(() => ({}));
+
+                        // The duplicate advisory is NOT an error: nothing was saved, the CI's entries
+                        // are all still in this open dialog, and the choice is theirs. This request
+                        // never reaches Blade — it is answered with 409 JSON — so the footer swap the
+                        // standalone page does server-side has to be applied here instead. Without
+                        // this the CI saw the warning while the footer still offered only Add.
+                        if (response.status === 409 && payload.result === 'duplicate_exists') {
+                            applyDuplicateState(form, payload.message ?? '');
+                            if (submitter?.isConnected) submitter.removeAttribute('disabled');
+                            return;
+                        }
+
                         const validationMessage = Object.values(payload.errors ?? {}).flat().find((message) => typeof message === 'string');
                         throw new Error(validationMessage ?? payload.message ?? 'Unable to save the Bank / Coop target.');
                     }
@@ -3214,17 +3403,80 @@
                 if (confirmModal instanceof HTMLDialogElement) confirmModal.close();
                 form.requestSubmit();
             });
+            // Mirrors exactly what asset-check-show.blade.php renders for $hasAssetTargetDuplicate:
+            // the advisory panel above the fields, and the one primary footer action swapped from
+            // Add Assessor to Continue Anyway (allow_duplicate=1). Advisory styling, never the
+            // danger styling — nothing failed here.
+            const applyAssetDuplicateState = (form, message) => {
+                form.querySelector('[data-asset-target-duplicate-warning]')?.remove();
+
+                const fields = form.querySelector('[data-asset-detail-status]')?.closest('.grid') ?? form;
+                const panel = document.createElement('div');
+                panel.dataset.assetTargetDuplicateWarning = '';
+                panel.className = 'mb-4 flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft px-3 py-3';
+                panel.setAttribute('role', 'alert');
+                panel.tabIndex = -1;
+                const text = document.createElement('p');
+                text.className = 'text-sm font-semibold leading-5 text-progress';
+                text.textContent = message;
+                panel.append(text);
+                fields.before(panel);
+
+                const primary = [...form.querySelectorAll('button[type="submit"]')].pop();
+                if (primary instanceof HTMLButtonElement) {
+                    primary.name = 'allow_duplicate';
+                    primary.value = '1';
+                    primary.dataset.assetTargetDuplicateContinue = '';
+                    const label = [...primary.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '');
+                    if (label) {
+                        label.textContent = 'Continue Anyway';
+                    } else {
+                        primary.textContent = 'Continue Anyway';
+                    }
+                }
+
+                panel.focus();
+            };
+
             body.addEventListener('submit', async (event) => {
                 const form = event.target;
                 if (!(form instanceof HTMLFormElement) || ! form.matches('[data-asset-target-form]')) return;
                 event.preventDefault();
                 form.querySelector('[data-asset-form-error]')?.remove();
-                const submit = form.querySelector('[type="submit"]'); if (submit instanceof HTMLButtonElement) submit.disabled = true;
+                const submitter = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
+                const submit = submitter ?? form.querySelector('[type="submit"]');
+                if (submit instanceof HTMLButtonElement) submit.disabled = true;
+
+                // A submit button's own name/value is part of a NATIVE submission but is NOT part
+                // of new FormData(form). Continue Anyway carries allow_duplicate=1 that way, so
+                // without this the deliberate duplicate would post as an ordinary Add and warn
+                // again forever.
+                const requestBody = new FormData(form);
+                if (submitter?.name) requestBody.append(submitter.name, submitter.value);
+
                 try {
-                    const response = await fetch(form.action, { method: form.method, body: new FormData(form), headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+                    const response = await fetch(form.action, { method: form.method, body: requestBody, headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
                     if (! response.ok) {
                         const payload = await response.json().catch(() => ({}));
-                        const message = Object.values(payload.errors ?? {}).flat()[0] ?? payload.message ?? 'Unable to save the Asset target.';
+
+                        // The duplicate advisory is NOT an error: nothing was saved, the CI's
+                        // entries are all still in this open dialog, and the choice is theirs. This
+                        // request never reaches Blade — it is answered with 409 JSON — so the footer
+                        // swap the standalone page does server-side has to be applied here instead.
+                        // Deliberately separate from the stale-edit conflict branch below.
+                        if (response.status === 409 && payload.result === 'duplicate_exists') {
+                            applyAssetDuplicateState(form, payload.message ?? '');
+                            if (submit instanceof HTMLButtonElement) submit.disabled = false;
+                            return;
+                        }
+
+                        // A stale-edit conflict is a known, expected outcome, not an unknown server
+                        // failure: nothing was saved, the CI's entries are still in this open form,
+                        // and they simply need to review the latest values. It is shown with the
+                        // server's own wording and the form stays open — never retried automatically.
+                        const message = payload.result === 'conflict' || payload.result === 'not_available'
+                            ? payload.message
+                            : (Object.values(payload.errors ?? {}).flat()[0] ?? payload.message ?? 'Unable to save the Asset target.');
                         throw new Error(message);
                     }
                     currentUrl = response.url || currentUrl;
@@ -3303,7 +3555,7 @@
                     const completed = status === 'completed';
                     completionCheckbox.checked = completed;
                     completionCheckbox.disabled = completed;
-                    completionCheckbox.dataset.completionExpectedUpdatedAt = source.dataset.defaultCheckUpdatedIso ?? completionCheckbox.dataset.completionExpectedUpdatedAt;
+                    completionCheckbox.dataset.completionExpectedRevision = source.dataset.defaultCheckRevision ?? completionCheckbox.dataset.completionExpectedRevision;
                     completionCheckbox.dataset.completionStatusLabel = source.dataset.defaultCheckStatusLabel ?? completionCheckbox.dataset.completionStatusLabel;
                     completionCheckbox.dataset.completionRemarks = source.dataset.defaultCheckRemarks ?? '';
                     const freshSchedule = source.dataset.defaultCheckSchedule ?? '—';
@@ -3434,7 +3686,7 @@
                         const payload = await response.json().catch(() => ({}));
                         if (! response.ok) {
                             if (errors instanceof HTMLElement) {
-                                errors.textContent = Object.values(payload.errors ?? {}).flat().join(' ') || 'Unable to save changes. Please try again.';
+                                errors.textContent = Object.values(payload.errors ?? {}).flat().join(' ') || payload.message || 'Unable to save changes. Please try again.';
                                 errors.hidden = false;
                             }
                             return;
@@ -3451,8 +3703,8 @@
                             if (freshSource instanceof HTMLElement) {
                                 synchronizeTable(freshSource);
                                 form.dataset.currentStatus = freshSource.dataset.defaultCheckStatus ?? form.dataset.currentStatus;
-                                const expected = form.querySelector('[name="expected_updated_at"]');
-                                if (expected instanceof HTMLInputElement) expected.value = freshSource.dataset.defaultCheckUpdatedIso ?? expected.value;
+                                const expected = form.querySelector('[name="expected_revision"]');
+                                if (expected instanceof HTMLInputElement) expected.value = freshSource.dataset.defaultCheckRevision ?? expected.value;
                             }
                         }
                         form.dataset.completionConfirmed = 'false';

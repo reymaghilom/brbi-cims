@@ -40,7 +40,24 @@ class SaveCibiReport
     public function execute(User $actor, ClientFolder $folder, array $data): CibiReport
     {
         return DB::transaction(function () use ($actor, $folder, $data): CibiReport {
-            $report = $folder->cibiReport()->firstOrNew(['co_maker_id' => $data['co_maker_id'] ?? null]);
+            $coMakerId = $data['co_maker_id'] ?? null;
+
+            // A CIBI row cannot lock a first save because it does not exist yet. Serialize the
+            // stable owner of this exact person scope first: the folder row represents only the
+            // Applicant scope, while an exact Co-Maker has their own independently lockable row.
+            // This prevents two blank-baseline requests from both observing "no report" without
+            // depending on nullable composite-unique behavior (NULL is not equal to NULL in
+            // MySQL/MariaDB unique indexes).
+            $this->lockExactPersonScope($folder, $coMakerId);
+
+            // This is an authoritative locking read. For an existing report, revision comparison,
+            // child synchronization, parent write and revision increment now all run while this
+            // row remains locked in the same transaction.
+            $report = $folder->cibiReport()
+                ->where('co_maker_id', $coMakerId)
+                ->lockForUpdate()
+                ->first()
+                ?? $folder->cibiReport()->make(['co_maker_id' => $coMakerId]);
             $created = ! $report->exists;
 
             if (! $created) {
@@ -122,6 +139,19 @@ class SaveCibiReport
 
             return $report->refresh();
         });
+    }
+
+    private function lockExactPersonScope(ClientFolder $folder, ?int $coMakerId): void
+    {
+        if ($coMakerId === null) {
+            ClientFolder::query()->whereKey($folder->id)->lockForUpdate()->firstOrFail();
+
+            return;
+        }
+
+        // Resolving through this folder is both the lock target and a final ownership assertion for
+        // direct Action callers; Applicant, Co-Maker A and Co-Maker B can never share a lock scope.
+        $folder->coMakers()->whereKey($coMakerId)->lockForUpdate()->firstOrFail();
     }
 
     private function sync(string $input, HasMany $relation, array $rows, array $fields): array

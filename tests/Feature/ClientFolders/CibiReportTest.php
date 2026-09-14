@@ -19,6 +19,7 @@ use App\Models\IncomeSourceTemplate;
 use App\Models\User;
 use App\Services\Reports\OfficialReportDataBuilder;
 use Database\Seeders\ReferenceDataSeeder;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
@@ -154,6 +155,47 @@ class CibiReportTest extends TestCase
             ->assertJsonValidationErrors('expected_revision');
     }
 
+    public function test_cibi_error_summary_keeps_normal_validation_generic_and_shows_only_the_stale_conflict_message(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $editRoute = route('client-folders.cibi-report.edit', $folder);
+
+        $invalid = $this->payload();
+        $invalid['branch_name'] = '';
+        $this->actingAs($ci)->from($editRoute)->put(route('client-folders.cibi-report.update', $folder), $invalid)
+            ->assertRedirect($editRoute)
+            ->assertSessionHasErrors('branch_name');
+        $this->get($editRoute)
+            ->assertOk()
+            ->assertSee('data-cibi-validation-heading', false)
+            ->assertSee('Please review the highlighted fields.');
+
+        $other = User::factory()->create();
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $this->payload())->assertRedirect();
+        $report = CibiReport::whereBelongsTo($folder)->sole();
+        $newer = $this->payload();
+        $newer['other_remarks'] = 'Protected newer report data.';
+        $this->actingAs($other)->put(route('client-folders.cibi-report.update', $folder), $newer + ['expected_revision' => 1])->assertRedirect();
+
+        $message = "{$other->full_name} updated this report while you were editing. Please review the latest version before saving again.";
+        $this->actingAs($ci)->from($editRoute)->put(route('client-folders.cibi-report.update', $folder), $this->payload() + ['expected_revision' => 1])
+            ->assertRedirect($editRoute)
+            ->assertSessionHasErrors(['expected_revision' => $message]);
+        $this->assertSame(2, $report->fresh()->revision);
+        $this->assertSame('Protected newer report data.', $report->fresh()->other_remarks);
+
+        $blade = file_get_contents(resource_path('views/client-folders/cibi-report/edit.blade.php'));
+        $this->assertStringContainsString("@php(\$revisionConflict = \$errors->first('expected_revision'))", $blade);
+        $this->assertStringContainsString('data-cibi-validation-heading @if($revisionConflict) hidden @endif', $blade);
+        $this->assertStringContainsString("{{ \$revisionConflict ?: 'No report changes were saved.' }}", $blade);
+
+        $javascript = file_get_contents(resource_path('js/app.js'));
+        $this->assertStringContainsString("const showErrors = (errors, message = 'No report changes were saved.', { conflict = false } = {}) => {", $javascript);
+        $this->assertStringContainsString("errorSummary.querySelector('[data-cibi-validation-heading]').hidden = conflict;", $javascript);
+        $this->assertStringContainsString('{ conflict: Boolean(conflictMessage) },', $javascript);
+    }
+
     public function test_conflict_message_names_the_last_editor_when_available(): void
     {
         $ci = User::factory()->create();
@@ -287,6 +329,45 @@ class CibiReportTest extends TestCase
             $response->json('errors.expected_revision.0'),
         );
         $this->assertSame(1, $report->fresh()->revision);
+    }
+
+    public function test_blank_baselines_are_isolated_between_applicant_and_exact_co_makers(): void
+    {
+        $first = User::factory()->create();
+        $second = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $first->id]);
+        $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER A']);
+        $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER B']);
+
+        $this->actingAs($first)->putJson(route('client-folders.cibi-report.update', $folder), $this->payload())
+            ->assertOk();
+        $this->actingAs($first)->putJson(route('client-folders.cibi-report.update', $folder), $this->payload() + ['co_maker_id' => $coMakerA->id])
+            ->assertOk();
+        $this->actingAs($second)->putJson(route('client-folders.cibi-report.update', $folder), $this->payload() + ['co_maker_id' => $coMakerB->id])
+            ->assertOk();
+
+        $this->assertSame(3, CibiReport::whereBelongsTo($folder)->count());
+        $this->assertSame(1, CibiReport::whereBelongsTo($folder)->whereNull('co_maker_id')->count());
+        $this->assertSame(1, CibiReport::whereBelongsTo($folder)->where('co_maker_id', $coMakerA->id)->count());
+        $this->assertSame(1, CibiReport::whereBelongsTo($folder)->where('co_maker_id', $coMakerB->id)->count());
+    }
+
+    public function test_direct_save_rejects_a_co_maker_from_another_folder_before_creating_a_report(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $foreignCoMaker = CoMaker::create(['client_folder_id' => $otherFolder->id, 'full_name' => 'FOREIGN CO MAKER']);
+
+        try {
+            app(SaveCibiReport::class)->execute($ci, $folder, $this->payload() + ['co_maker_id' => $foreignCoMaker->id]);
+            $this->fail('Expected the foreign Co-Maker scope to be rejected.');
+        } catch (ModelNotFoundException) {
+            $this->assertDatabaseMissing('cibi_reports', [
+                'client_folder_id' => $folder->id,
+                'co_maker_id' => $foreignCoMaker->id,
+            ]);
+        }
     }
 
     public function test_client_information_is_reused_read_only_without_creating_report_on_get(): void
@@ -1495,6 +1576,41 @@ class CibiReportTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk()
             ->assertSee('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;', false)
             ->assertDontSee('<script>alert("x")</script>', false);
+    }
+
+    public function test_loan_amount_descriptions_are_saved_and_reopened_as_exact_text(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $payload = $this->payload();
+        $payload['loan_records'] = [
+            ['institution' => 'First Bank', 'original_amount' => '5 digits', 'remaining_balance' => '4 digits', 'amortization_amount' => 'Not disclosed'],
+            ['institution' => 'Second Bank', 'original_amount' => 'Approximately 50,000', 'remaining_balance' => '50,000', 'amortization_amount' => '2500.00'],
+            ['institution' => 'Third Bank', 'original_amount' => '6 digits', 'remaining_balance' => '7 digits', 'amortization_amount' => 'Amount not disclosed'],
+            ['institution' => 'Fourth Bank', 'original_amount' => 'Confidential', 'remaining_balance' => '5 digits', 'amortization_amount' => '4 digits'],
+        ];
+
+        $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $payload)
+            ->assertOk()
+            ->assertJsonMissingValidationErrors();
+
+        $loans = CibiReport::whereBelongsTo($folder)->sole()->loanRecords()->orderBy('sort_order')->get();
+        $this->assertSame(
+            [
+                ['5 digits', '4 digits', 'Not disclosed'],
+                ['Approximately 50,000', '50,000', '2500.00'],
+                ['6 digits', '7 digits', 'Amount not disclosed'],
+                ['Confidential', '5 digits', '4 digits'],
+            ],
+            $loans->map(fn ($loan): array => [$loan->original_amount, $loan->remaining_balance, $loan->amortization_amount])->all(),
+        );
+
+        $page = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk();
+        foreach (['5 digits', '4 digits', 'Not disclosed', 'Approximately 50,000', '50,000', '2500.00', '6 digits', '7 digits', 'Amount not disclosed', 'Confidential'] as $value) {
+            $page->assertSee('value="'.$value.'"', false);
+        }
+        $page->assertDontSee('name="loan_records[0][original_amount]" value="5 digits" inputmode="decimal"', false);
+        $page->assertDontSee('name="loan_records[0][original_amount]" value="5 digits" data-number-format', false);
     }
 
     /**

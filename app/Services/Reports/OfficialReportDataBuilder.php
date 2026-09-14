@@ -131,14 +131,14 @@ class OfficialReportDataBuilder
                 $this->na($row->capital_share_text ?: $this->amount($row->capital_share_amount)), $this->na($row->relevant_remarks),
             ])->all(),
             'loan_records' => $this->groupedLoanRecords($report->loanRecords, fn ($row, bool $first): array => [
-                $first ? $this->na($row->institution) : '', $this->amount($row->original_amount), $this->amount($row->remaining_balance), $this->amount($row->amortization_amount),
+                $first ? $this->na($row->institution) : '', $this->na($row->original_amount), $this->na($row->remaining_balance), $this->na($row->amortization_amount),
                 $this->shortDate($row->granted_date).' - '.$this->shortDate($row->maturity_date),
                 $this->na($row->cycle_label ?: $row->cycle_number), $this->na($row->security_type), $this->na(trim(($row->payment_performance ?? '').' '.($row->remarks ?? ''))),
             ]),
             'loan_amount_totals' => [
-                'original' => $this->amount($report->loanRecords->sum(fn ($row) => (float) ($row->original_amount ?? 0))),
-                'remaining' => $this->amount($report->loanRecords->sum(fn ($row) => (float) ($row->remaining_balance ?? 0))),
-                'amortization' => $this->amount($report->loanRecords->sum(fn ($row) => (float) ($row->amortization_amount ?? 0))),
+                'original' => '',
+                'remaining' => '',
+                'amortization' => '',
             ],
             'totals' => [
                 'checked' => $report->summary_totals['institutions_checked'] ?? $report->creditChecks->whereNotNull('institution')->count(),
@@ -186,7 +186,7 @@ class OfficialReportDataBuilder
                 ['Validated Contact Number(s) / Email', $this->na($personal->get('contact_details'))], ['Other Remarks', $this->na($personal->get('other_remarks'))],
             ]) : null,
             $this->table('Bank / Cooperative Accounts', ['Institution', 'Branch', 'Year Opened', 'ADB Level', 'CA / SA / Share Capital', 'Remarks'], $report->bankAccounts->map(fn ($row) => [$this->na($row->institution), $this->na($row->branch), $this->na($row->year_opened), $this->na($row->adb_level), $this->na($row->capital_share_text ?: $this->amount($row->capital_share_amount)), $this->na($row->relevant_remarks)])),
-            $this->table('Loan Records', ['Institution', 'Original Amount', 'Balance', 'Amortization', 'Granted / Maturity', 'Cycle / Security', 'Performance & Findings'], collect($this->groupedLoanRecords($report->loanRecords, fn ($row, bool $first): array => [$first ? $this->na($row->institution) : '', $this->amount($row->original_amount), $this->amount($row->remaining_balance), $this->amount($row->amortization_amount), $this->shortDate($row->granted_date).' - '.$this->shortDate($row->maturity_date), $this->na(trim(($row->cycle_label ?: $row->cycle_number).' / '.($row->security_type ?? ''), ' /')), $this->na(trim(($row->payment_performance ?? '').' '.($row->remarks ?? '')))]))),
+            $this->table('Loan Records', ['Institution', 'Original Amount', 'Balance', 'Amortization', 'Granted / Maturity', 'Cycle / Security', 'Performance & Findings'], collect($this->groupedLoanRecords($report->loanRecords, fn ($row, bool $first): array => [$first ? $this->na($row->institution) : '', $this->na($row->original_amount), $this->na($row->remaining_balance), $this->na($row->amortization_amount), $this->shortDate($row->granted_date).' - '.$this->shortDate($row->maturity_date), $this->na(trim(($row->cycle_label ?: $row->cycle_number).' / '.($row->security_type ?? ''), ' /')), $this->na(trim(($row->payment_performance ?? '').' '.($row->remarks ?? '')))]))),
             $this->details('Credit / Loan Summary', [['Institutions Checked', $report->summary_totals['institutions_checked'] ?? $report->creditChecks->whereNotNull('institution')->count()], ['Institutions Declared', $report->summary_totals['institutions_declared'] ?? $report->creditChecks->where('is_declared', true)->count()], ['Loan Records Found', $report->summary_totals['loan_records_found'] ?? $report->loanRecords->whereNotNull('institution')->count()]]),
             $this->table('Income Source Validation Summary', ['Source', 'Type', 'Stability', 'Validation', 'Monthly Amount', 'Key Information'], $report->incomeSourceSummaries->map(fn ($row) => [$this->na($row->source_name), $this->na($row->source_type), $this->na($row->stability_result), $this->na($row->validation_status), $this->amount($row->monthly_amount), $this->na($row->key_information)])),
             $this->narrative('Negative Credit Findings', $this->na($report->negative_credit_findings)),

@@ -94,6 +94,7 @@ class CiActivityTargetReminderTest extends TestCase
         ]);
 
         $this->actingAs($creator)->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => $target->institution_name,
@@ -124,6 +125,7 @@ class CiActivityTargetReminderTest extends TestCase
         ]);
 
         $this->actingAs($creator)->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'inquiry_type' => $target->inquiry_type,
             'institution_name' => $target->institution_name,
@@ -255,6 +257,7 @@ class CiActivityTargetReminderTest extends TestCase
         ]);
 
         $this->actingAs($creator)->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'inquiry_type' => $target->inquiry_type,
             'institution_name' => $target->institution_name,
@@ -301,6 +304,7 @@ class CiActivityTargetReminderTest extends TestCase
         $targetA = $this->bankTarget($bankA, $creator, ['institution_name' => 'A Bank']);
 
         $this->actingAs($creator)->put(route('client-folders.activities.bank-targets.update', [$folder, $bankB, $targetA]), [
+            'expected_revision' => $targetA->fresh()->revision,
             'co_maker_id' => '',
             'inquiry_type' => $targetA->inquiry_type,
             'institution_name' => 'Tampered',
@@ -404,6 +408,7 @@ class CiActivityTargetReminderTest extends TestCase
         ]);
 
         $this->actingAs($creator)->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'assessor_type' => $target->assessor_type,
             'office_location' => $target->office_location,
@@ -432,6 +437,7 @@ class CiActivityTargetReminderTest extends TestCase
         ]);
 
         $this->actingAs($creator)->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'assessor_type' => $target->assessor_type,
             'office_location' => $target->office_location,
@@ -559,6 +565,7 @@ class CiActivityTargetReminderTest extends TestCase
         ]);
 
         $this->actingAs($creator)->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'assessor_type' => $target->assessor_type,
             'office_location' => $target->office_location,
@@ -605,6 +612,7 @@ class CiActivityTargetReminderTest extends TestCase
         $target = $this->assetTarget($asset, $creator, ['office_location' => 'Land']);
 
         $this->actingAs($creator)->put(route('client-folders.activities.asset-targets.update', [$otherFolder, $foreignAsset, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'assessor_type' => $target->assessor_type,
             'office_location' => 'Tampered',

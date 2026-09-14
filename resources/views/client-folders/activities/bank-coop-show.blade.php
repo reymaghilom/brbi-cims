@@ -12,6 +12,10 @@
         $completedCount = $activity->bankTargets->where('status', App\Enums\ActivityStatus::Completed)->count();
         $targetCount = $activity->bankTargets->count();
         $bankRemarks = $activity->bankTargets->pluck('remarks')->filter(fn ($remarks) => filled($remarks))->values();
+        // ONE duplicate-state flag, computed once and used by all three places that react to it:
+        // the advisory panel, the footer button swap and the auto-reopen script. Reading the
+        // session separately in each spot made it structurally possible for them to disagree.
+        $hasBankTargetDuplicate = session()->has('bank_target_duplicate');
     @endphp
 
     <x-ui.breadcrumb :items="[
@@ -137,19 +141,43 @@
         </ul>
     </section>
 
+    {{-- One source of truth for the Branch / Location helper copy. It sits in a line BELOW the
+         input rather than inside the label, so the label stays one line and the input keeps its
+         top edge level with the Status select beside it in the two-column grid. The markup renders
+         the state the server knows; sync() swaps between the two as the Inquiry Type changes. --}}
+    @php
+        $branchHintOptional = 'Optional — leave blank if not specified.';
+        $branchHintNotApplicable = 'Not applicable for Loan Inquiry.';
+    @endphp
+
     <dialog id="add-bank-target" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45">
         <form method="POST" action="{{ route('client-folders.activities.bank-targets.store', [$clientFolder, $activity]) }}" class="flex max-h-[calc(100dvh-2rem)] flex-col" data-bank-target-form>
             @csrf
             <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
             <div class="flex items-start justify-between gap-4 border-b border-ui-border px-5 py-4 sm:px-6"><div><h2 class="text-lg font-bold text-brand-sidebar">Add Bank / Coop</h2><p class="mt-1 text-sm text-text-muted">Add another institution to this activity.</p></div><button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close"><x-ui.icon name="close" size="size-5" /></button></div>
             <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+                {{-- Advisory duplicate warning, deliberately styled with the progress/advisory
+                     tokens rather than the danger ones: nothing failed and nothing was created.
+                     The panel only explains; the choice itself lives in the footer below, which
+                     never scrolls, so Continue Anyway cannot end up out of reach behind a long
+                     form. --}}
+                @if($hasBankTargetDuplicate)
+                    <div class="mb-4 flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft px-3 py-3" role="alert" data-bank-target-duplicate-warning>
+                        <x-ui.icon name="warning" size="size-4" class="mt-0.5 shrink-0 text-progress" aria-hidden="true" />
+                        <div class="min-w-0">
+                            <p class="text-sm font-semibold leading-5 text-progress">{{ session('bank_target_duplicate') }}</p>
+                            <p class="mt-1 text-xs leading-5 text-text-muted">Nothing has been added yet and your entries are kept below. Choose <span class="font-semibold text-text-main">Continue Anyway</span> to add it as a separate record, or Cancel to review the one already on this tracker.</p>
+                        </div>
+                    </div>
+                @endif
                 @if($bankInstitutionPrefillCandidates !== [])
                     <div class="mb-4 rounded-control border border-brand-primary/20 bg-brand-soft/60 p-3" data-bank-target-prefill-list>
-                        <p class="text-xs font-bold text-brand-sidebar">Available from this person&rsquo;s CIBI report</p>
-                        <p class="mt-1 text-xs leading-5 text-text-muted">Choose a candidate to fill empty fields. Existing values are never replaced.</p>
+                        <p class="text-xs font-bold text-brand-sidebar">Available from CIBI Report</p>
+                        <p class="mt-1 text-xs leading-5 text-text-muted">These institutions are in this person’s CIBI report but are not currently added to this Bank / Coop Check.</p>
+                        <p class="mt-1 text-xs leading-5 text-text-muted/80">If a tracker record is deleted, the CIBI record remains and becomes available here again.</p>
                         <div class="mt-2 flex flex-wrap gap-2">
                             @foreach($bankInstitutionPrefillCandidates as $candidate)
-                                <button type="button" class="ui-button-secondary-compact !text-left" data-bank-target-prefill data-inquiry-type="{{ $candidate['inquiry_type'] }}" data-institution="{{ $candidate['institution_name'] }}" data-branch="{{ $candidate['branch_location'] }}" title="{{ $candidate['source'] }}">
+                                <button type="button" class="ui-button-secondary-compact max-w-full !text-left !whitespace-normal break-words" data-bank-target-prefill data-inquiry-type="{{ $candidate['inquiry_type'] }}" data-institution="{{ $candidate['institution_name'] }}" data-branch="{{ $candidate['branch_location'] }}" title="{{ $candidate['source'] }}">
                                     {{ App\Models\CiActivityBankTarget::INQUIRY_TYPES[$candidate['inquiry_type']] }} &middot; {{ $candidate['institution_name'] }}@if($candidate['branch_location']) <span class="font-normal text-text-muted">&mdash; {{ $candidate['branch_location'] }}</span>@endif
                                 </button>
                             @endforeach
@@ -159,18 +187,31 @@
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div><label for="add-inquiry-type" class="ui-label">Inquiry Type</label><select id="add-inquiry-type" name="inquiry_type" class="ui-control" required data-bank-target-detail-inquiry-type><option value="">Select inquiry type</option>@foreach(App\Models\CiActivityBankTarget::INQUIRY_TYPES as $value => $label)<option value="{{ $value }}" @selected(old('inquiry_type') === $value)>{{ $label }}</option>@endforeach</select><x-form.validation-message for="inquiry_type" /></div>
                     <div><label for="add-institution-name" class="ui-label">Bank / Coop Name</label><input id="add-institution-name" name="institution_name" value="{{ old('institution_name') }}" class="ui-control" maxlength="255" required><x-form.validation-message for="institution_name" /></div>
-                    <div data-bank-target-detail-branch-field><label for="add-branch-location" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="add-branch-location" name="branch_location" value="{{ old('branch_location') }}" class="ui-control" maxlength="255" data-bank-target-detail-branch><x-form.validation-message for="branch_location" /></div>
+                    <div data-bank-target-detail-branch-field><label for="add-branch-location" class="ui-label">Branch / Location</label><input id="add-branch-location" name="branch_location" value="{{ old('branch_location') }}" class="ui-control" maxlength="255" aria-describedby="add-branch-location-hint" data-bank-target-detail-branch><p id="add-branch-location-hint" class="mt-1 text-xs leading-5 text-text-muted" data-bank-target-branch-hint>{{ $branchHintOptional }}</p><x-form.validation-message for="branch_location" /></div>
                     <div><label for="add-target-status" class="ui-label">Status</label><select id="add-target-status" name="status" class="ui-control" required data-bank-target-detail-status data-schedule-status>@foreach($statuses as $status)<option value="{{ $status->value }}" @selected(old('status', 'pending') === $status->value)>{{ $status->label() }}</option>@endforeach</select><x-form.validation-message for="status" /></div>
                     <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]" data-bank-target-detail-schedule><div><label for="add-target-date" class="ui-label">Schedule Date <x-form.schedule-date-indicator :required="App\Enums\ActivityStatus::requiresScheduledDate(old('status', App\Enums\ActivityStatus::Pending->value))" /></label><input id="add-target-date" name="scheduled_at" type="date" value="{{ old('scheduled_at') }}" class="ui-control" data-bank-target-detail-date data-schedule-date @required(App\Enums\ActivityStatus::requiresScheduledDate(old('status', App\Enums\ActivityStatus::Pending->value)))><x-form.validation-message for="scheduled_at" /></div><div><label for="add-target-time" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="add-target-time" name="scheduled_time" type="time" value="{{ old('scheduled_time') }}" class="ui-control" data-bank-target-detail-time><x-form.validation-message for="scheduled_time" /></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled and For Follow-up activities. Time is optional.</p></div>
                     <div class="sm:col-span-2"><label for="add-target-remarks" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="add-target-remarks" name="remarks" rows="3" class="ui-control">{{ old('remarks') }}</textarea><x-form.validation-message for="remarks" /></div>
                 </div>
             </div>
-            <div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary"><x-ui.icon name="check" size="size-4" />Add Bank / Coop</button></div>
+            {{-- Sibling of the scrolling body, so these actions stay put while the form scrolls.
+                 Full width stacked on a phone, auto width aligned right from sm up — the same
+                 flex-col-reverse / sm:flex-row pattern the other modals in this project use. --}}
+            <div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
+                <button type="button" class="ui-button-secondary w-full sm:w-auto" data-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button>
+                @if($hasBankTargetDuplicate)
+                    <button type="submit" name="allow_duplicate" value="1" class="ui-button-primary w-full sm:w-auto" data-bank-target-duplicate-continue><x-ui.icon name="check" size="size-4" />Continue Anyway</button>
+                @else
+                    <button type="submit" class="ui-button-primary w-full sm:w-auto"><x-ui.icon name="check" size="size-4" />Add Bank / Coop</button>
+                @endif
+            </div>
         </form>
     </dialog>
 
     @foreach($activity->bankTargets as $target)
-        @php $editSchedule = $target->scheduled_at?->timezone(config('cims.display_timezone')); @endphp
+        @php
+            $editSchedule = $target->scheduled_at?->timezone(config('cims.display_timezone'));
+            $targetIsLoanInquiry = $target->inquiry_type === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY;
+        @endphp
         @if($target->status !== App\Enums\ActivityStatus::Completed)
             <x-ui.bank-target-completion-modal :$target :$clientFolder :$activity :$activePerson />
         @endif
@@ -179,13 +220,18 @@
                 @csrf
                 @method('PUT')
                 <input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}">
+                <input type="hidden" name="expected_revision" value="{{ $target->revision }}">
                 <div class="flex items-start justify-between gap-4 border-b border-ui-border px-5 py-4 sm:px-6"><div><h2 class="text-lg font-bold text-brand-sidebar">Edit Bank / Coop</h2><p class="mt-1 truncate text-sm text-text-muted">{{ $target->institution_name }}</p></div><button type="button" class="ui-icon-button -mr-2" data-modal-close aria-label="Close"><x-ui.icon name="close" size="size-5" /></button></div>
                 <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
                     <p class="mb-4 flex items-start gap-1.5 rounded-control border border-progress/30 bg-progress-soft px-3 py-2 text-sm font-semibold text-progress" data-no-change-message role="status" aria-live="polite" hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected. Nothing needs to be updated.</p>
                     <div class="grid gap-4 sm:grid-cols-2">
                         <div><label for="inquiry-type-{{ $target->id }}" class="ui-label">Inquiry Type</label><select id="inquiry-type-{{ $target->id }}" name="inquiry_type" class="ui-control" required data-bank-target-detail-inquiry-type>@foreach(App\Models\CiActivityBankTarget::INQUIRY_TYPES as $value => $label)<option value="{{ $value }}" @selected($target->inquiry_type === $value)>{{ $label }}</option>@endforeach</select></div>
                         <div><label for="institution-name-{{ $target->id }}" class="ui-label">Bank / Coop Name</label><input id="institution-name-{{ $target->id }}" name="institution_name" value="{{ $target->institution_name }}" class="ui-control" maxlength="255" required></div>
-                        <div data-bank-target-detail-branch-field @if($target->inquiry_type === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY) hidden @endif><label for="branch-location-{{ $target->id }}" class="ui-label">Branch / Location <span class="font-normal text-text-muted">(optional)</span></label><input id="branch-location-{{ $target->id }}" name="branch_location" value="{{ $target->branch_location }}" class="ui-control" maxlength="255" data-bank-target-detail-branch @disabled($target->inquiry_type === App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY)></div>
+                        {{-- Kept VISIBLE for a Loan Inquiry, disabled rather than hidden, so the reason the field
+                             cannot be filled is on screen instead of the field simply vanishing. The value is
+                             blanked for that type too: the backend stores NULL for a Loan Inquiry, so showing a
+                             historical branch here would display something that is not the stored record. --}}
+                        <div data-bank-target-detail-branch-field><label for="branch-location-{{ $target->id }}" class="ui-label">Branch / Location</label><input id="branch-location-{{ $target->id }}" name="branch_location" value="{{ $targetIsLoanInquiry ? '' : $target->branch_location }}" class="ui-control" maxlength="255" aria-describedby="branch-location-hint-{{ $target->id }}" data-bank-target-detail-branch @disabled($targetIsLoanInquiry)><p id="branch-location-hint-{{ $target->id }}" class="mt-1 text-xs leading-5 text-text-muted" data-bank-target-branch-hint>{{ $targetIsLoanInquiry ? $branchHintNotApplicable : $branchHintOptional }}</p></div>
                         <div><label for="target-status-{{ $target->id }}" class="ui-label">Status</label><select id="target-status-{{ $target->id }}" name="status" class="ui-control" required data-bank-target-detail-status data-schedule-status>@foreach($statuses as $status)<option value="{{ $status->value }}" @selected($target->status === $status)>{{ $status->label() }}</option>@endforeach</select></div>
                         <div class="sm:col-span-2 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(8rem,1fr)]" data-bank-target-detail-schedule><div><label for="target-date-{{ $target->id }}" class="ui-label">Schedule Date <x-form.schedule-date-indicator :required="App\Enums\ActivityStatus::requiresScheduledDate($target->status)" /></label><input id="target-date-{{ $target->id }}" name="scheduled_at" type="date" value="{{ $editSchedule?->format('Y-m-d') }}" class="ui-control" data-bank-target-detail-date data-schedule-date @required(App\Enums\ActivityStatus::requiresScheduledDate($target->status))></div><div><label for="target-time-{{ $target->id }}" class="ui-label">Time <span class="font-normal text-text-muted">(optional)</span></label><input id="target-time-{{ $target->id }}" name="scheduled_time" type="time" value="{{ $target->scheduled_has_time ? $editSchedule?->format('H:i') : '' }}" class="ui-control" data-bank-target-detail-time></div><p class="text-xs leading-5 text-text-muted sm:col-span-2">Date is required for Scheduled and For Follow-up activities. Time is optional.</p></div>
                         <div class="sm:col-span-2"><label for="target-remarks-{{ $target->id }}" class="ui-label">Remarks <span class="font-normal text-text-muted">(optional)</span></label><textarea id="target-remarks-{{ $target->id }}" name="remarks" rows="3" class="ui-control">{{ $target->remarks }}</textarea></div>
@@ -207,6 +253,7 @@
             const syncForm = (form) => {
                 const inquiryType = form.querySelector('[data-bank-target-detail-inquiry-type]');
                 const branchField = form.querySelector('[data-bank-target-detail-branch-field]');
+                const branchHint = form.querySelector('[data-bank-target-branch-hint]');
                 const branch = form.querySelector('[data-bank-target-detail-branch]');
                 const status = form.querySelector('[data-bank-target-detail-status]');
                 const date = form.querySelector('[data-bank-target-detail-date]');
@@ -214,11 +261,26 @@
                 if (!(inquiryType instanceof HTMLSelectElement) || !(branchField instanceof HTMLElement) || !(branch instanceof HTMLInputElement)
                     || !(status instanceof HTMLSelectElement) || !(date instanceof HTMLInputElement) || !(time instanceof HTMLInputElement)) return;
 
+                // UI-only memory of a branch the CI typed before switching to Loan Inquiry. Switching
+                // used to blank the field outright, so a typed branch was silently destroyed and was
+                // gone even on switching straight back. The stash lives for as long as this dialog
+                // stays open and is never submitted: a Loan Inquiry still posts an empty, disabled
+                // field, and the request and the save action each independently force NULL.
+                let stashedBranch = '';
+
                 const sync = () => {
                     const isLoanInquiry = inquiryType.value === @js(App\Models\CiActivityBankTarget::INQUIRY_TYPE_LOAN_INQUIRY);
-                    branchField.hidden = isLoanInquiry;
-                    if (isLoanInquiry) branch.value = '';
+                    if (isLoanInquiry) {
+                        if (! branch.disabled && branch.value !== '') stashedBranch = branch.value;
+                        branch.value = '';
+                    } else if (branch.disabled && stashedBranch !== '') {
+                        branch.value = stashedBranch;
+                        stashedBranch = '';
+                    }
                     branch.disabled = isLoanInquiry;
+                    if (branchHint instanceof HTMLElement) {
+                        branchHint.textContent = isLoanInquiry ? @js($branchHintNotApplicable) : @js($branchHintOptional);
+                    }
                     const supportsSchedule = ['scheduled', 'follow_up'].includes(status.value);
                     if (! supportsSchedule) {
                         date.value = '';
@@ -240,6 +302,10 @@
             document.querySelectorAll('[data-bank-target-form]').forEach((form) => {
                 if (form instanceof HTMLFormElement) syncForm(form);
             });
+            @if($hasBankTargetDuplicate)
+                const duplicateDialog = document.getElementById('add-bank-target');
+                if (duplicateDialog instanceof HTMLDialogElement) duplicateDialog.showModal();
+            @endif
             document.querySelectorAll('[data-bank-target-prefill]').forEach((button) => {
                 button.addEventListener('click', () => {
                     const dialog = button.closest('dialog');
@@ -250,11 +316,26 @@
 
                     const candidateInstitution = button.dataset.institution ?? '';
                     const normalize = (value) => value.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+
+                    // 1. Reject before anything is written: a DIFFERENT institution the CI already
+                    //    typed is never silently replaced by a candidate.
                     if (institution.value.trim() !== '' && normalize(institution.value) !== normalize(candidateInstitution)) return;
+
+                    // 2. The candidate is accepted, so its own Inquiry Type wins outright. This used
+                    //    to be applied only when the select was still empty, which let a Loan Inquiry
+                    //    candidate fill the institution while the type stayed Bank / Coop Check — a
+                    //    half-applied candidate.
                     if (institution.value.trim() === '') institution.value = candidateInstitution;
-                    if (inquiryType.value === '') inquiryType.value = button.dataset.inquiryType ?? '';
-                    if (branch.value.trim() === '') branch.value = button.dataset.branch ?? '';
+                    inquiryType.value = button.dataset.inquiryType ?? inquiryType.value;
+
+                    // 3. Settle branch applicability FIRST. Filling the branch before this ran was
+                    //    what let sync() blank a value the click had just written.
                     inquiryType.dispatchEvent(new Event('change', { bubbles: true }));
+
+                    // 4. Only then fill the branch, and only where it applies and is still empty. A
+                    //    candidate with no branch leaves it blank — no location is ever invented.
+                    if (! branch.disabled && branch.value.trim() === '') branch.value = button.dataset.branch ?? '';
+
                     institution.dispatchEvent(new Event('input', { bubbles: true }));
                     institution.focus();
                 });

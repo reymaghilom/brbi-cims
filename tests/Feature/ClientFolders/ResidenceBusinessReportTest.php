@@ -81,6 +81,7 @@ class ResidenceBusinessReportTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'ci_date' => now()->toDateString(),
             'location' => 'Applicant Address',
             'remarks' => 'Updated remarks',
@@ -104,14 +105,14 @@ class ResidenceBusinessReportTest extends TestCase
         $this->assertSame($creator->id, $check->updated_by);
 
         $this->actingAs($editor)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'remarks' => 'Updated by another CI',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'remarks' => 'Updated by another CI',
         ])->assertRedirect();
         $check->refresh();
         $this->assertSame($creator->id, $check->ci_user_id);
         $this->assertSame($editor->id, $check->updated_by);
     }
 
-    public function test_residence_check_concurrent_save_with_stale_updated_at_is_rejected(): void
+    public function test_residence_check_concurrent_save_with_stale_revision_is_rejected(): void
     {
         $ci = User::factory()->create();
         $other = User::factory()->create();
@@ -120,18 +121,18 @@ class ResidenceBusinessReportTest extends TestCase
             'ci_date' => now()->toDateString(), 'location' => 'Applicant Address',
         ]));
         $check = $folder->residenceChecks()->firstOrFail();
-        $staleTimestamp = $check->updated_at->toISOString();
+        $staleRevision = $check->revision;
 
         $this->travel(1)->minutes();
         $this->actingAs($other)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address',
-            'remarks' => 'First save wins', 'expected_updated_at' => $staleTimestamp,
+            'remarks' => 'First save wins', 'expected_revision' => $staleRevision,
         ])->assertRedirect();
 
         $this->actingAs($ci)->postJson(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address',
-            'remarks' => 'Stale save should be rejected', 'expected_updated_at' => $staleTimestamp,
-        ])->assertStatus(422)->assertJsonValidationErrors('expected_updated_at');
+            'remarks' => 'Stale save should be rejected', 'expected_revision' => $staleRevision,
+        ])->assertStatus(409)->assertJson(['result' => 'conflict']);
     }
 
     public function test_residence_photo_stores_the_actual_authenticated_uploader(): void
@@ -180,7 +181,7 @@ class ResidenceBusinessReportTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($second)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'photos' => [$secondPhoto],
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'photos' => [$secondPhoto],
         ]);
 
         $photos = $check->photos()->orderBy('id')->get();
@@ -598,7 +599,7 @@ class ResidenceBusinessReportTest extends TestCase
 
         $replacement = UploadedFile::fake()->image('Map2.png', 800, 600)->size(400);
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'map_screenshot' => $replacement,
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'map_screenshot' => $replacement,
         ])->assertRedirect();
 
         $check->refresh();
@@ -608,7 +609,7 @@ class ResidenceBusinessReportTest extends TestCase
 
         $secondPath = $check->map_screenshot_path;
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'remove_map_screenshot' => '1',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'ci_date' => now()->toDateString(), 'location' => 'Applicant Address', 'remove_map_screenshot' => '1',
         ])->assertRedirect();
 
         $check->refresh();
@@ -639,7 +640,7 @@ class ResidenceBusinessReportTest extends TestCase
 
         $replacement = UploadedFile::fake()->image('Map2.png', 800, 600)->size(400);
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
-            'check_id' => $check->id, 'income_source_id' => $source->id, 'ci_date' => now()->toDateString(),
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'income_source_id' => $source->id, 'ci_date' => now()->toDateString(),
             'location' => 'Poblacion, San Miguel, Bulacan', 'map_screenshot' => $replacement,
         ])->assertRedirect();
 
@@ -650,7 +651,7 @@ class ResidenceBusinessReportTest extends TestCase
 
         $secondPath = $check->map_screenshot_path;
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
-            'check_id' => $check->id, 'income_source_id' => $source->id, 'ci_date' => now()->toDateString(),
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'income_source_id' => $source->id, 'ci_date' => now()->toDateString(),
             'location' => 'Poblacion, San Miguel, Bulacan', 'remove_map_screenshot' => '1',
         ])->assertRedirect();
 
@@ -736,7 +737,8 @@ class ResidenceBusinessReportTest extends TestCase
         $this->assertStringContainsString('Business Check actions', $content);
     }
 
-    public function test_multiple_residence_checks_for_the_same_applicant_appear_as_separate_rows(): void
+    /** The Applicant gets at most ONE Residence Check — a second create attempt is refused rather than adding a row, and the listing keeps showing exactly that one. */
+    public function test_the_applicant_keeps_exactly_one_residence_check_row(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -750,18 +752,16 @@ class ResidenceBusinessReportTest extends TestCase
             'photos' => [UploadedFile::fake()->image('Second.jpg', 900, 700)->size(500)],
         ])->assertRedirect();
 
-        // Two independent rows, never merged/overwritten into one.
-        $checks = $folder->residenceChecks()->whereNull('co_maker_id')->get();
-        $this->assertCount(2, $checks);
+        $check = $folder->residenceChecks()->whereNull('co_maker_id')->sole();
+        $this->assertSame('First residence check', $check->remarks);
 
         $content = $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk()->getContent();
-        $this->assertSame(2, substr_count($content, 'data-residence-check-select value='));
-        foreach ($checks as $check) {
-            $this->assertStringContainsString('data-residence-check-select value="'.$check->id.'"', $content);
-        }
+        $this->assertSame(1, substr_count($content, 'data-residence-check-select value='));
+        $this->assertStringContainsString('data-residence-check-select value="'.$check->id.'"', $content);
     }
 
-    public function test_multiple_residence_checks_for_the_same_co_maker_appear_as_separate_rows(): void
+    /** Same invariant for one exact Co-Maker: their second create attempt adds nothing, and the listing keeps showing exactly their one check. */
+    public function test_one_exact_co_maker_keeps_exactly_one_residence_check_row(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -777,16 +777,14 @@ class ResidenceBusinessReportTest extends TestCase
             'photos' => [UploadedFile::fake()->image('Second.jpg', 900, 700)->size(500)],
         ])->assertRedirect();
 
-        $checks = $folder->residenceChecks()->where('co_maker_id', $coMaker->id)->get();
-        $this->assertCount(2, $checks);
+        $check = $folder->residenceChecks()->where('co_maker_id', $coMaker->id)->sole();
+        $this->assertSame('Co-maker check one', $check->remarks);
 
         $content = $this->actingAs($ci)
             ->get(route('client-folders.residence-business.edit', $folder).'?person=co-maker&co_maker_id='.$coMaker->id)
             ->assertOk()->getContent();
-        $this->assertSame(2, substr_count($content, 'data-residence-check-select value='));
-        foreach ($checks as $check) {
-            $this->assertStringContainsString('data-residence-check-select value="'.$check->id.'"', $content);
-        }
+        $this->assertSame(1, substr_count($content, 'data-residence-check-select value='));
+        $this->assertStringContainsString('data-residence-check-select value="'.$check->id.'"', $content);
     }
 
     public function test_residence_table_sortable_headers_have_up_and_down_arrow_controls(): void
@@ -1213,6 +1211,7 @@ class ResidenceBusinessReportTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'check_id' => $applicantCheck->id,
+            'expected_revision' => $applicantCheck->fresh()->revision,
             'income_source_id' => $applicantSource->id,
             'ci_date' => $applicantCheck->ci_date->toDateString(),
             'location' => $applicantCheck->location,
@@ -1231,6 +1230,7 @@ class ResidenceBusinessReportTest extends TestCase
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'co_maker_id' => $coMaker->id,
             'check_id' => $coMakerCheck->id,
+            'expected_revision' => $coMakerCheck->fresh()->revision,
             'income_source_id' => $coMakerSource->id,
             'ci_date' => $coMakerCheck->ci_date->toDateString(),
             'location' => $coMakerCheck->location,

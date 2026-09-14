@@ -9,6 +9,8 @@ use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Exceptions\CloudMediaUploadException;
 use App\Exceptions\NoChangesDetectedException;
+use App\Exceptions\ResidenceCheckAlreadyExistsException;
+use App\Exceptions\ResidenceCheckConflictException;
 use App\Http\Requests\ClientFolders\SaveResidenceCheckRequest;
 use App\Http\Requests\ClientFolders\UpdateResidenceCheckContributorsRequest;
 use App\Models\ClientFolder;
@@ -80,6 +82,33 @@ class ResidenceCheckController extends Controller
 
         try {
             $check = $save->execute($request->user(), $clientFolder, $request->validated());
+        } catch (ResidenceCheckAlreadyExistsException $e) {
+            // A create that lost the race for this exact person: nothing was saved. The CI is sent
+            // to the Residence Check that does exist rather than left on a create form that can
+            // never succeed, so the duplicate row they were about to add simply never appears.
+            $existingRoute = route('client-folders.residence-checks.edit', [$clientFolder, $e->existingCheckId] + $personParams);
+
+            if ($wantsJson) {
+                return response()->json([
+                    'result' => 'exists',
+                    'message' => $e->getMessage(),
+                    'status_type' => 'error',
+                    'return_url' => $existingRoute,
+                ], 409);
+            }
+
+            return redirect()->to($existingRoute)->with('status', $e->getMessage())->with('statusType', 'error');
+        } catch (ResidenceCheckConflictException $e) {
+            if ($wantsJson) {
+                return response()->json([
+                    'result' => 'conflict',
+                    'message' => $e->getMessage(),
+                    'status_type' => 'error',
+                ], 409);
+            }
+
+            return redirect()->route('client-folders.residence-checks.edit', [$clientFolder, $checkId] + $personParams)
+                ->withInput()->with('status', $e->getMessage())->with('statusType', 'error');
         } catch (NoChangesDetectedException $e) {
             if ($wantsJson) {
                 // The modal stays open for this outcome (no parent postMessage is ever sent for

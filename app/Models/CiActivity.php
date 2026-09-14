@@ -22,6 +22,7 @@ class CiActivity extends Model
     {
         return [
             'status' => ActivityStatus::class,
+            'revision' => 'integer',
             'visit_date' => 'date',
             'scheduled_at' => 'datetime',
             'scheduled_has_time' => 'boolean',

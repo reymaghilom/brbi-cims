@@ -3,11 +3,14 @@
 namespace App\Actions\ClientFolders;
 
 use App\Enums\BusinessCheckPhotoCategory;
+use App\Exceptions\BusinessCheckConflictException;
 use App\Exceptions\NoChangesDetectedException;
+use App\Exceptions\SimilarBusinessCheckExistsException;
 use App\Models\AuditLog;
 use App\Models\BusinessCheck;
 use App\Models\BusinessCheckPhoto;
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use App\Models\User;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CiParticipantService;
@@ -16,6 +19,7 @@ use App\Services\Media\ClientMediaUploader;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -36,6 +40,81 @@ class SaveBusinessCheck
     {
         $checkId = $data['check_id'] ?? null;
         $activePerson = ActivePersonResolver::resolve($folder, $data['co_maker_id'] ?? null);
+
+        // request_token identifies one loaded copy of the Add Business Check form (a fresh UUID
+        // rendered once per page/iframe load), never the folder/person/business — so two submits
+        // carrying the same token are necessarily one Add attempt acted on twice (double-click, a
+        // retried request), while two genuinely separate Add actions always reload the form and so
+        // always carry different tokens. Same convention SaveResidenceCheck::execute() already
+        // uses. Edits are never deduped this way: they are already scoped by check_id and carry
+        // their own expected_revision guard.
+        $requestToken = $checkId === null ? ($data['request_token'] ?? null) : null;
+        if (! $requestToken) {
+            return $this->createOrUpdate($actor, $folder, $data, $checkId, $activePerson);
+        }
+
+        return Cache::lock("business-check-create:{$requestToken}", 15)->block(10, function () use ($actor, $folder, $data, $activePerson, $requestToken): BusinessCheck {
+            $resultCacheKey = "business-check-create-result:{$requestToken}";
+            $alreadyCreatedId = Cache::get($resultCacheKey);
+            if ($alreadyCreatedId !== null) {
+                // The first request for this exact token already created and committed its check
+                // (and uploaded its media) while this one waited on the lock — answer with that
+                // same record instead of inserting a second one.
+                return $folder->businessChecks()->findOrFail($alreadyCreatedId);
+            }
+
+            $check = $this->createOrUpdate($actor, $folder, $data, null, $activePerson);
+            // Recorded only after a successful create. A failed attempt — validation, a cloud
+            // upload failure, and in particular a SimilarBusinessCheckExistsException, which
+            // deliberately creates nothing — leaves nothing here, so the very next submission of
+            // this same still-open form (a genuine retry, or Continue Anyway) reaches the create
+            // path fresh rather than being told it already succeeded.
+            Cache::put($resultCacheKey, $check->id, now()->addMinutes(2));
+
+            return $check;
+        });
+    }
+
+    /**
+     * The similarity signature is deliberately narrow and exact-match-after-normalization: the
+     * same Business Name AND the same Location AND the same CI Date. Business Name alone is never
+     * the signal — two genuinely different branches or stalls routinely share a name ("Sari-Sari
+     * Store"), and treating that as a duplicate would block real work. Normalization is limited to
+     * trimming, collapsing runs of whitespace and case-insensitive comparison; there is no fuzzy
+     * or AI matching, so the outcome is predictable and explainable to a CI.
+     *
+     * Scope is the exact person inside this exact folder, with income_source_id NULL, so a manual
+     * check can never be compared against another person's, another folder's, or a linked one.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    private function findSimilarManualCheck(ClientFolder $folder, ?CoMaker $activePerson, array $data): ?BusinessCheck
+    {
+        $ciDate = filled($data['ci_date'] ?? null) ? Carbon::parse($data['ci_date'])->toDateString() : null;
+        $name = $this->normalizeForComparison($data['business_name'] ?? null);
+        $location = $this->normalizeForComparison($data['location'] ?? null);
+        if ($ciDate === null || $name === '' || $location === '') {
+            return null;
+        }
+
+        return $folder->businessChecks()
+            ->where('co_maker_id', $activePerson?->id)
+            ->whereNull('income_source_id')
+            ->whereDate('ci_date', $ciDate)
+            ->get(['id', 'business_name', 'location'])
+            ->first(fn (BusinessCheck $check) => $this->normalizeForComparison($check->business_name) === $name
+                && $this->normalizeForComparison($check->location) === $location);
+    }
+
+    /** Trim, collapse internal whitespace runs, casefold — nothing cleverer, so two CIs can predict it. */
+    private function normalizeForComparison(?string $value): string
+    {
+        return mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', (string) $value)));
+    }
+
+    /** @param  array<string, mixed>  $data */
+    private function createOrUpdate(User $actor, ClientFolder $folder, array $data, ?int $checkId, ?CoMaker $activePerson): BusinessCheck
+    {
         // Same cleanup-on-failure convention as SaveResidenceCheck::execute() / UploadMedia::execute():
         // newly stored files (local disk or Cloudinary) live outside the DB transaction below, so a
         // rollback there never removes them — collect every upload this save actually created and
@@ -71,21 +150,50 @@ class SaveBusinessCheck
                         ]);
                     }
                 }
+
+                // Manual create only (no referenced business). A person may legitimately run
+                // several businesses, so this is never a uniqueness rule — it is an advisory
+                // warning against an accidental re-add that the request_token guard cannot catch,
+                // because the CI reloaded the form and so carries a different token. Continue
+                // Anyway resubmits with allow_similar_duplicate and creates the second check.
+                // It deliberately does NOT apply to a linked check: there, the exact
+                // income_source_id rule above stays a hard block with no bypass.
+                if ($checkId === null && $referencedSourceId === null && ! ($data['allow_similar_duplicate'] ?? false)) {
+                    $existing = $this->findSimilarManualCheck($folder, $activePerson, $data);
+                    if ($existing !== null) {
+                        // Thrown before any field write, photo group, upload, suppression-marker
+                        // clear, audit row or progress recalculation — a warning has no side effects.
+                        throw new SimilarBusinessCheckExistsException((int) $existing->id);
+                    }
+                }
+                // An existing check is locked before its revision is compared and stays locked
+                // through every field, photo group, map screenshot, contributor, audit and
+                // progress mutation below, so the compare and the write are one atomic step. The
+                // previous updated_at comparison read the row without a lock, so two CIs could
+                // both compare against the same value before either wrote and the later request
+                // silently overwrote the earlier one. The scope — this folder, this exact person,
+                // this exact check id — is unchanged, so no other person's or folder's check is
+                // reachable here. income_source_id is deliberately NOT part of the lookup: it is a
+                // mutable field of the check (a CI may repoint a check at a different business),
+                // and identity is the check id itself.
                 $check = $checkId !== null
-                    ? $folder->businessChecks()->where('co_maker_id', $activePerson?->id)->findOrFail((int) $checkId)
+                    ? $folder->businessChecks()->where('co_maker_id', $activePerson?->id)->lockForUpdate()->findOrFail((int) $checkId)
                     : $folder->businessChecks()->make(['co_maker_id' => $activePerson?->id]);
                 $created = ! $check->exists;
 
-                if (! $created && filled($data['expected_updated_at'] ?? null) && ! Carbon::parse($data['expected_updated_at'])->equalTo($check->updated_at)) {
-                    throw ValidationException::withMessages([
-                        'expected_updated_at' => 'This record has been updated by another CI. Please review the latest version before saving.',
-                    ]);
+                if (! $created && (int) ($data['expected_revision'] ?? 0) !== $check->revision) {
+                    throw new BusinessCheckConflictException;
                 }
 
                 $check->fill(Arr::only($data, self::FIELDS));
                 $incomeSourceChanged = $created || $check->isDirty('income_source_id');
                 if ($created) {
                     $check->ci_user_id = $actor->id;
+                } else {
+                    // Advanced on every successful update, so the token a form was rendered with
+                    // can never be reused. A save that ends up rolling back (no-change, a failed
+                    // upload) rolls this back with it, exactly like every other field here.
+                    $check->revision++;
                 }
                 $check->updated_by = $actor->id;
 

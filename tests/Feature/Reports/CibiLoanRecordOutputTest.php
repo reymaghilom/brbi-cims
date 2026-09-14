@@ -61,7 +61,7 @@ class CibiLoanRecordOutputTest extends TestCase
 
         // …and all five saved rows are present, in saved order.
         $this->assertSame(
-            ['11,000.00', '12,000.00', '21,000.00', '22,000.00'],
+            ['11000', '12000', '21000', '22000'],
             $this->orderedAmounts($table),
         );
     }
@@ -78,13 +78,13 @@ class CibiLoanRecordOutputTest extends TestCase
         $this->assertSame(['FICCO', 'MCCB', '', 'OIC', ''], array_column($rows, 0));
         $this->assertSame('N/A', $rows[0][1]);                 // no fabricated FICCO amount
         $this->assertSame('TO BE FOLLOW', $rows[0][7]);        // findings survive
-        $this->assertSame(['N/A', '11,000.00', '12,000.00', '21,000.00', '22,000.00'], array_column($rows, 1));
+        $this->assertSame(['N/A', '11000', '12000', '21000', '22000'], array_column($rows, 1));
 
         // DOCX renders from the sections list and must carry the identical relationship.
         $section = collect($document['sections'])->firstWhere('title', 'Loan Records');
         $this->assertSame(['FICCO', 'MCCB', '—', 'OIC', '—'], array_column($section['rows'], 0));
         $this->assertSame('TO BE FOLLOW', $section['rows'][0][6]);
-        $this->assertSame(['N/A', '11,000.00', '12,000.00', '21,000.00', '22,000.00'], array_column($section['rows'], 1));
+        $this->assertSame(['N/A', '11000', '12000', '21000', '22000'], array_column($section['rows'], 1));
     }
 
     public function test_saved_sort_order_beats_incidental_id_order_in_the_official_outputs(): void
@@ -100,7 +100,7 @@ class CibiLoanRecordOutputTest extends TestCase
         $this->actingAs($ci);
         $rows = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi)['cibi']['loan_records'];
 
-        $this->assertSame(['11,000.00', '99,000.00'], array_column($rows, 1));
+        $this->assertSame(['11000', '99000'], array_column($rows, 1));
         $this->assertSame(['FIRST', 'SECOND'], array_column($rows, 7));
     }
 
@@ -122,7 +122,7 @@ class CibiLoanRecordOutputTest extends TestCase
         $this->assertStringContainsString('OIC', $documentXml);
 
         // Amounts appear in saved order, and each institution's name appears once in the table.
-        $this->assertSame(['11,000.00', '12,000.00', '21,000.00', '22,000.00'], $this->orderedAmounts($documentXml));
+        $this->assertSame(['11000', '12000', '21000', '22000'], $this->orderedAmounts($documentXml));
         $this->assertSame(1, substr_count($documentXml, '>MCCB<'));
         $this->assertSame(1, substr_count($documentXml, '>OIC<'));
     }
@@ -297,7 +297,7 @@ class CibiLoanRecordOutputTest extends TestCase
     /** @return array<int, string> */
     private function orderedAmounts(string $markup): array
     {
-        preg_match_all('/(1[12],000\.00|2[12],000\.00)/', $markup, $matches);
+        preg_match_all('/(1[12]000|2[12]000)/', $markup, $matches);
 
         return array_values(array_unique($matches[1]));
     }

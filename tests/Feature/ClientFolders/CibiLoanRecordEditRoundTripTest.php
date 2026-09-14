@@ -78,7 +78,7 @@ class CibiLoanRecordEditRoundTripTest extends TestCase
         }
 
         // Saved order (sort_order) wins over the order the ids happen to be in.
-        $this->assertSame(['10000.00', '90000.00'], $rendered);
+        $this->assertSame(['10000', '90000'], $rendered);
     }
 
     public function test_edit_forms_never_leak_loan_rows_between_the_applicant_and_any_co_maker(): void
@@ -205,8 +205,8 @@ class CibiLoanRecordEditRoundTripTest extends TestCase
         foreach ($ids as $id) {
             $this->assertTrue($after->contains('id', $id), "Row $id lost its identity across the round trip.");
         }
-        $this->assertSame('55000.00', $after->firstWhere('id', $ids[1])->original_amount);
-        $this->assertSame('30000.00', $after->firstWhere('id', $ids[2])->original_amount);
+        $this->assertSame('55,000', $after->firstWhere('id', $ids[1])->original_amount);
+        $this->assertSame('30,000', $after->firstWhere('id', $ids[2])->original_amount);
         $this->assertSame('STILL TO BE FOLLOW', $after->firstWhere('id', $ids[0])->payment_performance);
         $this->assertSame(['FICCO', 'MCCB', 'MCCB', 'MCCB', 'OIC'], $after->pluck('institution')->all());
 

@@ -56,7 +56,17 @@
             @csrf
             <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
             <input type="hidden" name="check_id" value="{{ $businessCheck?->id }}">
-            <input type="hidden" name="expected_updated_at" value="{{ $businessCheck?->updated_at?->toISOString() }}">
+            {{-- A monotonic edit token; unlike updated_at, it cannot repeat for two saves in one second. --}}
+            <input type="hidden" name="expected_revision" value="{{ $businessCheck?->revision }}">
+            {{-- One fresh value per page load — identifies this one loaded copy of the Add form so
+                 SaveBusinessCheck can tell a duplicate submit of it (double-click, a retried
+                 request) apart from a genuinely separate Add Business Check action, which always
+                 reloads this form and gets its own new token. Never sent on Edit. --}}
+            @unless($businessCheck)
+                <input type="hidden" name="request_token" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
+                {{-- Set to 1 only by Continue Anyway on the similar-Business-Check dialog below. --}}
+                <input type="hidden" name="allow_similar_duplicate" value="" data-business-check-allow-similar>
+            @endunless
 
             <div class="ui-panel divide-y divide-ui-border overflow-hidden">
                 <details open class="group" aria-labelledby="business-basic-info-title">
@@ -252,5 +262,21 @@
             <button type="button" class="ui-button-primary" data-companion-confirm>Add Selected</button>
         </x-slot:footer>
     </x-ui.modal>
+
+    @unless($businessCheck)
+        {{-- Advisory duplicate warning for a manual (unlinked) Business Check. Nothing has been
+             saved when this opens: the CI either reviews the existing record, deliberately
+             proceeds, or cancels. A person may legitimately run several businesses, so Continue
+             Anyway is always available here — it is never offered for a linked business, whose
+             one-check-per-income-source rule is a hard block. --}}
+        <x-ui.modal id="business-check-similar-dialog" title="Similar Business Check found" size="max-w-md" data-business-check-similar-dialog>
+            <p class="text-sm text-text-muted" data-business-check-similar-message></p>
+            <x-slot:footer>
+                <button type="button" class="ui-button-secondary" data-modal-close>Cancel</button>
+                <a href="#" class="ui-button-secondary" data-business-check-similar-review>Review Existing</a>
+                <button type="button" class="ui-button-primary" data-business-check-similar-continue>Continue Anyway</button>
+            </x-slot:footer>
+        </x-ui.modal>
+    @endunless
 
 @endsection

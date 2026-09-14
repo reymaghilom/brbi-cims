@@ -126,6 +126,7 @@ class CloudinaryMediaTest extends TestCase
             ->andReturn(...$newAssets);
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'photos' => $this->fakePhotos(3, 'Update'),
         ])->assertSessionHasNoErrors();
 
@@ -155,6 +156,7 @@ class CloudinaryMediaTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'photos' => $this->fakePhotos(3, 'Rejected'),
         ])->assertSessionHasErrors(['photos' => 'A maximum of 10 residence pictures is allowed.']);
 
@@ -191,6 +193,7 @@ class CloudinaryMediaTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'removed_photo_ids' => [$oldPhoto->id],
             'photos' => [UploadedFile::fake()->image('Replacement.jpg', 900, 700)->size(500)],
         ])->assertSessionHasNoErrors();
@@ -365,7 +368,7 @@ class CloudinaryMediaTest extends TestCase
         $this->mockedCloud->shouldNotReceive('destroy')->with('keep-me', \Mockery::any(), \Mockery::any());
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'removed_photo_ids' => [$toRemove->id],
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'removed_photo_ids' => [$toRemove->id],
         ])->assertSessionHasNoErrors();
 
         $this->assertSame(1, $check->photos()->count());
@@ -395,7 +398,7 @@ class CloudinaryMediaTest extends TestCase
         $this->mockedCloud->shouldNotReceive('destroy')->with('keep-me', \Mockery::any(), \Mockery::any());
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'removed_photo_ids' => [$toRemove1->id, $toRemove2->id],
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'removed_photo_ids' => [$toRemove1->id, $toRemove2->id],
         ])->assertSessionHasNoErrors();
 
         $this->assertSame(1, $check->photos()->count());
@@ -421,7 +424,7 @@ class CloudinaryMediaTest extends TestCase
         $this->mockedCloud->shouldNotReceive('destroy');
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'removed_photo_ids' => [$onlyPhoto->id],
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'removed_photo_ids' => [$onlyPhoto->id],
         ])->assertSessionHasErrors('photos');
 
         $this->assertSame('At least one residence picture is required.', session('errors')->first('photos'));
@@ -431,7 +434,7 @@ class CloudinaryMediaTest extends TestCase
 
     /**
      * A save that fails AFTER the removal loop has already run inside the transaction (a stale
-     * expected_updated_at conflict — checked at the very top of SaveResidenceCheck's transaction
+     * expected_revision conflict — checked at the very top of SaveResidenceCheck's transaction
      * closure, so this specific save never even reaches the removal loop, but exercises the same
      * "removal collected, then the whole transaction throws" shape a real mid-save failure would)
      * must roll back the DB delete and must never call destroy() — retireCloudAsset() only ever
@@ -453,10 +456,10 @@ class CloudinaryMediaTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision + 1,
             'removed_photo_ids' => [$photo->id],
             'photos' => [UploadedFile::fake()->image('Replacement.jpg', 900, 700)->size(500)],
-            'expected_updated_at' => now()->subDay()->toISOString(),
-        ])->assertSessionHasErrors('expected_updated_at');
+        ])->assertSessionHas('status', 'This Residence Check was updated by another user. Review or reload the latest version before saving again.');
 
         $this->assertDatabaseHas('residence_check_photos', ['id' => $photo->id]);
         $this->assertSame(10, $check->photos()->count());
@@ -485,7 +488,7 @@ class CloudinaryMediaTest extends TestCase
         $this->mockCloud()->shouldReceive('store')->once()
             ->andReturn($this->fakeCloudAsset('cloud-photo'));
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'photos' => [UploadedFile::fake()->image('Cloud.jpg', 900, 700)->size(500)],
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'photos' => [UploadedFile::fake()->image('Cloud.jpg', 900, 700)->size(500)],
         ]);
         $cloudPhoto = $check->photos()->where('cloud_public_id', 'cloud-photo')->firstOrFail();
         $this->assertSame(2, $check->photos()->count());
@@ -495,7 +498,7 @@ class CloudinaryMediaTest extends TestCase
             ->andReturn($this->fakeCloudAsset('replacement-photo'));
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'removed_photo_ids' => [$localPhoto->id, $cloudPhoto->id],
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'removed_photo_ids' => [$localPhoto->id, $cloudPhoto->id],
             'photos' => [UploadedFile::fake()->image('Replacement.jpg', 900, 700)->size(500)],
         ])->assertSessionHasNoErrors();
 
@@ -529,7 +532,7 @@ class CloudinaryMediaTest extends TestCase
         $this->mockedCloud->shouldNotReceive('destroy');
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'map_screenshot' => UploadedFile::fake()->image('Replacement.png', 1000, 800)->size(600),
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'map_screenshot' => UploadedFile::fake()->image('Replacement.png', 1000, 800)->size(600),
         ])->assertStatus(500);
 
         $check->refresh();

@@ -3,6 +3,7 @@
 namespace App\Actions\ClientFolders;
 
 use App\Enums\ActivityStatus;
+use App\Exceptions\DuplicateCiActivityException;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\CiActivity;
@@ -29,14 +30,17 @@ class CreateCiActivity
     public function execute(User $actor, ClientFolder $folder, array $data): CiActivity
     {
         return DB::transaction(function () use ($actor, $folder, $data): CiActivity {
+            // Always an already-existing type: creating the reusable Activity Type is its own
+            // catalog step (createDefinition), which deliberately makes no CiActivity.
             $definition = ActivityDefinition::query()->where('is_active', true)->findOrFail($data['activity_definition_id']);
             $definition = ActivityDefinition::query()->whereKey($definition->id)->lockForUpdate()->firstOrFail();
-            $this->ensureNotAlreadyAdded(
-                $folder,
-                $definition,
-                $data['co_maker_id'] ?? null,
-                'activity_definition_id',
-            );
+            // Checked under the ActivityDefinition lock taken just above, so a second CI adding the
+            // same activity at the same moment waits, re-reads, and gets the advisory rather than
+            // silently inserting a second row. Skipped entirely once the CI has explicitly chosen
+            // Continue Anyway.
+            if (! (bool) ($data['allow_duplicate'] ?? false)) {
+                $this->warnIfAlreadyAdded($folder, $definition, $data['co_maker_id'] ?? null);
+            }
             $isBankCoopCheck = $definition->code === ActivityDefinition::BANK_COOP_CHECK_CODE;
             $isAssetCheck = $definition->code === ActivityDefinition::ASSET_CHECK_CODE;
             $isMultiTargetCheck = $isBankCoopCheck || $isAssetCheck;
@@ -151,24 +155,21 @@ class CreateCiActivity
         );
     }
 
-    private function ensureNotAlreadyAdded(
-        ClientFolder $folder,
-        ActivityDefinition $definition,
-        ?int $coMakerId,
-        string $validationField,
-    ): void {
-        $alreadyExists = $folder->activities()
+    /**
+     * Scoped to this exact folder, this exact definition and this exact person (co_maker_id NULL =
+     * Applicant), so the same type under another person or folder is never involved. Thrown before
+     * the insert, so a refused add leaves no row, no audit, no reminder and no progress change.
+     */
+    private function warnIfAlreadyAdded(ClientFolder $folder, ActivityDefinition $definition, ?int $coMakerId): void
+    {
+        $existing = $folder->activities()
             ->where('activity_definition_id', $definition->id)
             ->where('co_maker_id', $coMakerId)
             ->lockForUpdate()
-            ->first(['ci_activities.id']) !== null;
+            ->first(['ci_activities.id']);
 
-        if ($alreadyExists) {
-            throw ValidationException::withMessages([
-                $validationField => $coMakerId === null
-                    ? 'This activity already exists for the current Applicant.'
-                    : 'This activity already exists for this Co-Maker.',
-            ]);
+        if ($existing !== null) {
+            throw new DuplicateCiActivityException($existing->id, $coMakerId);
         }
     }
 

@@ -124,7 +124,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
             ->andReturn($this->fakeCloudAsset('residence-map-1'));
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'map_screenshot' => UploadedFile::fake()->image('Map.png', 800, 600)->size(400),
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'map_screenshot' => UploadedFile::fake()->image('Map.png', 800, 600)->size(400),
         ])->assertSessionHas('status', 'Residence Check updated successfully. Files saved to Cloud Storage (Cloudinary).');
     }
 
@@ -141,7 +141,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Genuinely different remark.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Genuinely different remark.',
         ])->assertSessionHas('status', 'Residence Check updated successfully.');
     }
 
@@ -170,7 +170,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.',
         ])->assertSessionHas('status', 'Nothing changed. No updates were saved to the database.')
             ->assertSessionHas('statusType', 'info');
     }
@@ -237,7 +237,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $this->mockedCloud->shouldNotReceive('destroy');
 
         $response = $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'map_screenshot' => UploadedFile::fake()->image('Replacement.png', 800, 600)->size(400),
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'map_screenshot' => UploadedFile::fake()->image('Replacement.png', 800, 600)->size(400),
         ]);
 
         $response->assertRedirect(route('client-folders.residence-checks.edit', [$folder, $check]));

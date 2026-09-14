@@ -92,6 +92,7 @@ class ChecksListingFragmentTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'location' => 'New Residence Location',
         ], ['Accept' => 'application/json', 'X-Requested-With' => 'XMLHttpRequest'])
             ->assertOk()
@@ -115,6 +116,7 @@ class ChecksListingFragmentTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->fresh()->revision,
             'income_source_id' => $source->id,
             'ci_date' => now()->toDateString(),
             'location' => 'Edited Business Location',

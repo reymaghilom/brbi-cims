@@ -516,6 +516,7 @@ class CiActivityBankTargetsTest extends TestCase
 
         $folder->update(['assigned_ci_id' => $updater->id]);
         $this->actingAs($updater)->put(route('client-folders.activities.bank-targets.update', [$folder, $activity, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'BDO Updated',
@@ -536,6 +537,7 @@ class CiActivityBankTargetsTest extends TestCase
         $this->get($detailUrl)->assertOk()->assertSee('No follow-up date set');
 
         $this->put(route('client-folders.activities.bank-targets.update', [$folder, $activity, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'BDO Updated',
@@ -551,6 +553,7 @@ class CiActivityBankTargetsTest extends TestCase
         $this->get($detailUrl)->assertOk()->assertSee('No specific time');
 
         $this->put(route('client-folders.activities.bank-targets.update', [$folder, $activity, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'BDO Updated',
@@ -565,6 +568,7 @@ class CiActivityBankTargetsTest extends TestCase
         $this->assertTrue($target->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-03 14:45', 'Asia/Manila')->utc()));
 
         $this->put(route('client-folders.activities.bank-targets.update', [$folder, $activity, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
             'institution_name' => 'BDO Updated',

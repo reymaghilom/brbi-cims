@@ -85,7 +85,7 @@ class ResidenceBusinessSuccessToastTest extends TestCase
         ]);
         $check = $folder->residenceChecks()->firstOrFail();
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'A genuinely different remark.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'A genuinely different remark.',
         ])->assertSessionHas('status', 'Residence Check updated successfully.');
 
         // The parent listing page's own reload after the modal closes is where the CI actually

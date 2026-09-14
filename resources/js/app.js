@@ -407,7 +407,7 @@ document.querySelectorAll('[data-dashboard-completion-modal]').forEach((dashboar
         formData.set('_method', trigger.dataset.dashboardCompletionMethod || 'PUT');
         formData.set('_token', document.querySelector('meta[name="csrf-token"]')?.content ?? '');
         formData.set('co_maker_id', trigger.dataset.dashboardCompletionCoMakerId ?? '');
-        formData.set('expected_updated_at', trigger.dataset.dashboardCompletionExpectedUpdatedAt ?? '');
+        formData.set('expected_revision', trigger.dataset.dashboardCompletionExpectedRevision ?? '');
         formData.set('status', 'completed');
         formData.set('intent', 'return');
         confirm.disabled = true;
@@ -2943,10 +2943,11 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
         return root + parts.map((part) => `[${part}]`).join('');
     };
 
-    const showErrors = (errors, message = 'No report changes were saved.') => {
+    const showErrors = (errors, message = 'No report changes were saved.', { conflict = false } = {}) => {
         clearErrors();
         if (errorSummary) {
             errorSummary.hidden = false;
+            errorSummary.querySelector('[data-cibi-validation-heading]').hidden = conflict;
             errorSummary.querySelector('[data-cibi-error-message]').textContent = message;
         }
 
@@ -3078,7 +3079,11 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
                 // its field (expected_revision) is hidden, so the generic top-level message would
                 // otherwise hide the specific "updated by another user" wording entirely.
                 const conflictMessage = payload.errors?.expected_revision?.[0];
-                showErrors(payload.errors || {}, conflictMessage || payload.message || 'The report could not be saved.');
+                showErrors(
+                    payload.errors || {},
+                    conflictMessage || payload.message || 'The report could not be saved.',
+                    { conflict: Boolean(conflictMessage) },
+                );
                 return;
             }
 
@@ -4746,6 +4751,21 @@ document.querySelectorAll('[data-residence-check-form]').forEach((form) => {
                 showToast(payload.message, 'error');
                 return;
             }
+            if (xhr.status === 409 && payload?.result === 'conflict') {
+                showToast(payload.message, 'error');
+                return;
+            }
+            if (xhr.status === 409 && payload?.result === 'exists') {
+                // Another CI's Add for this exact person won the race, so nothing was created here.
+                // The toast is shown first and this form is then replaced by the Residence Check
+                // that does exist, so the CI continues on the real record instead of resubmitting
+                // a create that can never succeed.
+                showToast(payload.message, 'error');
+                if (payload.return_url) {
+                    window.setTimeout(() => { window.location.assign(payload.return_url); }, 1500);
+                }
+                return;
+            }
             if (xhr.status === 422 && payload?.errors) {
                 const firstMessage = Object.values(payload.errors).flat()[0];
                 showToast(firstMessage || 'Please correct the highlighted fields. No changes were saved.', 'error');
@@ -4992,6 +5012,29 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
                 showToast(payload.message, 'info');
                 return;
             }
+            if (xhr.status === 409 && payload?.result === 'conflict') {
+                // Another CI saved this Business Check first — nothing here was stored. The form
+                // stays open so the CI can reload and review the newer version.
+                showToast(payload.message, 'error');
+                return;
+            }
+            if (xhr.status === 409 && payload?.result === 'similar_exists') {
+                // Nothing was created. Offer the three choices; Continue Anyway resubmits this same
+                // form (same request_token, so a double-click on it still yields one row) with the
+                // allow_similar_duplicate flag set.
+                const dialog = document.querySelector('[data-business-check-similar-dialog]');
+                if (!dialog) {
+                    showToast(payload.message, 'error');
+                    return;
+                }
+                const message = dialog.querySelector('[data-business-check-similar-message]');
+                const review = dialog.querySelector('[data-business-check-similar-review]');
+                if (message) message.textContent = payload.message;
+                if (review instanceof HTMLAnchorElement) review.href = payload.existing_url || '#';
+                dialog.showModal();
+                dialog.querySelector('[data-business-check-similar-continue]')?.focus();
+                return;
+            }
             if (xhr.status === 422 && payload?.errors) {
                 const firstMessage = Object.values(payload.errors).flat()[0];
                 showToast(firstMessage || 'Please correct the highlighted fields. No changes were saved.', 'error');
@@ -5008,6 +5051,19 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
         xhr.addEventListener('abort', resetButton);
         xhr.send(new FormData(form));
     });
+
+    // Continue Anyway: set the server-validated flag and resubmit this same form, so the staged
+    // photos and every typed value go through unchanged. The flag is cleared again afterwards so a
+    // later, unrelated save never silently carries it.
+    document.querySelector('[data-business-check-similar-continue]')?.addEventListener('click', () => {
+        const allow = form.querySelector('[data-business-check-allow-similar]');
+        if (!(allow instanceof HTMLInputElement)) return;
+        allow.value = '1';
+        document.querySelector('[data-business-check-similar-dialog]')?.close();
+        form.dataset.submitting = 'false';
+        form.requestSubmit();
+        allow.value = '';
+    });
 });
 
 // A form marked [data-no-change-guard] refuses to submit while every editable control still
@@ -5015,7 +5071,7 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
 // and would still write history — it reveals its own [data-no-change-message] and stays open.
 // Comparison is against each control's own default (the rendered value/checked/selected state),
 // so no snapshot timing is involved and a fragment loaded into a modal behaves identically.
-const NO_CHANGE_IGNORED_FIELDS = ['_token', '_method', 'co_maker_id', 'expected_updated_at', 'intent'];
+const NO_CHANGE_IGNORED_FIELDS = ['_token', '_method', 'co_maker_id', 'expected_revision', 'intent'];
 
 function noChangeGuardIsDirty(form) {
     return [...form.elements].some((control) => {

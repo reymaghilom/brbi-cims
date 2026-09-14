@@ -37,6 +37,10 @@ class StoreCiActivityAssetTargetRequest extends FormRequest
             'scheduled_at' => ['nullable', 'date', Rule::requiredIf(ActivityStatus::requiresScheduledDate($this->input('status')))],
             'scheduled_time' => ['nullable', 'date_format:H:i'],
             'remarks' => ['nullable', 'string', 'max:20000'],
+            // Continue Anyway. Narrow and validated: it only lets an already-present target be
+            // added a second time, and changes nothing about authorization, the remaining rules or
+            // the Applicant/Co-Maker and folder scoping asserted in authorize().
+            'allow_duplicate' => ['sometimes', 'boolean'],
         ];
     }
 

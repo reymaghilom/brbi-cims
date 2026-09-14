@@ -157,7 +157,12 @@ class CibiBankCoopPrefillTest extends TestCase
             ->assertDontSee('data-bank-target-prefill data-institution="MCCB"', false)
             ->assertSee("if (institution.value.trim() !== '' && normalize(institution.value) !== normalize(candidateInstitution)) return;", false)
             ->assertSee("if (institution.value.trim() === '') institution.value = candidateInstitution;", false)
-            ->assertSee("if (branch.value.trim() === '') branch.value = button.dataset.branch ?? '';", false);
+            // The candidate's own Inquiry Type now always wins, and the branch is filled only after
+            // applicability has been settled and only where it still applies — so a Loan Inquiry
+            // candidate can no longer leave the form half-applied, and a branch written by the
+            // click can no longer be blanked straight afterwards.
+            ->assertSee('inquiryType.value = button.dataset.inquiryType ?? inquiryType.value;', false)
+            ->assertSee("if (! branch.disabled && branch.value.trim() === '') branch.value = button.dataset.branch ?? '';", false);
     }
 
     public function test_bank_targets_render_as_unsaved_cibi_bank_and_loan_rows_without_cross_mapping(): void
@@ -216,10 +221,10 @@ class CibiBankCoopPrefillTest extends TestCase
             ->assertSee('name="bank_accounts[1][branch]" value="Other Branch"', false)
             ->assertDontSee('name="bank_accounts[2][institution]" value="Another Bank"', false)
             ->assertSee('name="loan_records[0][institution]" value="Manual Bank"', false)
-            ->assertSee('name="loan_records[0][original_amount]" value="125000.00"', false)
+            ->assertSee('name="loan_records[0][original_amount]" value="125000"', false)
             ->assertSee('name="loan_records[1][institution]" value="Another Bank"', false);
         $this->assertSame('Saved Branch', $report->bankAccounts()->where('institution', 'Manual Bank')->sole()->branch);
-        $this->assertSame('125000.00', $report->loanRecords()->where('institution', 'Manual Bank')->sole()->original_amount);
+        $this->assertSame('125000', $report->loanRecords()->where('institution', 'Manual Bank')->sole()->original_amount);
         $this->assertSame(1, $report->bankAccounts()->count());
         $this->assertSame(1, $report->loanRecords()->count());
     }

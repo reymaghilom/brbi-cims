@@ -25,6 +25,7 @@ use App\Services\Progress\ClientProgressService;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -52,6 +53,7 @@ class ClientFolderMandatoryProgressTest extends TestCase
     {
         $folder = $this->folder();
         $this->assertProgress($folder, 0, ClientFolderStatus::OnProgress);
+        $this->assertSame(0, CiActivity::query()->whereBelongsTo($folder)->count(), 'Missing manual requirements must not create fake activity rows.');
 
         $this->cibi($folder, null);
         $this->assertProgress($folder, 14.29, ClientFolderStatus::OnProgress);
@@ -132,13 +134,61 @@ class ClientFolderMandatoryProgressTest extends TestCase
         $folder = $this->completeFolder();
         $barangay = $this->activityQuery($folder, ActivityDefinition::BARANGAY_CHECK_CODE)->sole();
         $barangay->update(['status' => ActivityStatus::Pending, 'completed_at' => null]);
-        $url = route('client-folders.activities.update', [$folder, $barangay]);
+        $url = route('client-folders.activities.update', [$folder, $barangay] + ['expected_revision' => $barangay->fresh()->revision]);
 
         $this->actingAs($this->ci)->putJson($url, ['co_maker_id' => null, 'status' => ActivityStatus::Completed->value])->assertOk();
         $this->assertStored($folder, 100, ClientFolderStatus::Completed);
+        $completedAt = $folder->fresh()->completed_at;
+        app(ClientProgressService::class)->recalculate($folder);
+        $this->assertTrue($completedAt->equalTo($folder->fresh()->completed_at), 'Recalculation must preserve the original completion timestamp.');
 
         $this->putJson($url, ['co_maker_id' => null, 'status' => ActivityStatus::Pending->value])->assertOk();
         $this->assertStored($folder, 85.71, ClientFolderStatus::OnProgress);
+    }
+
+    public function test_post_commit_recalculations_for_two_different_mandatory_activities_reach_current_state(): void
+    {
+        $folder = $this->completeFolder();
+        $barangay = $this->activityQuery($folder, ActivityDefinition::BARANGAY_CHECK_CODE)->sole();
+        $neighbor = $this->activityQuery($folder, ActivityDefinition::NEIGHBOR_CHECK_CODE)->sole();
+        $barangay->update(['status' => ActivityStatus::Pending, 'completed_at' => null]);
+        $neighbor->update(['status' => ActivityStatus::Pending, 'completed_at' => null]);
+        app(ClientProgressService::class)->recalculate($folder);
+        $this->assertStored($folder, 71.43, ClientFolderStatus::OnProgress);
+
+        DB::transaction(function () use ($folder, $barangay): void {
+            $barangay->update(['status' => ActivityStatus::Completed, 'completed_at' => now()]);
+            app(ClientProgressService::class)->recalculate($folder);
+            $this->assertStored($folder, 71.43, ClientFolderStatus::OnProgress, 'Stored progress changed before the activity transaction committed.');
+        });
+        $this->assertStored($folder, 85.71, ClientFolderStatus::OnProgress);
+
+        DB::transaction(function () use ($folder, $neighbor): void {
+            $neighbor->update(['status' => ActivityStatus::Completed, 'completed_at' => now()]);
+            app(ClientProgressService::class)->recalculate($folder);
+            $this->assertStored($folder, 85.71, ClientFolderStatus::OnProgress, 'Stored progress changed before the activity transaction committed.');
+        });
+        $this->assertStored($folder, 100, ClientFolderStatus::Completed);
+    }
+
+    public function test_serialized_progress_recalculations_remain_independent_between_folders(): void
+    {
+        $first = $this->completeFolder();
+        $second = $this->completeFolder();
+        $firstNeighbor = $this->activityQuery($first, ActivityDefinition::NEIGHBOR_CHECK_CODE)->sole();
+        $secondNeighbor = $this->activityQuery($second, ActivityDefinition::NEIGHBOR_CHECK_CODE)->sole();
+        $firstNeighbor->update(['status' => ActivityStatus::Pending, 'completed_at' => null]);
+        $secondNeighbor->update(['status' => ActivityStatus::Pending, 'completed_at' => null]);
+        app(ClientProgressService::class)->recalculate($first);
+        app(ClientProgressService::class)->recalculate($second);
+
+        DB::transaction(function () use ($first, $firstNeighbor): void {
+            $firstNeighbor->update(['status' => ActivityStatus::Completed, 'completed_at' => now()]);
+            app(ClientProgressService::class)->recalculate($first);
+        });
+
+        $this->assertStored($first, 100, ClientFolderStatus::Completed);
+        $this->assertStored($second, 85.71, ClientFolderStatus::OnProgress);
     }
 
     public function test_residence_check_save_and_delete_refresh_the_stored_progress(): void

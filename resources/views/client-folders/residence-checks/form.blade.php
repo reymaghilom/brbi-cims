@@ -41,7 +41,8 @@
         @csrf
         <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
         <input type="hidden" name="check_id" value="{{ $residenceCheck?->id }}">
-        <input type="hidden" name="expected_updated_at" value="{{ $residenceCheck?->updated_at?->toISOString() }}">
+        {{-- A monotonic edit token; unlike updated_at, it cannot repeat for two saves in one second. --}}
+        <input type="hidden" name="expected_revision" value="{{ $residenceCheck?->revision }}">
         {{-- One fresh value per page load — identifies this one loaded copy of the form so
              SaveResidenceCheck can tell a duplicate submit of it (double-click, a retried request)
              apart from a genuinely separate Add Residence Check action, which always reloads this

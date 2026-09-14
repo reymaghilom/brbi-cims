@@ -11,6 +11,7 @@ use App\Services\Reports\CibiExcelExporter;
 use App\Services\Reports\OfficialReportDataBuilder;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use Tests\TestCase;
@@ -416,7 +417,7 @@ class CibiLoanRecordGroupingTest extends TestCase
 
         $loan = CibiReport::whereBelongsTo($folder)->sole()->loanRecords()->sole();
         $this->assertSame('ABC Cooperative', $loan->institution);
-        $this->assertSame('100000.00', $loan->original_amount);
+        $this->assertSame('100,000', $loan->original_amount);
         $this->assertSame('Salary Loan', $loan->security_type);
     }
 
@@ -472,9 +473,9 @@ class CibiLoanRecordGroupingTest extends TestCase
 
         $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
 
-        $this->assertSame('100000.00', $first->fresh()->original_amount);
-        $this->assertSame('55000.00', $second->fresh()->original_amount);
-        $this->assertSame('300000.00', $third->fresh()->original_amount);
+        $this->assertSame('100,000', $first->fresh()->original_amount);
+        $this->assertSame('55,000', $second->fresh()->original_amount);
+        $this->assertSame('300,000', $third->fresh()->original_amount);
         $this->assertSame(3, $report->loanRecords()->count());
     }
 
@@ -727,11 +728,7 @@ class CibiLoanRecordGroupingTest extends TestCase
             $this->assertSame($visibleCount - $actualCount, substr_count($pdfHtml, $fillerMarkup));
             $this->assertStringContainsString('.cibi-loan-filler-row td{height:.15in}', $webHtml);
             $this->assertStringContainsString('.cibi-loan-filler-row td{height:.15in}', $pdfHtml);
-            $expectedMoneyTotals = [
-                number_format(10000 * (($actualCount * ($actualCount + 1)) / 2), 2),
-                number_format(50000 * $actualCount, 2),
-                number_format(5000 * $actualCount, 2),
-            ];
+            $expectedMoneyTotals = ['', '', ''];
             $this->assertSame($expectedMoneyTotals, $this->officialLoanMoneyTotals($webHtml));
             $this->assertSame($expectedMoneyTotals, $this->officialLoanMoneyTotals($pdfHtml));
             for ($index = 0; $index < $actualCount; $index++) {
@@ -769,11 +766,11 @@ class CibiLoanRecordGroupingTest extends TestCase
         $this->assertSame('TO BE FOLLOW', $rows[0][7]);
         $this->assertSame(array_fill(0, 8, ''), $rows[1]);
         $this->assertSame(array_fill(0, 8, ''), $rows[2]);
-        $this->assertSame(['0.00', '0.00', '0.00'], $this->officialLoanMoneyTotals($html));
+        $this->assertSame(['', '', ''], $this->officialLoanMoneyTotals($html));
         $this->assertCount(1, CibiReport::whereBelongsTo($folder)->sole()->loanRecords);
     }
 
-    public function test_official_money_totals_sum_each_actual_loan_once_and_ignore_blank_zero_result_amounts(): void
+    public function test_official_outputs_preserve_loan_amount_text_without_calculating_totals(): void
     {
         [$ci, $folder] = $this->folder();
         $firstLoan = $this->loanRow('MCCB', 'Salary Loan', '100,000');
@@ -793,13 +790,13 @@ class CibiLoanRecordGroupingTest extends TestCase
         $document = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi);
         $webHtml = $this->actingAs($ci)->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))->assertOk()->getContent();
         $pdfHtml = $this->officialHtml($folder, $document, true);
-        $expected = ['121,022.00', '50,500.00', '7,250.00'];
+        $expected = ['', '', ''];
 
         $this->assertSame($expected, array_values($document['cibi']['loan_amount_totals']));
         $this->assertSame($expected, $this->officialLoanMoneyTotals($webHtml));
         $this->assertSame($expected, $this->officialLoanMoneyTotals($pdfHtml));
         $this->assertSame(['MCCB', '', 'FICCO'], array_column($this->officialLoanRows($webHtml), 0));
-        $this->assertSame(1, substr_count($webHtml, '121,022.00'));
+        $this->assertSame(['100,000', '21,022', 'N/A'], array_column($this->officialLoanRows($webHtml), 1));
     }
 
     public function test_minimum_official_loan_rows_are_applied_independently_to_applicant_and_exact_co_maker(): void
@@ -829,8 +826,8 @@ class CibiLoanRecordGroupingTest extends TestCase
         $this->assertSame(array_fill(0, 8, ''), $applicantRows[1]);
         $this->assertCount(4, $coMakerRows);
         $this->assertSame(['CO MAKER BANK 1', 'CO MAKER BANK 2', 'CO MAKER BANK 3', 'CO MAKER BANK 4'], array_column($coMakerRows, 0));
-        $this->assertSame(['10,000.00', '50,000.00', '5,000.00'], $this->officialLoanMoneyTotals($applicantHtml));
-        $this->assertSame(['200,000.00', '200,000.00', '20,000.00'], $this->officialLoanMoneyTotals($coMakerHtml));
+        $this->assertSame(['', '', ''], $this->officialLoanMoneyTotals($applicantHtml));
+        $this->assertSame(['', '', ''], $this->officialLoanMoneyTotals($coMakerHtml));
         $this->assertStringNotContainsString('CO MAKER BANK', $applicantHtml);
         $this->assertStringNotContainsString('APPLICANT BANK', $coMakerHtml);
     }
@@ -857,6 +854,8 @@ class CibiLoanRecordGroupingTest extends TestCase
         ];
 
         $this->assertSame('ABC Cooperative', $cells['first_institution']);
+        $this->assertSame('100,000', (string) $sheet->getCell('G'.$loanStartRow)->getValue());
+        $this->assertSame(DataType::TYPE_STRING, $sheet->getCell('G'.$loanStartRow)->getDataType());
         $this->assertSame('', $cells['continuation_institution']);
         $this->assertSame('Zero Result Bank', $cells['zero_result_institution']);
         $this->assertSame('No existing loan record found during verification.', $cells['zero_result_findings']);
@@ -953,16 +952,15 @@ class CibiLoanRecordGroupingTest extends TestCase
                 }
                 $this->assertGreaterThan(0, $sheet->getRowDimension($row)->getRowHeight());
             }
-            $factor = ($actualCount * ($actualCount + 1)) / 2;
-            $this->assertSame(100000.0 * $factor, (float) $sheet->getCell('G'.$monetaryTotalRow)->getCalculatedValue());
-            $this->assertSame(70000.0 * $factor, (float) $sheet->getCell('J'.$monetaryTotalRow)->getCalculatedValue());
-            $this->assertSame(5000.0 * $factor, (float) $sheet->getCell('M'.$monetaryTotalRow)->getCalculatedValue());
+            $this->assertNull($sheet->getCell('G'.$monetaryTotalRow)->getValue());
+            $this->assertNull($sheet->getCell('J'.$monetaryTotalRow)->getValue());
+            $this->assertNull($sheet->getCell('M'.$monetaryTotalRow)->getValue());
             $this->assertGreaterThan($monetaryTotalRow, $this->rowContaining($sheet, 'V. INCOME SOURCES VALIDATION'));
             $this->assertCount($actualCount, $report->fresh()->loanRecords);
         }
     }
 
-    public function test_excel_loan_order_grouping_and_monetary_totals_use_each_actual_row_once(): void
+    public function test_excel_loan_order_grouping_preserves_text_and_does_not_calculate_totals(): void
     {
         [$ci, $folder] = $this->folder();
         $payload = $this->payload();
@@ -987,9 +985,11 @@ class CibiLoanRecordGroupingTest extends TestCase
         $this->assertSame('FIRST BY SORT', (string) $sheet->getCell('T'.$loanStartRow)->getValue());
         $this->assertSame('SECOND BY ID', (string) $sheet->getCell('T'.($loanStartRow + 1))->getValue());
         $this->assertNull($sheet->getCell('G'.($loanStartRow + 2))->getValue());
-        $this->assertSame(150000.0, (float) $sheet->getCell('G'.$totalRow)->getCalculatedValue());
-        $this->assertSame(90000.0, (float) $sheet->getCell('J'.$totalRow)->getCalculatedValue());
-        $this->assertSame(7500.0, (float) $sheet->getCell('M'.$totalRow)->getCalculatedValue());
+        $this->assertSame('100000', $sheet->getCell('G'.$loanStartRow)->getValue());
+        $this->assertSame('50000', $sheet->getCell('G'.($loanStartRow + 1))->getValue());
+        $this->assertNull($sheet->getCell('G'.$totalRow)->getValue());
+        $this->assertNull($sheet->getCell('J'.$totalRow)->getValue());
+        $this->assertNull($sheet->getCell('M'.$totalRow)->getValue());
     }
 
     public function test_excel_sections_and_monetary_totals_are_isolated_to_the_exact_applicant_or_co_maker(): void
@@ -1018,11 +1018,11 @@ class CibiLoanRecordGroupingTest extends TestCase
         $this->assertSame('XLSX APPLICANT', (string) $applicantSheet->getCell('G11')->getValue());
         $this->assertSame('APPLICANT XLSX BANK', (string) $applicantSheet->getCell('C36')->getValue());
         $this->assertSame('APPLICANT XLSX LOAN', (string) $applicantSheet->getCell('C'.$applicantLoanStart)->getValue());
-        $this->assertSame(10000.0, (float) $applicantSheet->getCell('G'.$this->monetaryTotalRow($applicantSheet, $applicantLoanStart))->getCalculatedValue());
+        $this->assertNull($applicantSheet->getCell('G'.$this->monetaryTotalRow($applicantSheet, $applicantLoanStart))->getValue());
         $this->assertSame('XLSX CO MAKER PERSON', (string) $coMakerSheet->getCell('G11')->getValue());
         $this->assertSame('CO MAKER XLSX BANK', (string) $coMakerSheet->getCell('C36')->getValue());
         $this->assertSame('CO MAKER XLSX LOAN', (string) $coMakerSheet->getCell('C'.$coMakerLoanStart)->getValue());
-        $this->assertSame(30000.0, (float) $coMakerSheet->getCell('G'.$this->monetaryTotalRow($coMakerSheet, $coMakerLoanStart))->getCalculatedValue());
+        $this->assertNull($coMakerSheet->getCell('G'.$this->monetaryTotalRow($coMakerSheet, $coMakerLoanStart))->getValue());
     }
 
     public function test_the_three_credit_totals_keep_their_own_submitted_values_and_are_never_derived_from_the_grouping(): void
@@ -1127,7 +1127,7 @@ class CibiLoanRecordGroupingTest extends TestCase
     private function monetaryTotalRow($sheet, int $startRow): int
     {
         for ($row = $startRow; $row <= $sheet->getHighestDataRow(); $row++) {
-            if (str_starts_with((string) $sheet->getCell('G'.$row)->getValue(), '=SUM(')) {
+            if (blank($sheet->getCell('B'.$row)->getValue())) {
                 return $row;
             }
         }

@@ -35,7 +35,7 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
         $activity = $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE);
-        $url = route('client-folders.activities.update', [$folder, $activity]);
+        $url = route('client-folders.activities.update', [$folder, $activity] + ['expected_revision' => $activity->fresh()->revision]);
 
         $this->actingAs($ci)->putJson($url, $this->payload(ActivityStatus::Scheduled, null, null, 'Try without a date.'))
             ->assertUnprocessable()
@@ -52,7 +52,7 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $this->assertFalse($activity->scheduled_has_time);
 
         $this->putJson($url, array_replace($this->payload(ActivityStatus::Scheduled, '2026-09-15', '09:30'), [
-            'expected_updated_at' => $activity->updated_at->toISOString(),
+            'expected_revision' => $activity->fresh()->revision,
         ]))->assertOk();
         $activity->refresh();
         $this->assertTrue($activity->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-15 09:30', 'Asia/Manila')->utc()));
@@ -82,7 +82,7 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $applicant = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
         $forA = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, $makerA->id);
         $forB = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, $makerB->id);
-        $urlA = route('client-folders.activities.update', [$folder, $forA]);
+        $urlA = route('client-folders.activities.update', [$folder, $forA] + ['expected_revision' => $forA->fresh()->revision]);
 
         $this->actingAs($ci)->putJson($urlA, array_replace($this->payload(ActivityStatus::FollowUp), ['co_maker_id' => $makerA->id]))
             ->assertUnprocessable()
@@ -116,7 +116,7 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.activities.default-check.show', [$folder, $activity]))->assertOk();
         $this->assertNull($activity->fresh()->scheduled_at);
 
-        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled, null, null, 'Remarks only.'))
+        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled, null, null, 'Remarks only.') + ['expected_revision' => $activity->fresh()->revision])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['scheduled_at' => self::MESSAGE]);
         $activity->refresh();
@@ -149,7 +149,7 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $activity = $folder->activities()->sole();
         $this->assertFalse($activity->scheduled_has_time);
 
-        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled))
+        $this->putJson(route('client-folders.activities.update', [$folder, $activity]), $this->payload(ActivityStatus::Scheduled) + ['expected_revision' => $activity->fresh()->revision])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['scheduled_at' => self::MESSAGE]);
         $this->assertNotNull($activity->fresh()->scheduled_at);
@@ -196,15 +196,15 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $bankPayload = ['co_maker_id' => '', 'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK, 'institution_name' => 'BDO', 'status' => ActivityStatus::Scheduled->value, 'scheduled_at' => '', 'scheduled_time' => ''];
         $assetPayload = ['co_maker_id' => '', 'assessor_type' => 'city_assessor', 'office_location' => 'Cagayan de Oro', 'status' => ActivityStatus::Scheduled->value, 'scheduled_at' => '', 'scheduled_time' => ''];
 
-        $this->actingAs($ci)->putJson(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), $bankPayload)
+        $this->actingAs($ci)->putJson(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), ['expected_revision' => $bankTarget->fresh()->revision] + $bankPayload)
             ->assertUnprocessable()->assertJsonValidationErrors(['scheduled_at' => self::MESSAGE]);
-        $this->putJson(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), $assetPayload)
+        $this->putJson(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), ['expected_revision' => $assetTarget->fresh()->revision] + $assetPayload)
             ->assertUnprocessable()->assertJsonValidationErrors(['scheduled_at' => self::MESSAGE]);
         $this->assertSame(ActivityStatus::Pending, $bankTarget->fresh()->status);
         $this->assertSame(ActivityStatus::Pending, $assetTarget->fresh()->status);
 
-        $this->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), ['scheduled_at' => '2026-09-15'] + $bankPayload)->assertSessionHasNoErrors();
-        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), ['scheduled_at' => '2026-09-15', 'scheduled_time' => '09:30'] + $assetPayload)->assertSessionHasNoErrors();
+        $this->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), ['expected_revision' => $bankTarget->fresh()->revision] + ['scheduled_at' => '2026-09-15'] + $bankPayload)->assertSessionHasNoErrors();
+        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), ['expected_revision' => $assetTarget->fresh()->revision] + ['scheduled_at' => '2026-09-15', 'scheduled_time' => '09:30'] + $assetPayload)->assertSessionHasNoErrors();
         $this->assertSame(ActivityStatus::Scheduled, $bankTarget->fresh()->status);
         $this->assertFalse($bankTarget->fresh()->scheduled_has_time);
         $this->assertSame(ActivityStatus::Scheduled, $assetTarget->fresh()->status);
@@ -212,15 +212,15 @@ class CiActivityScheduledDateRequiredTest extends TestCase
 
         $followUpBankPayload = ['status' => ActivityStatus::FollowUp->value] + $bankPayload;
         $followUpAssetPayload = ['status' => ActivityStatus::FollowUp->value] + $assetPayload;
-        $this->putJson(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), $followUpBankPayload)
+        $this->putJson(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), ['expected_revision' => $bankTarget->fresh()->revision] + $followUpBankPayload)
             ->assertUnprocessable()->assertJsonValidationErrors(['scheduled_at' => self::MESSAGE]);
-        $this->putJson(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), $followUpAssetPayload)
+        $this->putJson(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), ['expected_revision' => $assetTarget->fresh()->revision] + $followUpAssetPayload)
             ->assertUnprocessable()->assertJsonValidationErrors(['scheduled_at' => self::MESSAGE]);
         $this->assertSame(ActivityStatus::Scheduled, $bankTarget->fresh()->status);
         $this->assertSame(ActivityStatus::Scheduled, $assetTarget->fresh()->status);
 
-        $this->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), ['scheduled_at' => '2026-09-16'] + $followUpBankPayload)->assertSessionHasNoErrors();
-        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), ['scheduled_at' => '2026-09-16'] + $followUpAssetPayload)->assertSessionHasNoErrors();
+        $this->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), ['expected_revision' => $bankTarget->fresh()->revision] + ['scheduled_at' => '2026-09-16'] + $followUpBankPayload)->assertSessionHasNoErrors();
+        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), ['expected_revision' => $assetTarget->fresh()->revision] + ['scheduled_at' => '2026-09-16'] + $followUpAssetPayload)->assertSessionHasNoErrors();
         $this->assertSame(ActivityStatus::FollowUp, $bankTarget->fresh()->status);
         $this->assertFalse($bankTarget->fresh()->scheduled_has_time);
         $this->assertSame(ActivityStatus::FollowUp, $assetTarget->fresh()->status);
@@ -228,8 +228,8 @@ class CiActivityScheduledDateRequiredTest extends TestCase
         $this->assertSame(ActivityStatus::FollowUp, $bank->fresh()->status);
         $this->assertSame(ActivityStatus::FollowUp, $asset->fresh()->status);
 
-        $this->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), ['status' => ActivityStatus::Pending->value] + $bankPayload)->assertSessionHasNoErrors();
-        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), ['status' => ActivityStatus::Pending->value] + $assetPayload)->assertSessionHasNoErrors();
+        $this->put(route('client-folders.activities.bank-targets.update', [$folder, $bank, $bankTarget]), ['expected_revision' => $bankTarget->fresh()->revision] + ['status' => ActivityStatus::Pending->value] + $bankPayload)->assertSessionHasNoErrors();
+        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $assetTarget]), ['expected_revision' => $assetTarget->fresh()->revision] + ['status' => ActivityStatus::Pending->value] + $assetPayload)->assertSessionHasNoErrors();
         $this->assertSame(ActivityStatus::Pending, $bankTarget->fresh()->status);
         $this->assertSame(ActivityStatus::Pending, $assetTarget->fresh()->status);
         $this->assertSame(ActivityStatus::Pending, $bank->fresh()->status);

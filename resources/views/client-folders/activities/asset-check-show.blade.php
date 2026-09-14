@@ -8,6 +8,10 @@
 
 @section('content')
     @php
+        // ONE duplicate-state flag, used by all three places that react to it: the advisory panel,
+        // the footer button swap and the auto-reopen script. Reading the session separately in each
+        // spot would make it structurally possible for them to disagree.
+        $hasAssetTargetDuplicate = session()->has('asset_target_duplicate');
         $personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null);
         $completedCount = $activity->assetTargets->where('status', App\Enums\ActivityStatus::Completed)->count();
         $targetCount = $activity->assetTargets->count();
@@ -102,17 +106,46 @@
         </section>
 
         <dialog id="add-asset-target" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45">
-            <form method="POST" action="{{ route('client-folders.activities.asset-targets.store', [$clientFolder, $activity]) }}" class="flex max-h-[calc(100dvh-2rem)] flex-col" data-asset-target-form>@csrf<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><div class="flex items-start justify-between gap-4 border-b border-ui-border px-5 py-4 sm:px-6"><div><h2 class="text-lg font-bold text-brand-sidebar">Add Assessor</h2><p class="mt-1 text-sm text-text-muted">Add another office to this Asset Check.</p></div><button type="button" class="ui-icon-button" data-asset-modal-close aria-label="Close"><x-ui.icon name="close" size="size-5" /></button></div><div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">@include('client-folders.activities.partials.asset-target-fields', ['prefix' => 'add', 'target' => null])</div><div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-asset-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary"><x-ui.icon name="check" size="size-4" />Add Assessor</button></div></form>
+            <form method="POST" action="{{ route('client-folders.activities.asset-targets.store', [$clientFolder, $activity]) }}" class="flex max-h-[calc(100dvh-2rem)] flex-col" data-asset-target-form>@csrf<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><div class="flex items-start justify-between gap-4 border-b border-ui-border px-5 py-4 sm:px-6"><div><h2 class="text-lg font-bold text-brand-sidebar">Add Assessor</h2><p class="mt-1 text-sm text-text-muted">Add another office to this Asset Check.</p></div><button type="button" class="ui-icon-button" data-asset-modal-close aria-label="Close"><x-ui.icon name="close" size="size-5" /></button></div><div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+                {{-- Advisory duplicate warning, deliberately styled with the progress/advisory
+                     tokens rather than the danger ones: nothing failed and nothing was created.
+                     The panel only explains; the choice itself lives in the footer below, which
+                     never scrolls, so Continue Anyway cannot end up out of reach. --}}
+                @if($hasAssetTargetDuplicate)
+                    <div class="mb-4 flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft px-3 py-3" role="alert" data-asset-target-duplicate-warning>
+                        <x-ui.icon name="warning" size="size-4" class="mt-0.5 shrink-0 text-progress" aria-hidden="true" />
+                        <div class="min-w-0">
+                            <p class="text-sm font-semibold leading-5 text-progress">{{ session('asset_target_duplicate') }}</p>
+                            <p class="mt-1 text-xs leading-5 text-text-muted">Nothing has been added yet and your entries are kept below. Choose <span class="font-semibold text-text-main">Continue Anyway</span> to add it as a separate target, or Cancel to review the one already on this tracker.</p>
+                        </div>
+                    </div>
+                @endif
+                @include('client-folders.activities.partials.asset-target-fields', ['prefix' => 'add', 'target' => null, 'useOldInput' => true])
+            </div>
+            <div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
+                <button type="button" class="ui-button-secondary w-full sm:w-auto" data-asset-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button>
+                @if($hasAssetTargetDuplicate)
+                    <button type="submit" name="allow_duplicate" value="1" class="ui-button-primary w-full sm:w-auto" data-asset-target-duplicate-continue><x-ui.icon name="check" size="size-4" />Continue Anyway</button>
+                @else
+                    <button type="submit" class="ui-button-primary w-full sm:w-auto"><x-ui.icon name="check" size="size-4" />Add Assessor</button>
+                @endif
+            </div></form>
         </dialog>
 
         @foreach($activity->assetTargets as $target)
             <x-ui.asset-target-completion-modal :$target :$clientFolder :$activity :$activePerson />
-            <dialog id="edit-asset-target-{{ $target->id }}" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45"><form method="POST" action="{{ route('client-folders.activities.asset-targets.update', [$clientFolder, $activity, $target]) }}" class="flex max-h-[calc(100dvh-2rem)] flex-col" data-asset-target-form data-no-change-guard>@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><div class="flex items-start justify-between border-b border-ui-border px-5 py-4 sm:px-6"><h2 class="text-lg font-bold text-brand-sidebar">Edit Asset Check</h2><button type="button" class="ui-icon-button" data-asset-modal-close aria-label="Close"><x-ui.icon name="close" size="size-5" /></button></div><div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6"><p class="mb-4 flex items-start gap-1.5 rounded-control border border-progress/30 bg-progress-soft px-3 py-2 text-sm font-semibold text-progress" data-no-change-message role="status" aria-live="polite" hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected. Nothing needs to be updated.</p>@include('client-folders.activities.partials.asset-target-fields', ['prefix' => 'edit-'.$target->id, 'target' => $target])</div><div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-asset-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary"><x-ui.icon name="check" size="size-4" />Save Changes</button></div></form></dialog>
+            <dialog id="edit-asset-target-{{ $target->id }}" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45"><form method="POST" action="{{ route('client-folders.activities.asset-targets.update', [$clientFolder, $activity, $target]) }}" class="flex max-h-[calc(100dvh-2rem)] flex-col" data-asset-target-form data-no-change-guard>@csrf @method('PUT')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><input type="hidden" name="expected_revision" value="{{ $target->revision }}"><div class="flex items-start justify-between border-b border-ui-border px-5 py-4 sm:px-6"><h2 class="text-lg font-bold text-brand-sidebar">Edit Asset Check</h2><button type="button" class="ui-icon-button" data-asset-modal-close aria-label="Close"><x-ui.icon name="close" size="size-5" /></button></div><div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6"><p class="mb-4 flex items-start gap-1.5 rounded-control border border-progress/30 bg-progress-soft px-3 py-2 text-sm font-semibold text-progress" data-no-change-message role="status" aria-live="polite" hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected. Nothing needs to be updated.</p>@include('client-folders.activities.partials.asset-target-fields', ['prefix' => 'edit-'.$target->id, 'target' => $target])</div><div class="flex flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-asset-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary"><x-ui.icon name="check" size="size-4" />Save Changes</button></div></form></dialog>
             <dialog id="delete-asset-target-{{ $target->id }}" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border-0 bg-surface p-0 shadow-float backdrop:bg-brand-sidebar/45"><form method="POST" action="{{ route('client-folders.activities.asset-targets.destroy', [$clientFolder, $activity, $target]) }}" data-asset-target-form>@csrf @method('DELETE')<input type="hidden" name="co_maker_id" value="{{ $activePerson?->id }}"><div class="p-5 sm:p-6"><h2 class="text-lg font-bold text-brand-sidebar">Delete Assessor Target?</h2><p class="mt-3 break-words text-sm text-text-muted">This removes only <span class="font-semibold text-text-main">{{ $target->assessorLabel() }} — {{ $target->office_location }}</span>. The Asset Check activity will remain.</p><div class="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><button type="button" class="ui-button-secondary" data-asset-modal-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-danger"><x-ui.icon name="trash" size="size-4" />Delete Target</button></div></div></form></dialog>
         @endforeach
     </div>
 
     <script>
+        @if($hasAssetTargetDuplicate)
+            document.addEventListener('DOMContentLoaded', () => {
+                const duplicateDialog = document.getElementById('add-asset-target');
+                if (duplicateDialog instanceof HTMLDialogElement) duplicateDialog.showModal();
+            });
+        @endif
         document.addEventListener('DOMContentLoaded', () => {
             const bind = (form) => {
                 const status = form.querySelector('[data-asset-detail-status]'); const date = form.querySelector('[data-asset-detail-date]'); const time = form.querySelector('[data-asset-detail-time]');

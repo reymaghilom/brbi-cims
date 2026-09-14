@@ -81,7 +81,7 @@ class CiActivityHistoryAutoUpdateTest extends TestCase
             'co_maker_id' => '',
             'status' => 'completed',
             'intent' => 'return',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ]);
 
         $response->assertOk()->assertJson(['updated' => true]);
@@ -104,7 +104,7 @@ class CiActivityHistoryAutoUpdateTest extends TestCase
             'co_maker_id' => '',
             'status' => 'completed',
             'intent' => 'return',
-            'expected_updated_at' => $neighbor->updated_at->toISOString(),
+            'expected_revision' => $neighbor->fresh()->revision,
         ]);
 
         $response->assertOk();
@@ -123,7 +123,7 @@ class CiActivityHistoryAutoUpdateTest extends TestCase
             'co_maker_id' => '',
             'status' => 'scheduled',
             'scheduled_at' => now()->addDay()->format('Y-m-d'),
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ]);
 
         $response->assertOk();
@@ -281,10 +281,10 @@ class CiActivityHistoryAutoUpdateTest extends TestCase
             'co_maker_id' => '',
             'status' => 'completed',
             'intent' => 'return',
-            'expected_updated_at' => now()->subDay()->toISOString(),
+            'expected_revision' => $barangay->revision + 5,
         ]);
 
-        $response->assertStatus(422);
+        $response->assertStatus(409);
         $this->assertDatabaseMissing('audit_logs', ['action' => 'ci_activity.completed', 'metadata->activity_id' => $barangay->id]);
     }
 
@@ -309,7 +309,7 @@ class CiActivityHistoryAutoUpdateTest extends TestCase
             'co_maker_id' => $coMaker->id,
             'status' => 'completed',
             'intent' => 'return',
-            'expected_updated_at' => $coMakerBarangay->updated_at->toISOString(),
+            'expected_revision' => $coMakerBarangay->fresh()->revision,
         ]);
 
         $response->assertOk();
@@ -336,7 +336,7 @@ class CiActivityHistoryAutoUpdateTest extends TestCase
             'co_maker_id' => '',
             'status' => 'completed',
             'intent' => 'return',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         $page = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));

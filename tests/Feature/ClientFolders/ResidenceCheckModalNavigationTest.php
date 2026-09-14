@@ -111,7 +111,7 @@ class ResidenceCheckModalNavigationTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $response = $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified with barangay confirmation.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified with barangay confirmation.',
         ]);
 
         $response->assertRedirect(route('client-folders.residence-checks.edit', [$folder, $check]));
@@ -127,7 +127,7 @@ class ResidenceCheckModalNavigationTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'A genuinely different remark.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'A genuinely different remark.',
         ]);
 
         $this->actingAs($ci)->get(route('client-folders.residence-checks.edit', [$folder, $check]))
@@ -142,7 +142,7 @@ class ResidenceCheckModalNavigationTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.',
         ])->assertSessionHas('status', 'Nothing changed. No updates were saved to the database.')->assertSessionHas('statusType', 'info');
 
         // No auto-close hook — the no-change response must leave the form open rather than
@@ -159,7 +159,7 @@ class ResidenceCheckModalNavigationTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Updated remarks after edit.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Updated remarks after edit.',
         ]);
 
         $response = $this->actingAs($ci)->get(route('client-folders.residence-checks.edit', [$folder, $check]))->assertOk();

@@ -241,6 +241,7 @@ class CiActivityScheduleDisplayTest extends TestCase
         $target = $this->assetTarget($asset, $ci, ['office_location' => 'Land', 'status' => ActivityStatus::Scheduled, 'scheduled_at' => Carbon::parse('2026-09-02 10:00:00', config('cims.display_timezone'))->utc(), 'scheduled_has_time' => true]);
 
         $this->actingAs($ci)->put(route('client-folders.activities.asset-targets.update', [$folder, $asset, $target]), [
+            'expected_revision' => $target->fresh()->revision,
             'co_maker_id' => '',
             'assessor_type' => $target->assessor_type,
             'office_location' => 'Land',

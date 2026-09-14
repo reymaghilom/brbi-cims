@@ -129,7 +129,7 @@ class CiActivityTrackerSaveUxTest extends TestCase
             'status' => 'scheduled',
             'scheduled_at' => '2026-09-03',
             'scheduled_time' => '09:00',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ]);
 
         $response->assertOk();
@@ -147,7 +147,7 @@ class CiActivityTrackerSaveUxTest extends TestCase
         $response = $this->actingAs($ci)->putJson(route('client-folders.activities.update', [$folder, $neighbor]), [
             'co_maker_id' => '',
             'status' => 'completed',
-            'expected_updated_at' => $neighbor->updated_at->toISOString(),
+            'expected_revision' => $neighbor->fresh()->revision,
         ]);
 
         $response->assertOk();
@@ -166,7 +166,7 @@ class CiActivityTrackerSaveUxTest extends TestCase
             'co_maker_id' => '',
             'status' => 'pending',
             'remarks' => 'Updated remarks after visit.',
-            'expected_updated_at' => $barangay->updated_at->toISOString(),
+            'expected_revision' => $barangay->fresh()->revision,
         ])->assertOk();
 
         $this->assertSame('Updated remarks after visit.', $barangay->fresh()->remarks);
@@ -215,7 +215,7 @@ class CiActivityTrackerSaveUxTest extends TestCase
         $this->actingAs($ci)->putJson(route('client-folders.activities.update', [$folder, $coMakerBarangay]), [
             'co_maker_id' => $coMaker->id,
             'status' => 'completed',
-            'expected_updated_at' => $coMakerBarangay->updated_at->toISOString(),
+            'expected_revision' => $coMakerBarangay->fresh()->revision,
         ])->assertOk();
 
         $this->assertSame(ActivityStatus::Completed, $coMakerBarangay->fresh()->status);

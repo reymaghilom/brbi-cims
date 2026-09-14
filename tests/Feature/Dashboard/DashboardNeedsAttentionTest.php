@@ -163,7 +163,7 @@ class DashboardNeedsAttentionTest extends TestCase
         // Nothing mandatory is met yet, so the folder has not started.
         $this->assertSame(0, $before->viewData('summary')['in_progress']);
 
-        $this->putJson(route('client-folders.activities.update', [$folder, $barangay]), ['co_maker_id' => null, 'status' => ActivityStatus::Completed->value])->assertOk();
+        $this->putJson(route('client-folders.activities.update', [$folder, $barangay]), ['co_maker_id' => null, 'status' => ActivityStatus::Completed->value] + ['expected_revision' => $barangay->fresh()->revision])->assertOk();
 
         $after = $this->home();
         $this->assertSame(0, $after->viewData('summary')['needs_attention']);

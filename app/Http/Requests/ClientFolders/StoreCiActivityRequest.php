@@ -24,6 +24,9 @@ class StoreCiActivityRequest extends FormRequest
         $bankCoopCheck = $this->isBankCoopCheck();
         $assetCheck = $this->isAssetCheck();
         $multiTargetCheck = $bankCoopCheck || $assetCheck;
+        // Creating a reusable Activity Type is a catalog submit: it makes no CiActivity, so the
+        // activity's own fields are not part of it. The CI picks the type afterwards and adds the
+        // activity as a separate, ordinary Add.
         $excludeParentFields = $this->boolean('create_new_activity_type') || $multiTargetCheck;
 
         return [
@@ -35,6 +38,9 @@ class StoreCiActivityRequest extends FormRequest
                 Rule::exists('activity_definitions', 'id')->where('is_active', true),
             ],
             'create_new_activity_type' => ['required', 'boolean'],
+            // Continue Anyway, Add-only. It waives the collaborative duplicate advisory and
+            // nothing else — authorization, person scope and every other rule are untouched.
+            'allow_duplicate' => ['sometimes', 'boolean'],
             'new_activity_type' => [
                 'nullable',
                 Rule::requiredIf($this->boolean('create_new_activity_type')),

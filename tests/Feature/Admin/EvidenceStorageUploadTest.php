@@ -417,7 +417,7 @@ class EvidenceStorageUploadTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
-            'check_id' => $check->id, 'remarks' => 'Residence verified with barangay confirmation.',
+            'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified with barangay confirmation.',
         ])->assertSessionHas('status', 'Residence Check updated successfully.');
     }
 

@@ -129,8 +129,8 @@ class CiActivityAssetTargetsTest extends TestCase
         $this->get(route('client-folders.activities.asset-check.show', [$folder, $forA]))->assertNotFound();
 
         $payload = $this->target('city_assessor', 'Substituted', ActivityStatus::Pending) + ['co_maker_id' => $makerB->id];
-        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $forB, $targetA]), $payload)->assertNotFound();
-        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $forA, $applicantTarget]), $payload + ['co_maker_id' => $makerA->id])->assertNotFound();
+        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $forB, $targetA]), ['expected_revision' => $targetA->fresh()->revision] + $payload)->assertNotFound();
+        $this->put(route('client-folders.activities.asset-targets.update', [$folder, $forA, $applicantTarget]), ['expected_revision' => $applicantTarget->fresh()->revision] + $payload + ['co_maker_id' => $makerA->id])->assertNotFound();
         $this->assertSame('Maker A City', $targetA->fresh()->office_location);
     }
 
@@ -145,7 +145,7 @@ class CiActivityAssetTargetsTest extends TestCase
 
         $this->actingAs($ci)->put(
             route('client-folders.activities.asset-targets.update', [$otherFolder, $otherActivity, $target]),
-            $this->target('city_assessor', 'Substituted', ActivityStatus::Pending) + ['co_maker_id' => ''],
+            $this->target('city_assessor', 'Substituted', ActivityStatus::Pending) + ['co_maker_id' => '', 'expected_revision' => $target->fresh()->revision],
         )->assertNotFound();
     }
 
@@ -159,7 +159,7 @@ class CiActivityAssetTargetsTest extends TestCase
         $second = $this->createTarget($activity, $creator, 'Province Office');
 
         $this->actingAs($updater)->put(route('client-folders.activities.asset-targets.update', [$folder, $activity, $first]),
-            $this->target('city_assessor', 'Updated City Office', ActivityStatus::Scheduled, '2026-09-07', '10:15') + ['co_maker_id' => ''])
+            $this->target('city_assessor', 'Updated City Office', ActivityStatus::Scheduled, '2026-09-07', '10:15') + ['co_maker_id' => '', 'expected_revision' => $first->fresh()->revision])
             ->assertRedirect();
         $this->assertSame($creator->id, $first->fresh()->created_by);
         $this->assertSame($updater->id, $first->fresh()->updated_by);

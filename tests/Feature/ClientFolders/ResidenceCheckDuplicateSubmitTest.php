@@ -10,6 +10,7 @@ use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Mockery\MockInterface;
 use Tests\TestCase;
 
@@ -46,7 +47,7 @@ class ResidenceCheckDuplicateSubmitTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
         $this->mockCloud()->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo-1'));
 
         $this->ajaxPost($ci, $folder, [
@@ -62,7 +63,7 @@ class ResidenceCheckDuplicateSubmitTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
         $this->mockCloud()->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo-orphan-check'));
         // The upload itself succeeds; a later, unrelated step in the same transaction fails —
         // exactly the "asset landed in Cloudinary but nothing was ever saved" shape.
@@ -85,10 +86,10 @@ class ResidenceCheckDuplicateSubmitTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
         $this->mockCloud()->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo-1'));
         $this->mockedCloud->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/map-screenshots', 'map_screenshot')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/map-screenshots'), 'map_screenshot')
             ->andReturn($this->fakeCloudAsset('residence-map-orphan-check'));
         $this->mockedCloud->shouldReceive('destroy')->once()->with('residence-photo-1', 'image', 'authenticated');
         $this->mockedCloud->shouldReceive('destroy')->once()->with('residence-map-orphan-check', 'image', 'authenticated');
@@ -119,7 +120,7 @@ class ResidenceCheckDuplicateSubmitTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
         $this->mockCloud()->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo-dup'));
 
         $first = $this->ajaxPost($ci, $folder, [
@@ -138,25 +139,40 @@ class ResidenceCheckDuplicateSubmitTest extends TestCase
         $this->assertDatabaseCount('residence_check_photos', 1);
     }
 
-    /** Two genuinely separate Add Residence Check actions (each its own page load, so each its own request_token) must never be treated as duplicates of each other — this is the already-supported multiple-checks-per-person case (see ResidenceBusinessReportTest::test_multiple_residence_checks_for_the_same_applicant_appear_as_separate_rows), just re-verified through the AJAX path this fix touches. */
-    public function test_two_different_request_tokens_persist_two_separate_checks(): void
+    /**
+     * Two CIs each opening their own Add Residence Check form for the same exact person carry
+     * different request_tokens, so the token guard above can never see them as one save — which is
+     * exactly how manual multi-CI testing produced two Residence Check rows for one person. The
+     * one-check-per-exact-person invariant is enforced separately, by locking that person's own
+     * owning row before the authoritative existence lookup (SaveResidenceCheck::makeForExactPerson).
+     * The loser creates nothing at all: no second row, and no second Cloudinary upload either,
+     * which is why 'store' is expected exactly once here.
+     */
+    public function test_a_second_add_form_for_the_same_applicant_cannot_create_a_duplicate_check(): void
     {
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
-        $this->mockCloud()->shouldReceive('store')->twice()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
-            ->andReturn($this->fakeCloudAsset('residence-photo-a'), $this->fakeCloudAsset('residence-photo-b'));
+        $this->mockCloud()->shouldReceive('store')->once()
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
+            ->andReturn($this->fakeCloudAsset('residence-photo-a'));
 
         $this->ajaxPost($ci, $folder, [
             'request_token' => 'token-a',
             'photos' => [UploadedFile::fake()->image('First.jpg', 900, 700)->size(500)],
         ])->assertOk()->assertJson(['result' => 'success']);
+
+        $existing = $folder->residenceChecks()->whereNull('co_maker_id')->sole();
         $this->ajaxPost($ci, $folder, [
             'request_token' => 'token-b',
             'photos' => [UploadedFile::fake()->image('Second.jpg', 900, 700)->size(500)],
-        ])->assertOk()->assertJson(['result' => 'success']);
+        ])->assertStatus(409)->assertJson([
+            'result' => 'exists',
+            'status_type' => 'error',
+            'return_url' => route('client-folders.residence-checks.edit', [$folder, $existing]),
+        ]);
 
-        $this->assertDatabaseCount('residence_checks', 2);
+        $this->assertDatabaseCount('residence_checks', 1);
+        $this->assertDatabaseCount('residence_check_photos', 1);
     }
 
     public function test_a_retry_with_the_same_request_token_after_a_failed_attempt_saves_normally(): void
@@ -164,7 +180,7 @@ class ResidenceCheckDuplicateSubmitTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
         $this->mockCloud()->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo-retry-failed'));
         $this->mockedCloud->shouldReceive('destroy')->once()->with('residence-photo-retry-failed', 'image', 'authenticated');
         $this->mock(ResidenceBusinessCheckCompletionEvaluator::class, function ($mock) {
@@ -184,7 +200,7 @@ class ResidenceCheckDuplicateSubmitTest extends TestCase
         $this->assertDatabaseCount('residence_check_photos', 0);
 
         $this->mockedCloud->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo-retry-succeeded'));
 
         $retry = $this->ajaxPost($ci, $folder, [
@@ -195,6 +211,12 @@ class ResidenceCheckDuplicateSubmitTest extends TestCase
         $retry->assertOk()->assertJson(['result' => 'success']);
         $this->assertDatabaseCount('residence_checks', 1);
         $this->assertDatabaseCount('residence_check_photos', 1);
+    }
+
+    /** The exact Applicant-scoped Cloudinary namespace ClientMediaUploader builds for this folder — asserted literally so a photo can never be uploaded into another person's namespace. */
+    private function applicantCloudFolder(ClientFolder $folder, string $mediaFolder): string
+    {
+        return 'clients/CF-'.$folder->getKey().'-'.Str::slug((string) $folder->display_name).'/applicant/'.$mediaFolder;
     }
 
     /** Binds a mock CloudinaryMediaStorage (enabled() => true by default) and remembers it on $this->mockedCloud for further expectations — same convention as CloudinaryMediaTest/ResidenceCheckCloudUploadFeedbackTest. */

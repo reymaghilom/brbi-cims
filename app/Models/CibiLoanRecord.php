@@ -11,7 +11,7 @@ class CibiLoanRecord extends Model
 
     protected function casts(): array
     {
-        return ['original_amount' => 'decimal:2', 'remaining_balance' => 'decimal:2', 'amortization_amount' => 'decimal:2', 'granted_date' => 'date', 'maturity_date' => 'date'];
+        return ['granted_date' => 'date', 'maturity_date' => 'date'];
     }
 
     public function report(): BelongsTo

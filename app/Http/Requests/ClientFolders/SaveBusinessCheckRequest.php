@@ -42,7 +42,14 @@ class SaveBusinessCheckRequest extends FormRequest
             // referenced, SaveBusinessCheck derives the name from that exact business instead and
             // whatever the read-only input submitted is ignored.
             'business_name' => [Rule::requiredIf(blank($this->input('income_source_id'))), 'nullable', 'string', 'max:255'],
-            'expected_updated_at' => ['nullable', 'date'],
+            'expected_revision' => ['required_with:check_id', 'nullable', 'integer', 'min:1'],
+            // Identifies one loaded copy of the Add Business Check form, not the CI or the record
+            // — see SaveBusinessCheck::execute(). Only ever sent on a create.
+            'request_token' => ['nullable', 'string', 'max:100'],
+            // Set only by the Continue Anyway action on the similar-Business-Check warning. It can
+            // never bypass the linked-business (income_source_id) hard block, which is enforced
+            // independently of this flag.
+            'allow_similar_duplicate' => ['nullable', 'boolean'],
             'ci_date' => ['required', 'date', 'before_or_equal:today'],
             'location' => ['required', 'string', 'max:2000'],
             'remarks' => ['nullable', 'string', 'max:10000'],
@@ -82,6 +89,13 @@ class SaveBusinessCheckRequest extends FormRequest
             'location.required' => 'Business location is required.',
             'ci_date.required' => 'CI Date is required.',
             'business_name.required' => 'Business Name is required.',
+            // Only reachable when check_id was submitted (so this is an edit of an existing check)
+            // and the rule finds no such Business Check for this exact folder + person — in
+            // practice, the record was deleted while this form was still open. Scoped to this
+            // request class and this one rule, so Laravel's default "selected ... is invalid"
+            // wording is untouched everywhere else. The save still fails exactly as before; only
+            // the sentence the CI reads changes. Same approach as SaveResidenceCheckRequest.
+            'check_id.exists' => 'This Business Check was deleted by another user while you were working on it. Please return to the Residence & Business Report page.',
         ];
     }
 

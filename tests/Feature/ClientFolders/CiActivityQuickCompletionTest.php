@@ -124,7 +124,7 @@ class CiActivityQuickCompletionTest extends TestCase
 
             $this->actingAs($updater)->putJson(route('client-folders.activities.update', [$folder, $activity]), [
                 'co_maker_id' => null,
-                'expected_updated_at' => $activity->updated_at->toISOString(),
+                'expected_revision' => $activity->fresh()->revision,
                 'status' => ActivityStatus::Completed->value,
                 'intent' => 'return',
             ])->assertOk()->assertJson(['updated' => true]);

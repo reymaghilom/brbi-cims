@@ -17,7 +17,7 @@ class BusinessCheck extends Model implements HasCiParticipants
 
     protected function casts(): array
     {
-        return ['ci_date' => 'date'];
+        return ['ci_date' => 'date', 'revision' => 'integer'];
     }
 
     public function clientFolder(): BelongsTo

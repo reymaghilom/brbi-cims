@@ -87,7 +87,7 @@ class AssetCheckBulkAndActionUiTest extends TestCase
 
         $this->actingAs($ci)->put(
             route('client-folders.activities.asset-targets.update', [$folder, $activity, $target]),
-            $this->targetPayload('UPDATED OFFICE'),
+            ['expected_revision' => $target->fresh()->revision] + $this->targetPayload('UPDATED OFFICE'),
         )->assertRedirect();
 
         $this->assertSame('UPDATED OFFICE', $target->fresh()->office_location);
@@ -149,8 +149,11 @@ class AssetCheckBulkAndActionUiTest extends TestCase
 
         $html = $this->show($ci, $folder, $activity);
 
+        // Same shared icons and button classes as before; the footer now also stacks full width on
+        // a phone (w-full sm:w-auto) and the primary action is swapped for Continue Anyway while a
+        // duplicate advisory is active, so the two buttons are no longer adjacent in the source.
         $this->assertMatchesRegularExpression(
-            '/<button type="button" class="ui-button-secondary" data-asset-modal-close><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button><button type="submit" class="ui-button-primary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Add Assessor<\/button>/s',
+            '/<button type="button" class="ui-button-secondary w-full sm:w-auto" data-asset-modal-close><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>\s*<button type="submit" class="ui-button-primary w-full sm:w-auto"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Add Assessor<\/button>/s',
             $html,
         );
     }
@@ -267,7 +270,7 @@ class AssetCheckBulkAndActionUiTest extends TestCase
 
         $this->actingAs($ci)->put(
             route('client-folders.activities.asset-targets.update', [$folder, $aActivity, $aTarget]),
-            $this->targetPayload('A OFFICE UPDATED', $coMakerA->id),
+            ['expected_revision' => $aTarget->fresh()->revision] + $this->targetPayload('A OFFICE UPDATED', $coMakerA->id),
         )->assertRedirect();
         $this->assertSame('A OFFICE UPDATED', $aTarget->fresh()->office_location);
         $this->assertSame('B OFFICE', $bTarget->fresh()->office_location);
@@ -302,7 +305,7 @@ class AssetCheckBulkAndActionUiTest extends TestCase
 
         $this->actingAs($ci)->put(
             route('client-folders.activities.asset-targets.update', [$folder, $activity, $foreign]),
-            $this->targetPayload('FORGED UPDATE'),
+            ['expected_revision' => $foreign->fresh()->revision] + $this->targetPayload('FORGED UPDATE'),
         )->assertNotFound();
         $this->assertSame('FOREIGN OFFICE', $foreign->fresh()->office_location);
 
