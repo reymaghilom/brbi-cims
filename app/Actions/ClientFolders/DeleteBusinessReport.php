@@ -2,6 +2,7 @@
 
 namespace App\Actions\ClientFolders;
 
+use App\Exceptions\BusinessReportDeleteConflictException;
 use App\Models\AuditLog;
 use App\Models\BusinessReport;
 use App\Models\ClientFolder;
@@ -33,11 +34,24 @@ class DeleteBusinessReport
         private readonly ClientProgressService $progress,
     ) {}
 
-    public function execute(User $actor, ClientFolder $folder, IncomeSource $source): void
+    /**
+     * $expectedRevision is the IncomeSource revision the delete screen was rendered with. When
+     * given, it is compared under the exact IncomeSource row lock — after the report is confirmed
+     * to still exist (so a double delete reads as "no longer available", not as a conflict) and
+     * before anything is deleted — so a delete confirmed from a stale screen can never remove a
+     * version another CI saved after that screen loaded.
+     */
+    public function execute(User $actor, ClientFolder $folder, IncomeSource $source, ?int $expectedRevision = null): void
     {
-        DB::transaction(function () use ($actor, $folder, $source): void {
+        DB::transaction(function () use ($actor, $folder, $source, $expectedRevision): void {
             $lockedSource = $this->exactSourceQuery($folder, $source)->lockForUpdate()->firstOrFail();
             $report = BusinessReport::query()->where('income_source_id', $lockedSource->id)->lockForUpdate()->firstOrFail();
+
+            // Every HTTP delete path (single and bulk) requires the token, so null is only ever an
+            // in-process caller, never a request.
+            if ($expectedRevision !== null && $expectedRevision !== $lockedSource->revision) {
+                throw BusinessReportDeleteConflictException::forReport();
+            }
 
             $reportId = $report->id;
             $businessName = $report->business_name;
@@ -49,7 +63,20 @@ class DeleteBusinessReport
             // the exact IncomeSource is what stops the centralized Reports workspace re-synthesising
             // a "Create Report" work item for a business whose report was deliberately removed. It
             // is cleared again by SaveBusinessIncomeSource the moment a report is saved here.
-            $lockedSource->forceFill(['business_report_deleted_at' => now()])->save();
+            $lockedSource->forceFill(['business_report_deleted_at' => now()]);
+            // Advancing the revision invalidates every Business Report edit form opened before this
+            // delete: their expected_revision no longer matches, so SaveBusinessIncomeSource refuses
+            // them instead of silently recreating the report from stale input. A form reopened after
+            // the delete renders the new revision, so a deliberate recreate still works.
+            //
+            // Only for a genuinely saved report (revision > 1). A revision-1 row is the never-saved
+            // shell convention that checkFirstCandidates() / isBlankLegacyPlaceholder() match on
+            // exactly; advancing it would make that shell look saved. Every other `revision > 1`
+            // consumer also requires the business_reports row, which is gone either way.
+            if ($lockedSource->revision > 1) {
+                $lockedSource->revision++;
+            }
+            $lockedSource->save();
 
             AuditLog::create([
                 'user_id' => $actor->id,
@@ -64,6 +91,7 @@ class DeleteBusinessReport
                     'business_name' => $businessName,
                     'income_source_orphan_removed' => false,
                     'business_report_suppressed' => true,
+                    'revision' => $lockedSource->revision,
                 ],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),

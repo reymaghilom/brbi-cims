@@ -13,7 +13,6 @@ use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Mockery\MockInterface;
 use Tests\TestCase;
 
@@ -725,19 +724,24 @@ class CloudinaryMediaTest extends TestCase
             ->all();
     }
 
+    /** NEW uploads mirror the Local module folders beneath the numbered client directory. */
+    private const LOCAL_MODULE_FOLDERS = [
+        'residence/photos' => 'Residence Check Report/Pictures',
+        'residence/map-screenshots' => 'Residence Check Report/Google Map',
+        'business/photos' => 'Business Check Report/Pictures',
+        'business/map-screenshots' => 'Business Check Report/Google Map',
+    ];
+
     private function applicantCloudFolder(ClientFolder $folder, string $mediaFolder): string
     {
-        $slug = Str::slug((string) $folder->display_name) ?: 'client';
-
-        return "clients/CF-{$folder->id}-{$slug}/applicant/{$mediaFolder}";
+        return app(CiTeamDocumentStorage::class)->clientDirectory($folder).'/'.self::LOCAL_MODULE_FOLDERS[$mediaFolder];
     }
 
     private function coMakerCloudFolder(ClientFolder $folder, CoMaker $coMaker, string $mediaFolder): string
     {
-        $folderSlug = Str::slug((string) $folder->display_name) ?: 'client';
-        $coMakerSlug = Str::slug((string) $coMaker->full_name) ?: 'co-maker';
-
-        return "clients/CF-{$folder->id}-{$folderSlug}/co-makers/CM-{$coMaker->id}-{$coMakerSlug}/{$mediaFolder}";
+        return app(CiTeamDocumentStorage::class)->clientDirectory($folder)
+            .'/Co-Makers/CM-'.str_pad((string) $coMaker->id, 6, '0', STR_PAD_LEFT).' - '.$coMaker->full_name
+            .'/'.self::LOCAL_MODULE_FOLDERS[$mediaFolder];
     }
 
     private function businessSource(ClientFolder $folder, string $name, string $address, ?int $coMakerId = null): IncomeSource

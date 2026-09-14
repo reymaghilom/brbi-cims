@@ -30,6 +30,15 @@ class ActivityDefinition extends Model
 
     protected $guarded = [];
 
+    protected static function booted(): void
+    {
+        static::saving(function (self $definition): void {
+            if ($definition->isDirty('name') || blank($definition->normalized_name)) {
+                $definition->normalized_name = self::normalizedNameKey($definition->name);
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return ['is_required' => 'boolean', 'is_active' => 'boolean'];
@@ -58,7 +67,7 @@ class ActivityDefinition extends Model
     public static function equivalentToName(string $name): ?self
     {
         return self::query()
-            ->whereRaw('LOWER(name) = ?', [self::normalizedNameKey($name)])
+            ->where('normalized_name', self::normalizedNameKey($name))
             ->first();
     }
 

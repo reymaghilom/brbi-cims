@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -26,7 +27,6 @@ class UserManagementTest extends TestCase
 
         $response = $this->actingAs($administrator)->post(route('admin.users.store'), [
             'full_name' => 'New Credit Investigator',
-            'employee_id' => 'CI-100',
             'username' => 'New.CI',
             'role' => UserRole::CreditInvestigator->value,
             'password' => $temporaryPassword,
@@ -52,7 +52,6 @@ class UserManagementTest extends TestCase
 
         $this->actingAs($administrator)->put(route('admin.users.update', $user), [
             'full_name' => 'Updated User',
-            'employee_id' => 'UPDATED-1',
             'username' => 'updated.user',
             'role' => UserRole::Administrator->value,
         ])->assertRedirect();
@@ -102,7 +101,6 @@ class UserManagementTest extends TestCase
 
         $this->actingAs($administrator)->put(route('admin.users.update', $administrator), [
             'full_name' => $administrator->full_name,
-            'employee_id' => $administrator->employee_id,
             'username' => $administrator->username,
             'role' => UserRole::CreditInvestigator->value,
         ])->assertSessionHasErrors('role');
@@ -179,5 +177,53 @@ class UserManagementTest extends TestCase
             ->assertOk()
             ->assertDontSee($user->password)
             ->assertDontSee('current password', false);
+    }
+
+    public function test_users_are_managed_by_account_fields_only_and_audit_trail_backend_remains(): void
+    {
+        $administrator = User::factory()->administrator()->create();
+        $historical = User::factory()->create(['full_name' => 'Historical User']);
+
+        // The column no longer exists; users are identified only by users.id.
+        $this->assertFalse(Schema::hasColumn('users', 'employee_id'));
+
+        // Neither the Users list, the Create form nor the Edit form shows or asks for an employee number.
+        foreach ([route('admin.users.index'), route('admin.users.create'), route('admin.users.edit', $historical)] as $url) {
+            $this->actingAs($administrator)->get($url)->assertOk()
+                ->assertDontSee('Employee')
+                ->assertDontSee('employee', false);
+        }
+
+        // Create succeeds with only the account fields.
+        $this->actingAs($administrator)->post(route('admin.users.store'), [
+            'full_name' => 'Plain Account User',
+            'username' => 'plain.account',
+            'role' => UserRole::CreditInvestigator->value,
+            'password' => 'exactly8',
+            'password_confirmation' => 'exactly8',
+        ])->assertSessionHasNoErrors();
+        $created = User::where('username', 'plain.account')->sole();
+        $this->assertSame(UserRole::CreditInvestigator, $created->role);
+
+        // Editing works with only the account fields and keeps the same users.id.
+        $this->actingAs($administrator)->put(route('admin.users.update', $historical), [
+            'full_name' => 'Historical User Renamed',
+            'username' => $historical->username,
+            'role' => $historical->role->value,
+        ])->assertSessionHasNoErrors();
+        $this->assertSame('Historical User Renamed', User::query()->findOrFail($historical->id)->full_name);
+
+        // Full name, username and role stay required; the password minimum stays 8.
+        $this->actingAs($administrator)->post(route('admin.users.store'), [
+            'password' => 'short77',
+            'password_confirmation' => 'short77',
+        ])->assertSessionHasErrors(['full_name', 'username', 'role', 'password']);
+        $this->actingAs($administrator)->put(route('admin.users.update', $historical), [])
+            ->assertSessionHasErrors(['full_name', 'username', 'role']);
+
+        // Audit logging still records these actions, and the Audit Trail page itself still works.
+        $this->assertDatabaseHas('audit_logs', ['action' => 'user.created', 'user_id' => $administrator->id]);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'user.updated', 'user_id' => $administrator->id]);
+        $this->actingAs($administrator)->get(route('admin.audit-logs.index'))->assertOk();
     }
 }

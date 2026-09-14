@@ -12,7 +12,6 @@ class UserFactory extends Factory
     public function definition(): array
     {
         return [
-            'employee_id' => fake()->unique()->numerify('EMP-####'),
             'full_name' => fake()->name(),
             'username' => fake()->unique()->userName(),
             'password' => Hash::make(Str::random(40)),

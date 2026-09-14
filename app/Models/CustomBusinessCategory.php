@@ -30,6 +30,15 @@ class CustomBusinessCategory extends Model
 
     protected $guarded = [];
 
+    protected static function booted(): void
+    {
+        static::saving(function (self $category): void {
+            if ($category->isDirty('name') || blank($category->normalized_name)) {
+                $category->normalized_name = self::normalizeName($category->name);
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return ['is_active' => 'boolean'];
@@ -60,6 +69,21 @@ class CustomBusinessCategory extends Model
     public static function isCustomKey(mixed $key): bool
     {
         return is_string($key) && preg_match('/^'.self::KEY_PREFIX.'\d+$/', $key) === 1;
+    }
+
+    /** @return list<int> */
+    public static function idsFromKeys(mixed $keys): array
+    {
+        if (! is_array($keys)) {
+            return [];
+        }
+
+        return collect($keys)
+            ->filter(fn (mixed $key): bool => static::isCustomKey($key))
+            ->map(fn (string $key): int => (int) substr($key, strlen(self::KEY_PREFIX)))
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /** The catalog rows the Other Business form renders, in the same shape as the config's own. */

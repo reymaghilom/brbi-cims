@@ -25,7 +25,7 @@ class RecentActivityAccountabilityTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $source = $this->business($folder, null, 'ABC STORE');
 
-        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]))->assertRedirect();
+        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]), ['expected_revision' => $source->fresh()->revision])->assertRedirect();
 
         $this->assertDatabaseHas('audit_logs', [
             'client_folder_id' => $folder->id,
@@ -41,7 +41,7 @@ class RecentActivityAccountabilityTest extends TestCase
         $source = $this->business($folder, null, 'ABC STORE');
         $unrelatedSource = $this->business($folder, null, 'UNAFFECTED STORE');
 
-        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]));
+        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]), ['expected_revision' => $source->fresh()->revision]);
         // Permanently removed — the name below is recovered from the audit metadata, not from a
         // lingering soft-deleted row (there is no Recycle Bin to reach one from any more).
         $this->assertDatabaseMissing('income_sources', ['id' => $source->id]);
@@ -64,7 +64,7 @@ class RecentActivityAccountabilityTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER X']);
         $source = $this->business($folder, null, 'APPLICANT STORE');
-        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]));
+        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]), ['expected_revision' => $source->fresh()->revision]);
 
         $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->assertSee('APPLICANT STORE');
         $this->actingAs($ci)
@@ -80,7 +80,7 @@ class RecentActivityAccountabilityTest extends TestCase
         $targetCoMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'TARGET CO MAKER']);
         $otherCoMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'OTHER CO MAKER']);
         $source = $this->business($folder, $targetCoMaker->id, 'COMAKER STORE');
-        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]).'?'.http_build_query(['person' => 'co-maker', 'co_maker_id' => $targetCoMaker->id]));
+        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]).'?'.http_build_query(['person' => 'co-maker', 'co_maker_id' => $targetCoMaker->id]), ['expected_revision' => $source->fresh()->revision]);
 
         $this->actingAs($ci)
             ->get(route('client-folders.show', $folder).'?person=co-maker&co_maker_id='.$targetCoMaker->id)

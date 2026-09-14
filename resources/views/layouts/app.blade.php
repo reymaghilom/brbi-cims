@@ -79,7 +79,6 @@
                     <div class="space-y-1">
                         <x-ui.sidebar-link :href="route('admin.users.index')" icon="users" :active="request()->routeIs('admin.users.*')">Users</x-ui.sidebar-link>
                         @can('viewAny', App\Models\SystemSetting::class)<x-ui.sidebar-link :href="route('admin.settings.index')" icon="settings" :active="request()->routeIs('admin.settings.*')">Settings</x-ui.sidebar-link>@endcan
-                        @can('viewAny', App\Models\AuditLog::class)<x-ui.sidebar-link :href="route('admin.audit-logs.index')" icon="audit" :active="request()->routeIs('admin.audit-logs.*')">Audit Trail</x-ui.sidebar-link>@endcan
                     </div>
                 </div>
             @endcan

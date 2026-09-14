@@ -12,12 +12,12 @@ use App\Models\MediaReference;
 use App\Models\User;
 use App\Services\Media\ClientMediaUploader;
 use App\Services\Media\CloudinaryCiActivityProofStorage;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -125,24 +125,24 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
         $coMakerActivity = $this->activityFor($folder, $ci, 'CO-MAKER CLOUDINARY PATH', $coMaker->id);
         $storage = app(CloudinaryCiActivityProofStorage::class);
         $clientMediaUploader = app(ClientMediaUploader::class);
-        $clientSlug = Str::slug((string) $folder->display_name) ?: 'client';
-        $coMakerSlug = Str::slug((string) $coMaker->full_name) ?: 'co-maker';
-        $clientRoot = 'BRBI-CIMS/clients/CF-'.$folder->id.'-'.$clientSlug;
+        // NEW uploads: the numbered Local client directory, then Local's own module folder names.
+        $clientRoot = 'BRBI-CIMS/'.app(CiTeamDocumentStorage::class)->clientDirectory($folder);
+        $coMakerRoot = $clientRoot.'/Co-Makers/CM-'.str_pad((string) $coMaker->id, 6, '0', STR_PAD_LEFT).' - PRIVATE NAME MUST NOT APPEAR';
 
         $this->assertSame(
-            $clientRoot.'/applicant/ci-activities/attachments',
+            $clientRoot.'/CI Activities/Supporting Proof',
             $storage->folderFor($folder, $applicantActivity),
         );
         $this->assertSame(
-            $clientRoot.'/co-makers/CM-'.$coMaker->id.'-'.$coMakerSlug.'/ci-activities/attachments',
+            $coMakerRoot.'/CI Activities/Supporting Proof',
             $storage->folderFor($folder, $coMakerActivity),
         );
         $this->assertSame(
-            $clientRoot.'/applicant/residence/photos',
+            $clientRoot.'/Residence Check Report/Pictures',
             $clientMediaUploader->rootedPersonCloudFolder($folder, 'residence/photos'),
         );
         $this->assertSame(
-            $clientRoot.'/applicant/business/photos',
+            $clientRoot.'/Business Check Report/Pictures',
             $clientMediaUploader->rootedPersonCloudFolder($folder, 'business/photos'),
         );
     }

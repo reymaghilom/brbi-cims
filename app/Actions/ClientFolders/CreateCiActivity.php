@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Notifications\CiActivityScheduledReminder;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
 use App\Services\Progress\ClientProgressService;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -150,9 +151,21 @@ class CreateCiActivity
 
     public function createDefinition(User $actor, ClientFolder $folder, string $name): ActivityDefinition
     {
-        return DB::transaction(
-            fn (): ActivityDefinition => $this->resolveCustomDefinition($actor, $folder, $name),
-        );
+        $normalizedName = ActivityDefinition::normalizedNameKey($name);
+
+        try {
+            return DB::transaction(
+                fn (): ActivityDefinition => $this->resolveCustomDefinition($actor, $folder, $name),
+            );
+        } catch (QueryException $exception) {
+            if (ActivityDefinition::query()->where('normalized_name', $normalizedName)->exists()) {
+                throw ValidationException::withMessages([
+                    'new_activity_type' => 'An Activity Type with this name already exists.',
+                ]);
+            }
+
+            throw $exception;
+        }
     }
 
     /**
@@ -192,31 +205,37 @@ class CreateCiActivity
         if ($existing) {
             if (! $existing->is_active) {
                 throw ValidationException::withMessages([
-                    'new_activity_type' => 'An inactive activity type with this name already exists.',
+                    'new_activity_type' => 'An inactive Activity Type with this name already exists. Reactivate it from Manage Activity Types.',
                 ]);
             }
 
-            return $existing;
+            throw ValidationException::withMessages([
+                'new_activity_type' => 'An Activity Type with this name already exists.',
+            ]);
         }
 
         $key = ActivityDefinition::normalizedNameKey($name);
         $slug = Str::slug($key, '_') ?: 'activity';
-        $code = ActivityDefinition::CUSTOM_CODE_PREFIX.Str::limit($slug, 62, '').'_'.substr(hash('sha256', $key), 0, 10);
-        $definition = ActivityDefinition::query()->createOrFirst(
-            ['code' => $code],
-            [
-                'name' => $name,
-                'sort_order' => ((int) ActivityDefinition::query()->max('sort_order')) + 10,
-                'is_required' => false,
-                'is_active' => true,
-            ],
-        );
+        $baseCode = ActivityDefinition::CUSTOM_CODE_PREFIX.Str::limit($slug, 62, '').'_'.substr(hash('sha256', $key), 0, 10);
 
-        if (ActivityDefinition::normalizedNameKey($definition->name) !== $key || ! $definition->is_active) {
-            throw ValidationException::withMessages([
-                'new_activity_type' => 'This activity type conflicts with an existing definition.',
-            ]);
+        // A rename keeps the definition's ORIGINAL code on purpose, so the code derived from a
+        // name that has since been renamed away can still be occupied even though the name itself
+        // is free again. normalized_name is the authoritative uniqueness key; the code is an opaque
+        // identifier, so it is disambiguated rather than letting a legitimately free name fail with
+        // a raw "UNIQUE constraint failed: activity_definitions.code" 500.
+        $code = $baseCode;
+        for ($attempt = 2; $attempt <= 99 && ActivityDefinition::query()->where('code', $code)->exists(); $attempt++) {
+            $code = Str::limit($baseCode, 76, '').'_'.$attempt;
         }
+
+        $definition = ActivityDefinition::query()->create([
+            'code' => $code,
+            'name' => $name,
+            'normalized_name' => $key,
+            'sort_order' => ((int) ActivityDefinition::query()->max('sort_order')) + 10,
+            'is_required' => false,
+            'is_active' => true,
+        ]);
 
         if ($definition->wasRecentlyCreated) {
             AuditLog::create([

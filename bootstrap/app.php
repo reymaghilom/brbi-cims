@@ -4,9 +4,12 @@ use App\Http\Middleware\EnsureCurrentAuthenticationSession;
 use App\Http\Middleware\EnsurePasswordHasBeenChanged;
 use App\Http\Middleware\EnsureUserHasRole;
 use App\Models\ActivityDefinition;
+use App\Models\BusinessReport;
 use App\Models\CiActivity;
 use App\Models\CiActivityAssetTarget;
 use App\Models\CiActivityBankTarget;
+use App\Models\CustomBusinessCategory;
+use App\Models\IncomeSource;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -148,7 +151,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 return null;
             }
 
-            $message = 'This Activity Type is no longer available. It may have been deleted or changed. Please refresh the page and try again.';
+            $message = 'This Activity Type is no longer available. It may have been deleted or changed by another user. Please refresh the page and try again.';
 
             if ($request->expectsJson()) {
                 return response()->json([
@@ -159,6 +162,68 @@ return Application::configure(basePath: dirname(__DIR__))
             }
 
             return response()->view('client-folders.activities.activity-type-unavailable', ['message' => $message], 404);
+        });
+
+        $exceptions->render(function (NotFoundHttpException $e, Request $request) {
+            $missing = $e->getPrevious();
+            if (! $missing instanceof ModelNotFoundException || $missing->getModel() !== CustomBusinessCategory::class) {
+                return null;
+            }
+
+            $message = 'This Custom Business Category is no longer available. It may have been deleted or changed by another user. Please refresh the page and try again.';
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'result' => 'not_available',
+                    'message' => $message,
+                    'status_type' => 'error',
+                ], 404);
+            }
+
+            return response()->view('client-folders.income-sources.custom-business-category-unavailable', ['message' => $message], 404);
+        });
+
+        /**
+         * A Business Report / business that another CI already deleted, reached from a stale
+         * Business Report edit form or delete confirmation. Route-model binding (and the locked
+         * lookups in DeleteBusinessReport / DeleteIncomeSource) raise ModelNotFoundException, whose
+         * text embeds the model class and id, and the delete dialog's fetch handler toasts
+         * `payload.message` verbatim.
+         *
+         * Scoped to exactly the Business Report update, the two delete routes and the four
+         * Business Report edit/preview/export links listed below, and to the
+         * IncomeSource / BusinessReport models only — every other missing model and route keeps
+         * Laravel's own 404 handling. Still a 404; nothing is recreated or redirected into looking
+         * valid; only the wording changes.
+         */
+        $exceptions->render(function (NotFoundHttpException $e, Request $request) {
+            $missing = $e->getPrevious();
+            $routeName = $request->route()?->getName();
+            // Read-only Business Report links the Reports workspace (and other already-loaded pages)
+            // hand out, which naturally go stale once another CI deletes the business.
+            $staleReportLinks = ['client-folders.income-sources.edit', 'client-folders.generated-reports.preview', 'client-folders.income-sources.export-pdf', 'client-folders.income-sources.export-excel'];
+            if (! $missing instanceof ModelNotFoundException
+                || ! in_array($missing->getModel(), [IncomeSource::class, BusinessReport::class], true)
+                || ! in_array($routeName, ['client-folders.income-sources.business.update', 'client-folders.income-sources.business-report.destroy', 'client-folders.income-sources.destroy', ...$staleReportLinks], true)) {
+                return null;
+            }
+
+            [$title, $message] = match (true) {
+                in_array($routeName, $staleReportLinks, true) => ['Report unavailable', 'This report is no longer available. It may have been deleted or changed by another CI. Please refresh the Reports page and try again.'],
+                $routeName === 'client-folders.income-sources.business.update' => ['Business Report unavailable', 'This Business Report is no longer available. It may have been deleted by another CI while you were editing it. Please return to the Business Reports page and review the latest information.'],
+                $missing->getModel() === BusinessReport::class => ['Business Report unavailable', 'This Business Report is no longer available. It may have already been deleted by another CI. Please refresh the Business Reports page.'],
+                default => ['Business unavailable', 'This business is no longer available. It may have already been deleted by another CI. Please refresh the page.'],
+            };
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'result' => 'not_available',
+                    'message' => $message,
+                    'status_type' => 'error',
+                ], 404);
+            }
+
+            return response()->view('client-folders.income-sources.business-report-unavailable', ['title' => $title, 'message' => $message], 404);
         });
 
         $exceptions->render(function (NotFoundHttpException $e, Request $request) {

@@ -118,7 +118,7 @@
                             data-sort-ci_date="{{ optional($business->businessReport?->start_date)->format('Y-m-d') ?? '' }}"
                         >
                             <td class="py-3 pl-3 pr-1">
-                                <input type="checkbox" class="size-4 rounded border-ui-border-strong text-brand-primary focus:ring-brand-primary" data-business-select value="{{ $business->id }}" data-business-name="{{ $business->displayName() }}" aria-label="Select {{ $business->displayName() }}">
+                                <input type="checkbox" class="size-4 rounded border-ui-border-strong text-brand-primary focus:ring-brand-primary" data-business-select value="{{ $business->id }}" data-business-revision="{{ $business->revision }}" data-business-name="{{ $business->displayName() }}" aria-label="Select {{ $business->displayName() }}">
                             </td>
                             <td class="py-3 pl-1 pr-3">
                                 <p class="break-words font-bold text-text-main" data-business-row-name>{{ $business->displayName() }}</p>
@@ -159,6 +159,8 @@
         </form>
         <x-ui.confirmation-dialog id="delete-business-{{ $business->id }}" title="Permanently Delete Business Report?" :action="route('client-folders.income-sources.business-report.destroy', [$clientFolder, $business] + $personParams)" method="DELETE" confirm-label="Delete Permanently" destructive data-business-delete-form>
             <p class="text-sm text-text-muted">This will permanently delete this Business Report and cannot be undone. The related Business Check, if any, will remain unchanged.</p>
+            {{-- Stale-delete token: DeleteBusinessReport refuses the delete if another CI saved after this list loaded. --}}
+            <x-slot:formFields><input type="hidden" name="expected_revision" value="{{ $business->revision }}"></x-slot:formFields>
         </x-ui.confirmation-dialog>
     @endforeach
 

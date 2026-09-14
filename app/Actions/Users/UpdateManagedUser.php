@@ -36,7 +36,6 @@ class UpdateManagedUser
 
                 $user->update([
                     'full_name' => $data['full_name'],
-                    'employee_id' => $data['employee_id'],
                     'username' => $data['username'],
                     'role' => $data['role'],
                     ...($newPhotoUploaded ? ['profile_photo_path' => $newPhotoPath] : []),

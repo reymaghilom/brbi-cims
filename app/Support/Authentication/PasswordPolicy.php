@@ -6,7 +6,8 @@ use Illuminate\Validation\Rules\Password;
 
 final class PasswordPolicy
 {
-    public const MIN_LENGTH = 12;
+    /** A MINIMUM, never an exact length: any password of 8 or more characters is accepted. */
+    public const MIN_LENGTH = 8;
 
     public static function rule(): Password
     {

@@ -127,6 +127,15 @@ class SaveBusinessCheckRequest extends FormRequest
                 ->exists()) {
                 $validator->errors()->add('income_source_id', 'A Business Check already exists for the selected business. Open the existing Business Check to view or edit it.');
             }
+            // Friendly early answer for an edit that repoints this check at a business another
+            // Business Check already links to. SaveBusinessCheck re-checks this authoritatively
+            // under the income_sources row lock.
+            if ($validBusiness && filled($this->input('check_id')) && BusinessCheck::query()
+                ->where('income_source_id', $incomeSourceId)
+                ->whereKeyNot((int) $this->input('check_id'))
+                ->exists()) {
+                $validator->errors()->add('income_source_id', 'This business is already linked to another Business Check.');
+            }
         });
     }
 

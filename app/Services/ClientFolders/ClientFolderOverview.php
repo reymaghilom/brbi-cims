@@ -5,17 +5,15 @@ namespace App\Services\ClientFolders;
 use App\Enums\ActivityStatus;
 use App\Enums\RecordState;
 use App\Models\AuditLog;
-use App\Models\ClientCompletionResult;
+use App\Models\CiActivity;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
-use App\Services\Progress\RequiredItemsProgressCalculator;
+use App\Services\Progress\MandatoryInvestigationRequirements;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 
 class ClientFolderOverview
 {
-    public function __construct(private readonly RequiredItemsProgressCalculator $progressCalculator) {}
-
     public function for(ClientFolder $folder, ?CoMaker $activePerson = null): array
     {
         $personId = $activePerson?->id;
@@ -45,11 +43,6 @@ class ClientFolderOverview
                 'residenceChecks' => fn ($query) => $query->where('co_maker_id', $personId),
                 'businessChecks' => fn ($query) => $query->where('co_maker_id', $personId),
                 'activities' => fn ($query) => $query->where('co_maker_id', $personId),
-                'activities as completed_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', ActivityStatus::Completed),
-                'activities as started_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', '!=', ActivityStatus::Pending),
-                'activities as required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
-                'activities as completed_required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', ActivityStatus::Completed)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
-                'activities as started_required_activities_count' => fn ($query) => $query->where('co_maker_id', $personId)->where('status', '!=', ActivityStatus::Pending)->whereHas('definition', fn ($definition) => $definition->where('is_active', true)->where('is_required', true)),
             ])
             ->withMax([
                 'incomeSources' => fn ($query) => $query->where('co_maker_id', $personId),
@@ -58,20 +51,6 @@ class ClientFolderOverview
                 'activities' => fn ($query) => $query->where('co_maker_id', $personId),
             ], 'updated_at')
             ->findOrFail($folder->id);
-
-        $completionResults = ClientCompletionResult::query()
-            ->where('client_folder_id', $folder->id)
-            ->whereHas('rule', fn ($query) => $query->where('is_active', true)->where('is_required', true))
-            ->join('completion_rules', 'completion_rules.id', '=', 'client_completion_results.completion_rule_id')
-            ->orderBy('completion_rules.sort_order')
-            ->get([
-                'client_completion_results.is_satisfied',
-                'completion_rules.label',
-            ]);
-
-        $calculated = $this->progressCalculator->calculate(
-            $completionResults->mapWithKeys(fn ($result): array => [$result->label => $result->is_satisfied]),
-        );
 
         $recentHistory = AuditLog::query()
             ->where('client_folder_id', $folder->id)
@@ -82,14 +61,11 @@ class ClientFolderOverview
 
         return [
             'clientFolder' => $folder,
+            // The stored authoritative value ClientProgressService writes (mandatory requirements).
             'progress' => [
                 'percentage' => (float) $folder->progress_percent,
-                'completed' => count($calculated->completed),
-                'total' => count($calculated->completed) + count($calculated->incomplete),
-                'is_evaluated' => $completionResults->isNotEmpty(),
-                'missing' => $calculated->incomplete,
             ],
-            'modules' => $this->modules($folder),
+            'modules' => $this->modules($folder, $personId, $this->mandatoryActivityProgress($folder, $personId)),
             'recentHistory' => $recentHistory,
             'recentPersonActivity' => $this->recentPersonActivity($folder, $activePerson),
         ];
@@ -327,14 +303,15 @@ class ClientFolderOverview
         return $old && $new ? "{$old} \u{2192} {$new}" : null;
     }
 
-    private function modules(ClientFolder $folder): array
+    /** @param  array{total: int, completed: int, started: int}  $activities */
+    private function modules(ClientFolder $folder, ?int $personId, array $activities): array
     {
         return [
             $this->module('client-information', 'Client Information', 'user', $this->singleState($folder->information?->completion_state), $folder->information ? 'Client profile record available.' : 'No client information has been encoded.', $folder->information?->updated_at),
             $this->module('cibi-report', 'CIBI Report', 'report', $this->singleState($folder->cibiReport?->state), $folder->cibiReport ? 'Official CI / BI report record available.' : 'No CI / BI report has been started.', $folder->cibiReport?->updated_at),
             $this->module('income-sources', 'Business / Income Sources', 'folder', $this->collectionState($folder->income_sources_count, $folder->completed_income_sources_count), null, $folder->income_sources_max_updated_at),
-            $this->module('residence-business', 'Residence & Business Report', 'media', $this->residenceBusinessState($folder), $this->residenceBusinessDescription($folder), $this->latest($folder->residence_checks_max_updated_at, $folder->business_checks_max_updated_at)),
-            $this->module('activities', 'CI Activities', 'activity', $this->activityState($folder), $this->activityDescription($folder), $folder->activities_max_updated_at),
+            $this->module('residence-business', 'Residence & Business Report', 'media', $this->residenceBusinessState($folder, $personId), $this->residenceBusinessDescription($folder), $this->latest($folder->residence_checks_max_updated_at, $folder->business_checks_max_updated_at)),
+            $this->module('activities', 'CI Activities', 'activity', $this->activityState($activities), $this->activityDescription($activities), $folder->activities_max_updated_at),
         ];
     }
 
@@ -357,12 +334,25 @@ class ClientFolderOverview
         };
     }
 
-    private function residenceBusinessState(ClientFolder $folder): string
+    /**
+     * Follows the mandatory requirements for the viewed person (MandatoryInvestigationRequirements):
+     * the Applicant needs both a Residence Check and a Business Check, while a Co-Maker needs only a
+     * Residence Check — a Co-Maker's Business Check is never an extra requirement. Both counts are
+     * already filtered to this exact person.
+     */
+    private function residenceBusinessState(ClientFolder $folder, ?int $personId): string
     {
+        $hasResidence = $folder->residence_checks_count > 0;
+        $hasBusiness = $folder->business_checks_count > 0;
+
+        if ($personId !== null) {
+            return $hasResidence ? 'completed' : 'not_started';
+        }
+
         return match (true) {
-            $folder->residence_checks_count === 0 && $folder->business_checks_count === 0 => 'not_started',
-            $folder->residence_checks_count === 0 => 'in_progress',
-            default => 'completed',
+            $hasResidence && $hasBusiness => 'completed',
+            $hasResidence || $hasBusiness => 'in_progress',
+            default => 'not_started',
         };
     }
 
@@ -380,19 +370,53 @@ class ClientFolderOverview
         return collect($values)->filter()->sortDesc()->first();
     }
 
-    private function activityState(ClientFolder $folder): string
+    /**
+     * The viewed person's MANDATORY CI Activity requirements, exactly as folder progress defines them
+     * (MandatoryInvestigationRequirements::ciActivityRequirements()): Barangay, Neighbor and Bank /
+     * Coop for the Applicant; Barangay and Neighbor for a Co-Maker. Asset and custom activities are
+     * never part of this fixed denominator. A requirement with no row at all simply counts as neither
+     * started nor completed — nothing is created to represent it. Several rows for one requirement
+     * count once. Read-only; one query.
+     *
+     * @return array{total: int, completed: int, started: int}
+     */
+    private function mandatoryActivityProgress(ClientFolder $folder, ?int $personId): array
+    {
+        $codes = array_values(MandatoryInvestigationRequirements::ciActivityRequirements($personId));
+
+        $rows = CiActivity::query()
+            ->join('activity_definitions', 'activity_definitions.id', '=', 'ci_activities.activity_definition_id')
+            ->where('ci_activities.client_folder_id', $folder->id)
+            ->when(
+                $personId === null,
+                fn ($query) => $query->whereNull('ci_activities.co_maker_id'),
+                fn ($query) => $query->where('ci_activities.co_maker_id', $personId),
+            )
+            ->whereIn('activity_definitions.code', $codes)
+            ->get(['activity_definitions.code as requirement_code', 'ci_activities.status']);
+
+        return [
+            'total' => count($codes),
+            'completed' => $rows->filter(fn (CiActivity $row): bool => $row->status === ActivityStatus::Completed)->pluck('requirement_code')->unique()->count(),
+            'started' => $rows->filter(fn (CiActivity $row): bool => $row->status !== ActivityStatus::Pending)->pluck('requirement_code')->unique()->count(),
+        ];
+    }
+
+    /** @param  array{total: int, completed: int, started: int}  $activities */
+    private function activityState(array $activities): string
     {
         return match (true) {
-            $folder->required_activities_count === 0 || $folder->started_required_activities_count === 0 => 'not_started',
-            $folder->completed_required_activities_count === $folder->required_activities_count => 'completed',
+            $activities['completed'] === $activities['total'] => 'completed',
+            $activities['started'] === 0 => 'not_started',
             default => 'in_progress',
         };
     }
 
-    private function activityDescription(ClientFolder $folder): string
+    /** @param  array{total: int, completed: int, started: int}  $activities */
+    private function activityDescription(array $activities): string
     {
-        $pending = $folder->required_activities_count - $folder->completed_required_activities_count;
+        $pending = $activities['total'] - $activities['completed'];
 
-        return "{$folder->completed_required_activities_count} of {$folder->required_activities_count} required activities completed; {$pending} pending.";
+        return "{$activities['completed']} of {$activities['total']} required activities completed; {$pending} pending.";
     }
 }

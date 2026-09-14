@@ -497,18 +497,18 @@ class ReportWorkspaceQuery
 
     /**
      * A business this person could legitimately record a Business Check against right now: a real
-     * dedicated business, not recycled, not suppressed on either side, and without a saved Business
-     * Check of its own yet.
+     * dedicated business, not recycled, whose own Business Check was not intentionally deleted, and
+     * without a saved Business Check of its own yet.
      *
-     * The two suppressions are independent and both mean "do not re-synthesise this work item".
-     * business_report_deleted_at: deleting the Business Report also retires a Business Check that
-     * was still only virtual. business_check_deleted_at: the Business Check itself was
-     * intentionally deleted, which suppresses only this and never the Business Report.
+     * Each suppression marker applies only to its own module. business_check_deleted_at: the
+     * Business Check itself was intentionally deleted, so its Pending entry is not re-synthesised.
+     * business_report_deleted_at is deliberately NOT consulted: a report-only delete leaves the
+     * IncomeSource in place, and Business Check is an independent module, so that surviving
+     * business still needs its Business Check.
      */
     private function eligibleUncheckedBusiness(Builder $query): Builder
     {
         return $this->scopeExistingBusiness($query)
-            ->whereNull('s.business_report_deleted_at')
             ->whereNull('s.business_check_deleted_at')
             ->whereNotExists(fn (Builder $exists) => $exists->select(DB::raw(1))->from('business_checks as c')
                 ->whereColumn('c.income_source_id', 's.id'));

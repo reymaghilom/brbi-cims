@@ -49,7 +49,6 @@ class SeniorCreditInvestigatorRoleTest extends TestCase
             ->assertSee('senior_credit_investigator');
 
         $this->actingAs($admin)->post(route('admin.users.store'), [
-            'employee_id' => 'EMP-9001',
             'full_name' => 'SENIOR CI USER',
             'username' => 'senior.ci',
             'role' => UserRole::SeniorCreditInvestigator->value,
@@ -64,7 +63,6 @@ class SeniorCreditInvestigatorRoleTest extends TestCase
         // An existing Credit Investigator can be promoted through the same form.
         $investigator = User::factory()->create();
         $this->actingAs($admin)->put(route('admin.users.update', $investigator), [
-            'employee_id' => $investigator->employee_id,
             'full_name' => $investigator->full_name,
             'username' => $investigator->username,
             'role' => UserRole::SeniorCreditInvestigator->value,

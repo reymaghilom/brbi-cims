@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\ClientFolders\BusinessReportDuplicateGuard;
 use App\Actions\ClientFolders\CreateIncomeSource;
 use App\Actions\ClientFolders\DeleteBusinessReport;
 use App\Actions\ClientFolders\DeleteIncomeSource;
@@ -10,6 +11,7 @@ use App\Actions\ClientFolders\SaveGeneralIncomeSource;
 use App\Actions\ClientFolders\UpdateIncomeSourceContributors;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
+use App\Exceptions\BusinessReportDeleteConflictException;
 use App\Exceptions\NoChangesDetectedException;
 use App\Http\Requests\ClientFolders\StoreIncomeSourceRequest;
 use App\Http\Requests\ClientFolders\UpdateBusinessIncomeSourceRequest;
@@ -132,6 +134,11 @@ class IncomeSourceController extends Controller
 
     private const OTHER_BUSINESS_TEMPLATE_TYPE = 'other_business_source_of_income';
 
+    /** A delete request that lacks the revision token(s) its page must have rendered. */
+    private const STALE_DELETE_PAGE_MESSAGE = 'This page is out of date. Nothing was deleted. Please refresh and review the latest information before deleting.';
+
+    private const BULK_STALE_DELETE_MESSAGE = 'One or more selected Business Reports were updated after you opened this page. Nothing was deleted. Please refresh and review the latest information before deleting again.';
+
     /**
      * The single wording for a STANDARD duplicate Business Template, wherever the CI meets it: the
      * Select Business Template modal states it inline under the selector, launch() flashes it when
@@ -141,7 +148,7 @@ class IncomeSourceController extends Controller
      * Other Business / Source of Income is never judged by this rule — its identity is the exact
      * normalized set of categories ticked inside the form, and it has its own message.
      */
-    public const DUPLICATE_TEMPLATE_MESSAGE = 'This business template already exists for this client. Please select another template.';
+    public const DUPLICATE_TEMPLATE_MESSAGE = BusinessReportDuplicateGuard::STANDARD_MESSAGE;
 
     public function create(ClientFolder $clientFolder): RedirectResponse
     {
@@ -159,14 +166,48 @@ class IncomeSourceController extends Controller
         return redirect()->route('client-folders.income-sources.index', [$clientFolder] + $personParams);
     }
 
-    public function store(StoreIncomeSourceRequest $request, ClientFolder $clientFolder, CreateIncomeSource $create, SaveBusinessIncomeSource $save): RedirectResponse
-    {
+    public function store(
+        StoreIncomeSourceRequest $request,
+        ClientFolder $clientFolder,
+        CreateIncomeSource $create,
+        SaveBusinessIncomeSource $save,
+        BusinessReportDuplicateGuard $duplicates,
+    ): RedirectResponse {
         $data = $request->validated();
-        $source = $create->execute($request->user(), $clientFolder, $data);
-        $save->execute($request->user(), $clientFolder, $source, $data);
-        $personParams = ActivePersonResolver::queryParams(ActivePersonResolver::resolve($clientFolder, $data['co_maker_id'] ?? null));
+        $activePerson = ActivePersonResolver::resolve($clientFolder, $data['co_maker_id'] ?? null);
 
-        $this->flashManageRefresh($clientFolder, ActivePersonResolver::resolve($clientFolder, $data['co_maker_id'] ?? null));
+        $source = DB::transaction(function () use ($request, $clientFolder, $create, $save, $duplicates, $data, $activePerson): IncomeSource {
+            // A new IncomeSource cannot be locked before it exists. Serialize on the narrowest
+            // stable folder/person row, then repeat the duplicate check under that lock.
+            if ($activePerson === null) {
+                ClientFolder::query()->whereKey($clientFolder->id)->lockForUpdate()->firstOrFail();
+            } else {
+                $clientFolder->coMakers()->whereKey($activePerson->id)->lockForUpdate()->firstOrFail();
+            }
+
+            $template = IncomeSourceTemplate::query()
+                ->whereKey($data['income_source_template_id'])
+                ->where('is_active', true)
+                ->where('is_fallback', false)
+                ->where('form_handler', 'dedicated-business')
+                ->firstOrFail();
+            $duplicateError = $duplicates->duplicateError(
+                $clientFolder,
+                $template,
+                $activePerson?->id,
+                data_get($data, 'template_data.fields.income_sources'),
+            );
+            if ($duplicateError !== []) {
+                throw ValidationException::withMessages($duplicateError);
+            }
+
+            $source = $create->execute($request->user(), $clientFolder, $data);
+
+            return $save->execute($request->user(), $clientFolder, $source, $data);
+        });
+        $personParams = ActivePersonResolver::queryParams($activePerson);
+
+        $this->flashManageRefresh($clientFolder, $activePerson);
 
         return redirect()->route('client-folders.income-sources.edit', [$clientFolder, $source] + $personParams)->with('status', 'Business Report saved successfully.');
     }
@@ -249,11 +290,16 @@ class IncomeSourceController extends Controller
         return $this->afterSave('stay', $clientFolder, $incomeSource, 'Contributors updated successfully.', $activePerson);
     }
 
-    public function destroy(ClientFolder $clientFolder, IncomeSource $incomeSource, DeleteIncomeSource $delete): RedirectResponse
+    public function destroy(ClientFolder $clientFolder, IncomeSource $incomeSource, DeleteIncomeSource $delete): RedirectResponse|JsonResponse
     {
         Gate::authorize('delete', $incomeSource);
         $personParams = ActivePersonResolver::queryParams($incomeSource->co_maker_id ? $clientFolder->coMakers()->find($incomeSource->co_maker_id) : null);
-        $delete->execute(request()->user(), $clientFolder, $incomeSource);
+
+        try {
+            $delete->execute(request()->user(), $clientFolder, $incomeSource, $this->expectedDeleteRevision());
+        } catch (BusinessReportDeleteConflictException $e) {
+            return $this->deleteConflictResponse($e, $clientFolder, $personParams);
+        }
 
         return redirect()->route('client-folders.income-sources.manage', [$clientFolder] + $personParams)->with('status', 'Business and linked Business Report and Business Check permanently deleted.');
     }
@@ -270,7 +316,12 @@ class IncomeSourceController extends Controller
         Gate::authorize('delete', $incomeSource);
         $activePerson = $incomeSource->co_maker_id ? $clientFolder->coMakers()->find($incomeSource->co_maker_id) : null;
         $personParams = ActivePersonResolver::queryParams($activePerson);
-        $delete->execute(request()->user(), $clientFolder, $incomeSource);
+
+        try {
+            $delete->execute(request()->user(), $clientFolder, $incomeSource, $this->expectedDeleteRevision());
+        } catch (BusinessReportDeleteConflictException $e) {
+            return $this->deleteConflictResponse($e, $clientFolder, $personParams);
+        }
 
         if (request()->wantsJson()) {
             return response()->json(['deleted' => 1] + $this->refreshPayload($clientFolder, $activePerson));
@@ -303,10 +354,24 @@ class IncomeSourceController extends Controller
             'co_maker_id' => ['nullable', 'integer'],
             'income_source_ids' => ['required', 'array', 'min:1'],
             'income_source_ids.*' => ['integer'],
+            // Keyed by exact income_source_id (never by position): the revision each selected row
+            // was rendered with. Mandatory for every selected id — see the locked check below.
+            'expected_revisions' => ['required', 'array'],
+            'expected_revisions.*' => ['required', 'integer', 'min:0'],
+        ], [
+            'expected_revisions' => self::STALE_DELETE_PAGE_MESSAGE,
+            'expected_revisions.*' => self::STALE_DELETE_PAGE_MESSAGE,
         ]);
         $activePerson = ActivePersonResolver::resolve($clientFolder, $validated['co_maker_id'] ?? null);
         $personParams = ActivePersonResolver::queryParams($activePerson);
         $submittedIds = array_values(array_unique(array_map('intval', $validated['income_source_ids'])));
+        $expectedRevisions = [];
+        foreach ($submittedIds as $id) {
+            if (! array_key_exists($id, $validated['expected_revisions'])) {
+                throw ValidationException::withMessages(['expected_revisions' => self::STALE_DELETE_PAGE_MESSAGE]);
+            }
+            $expectedRevisions[$id] = (int) $validated['expected_revisions'][$id];
+        }
 
         $sources = IncomeSource::query()
             ->where('client_folder_id', $clientFolder->id)
@@ -327,12 +392,40 @@ class IncomeSourceController extends Controller
         }
 
         $deletedCount = 0;
-        DB::transaction(function () use ($sources, $delete, $clientFolder, &$deletedCount): void {
-            foreach ($sources as $source) {
-                $delete->execute(request()->user(), $clientFolder, $source);
-                $deletedCount++;
-            }
-        });
+
+        try {
+            DB::transaction(function () use ($sources, $delete, $clientFolder, $activePerson, $expectedRevisions, &$deletedCount): void {
+                // Stale check for the WHOLE selection first: lock every selected exact IncomeSource
+                // (id order, so two overlapping bulk deletes always lock in the same order) and
+                // compare each against the revision its row was rendered with. Any stale or
+                // meanwhile-removed report aborts before a single delete runs — nothing is deleted.
+                $locked = IncomeSource::query()
+                    ->where('client_folder_id', $clientFolder->id)
+                    ->where('co_maker_id', $activePerson?->id)
+                    ->whereIn('id', $sources->modelKeys())
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get()
+                    ->keyBy('id');
+                foreach ($sources as $source) {
+                    $current = $locked->get($source->id);
+                    if ($current === null
+                        || $current->revision !== $expectedRevisions[$source->id]
+                        || ! BusinessReport::query()->where('income_source_id', $source->id)->exists()) {
+                        throw new BusinessReportDeleteConflictException(self::BULK_STALE_DELETE_MESSAGE);
+                    }
+                }
+
+                // All current: the same canonical single-delete action (which re-checks the same
+                // token under the lock this transaction already holds).
+                foreach ($sources as $source) {
+                    $delete->execute(request()->user(), $clientFolder, $source, $expectedRevisions[$source->id]);
+                    $deletedCount++;
+                }
+            });
+        } catch (BusinessReportDeleteConflictException $e) {
+            return $this->deleteConflictResponse($e, $clientFolder, $personParams);
+        }
 
         $message = $deletedCount === 1 ? '1 Business Report permanently deleted.' : "{$deletedCount} Business Reports permanently deleted.";
 
@@ -518,6 +611,33 @@ class IncomeSourceController extends Controller
             ->orderBy('sort_order')
             ->orderBy('name')
             ->get(['id', 'name', 'description', 'business_category', 'template_type', 'version', 'compatibility_tags']);
+    }
+
+    /**
+     * The IncomeSource revision a delete confirmation was rendered with. Mandatory: omitting it is
+     * never permission to delete. The delete action compares it under the exact IncomeSource row
+     * lock before anything is removed.
+     */
+    private function expectedDeleteRevision(): int
+    {
+        $validated = request()->validate(
+            ['expected_revision' => ['required', 'integer', 'min:0']],
+            ['expected_revision' => self::STALE_DELETE_PAGE_MESSAGE],
+        );
+
+        return (int) $validated['expected_revision'];
+    }
+
+    /** @param  array<string, mixed>  $personParams */
+    private function deleteConflictResponse(BusinessReportDeleteConflictException $e, ClientFolder $clientFolder, array $personParams): RedirectResponse|JsonResponse
+    {
+        // Nothing was deleted — the conflict is raised under the row lock before any delete runs.
+        if (request()->wantsJson()) {
+            return response()->json(['result' => 'conflict', 'message' => $e->getMessage(), 'status_type' => 'error'], 409);
+        }
+
+        return redirect()->route('client-folders.income-sources.manage', [$clientFolder] + $personParams)
+            ->with('status', $e->getMessage())->with('statusType', 'error');
     }
 
     private function isBlankLegacyPlaceholder(IncomeSource $source): bool

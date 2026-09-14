@@ -7,6 +7,7 @@ use App\Exceptions\NoChangesDetectedException;
 use App\Models\AuditLog;
 use App\Models\BusinessReport;
 use App\Models\ClientFolder;
+use App\Models\CustomBusinessCategory;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
@@ -63,8 +64,15 @@ class SaveBusinessIncomeSource
                 ->firstOrFail();
 
             if (filled($data['expected_revision'] ?? null) && (int) $data['expected_revision'] !== $source->revision) {
+                // DeleteBusinessReport advances the revision, so a form opened before a report-only
+                // delete lands here too — tell that CI the report was deleted rather than updated.
+                $deletedMeanwhile = $source->business_report_deleted_at !== null
+                    && ! BusinessReport::query()->where('income_source_id', $source->id)->exists();
+
                 throw ValidationException::withMessages([
-                    'expected_revision' => 'This record has been updated by another CI. Please review the latest version before saving.',
+                    'expected_revision' => $deletedMeanwhile
+                        ? 'This Business Report was deleted by another CI while you were editing it. Your changes were not saved. Please refresh or return to the Business Reports page.'
+                        : 'This Business Report was updated by another CI while you were editing it. Your changes were not saved. Please refresh the report to review the latest information before editing again.',
                 ]);
             }
 
@@ -98,6 +106,14 @@ class SaveBusinessIncomeSource
 
             if ($report === null) {
                 $report = new BusinessReport(['income_source_id' => $source->id]);
+            }
+
+            if ($source->template_type === BusinessReportDuplicateGuard::OTHER_BUSINESS_TEMPLATE_TYPE
+                && data_has($data, 'template_data.fields.income_sources')) {
+                $this->lockAndValidateSelectedCustomCategories(
+                    $report->exists ? $report : null,
+                    data_get($data, 'template_data.fields.income_sources'),
+                );
             }
 
             $report->fill(Arr::only($data, self::REPORT_FIELDS));
@@ -183,6 +199,41 @@ class SaveBusinessIncomeSource
 
             return $source->refresh();
         });
+    }
+
+    private function lockAndValidateSelectedCustomCategories(?BusinessReport $report, mixed $selectedKeys): void
+    {
+        $customIds = CustomBusinessCategory::idsFromKeys($selectedKeys);
+        if ($customIds === []) {
+            return;
+        }
+
+        $categories = CustomBusinessCategory::query()
+            ->whereKey($customIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+        $selectedCustomKeys = collect((array) $selectedKeys)
+            ->filter(fn (mixed $key): bool => CustomBusinessCategory::isCustomKey($key))
+            ->unique()
+            ->values();
+
+        if ($categories->count() !== count($customIds)
+            || $selectedCustomKeys->contains(fn (string $key): bool => ! $categories->contains(fn (CustomBusinessCategory $category): bool => $category->optionKey() === $key))) {
+            throw ValidationException::withMessages([
+                'template_data.fields.income_sources' => 'One or more selected custom businesses are no longer available. Please review the business selections.',
+            ]);
+        }
+
+        $historicalIds = CustomBusinessCategory::idsFromKeys(
+            data_get($report?->template_data, 'fields.income_sources'),
+        );
+        if ($categories->contains(fn (CustomBusinessCategory $category): bool => ! $category->is_active && ! in_array($category->id, $historicalIds, true))) {
+            throw ValidationException::withMessages([
+                'template_data.fields.income_sources' => 'One or more selected custom businesses have been removed from future selection. Please review the business selections.',
+            ]);
+        }
     }
 
     private function sync(HasMany $relation, array $rows, array $fields, string $required): array

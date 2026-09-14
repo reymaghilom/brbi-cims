@@ -266,10 +266,11 @@ class CreditInvestigatorDashboardTest extends TestCase
         $this->assertSame([$overdue->id, $coMakerWork->id], $work->pluck('id')->all(), 'Overdue work is surfaced first; completed and unassigned work is excluded.');
         $this->assertSame('Overdue', $work->first()['status']);
 
-        // Each action targets that activity's authoritative check page, carrying its exact person context.
+        // Overdue work Continues on that activity's authoritative check page; not-yet-overdue work
+        // Opens that exact activity on its person's CI Activities page. Both carry exact person context.
         $this->assertSame(route('client-folders.activities.default-check.show', [$folder->id, $overdue->id]), $work->first()['url']);
         $this->assertSame(
-            route('client-folders.activities.default-check.show', [$folder->id, $coMakerWork->id, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]),
+            route('client-folders.activities.index', [$folder->id, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]).'#activity-'.$coMakerWork->id,
             $work->last()['url'],
         );
         $this->assertSame($coMaker->full_name, $work->last()['person']);
@@ -353,9 +354,11 @@ class CreditInvestigatorDashboardTest extends TestCase
         $large = $measure(12);
 
         $this->assertSame($small, $large, 'Dashboard query count must not scale with the number of assigned folders.');
-        // 21: the Needs Attention detail adds three fixed queries (activities, Bank / Coop targets,
-        // Asset targets); the flat count above remains the actual N+1 guard.
-        $this->assertLessThanOrEqual(21, $large);
+        // 23: the Needs Attention detail adds three fixed queries (activities, Bank / Coop targets,
+        // Asset targets), and My Work Today adds two fixed eager loads of the still-open Bank / Coop
+        // and Asset targets it lists one row per target from (loaded once for every activity, never
+        // per activity). The flat count above remains the actual N+1 guard.
+        $this->assertLessThanOrEqual(23, $large);
     }
 
     /**

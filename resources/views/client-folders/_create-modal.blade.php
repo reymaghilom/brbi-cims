@@ -36,7 +36,7 @@
                         <select id="create-folder-assigned-ci" name="assigned_ci_id" class="ui-control" aria-describedby="create-folder-assigned-ci-help create-folder-assigned-ci-error">
                             <option value="">Leave unassigned</option>
                             @foreach($creditInvestigators as $investigator)
-                                <option value="{{ $investigator->id }}">{{ $investigator->full_name }}{{ $investigator->employee_id ? ' — '.$investigator->employee_id : '' }}</option>
+                                <option value="{{ $investigator->id }}">{{ $investigator->full_name }}</option>
                             @endforeach
                         </select>
                         <p id="create-folder-assigned-ci-help" class="ui-help">Client Folders are a shared workspace — every Credit Investigator can open and work on any active folder regardless of this selection.</p>

@@ -14,6 +14,7 @@ use App\Notifications\CiActivityScheduledReminder;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 /**
@@ -44,7 +45,9 @@ class CustomCiActivityLifecycleTest extends TestCase
 
     private const CO_MAKER_WARNING = 'A similar activity already exists for this Co-Maker. Another CI may already be working on it. Please review the existing entry before continuing.';
 
-    private const TYPE_UNAVAILABLE = 'This Activity Type is no longer available. It may have been deleted or changed. Please refresh the page and try again.';
+    private const TYPE_UNAVAILABLE = 'This Activity Type is no longer available. It may have been deleted or changed by another user. Please refresh the page and try again.';
+
+    private const TYPE_DUPLICATE = 'An Activity Type with this name already exists.';
 
     private const UNAVAILABLE = 'This CI Activity is no longer available. It may have been deleted or changed by another user. Please return to the CI Activities page.';
 
@@ -138,6 +141,9 @@ class CustomCiActivityLifecycleTest extends TestCase
         $this->assertStringContainsString('data-ci-activity-duplicate-warning', $html);
         $this->assertStringContainsString(self::APPLICANT_WARNING, $html);
         $this->assertStringContainsString('Typed remarks kept.', $html);
+        preg_match('/<button[^>]*data-value="'.preg_quote((string) $definition->id, '/').'"[^>]*>/', $html, $option);
+        $this->assertNotEmpty($option, 'Expected the used custom Activity Type in the Add dropdown.');
+        $this->assertStringNotContainsString('disabled', $option[0]);
 
         $footer = substr($html, strrpos($html, '<div class="flex shrink-0 flex-col-reverse gap-3 border-t'));
         $footer = substr($footer, 0, strpos($footer, '</div>') + 6);
@@ -179,6 +185,9 @@ class CustomCiActivityLifecycleTest extends TestCase
         // A committed rename must never be reported as a failure by a later refresh problem.
         $this->assertStringContainsString('the list could not be refreshed', $html);
         $this->assertStringContainsString('// Past this point the rename is COMMITTED', $html);
+        $this->assertStringContainsString('data-activity-type-success', $html);
+        $this->assertStringContainsString('showSuccess(payload.message', $html);
+        $this->assertStringContainsString('}, true);', $html);
     }
 
     public function test_a_second_identical_add_for_the_same_co_maker_is_blocked_with_person_aware_wording(): void
@@ -263,101 +272,128 @@ class CustomCiActivityLifecycleTest extends TestCase
 
     // ------------------------------------------------------------------ Custom definitions
 
-    public function test_equivalent_type_names_reuse_one_definition_across_one_submit_adds(): void
+    public function test_add_new_activity_type_mode_shows_only_the_catalog_fields(): void
     {
         $folder = $this->folder();
-        $before = ActivityDefinition::query()->count();
+        $indexUrl = route('client-folders.activities.index', $folder);
 
-        // First submit: creates the type AND its activity in the same request.
-        $this->actingAs($this->ci)
-            ->post($this->storeUrl($folder), $this->newTypePayload('My Custom Check'))
-            ->assertRedirect()
-            ->assertSessionHasNoErrors()
-            ->assertSessionHas('status', 'Activity Type created and activity added successfully.');
+        $response = $this->actingAs($this->ci)->from($indexUrl)->post($this->storeUrl($folder), [
+            'co_maker_id' => '',
+            'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
+            'create_new_activity_type' => '1',
+            'new_activity_type' => '',
+        ])->assertRedirect()->assertSessionHasErrors(['new_activity_type']);
 
-        $this->assertSame($before + 1, ActivityDefinition::query()->count());
-        $definition = ActivityDefinition::query()->where('code', 'like', ActivityDefinition::CUSTOM_CODE_PREFIX.'%')->sole();
-        $this->assertFalse($definition->is_required);
-        $this->assertTrue($definition->is_active);
-        $this->assertSame(1, $this->activitiesFor($folder, $definition, null));
+        $form = $this->createFormHtml($this->get($response->headers->get('Location'))->assertOk()->getContent());
 
-        // Equivalent spellings reuse the SAME definition and then hit the collaborative advisory,
-        // because this exact person already has the activity.
-        foreach ([' my   custom   check ', 'MY CUSTOM CHECK'] as $variation) {
-            $this->postJson($this->storeUrl($folder), $this->newTypePayload($variation))
-                ->assertStatus(409)
-                ->assertJsonPath('result', 'duplicate_exists')
-                ->assertJsonPath('message', self::APPLICANT_WARNING);
-        }
-
-        $this->assertSame($before + 1, ActivityDefinition::query()->count());
-        $this->assertSame(1, $this->activitiesFor($folder, $definition, null));
-
-        // Continue Anyway reuses the same definition and adds a second independent activity.
-        $this->post($this->storeUrl($folder), $this->newTypePayload('MY CUSTOM CHECK', ['allow_duplicate' => '1']))
-            ->assertRedirect()->assertSessionHasNoErrors();
-        $this->assertSame($before + 1, ActivityDefinition::query()->count());
-        $this->assertSame(2, $this->activitiesFor($folder, $definition, null));
+        $this->assertMatchesRegularExpression('/<div(?=[^>]*data-new-activity-type-fields)(?![^>]*hidden)[^>]*>/', $form);
+        $this->assertStringContainsString('data-new-activity-type-input', $form);
+        $this->assertMatchesRegularExpression('/<div(?=[^>]*data-standard-activity-field)(?=[^>]*hidden)[^>]*>/', $form);
+        $this->assertMatchesRegularExpression('/<select(?=[^>]*data-ci-activity-status)(?=[^>]*disabled)[^>]*>/', $form);
+        $this->assertMatchesRegularExpression('/<input(?=[^>]*data-ci-activity-schedule)(?=[^>]*disabled)[^>]*>/', $form);
+        $this->assertMatchesRegularExpression('/<input(?=[^>]*data-ci-activity-schedule-time)(?=[^>]*disabled)[^>]*>/', $form);
+        $this->assertMatchesRegularExpression('/<textarea(?=[^>]*data-ci-activity-remarks)(?=[^>]*disabled)[^>]*>/', $form);
+        $this->assertMatchesRegularExpression('/>\s*Add Activity Type\s*<\/span>/', $form);
+        $this->assertStringNotContainsString('Saving this reusable Activity Type will not create a CI Activity or assign a Creator.', $form);
     }
 
-    public function test_one_submit_creates_the_type_and_the_activity_for_the_exact_person(): void
+    public function test_activity_type_creation_is_catalog_only_then_reopens_normal_add_mode(): void
     {
+        Notification::fake();
         $folder = $this->folder();
-        $coMaker = $this->coMaker($folder, 'Maker Alpha');
+        $folderBefore = $folder->fresh()->getAttributes();
 
-        // Applicant, scheduled — the newly typed type uses the ordinary custom-activity workflow,
-        // not a weaker catalog-only one.
-        $this->actingAs($this->ci)
-            ->post($this->storeUrl($folder), $this->newTypePayload('Employment Verification', [
-                'status' => ActivityStatus::Scheduled->value,
-                'scheduled_at' => '2026-09-20',
-                'scheduled_time' => '10:30',
-                'remarks' => 'Typed in one go.',
-            ]))
-            ->assertRedirect()->assertSessionHasNoErrors();
+        $response = $this->actingAs($this->ci)
+            ->postJson($this->storeUrl($folder), $this->newTypePayload('Employment Verification'))
+            ->assertOk()
+            ->assertJsonPath('activity_created', false)
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('status', 'Activity Type created successfully.')
+            ->assertSessionHas('ci_activity_modal_open', true);
 
         $definition = ActivityDefinition::query()->whereRaw('LOWER(name) = ?', ['employment verification'])->sole();
-        $applicant = $folder->activities()->where('activity_definition_id', $definition->id)->whereNull('co_maker_id')->sole();
-        $this->assertSame(ActivityStatus::Scheduled, $applicant->status);
-        $this->assertNotNull($applicant->scheduled_at);
-        $this->assertTrue($applicant->scheduled_has_time);
-        $this->assertSame('Typed in one go.', $applicant->remarks);
-        $this->assertSame($this->ci->id, $applicant->creator_id);
-        $this->assertSame(1, AuditLog::query()->where('action', 'ci_activity.created')->count());
+        $this->assertSame('employment verification', $definition->normalized_name);
+        $this->assertFalse($definition->is_required);
+        $this->assertTrue($definition->is_active);
+        $this->assertSame(0, CiActivity::query()->count());
+        $this->assertSame(0, AuditLog::query()->where('action', 'ci_activity.created')->count());
+        $this->assertSame(1, AuditLog::query()->where('action', 'activity_definition.created')->count());
+        $this->assertSame($folderBefore, $folder->fresh()->getAttributes());
+        Notification::assertNothingSent();
+        $response->assertJsonPath('activity_definition_id', $definition->id);
+        $response->assertSessionHasInput('activity_definition_id', (string) $definition->id)
+            ->assertSessionHasInput('create_new_activity_type', false);
 
-        // The same typed name for a Co-Maker reuses the definition and is its own activity.
-        $this->post($this->storeUrl($folder), $this->newTypePayload('employment verification', [
-            'co_maker_id' => $coMaker->id,
-        ]))->assertRedirect()->assertSessionHasNoErrors()
-            ->assertSessionHas('status', 'Activity added successfully.');
-
-        $this->assertSame(1, $this->activitiesFor($folder, $definition, $coMaker->id));
-        $this->assertSame(1, ActivityDefinition::query()->whereRaw('LOWER(name) = ?', ['employment verification'])->count());
+        $form = $this->createFormHtml($this->get($response->json('redirect'))->assertOk()->getContent());
+        $this->assertStringContainsString('data-value="'.$definition->id.'"', $form);
+        $this->assertStringContainsString('data-value="'.$definition->id.'" data-code="'.$definition->code.'" data-label="'.$definition->name.'" aria-selected="true"', $form);
+        $this->assertMatchesRegularExpression('/<div(?=[^>]*data-standard-activity-field)(?![^>]*hidden)[^>]*>\s*<label for="activity-status"/', $form);
+        $this->assertMatchesRegularExpression('/<textarea(?=[^>]*data-ci-activity-remarks)(?![^>]*disabled)[^>]*>/', $form);
+        $this->assertMatchesRegularExpression('/>\s*Add Activity\s*<\/span>/', $form);
     }
 
-    public function test_one_submit_enforces_the_same_schedule_rules_as_any_custom_activity(): void
+    public function test_equivalent_active_type_is_rejected_without_creating_a_definition_or_activity(): void
     {
         $folder = $this->folder();
+        $definition = $this->customDefinition($folder, 'Court Records Check');
+        $before = ActivityDefinition::query()->count();
 
-        // For Follow-up without a date is refused exactly as it is for an existing type.
         $this->actingAs($this->ci)
-            ->postJson($this->storeUrl($folder), $this->newTypePayload('Court Records Check', [
-                'status' => ActivityStatus::FollowUp->value,
-                'scheduled_at' => '',
-            ]))
+            ->postJson($this->storeUrl($folder), $this->newTypePayload('  COURT   RECORDS CHECK  '))
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['scheduled_at']);
+            ->assertJsonPath('errors.new_activity_type.0', self::TYPE_DUPLICATE);
 
-        // Nothing was created — not the type, not the activity.
+        $this->assertSame($before, ActivityDefinition::query()->count());
         $this->assertSame(0, CiActivity::query()->count());
-        $this->assertSame(0, ActivityDefinition::query()->where('code', 'like', ActivityDefinition::CUSTOM_CODE_PREFIX.'%')->count());
+        $this->assertSame(0, AuditLog::query()->where('action', 'ci_activity.created')->count());
+        $this->assertSame($definition->id, ActivityDefinition::equivalentToName('court records check')->id);
 
-        $this->post($this->storeUrl($folder), $this->newTypePayload('Court Records Check', [
-            'status' => ActivityStatus::FollowUp->value,
-            'scheduled_at' => '2026-09-21',
-        ]))->assertRedirect()->assertSessionHasNoErrors();
+        $indexUrl = route('client-folders.activities.index', $folder);
+        $response = $this->from($indexUrl)
+            ->post($this->storeUrl($folder), $this->newTypePayload('  COURT   RECORDS CHECK  '))
+            ->assertRedirect()
+            ->assertSessionHasErrors(['new_activity_type' => self::TYPE_DUPLICATE])
+            ->assertSessionHasInput('new_activity_type', 'COURT   RECORDS CHECK');
+        $form = $this->createFormHtml($this->get($response->headers->get('Location'))->assertOk()->getContent());
+        $this->assertStringContainsString('value="COURT   RECORDS CHECK"', $form);
+        $footer = substr($form, strrpos($form, '<div class="flex shrink-0 flex-col-reverse gap-3 border-t'));
+        $this->assertStringNotContainsString('Continue Anyway', $footer);
+        $this->assertStringNotContainsString('allow_duplicate', $footer);
+    }
 
-        $this->assertSame(1, CiActivity::query()->count());
+    public function test_equivalent_inactive_type_requires_explicit_reactivation(): void
+    {
+        $folder = $this->folder();
+        $definition = $this->customDefinition($folder, 'Employment Verification');
+        $definition->update(['is_active' => false]);
+
+        $this->actingAs($this->ci)
+            ->postJson($this->storeUrl($folder), $this->newTypePayload(' employment verification '))
+            ->assertUnprocessable()
+            ->assertJsonPath(
+                'errors.new_activity_type.0',
+                'An inactive Activity Type with this name already exists. Reactivate it from Manage Activity Types.',
+            );
+
+        $this->assertSame(1, ActivityDefinition::query()->where('normalized_name', 'employment verification')->count());
+        $this->assertFalse($definition->fresh()->is_active);
+    }
+
+    public function test_equivalent_definition_creates_have_one_logical_survivor(): void
+    {
+        $folder = $this->folder();
+        $create = app(CreateCiActivity::class);
+        $first = $create->createDefinition($this->ci, $folder, 'Employment');
+
+        try {
+            $create->createDefinition($this->ci, $folder, ' employment ');
+            $this->fail('The equivalent definition was not rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(self::TYPE_DUPLICATE, $exception->errors()['new_activity_type'][0]);
+        }
+
+        $this->assertSame(1, ActivityDefinition::query()->where('normalized_name', 'employment')->count());
+        $this->assertSame($first->id, ActivityDefinition::equivalentToName('EMPLOYMENT')->id);
     }
 
     public function test_the_activity_type_manager_refresh_shows_a_rename_immediately(): void
@@ -365,11 +401,23 @@ class CustomCiActivityLifecycleTest extends TestCase
         $folder = $this->folder();
         $definition = $this->customDefinition($folder, 'Employment Verification');
         $activity = $this->customActivity($folder, null, 'Employment Verification');
+        $url = route('client-folders.activity-definitions.update', [$folder, $definition]);
 
-        $this->actingAs($this->ci)
-            ->putJson(route('client-folders.activity-definitions.update', [$folder, $definition]), [
-                'co_maker_id' => '', 'name' => 'Employment Verification Updated',
-            ])->assertOk();
+        $before = $this->actingAs($this->ci)
+            ->get(route('client-folders.activities.index', $folder))
+            ->assertOk()
+            ->getContent();
+        $this->assertTrue(str_contains($before, 'data-activity-type-id="'.$definition->id.'" data-activity-type-name="Employment Verification"'), 'Expected the correct definition row and name in the manager.');
+        $this->assertTrue(str_contains($before, 'data-activity-type-edit'), 'Expected the Edit action in the custom definition row.');
+        $this->assertTrue(str_contains($before, route('client-folders.activity-definitions.update', [$folder, '__ID__'])), 'Expected the manager update URL template.');
+
+        // Exact browser transport: POST FormData with method spoofing and a JSON response.
+        $this->post($url, [
+            '_method' => 'PUT', 'co_maker_id' => '', 'name' => 'Employment Verification Updated',
+        ], ['Accept' => 'application/json', 'X-Requested-With' => 'XMLHttpRequest'])
+            ->assertOk()
+            ->assertJsonPath('message', 'Employment Verification Updated activity type updated.')
+            ->assertJsonStructure(['redirect', 'history']);
 
         // The manager re-fetches the CI Activities page with these exact headers and copies
         // [data-activity-type-rows] out of it. If that request did not return the refreshed rows,
@@ -391,6 +439,12 @@ class CustomCiActivityLifecycleTest extends TestCase
         $renamed = $definition->fresh();
         $this->assertSame($definition->code, $renamed->code);
         $this->assertSame($definition->id, $activity->fresh()->activity_definition_id);
+
+        $other = $this->customDefinition($folder, 'Other Verification');
+        $this->putJson(route('client-folders.activity-definitions.update', [$folder, $other]), [
+            'co_maker_id' => '', 'name' => 'Employment Verification Updated',
+        ])->assertUnprocessable()
+            ->assertJsonPath('errors.name.0', self::TYPE_DUPLICATE);
     }
 
     public function test_reserved_built_in_and_dedicated_module_names_are_still_refused(): void
@@ -628,6 +682,27 @@ class CustomCiActivityLifecycleTest extends TestCase
         $this->assertSame('Employment Verification', $custom->fresh()->name);
     }
 
+    public function test_rename_to_an_equivalent_definition_is_rejected_without_relinking(): void
+    {
+        $folder = $this->folder();
+        $first = $this->customDefinition($folder, 'Employment Verification');
+        $second = $this->customDefinition($folder, 'Court Records Check');
+        $activity = $this->customActivity($folder, null, 'Court Records Check');
+        $secondCode = $second->code;
+
+        $this->actingAs($this->ci)
+            ->putJson(route('client-folders.activity-definitions.update', [$folder, $second]), [
+                'co_maker_id' => '', 'name' => ' employment verification ',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.name.0', self::TYPE_DUPLICATE);
+
+        $this->assertSame('Employment Verification', $first->fresh()->name);
+        $this->assertSame('Court Records Check', $second->fresh()->name);
+        $this->assertSame($secondCode, $second->fresh()->code);
+        $this->assertSame($second->id, $activity->fresh()->activity_definition_id);
+    }
+
     public function test_deleting_one_persons_activity_leaves_the_shared_type_and_the_other_activities(): void
     {
         $folder = $this->folder();
@@ -661,17 +736,28 @@ class CustomCiActivityLifecycleTest extends TestCase
         $this->assertSame(1, $this->activitiesFor($folder, $definition, null));
     }
 
-    public function test_an_in_use_custom_type_cannot_be_permanently_deleted(): void
+    public function test_removing_an_in_use_custom_type_deactivates_it_and_preserves_history(): void
     {
         $folder = $this->folder();
         $definition = $this->customDefinition($folder, 'Employment Verification');
-        $this->customActivity($folder, null, 'Employment Verification');
+        $activity = $this->customActivity($folder, null, 'Employment Verification');
 
         $this->actingAs($this->ci)
             ->deleteJson(route('client-folders.activity-definitions.destroy', [$folder, $definition]), ['co_maker_id' => ''])
-            ->assertStatus(422);
+            ->assertOk()
+            ->assertJsonPath('message', 'Employment Verification activity type is in use and was deactivated for future activities.');
 
-        $this->assertDatabaseHas('activity_definitions', ['id' => $definition->id]);
+        $this->assertDatabaseHas('activity_definitions', ['id' => $definition->id, 'is_active' => false]);
+        $this->assertDatabaseHas('ci_activities', [
+            'id' => $activity->id,
+            'activity_definition_id' => $definition->id,
+            'name' => 'Employment Verification',
+        ]);
+
+        $html = $this->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
+        $form = $this->createFormHtml($html);
+        $this->assertStringNotContainsString('data-value="'.$definition->id.'"', $form);
+        $this->assertStringContainsString('Employment Verification', $html);
     }
 
     public function test_a_stale_activity_type_never_exposes_the_model_class_or_id(): void
@@ -873,6 +959,77 @@ class CustomCiActivityLifecycleTest extends TestCase
         return substr($html, $start, $end - $start);
     }
 
+    public function test_a_rename_moves_the_uniqueness_key_with_the_display_name(): void
+    {
+        $folder = $this->folder();
+        $definition = $this->customDefinition($folder, 'Employment Verification');
+        $activity = $this->customActivity($folder, null, 'Employment Verification');
+
+        $this->actingAs($this->ci)
+            ->putJson(route('client-folders.activity-definitions.update', [$folder, $definition]), [
+                'co_maker_id' => '', 'name' => 'Payroll Verification',
+            ])->assertOk();
+
+        // Identity is the row, not the name: same id, same custom code, same linked activity.
+        $renamed = $definition->fresh();
+        $this->assertSame($definition->id, $renamed->id);
+        $this->assertSame($definition->code, $renamed->code);
+        $this->assertSame('Payroll Verification', $renamed->name);
+        $this->assertSame($definition->id, $activity->fresh()->activity_definition_id);
+
+        // normalized_name carries the unique index and every duplicate check, so it must track the
+        // display name. It used to stay behind, which made the OLD name permanently unusable and
+        // let the NEW one be created a second time.
+        $this->assertSame('payroll verification', $renamed->normalized_name);
+
+        // The freed-up old name can be created again...
+        $this->post($this->storeUrl($folder), [
+            'co_maker_id' => '',
+            'create_new_activity_type' => '1',
+            'new_activity_type' => 'Employment Verification',
+        ])->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertSame(2, ActivityDefinition::query()->where('code', 'like', ActivityDefinition::CUSTOM_CODE_PREFIX.'%')->count());
+
+        // ...and the new name is now taken, in any casing or spacing.
+        $this->post($this->storeUrl($folder), [
+            'co_maker_id' => '',
+            'create_new_activity_type' => '1',
+            'new_activity_type' => '  payroll   VERIFICATION  ',
+        ])->assertRedirect()->assertSessionHasErrors([
+            'new_activity_type' => 'An Activity Type with this name already exists.',
+        ]);
+        $this->assertSame(2, ActivityDefinition::query()->where('code', 'like', ActivityDefinition::CUSTOM_CODE_PREFIX.'%')->count());
+    }
+
+    public function test_a_used_type_deactivates_while_an_unused_one_is_deleted_outright(): void
+    {
+        $folder = $this->folder();
+        $used = $this->customDefinition($folder, 'Employment Verification');
+        $unused = $this->customDefinition($folder, 'Court Records Check');
+        $activity = $this->customActivity($folder, null, 'Employment Verification');
+
+        // In use: removed from future selection, never destroyed — the history stays readable.
+        $this->actingAs($this->ci)
+            ->deleteJson(route('client-folders.activity-definitions.destroy', [$folder, $used]), ['co_maker_id' => ''])
+            ->assertOk();
+        $this->assertDatabaseHas('activity_definitions', ['id' => $used->id]);
+        $this->assertFalse($used->fresh()->is_active);
+        $this->assertSame($used->id, $activity->fresh()->activity_definition_id);
+
+        // Unused: permanently deleted.
+        $this->deleteJson(route('client-folders.activity-definitions.destroy', [$folder, $unused]), ['co_maker_id' => ''])
+            ->assertOk();
+        $this->assertDatabaseMissing('activity_definitions', ['id' => $unused->id]);
+
+        // An inactive equivalent is never silently duplicated by a new create.
+        $this->post($this->storeUrl($folder), [
+            'co_maker_id' => '',
+            'create_new_activity_type' => '1',
+            'new_activity_type' => 'employment verification',
+        ])->assertRedirect()->assertSessionHasErrors(['new_activity_type']);
+        $this->assertSame(1, ActivityDefinition::query()->where('normalized_name', 'employment verification')->count());
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private function storeUrl(ClientFolder $folder): string
@@ -885,7 +1042,7 @@ class CustomCiActivityLifecycleTest extends TestCase
         return route('client-folders.activities.update', [$folder, $activity]);
     }
 
-    /** One submit: type the new Activity Type name AND the activity's own fields together. */
+    /** Catalog-only first step: no actual activity fields belong to this request. */
     private function newTypePayload(string $name, array $overrides = []): array
     {
         return $overrides + [
@@ -893,10 +1050,6 @@ class CustomCiActivityLifecycleTest extends TestCase
             'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
             'create_new_activity_type' => '1',
             'new_activity_type' => $name,
-            'status' => ActivityStatus::Pending->value,
-            'scheduled_at' => '',
-            'scheduled_time' => '',
-            'remarks' => null,
         ];
     }
 
@@ -921,15 +1074,23 @@ class CustomCiActivityLifecycleTest extends TestCase
             ->count();
     }
 
-    /**
-     * Creates just the reusable definition. Adding is one submit now, so the HTTP route always
-     * creates an activity too — this uses the same internal resolver the Add path uses when a test
-     * needs the type to exist without an activity yet.
-     */
+    /** Creates just the reusable definition for setup that does not exercise the HTTP flow. */
     private function customDefinition(ClientFolder $folder, string $name): ActivityDefinition
     {
         return app(CreateCiActivity::class)
             ->createDefinition($this->ci, $folder, $name);
+    }
+
+    private function createFormHtml(string $html): string
+    {
+        $hook = strpos($html, 'data-ci-activity-create-form');
+        $this->assertNotFalse($hook, 'Expected the Add Activity form.');
+        $start = strrpos(substr($html, 0, $hook), '<form');
+        $end = strpos($html, '</form>', $hook);
+        $this->assertNotFalse($start, 'Expected the Add Activity form opening tag.');
+        $this->assertNotFalse($end, 'Expected the Add Activity form closing tag.');
+
+        return substr($html, $start, $end + 7 - $start);
     }
 
     private function customActivity(ClientFolder $folder, ?int $coMakerId = null, string $name = 'Court Records Check'): CiActivity

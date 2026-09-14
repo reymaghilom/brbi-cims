@@ -47,7 +47,10 @@
             @csrf
             @method('PUT')
             <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
-            <input type="hidden" name="expected_revision" value="{{ $incomeSource->revision }}">
+            {{-- old() keeps a rejected stale token stale: after a stale-save redirect the form still
+                 carries the CI's unsaved (older) values, so re-clicking Save must stay blocked until
+                 the report is genuinely refreshed. --}}
+            <input type="hidden" name="expected_revision" value="{{ old('expected_revision', $incomeSource->revision) }}">
 
     @else
         <div class="business-encoding-page" data-business-report-form>
@@ -59,6 +62,12 @@
                  beside the checkboxes. The user's entries and ticks are preserved by old(). --}}
             <div class="mb-3 rounded-control border border-danger/30 bg-danger-soft p-3 text-sm text-danger" role="alert" tabindex="-1" data-business-duplicate-categories-error>
                 {{ $errors->first(\App\Http\Requests\ClientFolders\StoreIncomeSourceRequest::DUPLICATE_CATEGORIES_KEY) }}
+            </div>
+        @elseif($errors->has('expected_revision'))
+            {{-- A stale save has one cause (another CI saved first) and nothing to correct in the
+                 fields, so it replaces the generic banner with the friendly stale explanation. --}}
+            <div class="mb-3 rounded-control border border-danger/30 bg-danger-soft p-3 text-sm text-danger" role="alert" tabindex="-1" data-business-report-stale-error>
+                {{ $errors->first('expected_revision') }}
             </div>
         @elseif($errors->any())
             <div class="mb-3 rounded-control border border-danger/30 bg-danger-soft p-3 text-sm text-danger" role="alert" tabindex="-1">
@@ -141,7 +150,9 @@
             </section>
 
             @if($incomeSource)
-                <div data-editing-presence data-editing-type="income_source" data-editing-id="{{ $incomeSource->id }}" data-editing-label="Business Report">
+                {{-- Advisory only: never disables the form. The expected_revision guard in
+                     SaveBusinessIncomeSource stays the authoritative first-save-wins protection. --}}
+                <div data-editing-presence data-editing-type="income_source" data-editing-id="{{ $incomeSource->id }}" data-editing-label="Business Report" data-editing-advice="You may continue reviewing the form, but if they save changes first, you will need to refresh before saving your changes.">
                     <div data-editing-presence-banner hidden role="status" class="mt-3 flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft p-3 text-sm text-progress">
                         <x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" />
                         <span data-editing-presence-text></span>

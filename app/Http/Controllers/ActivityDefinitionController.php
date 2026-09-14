@@ -65,9 +65,16 @@ class ActivityDefinitionController extends Controller
         $name = $activityDefinition->name;
 
         $watermark = CiActivityHistoryFeed::watermark();
-        $manage->deletePermanently($request->user(), $clientFolder, $activityDefinition);
+        $deleted = $manage->remove($request->user(), $clientFolder, $activityDefinition);
 
-        return $this->respond($request, $clientFolder, $name.' activity type permanently deleted.', $watermark);
+        return $this->respond(
+            $request,
+            $clientFolder,
+            $deleted
+                ? $name.' activity type permanently deleted.'
+                : $name.' activity type is in use and was deactivated for future activities.',
+            $watermark,
+        );
     }
 
     private function respond(Request $request, ClientFolder $clientFolder, string $message, int $watermark): JsonResponse|RedirectResponse

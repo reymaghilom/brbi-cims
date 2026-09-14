@@ -64,8 +64,10 @@ class StoreCiActivityRequest extends FormRequest
                     }
 
                     $existing = ActivityDefinition::equivalentToName($value);
-                    if ($existing && ! $existing->is_active) {
-                        $fail('An inactive activity type with this name already exists.');
+                    if ($existing?->is_active) {
+                        $fail('An Activity Type with this name already exists.');
+                    } elseif ($existing) {
+                        $fail('An inactive Activity Type with this name already exists. Reactivate it from Manage Activity Types.');
                     }
                 },
             ],

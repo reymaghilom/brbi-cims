@@ -141,10 +141,9 @@ class SaveBusinessCheck
                         ->whereKey($referencedSourceId)
                         ->lockForUpdate()
                         ->firstOrFail();
-                    if ($folder->businessChecks()
-                        ->where('co_maker_id', $activePerson?->id)
-                        ->where('income_source_id', $referencedSourceId)
-                        ->exists()) {
+                    // Authoritative on the exact income_source_id alone — one IncomeSource may be
+                    // linked to at most one Business Check, whichever check that is.
+                    if (BusinessCheck::query()->where('income_source_id', $referencedSourceId)->exists()) {
                         throw ValidationException::withMessages([
                             'income_source_id' => 'A Business Check already exists for the selected business. Open the existing Business Check to view or edit it.',
                         ]);
@@ -183,6 +182,27 @@ class SaveBusinessCheck
 
                 if (! $created && (int) ($data['expected_revision'] ?? 0) !== $check->revision) {
                     throw new BusinessCheckConflictException;
+                }
+
+                // Repointing an existing check at a different business is held to the same
+                // one-check-per-business rule as a create, and serialized on the same exact
+                // income_sources row, so a create and an edit (or two edits) racing for one
+                // business cannot both win. Lock order stays check row -> income_sources row, the
+                // same order DeleteBusinessCheck uses. The duplicate lookup runs only after that
+                // lock is held and excludes this check itself, so keeping the current business
+                // (or a manual check staying manual) is never blocked.
+                if (! $created && $referencedSourceId !== null
+                    && ($check->income_source_id === null || (int) $check->income_source_id !== $referencedSourceId)) {
+                    $folder->incomeSources()
+                        ->where('co_maker_id', $activePerson?->id)
+                        ->whereKey($referencedSourceId)
+                        ->lockForUpdate()
+                        ->firstOrFail();
+                    if (BusinessCheck::query()->where('income_source_id', $referencedSourceId)->whereKeyNot($check->id)->exists()) {
+                        throw ValidationException::withMessages([
+                            'income_source_id' => 'This business is already linked to another Business Check.',
+                        ]);
+                    }
                 }
 
                 $check->fill(Arr::only($data, self::FIELDS));

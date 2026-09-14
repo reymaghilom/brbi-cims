@@ -54,8 +54,8 @@ class SaveCustomBusinessCategoryRequest extends FormRequest
                 // The category being renamed is excluded, so re-saving its own name is not a clash.
                 $clash = CustomBusinessCategory::query()
                     ->when($this->route('customBusinessCategory'), fn ($query, $current) => $query->whereKeyNot($current->getKey()))
-                    ->get(['id', 'name'])
-                    ->contains(fn (CustomBusinessCategory $category): bool => CustomBusinessCategory::normalizeName($category->name) === $incoming);
+                    ->where('normalized_name', $incoming)
+                    ->exists();
 
                 if ($clash) {
                     $validator->errors()->add('name', 'That business is already in the list.');

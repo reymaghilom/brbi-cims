@@ -22,6 +22,6 @@ class ClientFolderCreationOptions
             ->where('role', UserRole::CreditInvestigator)
             ->where('status', UserStatus::Active)
             ->orderBy('full_name')
-            ->get(['id', 'full_name', 'employee_id']);
+            ->get(['id', 'full_name']);
     }
 }

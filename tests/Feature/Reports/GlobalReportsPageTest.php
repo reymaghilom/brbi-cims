@@ -890,7 +890,7 @@ class GlobalReportsPageTest extends TestCase
         $this->assertStringContainsString('client_folder_id='.$folder->id, $html);
     }
 
-    public function test_the_clear_action_drops_every_filter_but_keeps_the_current_tab(): void
+    public function test_the_clear_action_drops_every_filter_including_the_status_tab(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci, 'DELA CRUZ, JUAN');
@@ -902,15 +902,14 @@ class GlobalReportsPageTest extends TestCase
         ];
         $html = $this->actingAs($ci)->get(route('reports.index', $query))->assertOk()->getContent();
 
-        // Clear points at the same tab with nothing else attached — search, exact client, report
-        // type, client type and the date range all go.
-        $this->assertStringContainsString(e(route('reports.index', ['tab' => 'pending'])).'" class="ui-button-secondary-compact', $html);
+        // Clear Filters is the toolbar's single reset: it points at the bare workspace, so search,
+        // exact client, report type, client type, the date range and the Status tab all go.
+        $this->assertStringContainsString('<a href="'.e(route('reports.index')).'" class="ui-button-secondary w-full shrink-0 sm:w-auto" data-reports-clear-filters>', $html);
 
-        // And following it really does restore the unfiltered (but still Pending) list.
+        // And following it really does restore the whole unfiltered list.
         $filtered = $this->items($ci, $query);
-        $cleared = $this->items($ci, ['tab' => 'pending']);
+        $cleared = $this->items($ci, []);
         $this->assertGreaterThan($filtered->count(), $cleared->count());
-        $this->assertTrue($cleared->every(fn ($item) => $item->isCompleted === false), 'The tab survives Clear.');
     }
 
     public function test_clearing_the_client_search_restores_the_rest_of_the_view(): void
@@ -1936,8 +1935,9 @@ class GlobalReportsPageTest extends TestCase
         $this->assertCount(2, $afterApplicantDelete->whereStrict('coMakerId', null)->filter->isUnboundBusiness());
         $this->assertNotNull($afterApplicantDelete->first(fn (ReportWorkItem $item): bool => $item->kind === 'cibi' && $item->sourceId === $cibi->id));
         $this->assertNotNull($afterApplicantDelete->first(fn (ReportWorkItem $item): bool => $item->kind === 'residence_check' && $item->sourceId === $residence->id));
-        $this->assertDatabaseHas('income_sources', ['id' => $applicantBusiness->id]);
-        $this->assertNotNull(IncomeSource::withTrashed()->findOrFail($applicantBusiness->id)->deleted_at);
+        // Full business delete is permanent: the exact IncomeSource is force-deleted, not recycled.
+        $this->assertNull(IncomeSource::withTrashed()->find($applicantBusiness->id));
+        $this->assertNotNull(IncomeSource::query()->find($coMakerBusiness->id), "The Co-Maker's business is untouched.");
         $this->assertDatabaseMissing('business_reports', ['income_source_id' => $applicantBusiness->id]);
         $this->assertDatabaseMissing('business_checks', ['income_source_id' => $applicantBusiness->id]);
 
@@ -1952,7 +1952,7 @@ class GlobalReportsPageTest extends TestCase
         $this->assertNotNull($final->first(fn (ReportWorkItem $item): bool => $item->kind === 'cibi' && $item->sourceId === $cibi->id));
         $this->assertNotNull($final->first(fn (ReportWorkItem $item): bool => $item->kind === 'residence_check' && $item->sourceId === $residence->id));
         $this->assertSame(0, IncomeSource::query()->where('client_folder_id', $folder->id)->count());
-        $this->assertSame(2, IncomeSource::withTrashed()->where('client_folder_id', $folder->id)->count());
+        $this->assertSame(0, IncomeSource::withTrashed()->where('client_folder_id', $folder->id)->count());
         $this->assertSame(0, BusinessReport::query()->count());
         $this->assertSame(0, BusinessCheck::query()->where('client_folder_id', $folder->id)->count());
     }
@@ -2056,11 +2056,12 @@ class GlobalReportsPageTest extends TestCase
         $this->assertNotNull(IncomeSource::query()->find($business->id), 'The IncomeSource stays active.');
         $this->assertNotNull($business->fresh()->business_report_deleted_at, 'The deletion is recorded on that exact business.');
 
-        // Neither work item is re-synthesised — and repeated reads never resurrect them.
+        // The Business Report is not re-synthesised — and repeated reads never resurrect it. The
+        // independent Business Check requirement survives as the person's generic Pending entry.
         foreach (range(1, 3) as $ignored) {
             $rows = $this->items($ci)->where('incomeSourceId', $business->id);
             $this->assertCount(0, $rows->where('kind', 'business_report'), 'A deleted Business Report must not come back as Pending.');
-            $this->assertCount(0, $rows->where('kind', 'business_check'), 'Its never-saved Business Check goes with it.');
+            $this->assertCount(1, $this->items($ci)->where('clientFolderId', $folder->id)->where('kind', 'business_check')->where('isCompleted', false));
         }
         // Reading Reports is not what cleared or set anything.
         $this->assertNotNull($business->fresh()->business_report_deleted_at);
@@ -2161,10 +2162,18 @@ class GlobalReportsPageTest extends TestCase
         $this->assertTrue($emptyRows->has('business_check'));
         $this->assertNull($emptyRows['business_report']->incomeSourceId, 'The placeholder is unbound.');
 
-        // The suppressed folder still HAS a business, so it must not fall back to a placeholder.
+        // The suppressed folder still HAS a business, so it must not fall back to a Business Report
+        // placeholder. Its Business Check is an independent module the report delete never touched,
+        // so the surviving, still-unchecked business keeps the person's Pending Business Check
+        // entry point — the same generic per-person row as always, not a zero-business placeholder.
         $suppressedRows = $this->items($ci)->where('clientFolderId', $withBusiness->id);
         $this->assertCount(0, $suppressedRows->where('kind', 'business_report'));
-        $this->assertCount(0, $suppressedRows->where('kind', 'business_check'));
+        $pendingCheck = $suppressedRows->where('kind', 'business_check')->sole();
+        $this->assertFalse($pendingCheck->isCompleted);
+        $this->assertNull($pendingCheck->coMakerId);
+        $this->assertNull($pendingCheck->sourceId);
+        $this->assertNull($business->fresh()->business_check_deleted_at, 'A report delete never sets the Business Check marker.');
+        $this->assertSame(0, BusinessCheck::query()->where('client_folder_id', $withBusiness->id)->count(), 'Nothing is created by reading Reports.');
         $this->assertSame(1, IncomeSource::query()->where('client_folder_id', $withBusiness->id)->count());
     }
 

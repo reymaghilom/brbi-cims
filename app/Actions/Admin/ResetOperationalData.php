@@ -2,6 +2,7 @@
 
 namespace App\Actions\Admin;
 
+use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\User;
 use App\Notifications\CiActivityScheduledReminder;
@@ -9,8 +10,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Permanently clears the operational workspace - client and investigation records - while leaving
- * every account, role, permission, master definition and system setting exactly as it was.
+ * Permanently clears the operational workspace - client and investigation records, plus the
+ * user-created custom Activity Types and custom Other Business categories - while leaving every
+ * account, role, permission, built-in master definition and system setting exactly as it was.
  *
  * SAFETY MODEL
  *
@@ -157,6 +159,26 @@ class ResetOperationalData
                     DB::table($table)->delete();
                 }
             }
+
+            // User-created catalog entries go too, but never their built-in counterparts, and never
+            // through the whole-table allowlist above (activity_definitions holds built-ins).
+            //
+            // Custom Activity Types: ci_activities references them with restrictOnDelete, and it
+            // is already empty at this point. The authoritative marker is the model's own custom_
+            // code prefix (ActivityDefinition::isCustom()), checked in PHP rather than with LIKE,
+            // where `_` is a wildcard. Built-in rows keep their ids and codes; nothing is reseeded.
+            $customDefinitionIds = ActivityDefinition::query()
+                ->get(['id', 'code'])
+                ->filter(fn (ActivityDefinition $definition): bool => $definition->isCustom())
+                ->modelKeys();
+            if ($customDefinitionIds !== []) {
+                ActivityDefinition::query()->whereKey($customDefinitionIds)->delete();
+            }
+
+            // Custom Other Business / Source of Income categories are user-created by definition
+            // (the default options live in config). The Business Reports whose template data
+            // referenced their option keys were removed above, so no reference can dangle.
+            DB::table('custom_business_categories')->delete();
 
             // Client-scoped history goes with the records it describes. System-level entries -
             // user management, settings changes, and the reset event written below - carry no

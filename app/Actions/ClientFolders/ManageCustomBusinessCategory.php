@@ -8,7 +8,9 @@ use App\Models\BusinessReport;
 use App\Models\ClientFolder;
 use App\Models\CustomBusinessCategory;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Add, rename and remove custom "Other Business / Source of Income" checkbox options.
@@ -19,20 +21,30 @@ use Illuminate\Support\Facades\DB;
  */
 class ManageCustomBusinessCategory
 {
+    private const DUPLICATE_MESSAGE = 'That business is already in the list.';
+
     public function create(User $actor, ClientFolder $folder, string $name): CustomBusinessCategory
     {
-        return DB::transaction(function () use ($actor, $folder, $name): CustomBusinessCategory {
-            $category = CustomBusinessCategory::create([
-                'name' => $name,
-                'is_active' => true,
-                'created_by' => $actor->id,
-                'updated_by' => $actor->id,
-            ]);
+        $name = trim($name);
+        $normalizedName = CustomBusinessCategory::normalizeName($name);
 
-            $this->log($actor, $folder, 'custom_business_category.created', 'A custom business option was added.', $category);
+        try {
+            return DB::transaction(function () use ($actor, $folder, $name, $normalizedName): CustomBusinessCategory {
+                $category = CustomBusinessCategory::create([
+                    'name' => $name,
+                    'normalized_name' => $normalizedName,
+                    'is_active' => true,
+                    'created_by' => $actor->id,
+                    'updated_by' => $actor->id,
+                ]);
 
-            return $category;
-        });
+                $this->log($actor, $folder, 'custom_business_category.created', 'A custom business option was added.', $category);
+
+                return $category;
+            });
+        } catch (QueryException $exception) {
+            $this->translateDuplicateCollision($exception, $normalizedName);
+        }
     }
 
     /**
@@ -41,22 +53,34 @@ class ManageCustomBusinessCategory
      */
     public function rename(User $actor, ClientFolder $folder, CustomBusinessCategory $category, string $name): CustomBusinessCategory
     {
-        return DB::transaction(function () use ($actor, $folder, $category, $name): CustomBusinessCategory {
-            if ($category->name === $name) {
-                // Same convention the rest of the app uses for a submitted no-op: nothing is
-                // written, no timestamp moves and no history entry is fabricated.
-                throw new NoChangesDetectedException('No changes detected. Nothing needs to be updated.');
-            }
+        $name = trim($name);
+        $normalizedName = CustomBusinessCategory::normalizeName($name);
 
-            $previous = $category->name;
-            $category->forceFill(['name' => $name, 'updated_by' => $actor->id])->save();
+        try {
+            return DB::transaction(function () use ($actor, $folder, $category, $name, $normalizedName): CustomBusinessCategory {
+                $category = CustomBusinessCategory::query()->lockForUpdate()->findOrFail($category->id);
+                if ($category->name === $name) {
+                    // Same convention the rest of the app uses for a submitted no-op: nothing is
+                    // written, no timestamp moves and no history entry is fabricated.
+                    throw new NoChangesDetectedException('No changes detected. Nothing needs to be updated.');
+                }
 
-            $this->log($actor, $folder, 'custom_business_category.updated', 'A custom business option was renamed.', $category, [
-                'previous_name' => $previous,
-            ]);
+                $previous = $category->name;
+                $category->forceFill([
+                    'name' => $name,
+                    'normalized_name' => $normalizedName,
+                    'updated_by' => $actor->id,
+                ])->save();
 
-            return $category;
-        });
+                $this->log($actor, $folder, 'custom_business_category.updated', 'A custom business option was renamed.', $category, [
+                    'previous_name' => $previous,
+                ]);
+
+                return $category;
+            });
+        } catch (QueryException $exception) {
+            $this->translateDuplicateCollision($exception, $normalizedName, $category->id);
+        }
     }
 
     /**
@@ -69,6 +93,7 @@ class ManageCustomBusinessCategory
     public function remove(User $actor, ClientFolder $folder, CustomBusinessCategory $category): bool
     {
         return DB::transaction(function () use ($actor, $folder, $category): bool {
+            $category = CustomBusinessCategory::query()->lockForUpdate()->findOrFail($category->id);
             $inUse = $this->isUsedByAnySavedReport($category);
 
             if ($inUse) {
@@ -118,5 +143,19 @@ class ManageCustomBusinessCategory
             'ip_address' => request()?->ip(),
             'user_agent' => request()?->userAgent(),
         ]);
+    }
+
+    private function translateDuplicateCollision(QueryException $exception, string $normalizedName, ?int $exceptId = null): never
+    {
+        $duplicateExists = CustomBusinessCategory::query()
+            ->where('normalized_name', $normalizedName)
+            ->when($exceptId !== null, fn ($query) => $query->whereKeyNot($exceptId))
+            ->exists();
+
+        if ($duplicateExists) {
+            throw ValidationException::withMessages(['name' => self::DUPLICATE_MESSAGE]);
+        }
+
+        throw $exception;
     }
 }

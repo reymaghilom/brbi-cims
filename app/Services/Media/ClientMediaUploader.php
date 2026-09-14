@@ -111,11 +111,64 @@ class ClientMediaUploader
         return $this->cloud->folderFor($this->personCloudFolder($folder, $mediaFolder, $coMaker));
     }
 
+    /**
+     * The evidence kinds whose NEW Cloudinary uploads mirror the Local CI Team hierarchy, mapped to
+     * the CiTeamDocumentStorage method that already names their Local home. Only the module part
+     * below the person directory is reused from those methods, so the folder names have one source.
+     */
+    private const LOCAL_MIRRORED_CLOUD_KINDS = [
+        'residence/photos' => 'residenceCheckPicturesDirectory',
+        'residence/map-screenshots' => 'residenceCheckMapDirectory',
+        'business/photos' => 'businessCheckPicturesDirectory',
+        'business/map-screenshots' => 'businessCheckMapDirectory',
+        'ci-activities/attachments' => 'ciActivityProofDirectory',
+    ];
+
+    /**
+     * NEW uploads only — every existing asset keeps (and is delivered/deleted by) its stored
+     * public_id, so nothing already in Cloudinary moves.
+     *
+     * Known evidence kinds use the Local hierarchy below the client, but always rooted at the
+     * NUMBERED client directory Local uses for official reports ("CI-2026-001 - NAME", see
+     * CiTeamDocumentStorage::clientDirectory()) rather than the plain-name evidence directory: a
+     * future same-name client can then never share a remote folder left behind by a reset or hard
+     * delete. Co-Makers keep Local's "Co-Makers/CM-000123 - NAME". Any other kind keeps the previous
+     * namespace unchanged.
+     */
     private function personCloudFolder(ClientFolder $folder, string $mediaFolder, ?CoMaker $coMaker = null): string
     {
+        $method = self::LOCAL_MIRRORED_CLOUD_KINDS[trim($mediaFolder, '/')] ?? null;
+        if ($method !== null) {
+            $evidenceBase = $this->documents->evidencePersonDirectory($folder, $coMaker);
+            $evidencePath = $this->documents->{$method}($folder, $coMaker);
+            if (str_starts_with($evidencePath, $evidenceBase.'/')) {
+                $moduleSubpath = substr($evidencePath, strlen($evidenceBase) + 1);
+
+                return $this->cloudSafePath($this->documents->personDirectory($folder, $coMaker).'/'.$moduleSubpath);
+            }
+        }
+
         return $coMaker
             ? $this->coMakerCloudFolder($folder, $coMaker, $mediaFolder)
             : $this->applicantCloudFolder($folder, $mediaFolder);
+    }
+
+    /**
+     * The extra cleanup Cloudinary needs on top of CiTeamDocumentStorage::segment() (which already
+     * removed Windows-invalid characters and transliterated to ASCII): Cloudinary folder and
+     * public_id values cannot contain ? & # \ % < > +. "&" reads as "and"; the rest become a space.
+     * Nothing else changes, so the path stays as readable as the Local one.
+     */
+    private function cloudSafePath(string $path): string
+    {
+        return collect(explode('/', $path))
+            ->map(function (string $segment): string {
+                $segment = str_replace('&', ' and ', $segment);
+                $segment = trim((string) preg_replace('/\s+/', ' ', (string) preg_replace('/[?#\\\\%<>+]/', ' ', $segment)));
+
+                return $segment === '' ? '_' : $segment;
+            })
+            ->implode('/');
     }
 
     /** Builds the new Applicant-only Cloudinary namespace; Co-Maker uploads never call this. */

@@ -6,11 +6,11 @@ use App\Models\ClientFolder;
 use App\Models\User;
 use App\Services\ClientFolders\ResidenceBusinessCheckCompletionEvaluator;
 use App\Services\Media\CloudinaryMediaStorage;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Mockery\MockInterface;
 use Tests\TestCase;
 
@@ -213,10 +213,13 @@ class ResidenceCheckDuplicateSubmitTest extends TestCase
         $this->assertDatabaseCount('residence_check_photos', 1);
     }
 
-    /** The exact Applicant-scoped Cloudinary namespace ClientMediaUploader builds for this folder — asserted literally so a photo can never be uploaded into another person's namespace. */
+    /** The exact Applicant-scoped Cloudinary folder ClientMediaUploader builds for NEW uploads: the numbered client directory plus the Local module folder names. */
     private function applicantCloudFolder(ClientFolder $folder, string $mediaFolder): string
     {
-        return 'clients/CF-'.$folder->getKey().'-'.Str::slug((string) $folder->display_name).'/applicant/'.$mediaFolder;
+        return app(CiTeamDocumentStorage::class)->clientDirectory($folder).'/'.[
+            'residence/photos' => 'Residence Check Report/Pictures',
+            'residence/map-screenshots' => 'Residence Check Report/Google Map',
+        ][$mediaFolder];
     }
 
     /** Binds a mock CloudinaryMediaStorage (enabled() => true by default) and remembers it on $this->mockedCloud for further expectations — same convention as CloudinaryMediaTest/ResidenceCheckCloudUploadFeedbackTest. */

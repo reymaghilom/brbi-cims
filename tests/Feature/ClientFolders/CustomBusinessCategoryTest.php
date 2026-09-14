@@ -10,8 +10,12 @@ use App\Models\CustomBusinessCategory;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
 use Database\Seeders\ReferenceDataSeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Testing\TestResponse;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 /**
@@ -42,6 +46,7 @@ class CustomBusinessCategoryTest extends TestCase
 
         $category = CustomBusinessCategory::query()->firstOrFail();
         $this->assertSame('custom_'.$category->id, $category->optionKey());
+        $this->assertSame('vulcanizing shop', $category->normalized_name);
         $this->assertTrue($category->is_active);
         $this->assertSame($ci->id, $category->created_by);
 
@@ -80,6 +85,7 @@ class CustomBusinessCategoryTest extends TestCase
 
         $category->refresh();
         $this->assertSame('Motorcycle & Vulcanizing Shop', $category->name);
+        $this->assertSame('motorcycle & vulcanizing shop', $category->normalized_name);
         // Same row, same derived key — no second category, and no duplicated report.
         $this->assertSame($key, $category->optionKey());
         $this->assertSame(1, CustomBusinessCategory::query()->count());
@@ -231,6 +237,54 @@ class CustomBusinessCategoryTest extends TestCase
         $this->assertStringNotContainsString('__OPTION_KEY__', $this->catalog($ci, $folder));
     }
 
+    public function test_the_business_report_layout_exposes_a_non_empty_csrf_token(): void
+    {
+        [$ci, $folder] = $this->context();
+
+        $html = $this->actingAs($ci)->get(route('client-folders.income-sources.index', $folder))->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('/<meta name="csrf-token" content="[^\"]+">/', $html);
+    }
+
+    public function test_a_missing_custom_business_category_returns_a_safe_json_404(): void
+    {
+        [$ci, $folder] = $this->context();
+        $missingId = 987654321;
+        $message = 'This Custom Business Category is no longer available. It may have been deleted or changed by another user. Please refresh the page and try again.';
+
+        $response = $this->actingAs($ci)->putJson(
+            route('client-folders.custom-business-categories.update', [$folder, $missingId]),
+            ['name' => 'Stale Category'],
+        );
+
+        $response->assertNotFound()->assertExactJson([
+            'result' => 'not_available',
+            'message' => $message,
+            'status_type' => 'error',
+        ]);
+        $response->assertDontSee('App\\Models\\CustomBusinessCategory', false)
+            ->assertDontSee('No query results for model', false)
+            ->assertDontSee((string) $missingId, false);
+    }
+
+    public function test_a_missing_custom_business_category_returns_a_safe_browser_404(): void
+    {
+        [$ci, $folder] = $this->context();
+        $missingId = 987654321;
+        $message = 'This Custom Business Category is no longer available. It may have been deleted or changed by another user. Please refresh the page and try again.';
+
+        $response = $this->actingAs($ci)->delete(
+            route('client-folders.custom-business-categories.destroy', [$folder, $missingId]),
+        );
+
+        $response->assertNotFound()
+            ->assertViewIs('client-folders.income-sources.custom-business-category-unavailable')
+            ->assertSee($message)
+            ->assertDontSee('App\\Models\\CustomBusinessCategory', false)
+            ->assertDontSee('No query results for model', false)
+            ->assertDontSee((string) $missingId, false);
+    }
+
     public function test_custom_rows_and_add_action_follow_stl_in_the_first_business_column(): void
     {
         [$ci, $folder] = $this->context();
@@ -313,6 +367,113 @@ class CustomBusinessCategoryTest extends TestCase
         }
 
         $this->assertSame(1, CustomBusinessCategory::query()->count());
+    }
+
+    public function test_normalized_name_is_authoritative_and_database_unique(): void
+    {
+        [$ci, $folder] = $this->context();
+        $category = $this->category($ci, $folder, 'Employment Verification');
+
+        $this->assertTrue(Schema::hasColumn('custom_business_categories', 'normalized_name'));
+        $this->assertSame('employment verification', $category->normalized_name);
+        $this->assertSame('employment verification', CustomBusinessCategory::normalizeName(' employment verification '));
+        $this->assertSame('employment verification', CustomBusinessCategory::normalizeName('EMPLOYMENT VERIFICATION'));
+
+        $this->expectException(QueryException::class);
+        DB::table('custom_business_categories')->insert([
+            'name' => ' employment verification ',
+            'normalized_name' => 'employment verification',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    public function test_late_unique_create_collision_is_returned_as_professional_validation(): void
+    {
+        [$ci, $folder] = $this->context();
+        $this->category($ci, $folder, 'Employment Verification');
+
+        try {
+            $this->category($ci, $folder, ' EMPLOYMENT VERIFICATION ');
+            $this->fail('The normalized duplicate was not rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertSame('That business is already in the list.', $exception->errors()['name'][0]);
+        }
+
+        $this->assertSame(1, CustomBusinessCategory::query()->count());
+    }
+
+    public function test_rename_to_a_normalized_duplicate_is_blocked_cleanly(): void
+    {
+        [$ci, $folder] = $this->context();
+        $first = $this->category($ci, $folder, 'Employment Verification');
+        $second = $this->category($ci, $folder, 'Motorcycle Repair');
+        $secondKey = $second->optionKey();
+
+        $this->actingAs($ci)->putJson(route('client-folders.custom-business-categories.update', [$folder, $second]), [
+            'name' => ' employment verification ',
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors('name')
+            ->assertJsonPath('errors.name.0', 'That business is already in the list.');
+
+        $this->assertSame('Motorcycle Repair', $second->fresh()->name);
+        $this->assertSame('motorcycle repair', $second->fresh()->normalized_name);
+        $this->assertSame($secondKey, $second->fresh()->optionKey());
+        $this->assertSame('Employment Verification', $first->fresh()->name);
+    }
+
+    public function test_deleted_category_cannot_be_saved_as_a_dangling_custom_key(): void
+    {
+        [$ci, $folder] = $this->context();
+        $category = $this->category($ci, $folder, 'Temporary Business');
+        $key = $category->optionKey();
+
+        $this->actingAs($ci)
+            ->deleteJson(route('client-folders.custom-business-categories.destroy', [$folder, $category]))
+            ->assertOk()
+            ->assertJsonPath('deleted', true);
+
+        $this->store($ci, $folder, 'Cannot Save Deleted', [$key])
+            ->assertSessionHasErrors('template_data.fields.income_sources');
+
+        $this->assertSame(0, $folder->incomeSources()->count());
+    }
+
+    public function test_inactive_category_is_rejected_for_new_reports_but_retained_by_its_existing_report(): void
+    {
+        [$ci, $folder] = $this->context();
+        $category = $this->category($ci, $folder, 'Historical Business');
+        $key = $category->optionKey();
+
+        $this->store($ci, $folder, 'Original Report', [$key])->assertSessionHasNoErrors();
+        $source = $folder->incomeSources()->with('businessReport')->sole();
+        $this->actingAs($ci)
+            ->deleteJson(route('client-folders.custom-business-categories.destroy', [$folder, $category]))
+            ->assertOk()
+            ->assertJsonPath('deleted', false);
+
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'co_maker_id' => null,
+            'expected_revision' => $source->revision,
+            'source_name' => $source->source_name,
+            'business_name' => $source->business_name,
+            'report_category' => $source->businessReport->report_category,
+            'start_date' => $source->businessReport->start_date->format('Y-m-d'),
+            'report_remarks' => 'Updated while retaining the historical category.',
+            'template_data' => ['fields' => ['income_sources' => [$key]]],
+            'properties' => [],
+            'tenants' => [],
+            'intent' => 'stay',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame([$key], data_get($source->fresh()->businessReport->template_data, 'fields.income_sources'));
+        $this->assertSame('Historical Business', CustomBusinessCategory::labelsForKeys([$key])[$key]);
+
+        $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $this->store($ci, $otherFolder, 'New Report', [$key])
+            ->assertSessionHasErrors('template_data.fields.income_sources');
+        $this->assertSame(0, $otherFolder->incomeSources()->count());
     }
 
     /** TEST 15 — a custom name may not duplicate a DEFAULT checkbox label. */

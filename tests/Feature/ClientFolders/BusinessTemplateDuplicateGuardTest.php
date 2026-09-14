@@ -532,7 +532,7 @@ class BusinessTemplateDuplicateGuardTest extends TestCase
         // Deleting the report through the same endpoint the page uses returns the corrected list,
         // so the picker stops advertising that template without any reload.
         $payload = $this->actingAs($ci)
-            ->deleteJson(route('client-folders.income-sources.business-report.destroy', [$folder, $source]))
+            ->deleteJson(route('client-folders.income-sources.business-report.destroy', [$folder, $source]), ['expected_revision' => $source->fresh()->revision])
             ->assertOk()
             ->json();
 

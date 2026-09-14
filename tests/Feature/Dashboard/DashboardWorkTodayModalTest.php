@@ -105,8 +105,10 @@ class DashboardWorkTodayModalTest extends TestCase
         $this->assertSame('Continue', $overdueWork[$remaining->id]['action']);
         $this->assertNull($overdueWork[$applicant->id]['completion_co_maker_id']);
         $this->assertSame($coMaker->id, $overdueWork[$remaining->id]['completion_co_maker_id']);
-        $this->assertSame(route('client-folders.activities.update', [$folder, $applicant]), $overdueWork[$applicant->id]['completion_url'] + ['expected_revision' => $applicant->fresh()->revision]);
-        $this->assertSame(route('client-folders.activities.update', [$folder, $remaining]), $overdueWork[$remaining->id]['completion_url'] + ['expected_revision' => $remaining->fresh()->revision]);
+        $this->assertSame(route('client-folders.activities.update', [$folder, $applicant]), $overdueWork[$applicant->id]['completion_url']);
+        $this->assertSame(route('client-folders.activities.update', [$folder, $remaining]), $overdueWork[$remaining->id]['completion_url']);
+        $this->assertSame($applicant->fresh()->revision, $overdueWork[$applicant->id]['completion_expected_revision']);
+        $this->assertSame($remaining->fresh()->revision, $overdueWork[$remaining->id]['completion_expected_revision']);
         $this->assertStringNotContainsString('co_maker_id', $overdueWork[$applicant->id]['modal_url']);
         $this->assertStringContainsString('co_maker_id='.$coMaker->id, $overdueWork[$remaining->id]['modal_url']);
         $this->assertSame(4, substr_count($dashboard->getContent(), 'data-modal-open="dashboard-overdue-complete-activity-modal"'));

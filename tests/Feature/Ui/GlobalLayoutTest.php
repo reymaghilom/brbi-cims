@@ -546,10 +546,11 @@ class GlobalLayoutTest extends TestCase
         $this->actingAs($administrator)->get(route('home'))
             ->assertSee(route('admin.users.index'), false)
             ->assertSee(route('admin.settings.index'), false)
-            ->assertSee(route('admin.audit-logs.index'), false)
+            // Audit Trail is no longer a sidebar item; the backend page and audit logging remain.
+            ->assertDontSee(route('admin.audit-logs.index'), false)
             ->assertSee('Users')
             ->assertSee('Settings')
-            ->assertSee('Audit Trail')
+            ->assertDontSee('Audit Trail')
             ->assertDontSee('Integrations &amp; records', false)
             ->assertDontSee('Recycle Bin');
 
@@ -586,7 +587,7 @@ class GlobalLayoutTest extends TestCase
         $this->actingAs($user)->get(route('password.change-required.edit'))
             ->assertOk()
             ->assertSee('Create a new password')
-            ->assertSee('minlength="12"', false)
+            ->assertSee('minlength="8"', false)
             ->assertSee(route('logout'), false);
     }
 

@@ -20,7 +20,6 @@ class CreateInitialAdministratorTest extends TestCase
 
         $this->artisan('cims:create-admin')
             ->expectsQuestion('Full name', 'Primary Administrator')
-            ->expectsQuestion('Employee ID (optional)', 'EMP-ADMIN-1')
             ->expectsQuestion('Username', 'Primary.Admin')
             ->expectsQuestion('Password', $password)
             ->expectsQuestion('Confirm password', $password)
@@ -36,6 +35,9 @@ class CreateInitialAdministratorTest extends TestCase
 
         $audit = AuditLog::where('action', 'administrator.bootstrapped')->sole();
         $this->assertStringNotContainsString($password, json_encode($audit->toArray(), JSON_THROW_ON_ERROR));
+        // Only these prompts exist; the audit event keeps its identity by users.id and username alone.
+        $this->assertSame(['administrator_user_id', 'username', 'source'], array_keys($audit->metadata));
+        $this->assertSame($administrator->id, $audit->metadata['administrator_user_id']);
     }
 
     public function test_command_rejects_duplicate_username_with_clear_validation_error(): void
@@ -44,7 +46,6 @@ class CreateInitialAdministratorTest extends TestCase
 
         $this->artisan('cims:create-admin')
             ->expectsQuestion('Full name', 'Primary Administrator')
-            ->expectsQuestion('Employee ID (optional)', '')
             ->expectsQuestion('Username', 'existing.user')
             ->expectsQuestion('Password', 'personally chosen password')
             ->expectsQuestion('Confirm password', 'personally chosen password')
@@ -58,7 +59,6 @@ class CreateInitialAdministratorTest extends TestCase
     {
         $this->artisan('cims:create-admin')
             ->expectsQuestion('Full name', 'Primary Administrator')
-            ->expectsQuestion('Employee ID (optional)', '')
             ->expectsQuestion('Username', 'primary.admin')
             ->expectsQuestion('Password', 'short')
             ->expectsQuestion('Confirm password', 'different')

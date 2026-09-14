@@ -6,7 +6,9 @@ use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\ClientFolder;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Activity Type Management — operates on the reusable ActivityDefinition itself, never on a
@@ -18,22 +20,48 @@ use Illuminate\Support\Facades\DB;
  */
 class ManageActivityDefinition
 {
+    private const DUPLICATE_MESSAGE = 'An Activity Type with this name already exists.';
+
     public function rename(User $actor, ClientFolder $folder, ActivityDefinition $definition, string $name): ActivityDefinition
     {
-        return DB::transaction(function () use ($actor, $folder, $definition, $name): ActivityDefinition {
-            $definition = $this->lockCustomDefinition($definition);
-            $previousName = $definition->name;
-            $newName = ActivityDefinition::normalizeName($name);
+        $normalizedName = ActivityDefinition::normalizedNameKey($name);
 
-            if ($newName !== $previousName) {
-                $definition->update(['name' => $newName]);
-                $this->recordAudit($actor, $folder, $definition, 'activity_definition.renamed', 'A reusable CI activity type was renamed.', [
-                    'previous_name' => $previousName,
-                ]);
+        try {
+            return DB::transaction(function () use ($actor, $folder, $definition, $name, $normalizedName): ActivityDefinition {
+                $definition = $this->lockCustomDefinition($definition);
+                $previousName = $definition->name;
+                $newName = ActivityDefinition::normalizeName($name);
+
+                if (ActivityDefinition::query()
+                    ->where('normalized_name', $normalizedName)
+                    ->whereKeyNot($definition->id)
+                    ->exists()) {
+                    throw ValidationException::withMessages(['name' => self::DUPLICATE_MESSAGE]);
+                }
+
+                if ($newName !== $previousName) {
+                    // normalized_name carries the unique index and every duplicate check, so it has
+                    // to move with the display name. Updating only `name` left the old key behind:
+                    // the previous name stayed permanently unusable and the new one could be
+                    // created a second time, defeating the uniqueness this column exists for.
+                    $definition->update(['name' => $newName, 'normalized_name' => $normalizedName]);
+                    $this->recordAudit($actor, $folder, $definition, 'activity_definition.renamed', 'A reusable CI activity type was renamed.', [
+                        'previous_name' => $previousName,
+                    ]);
+                }
+
+                return $definition;
+            });
+        } catch (QueryException $exception) {
+            if (ActivityDefinition::query()
+                ->where('normalized_name', $normalizedName)
+                ->whereKeyNot($definition->id)
+                ->exists()) {
+                throw ValidationException::withMessages(['name' => self::DUPLICATE_MESSAGE]);
             }
 
-            return $definition;
-        });
+            throw $exception;
+        }
     }
 
     public function setActivation(User $actor, ClientFolder $folder, ActivityDefinition $definition, bool $active): ActivityDefinition
@@ -58,18 +86,27 @@ class ManageActivityDefinition
         });
     }
 
-    public function deletePermanently(User $actor, ClientFolder $folder, ActivityDefinition $definition): void
+    public function remove(User $actor, ClientFolder $folder, ActivityDefinition $definition): bool
     {
-        DB::transaction(function () use ($actor, $folder, $definition): void {
+        return DB::transaction(function () use ($actor, $folder, $definition): bool {
             $definition = $this->lockCustomDefinition($definition);
 
             // Authoritative usage check inside the same transaction/lock: a definition that any
             // CiActivity still references can never be deleted, whatever the client sent.
             $isUsed = $definition->activities()->lockForUpdate()->first(['ci_activities.id']) !== null;
-            abort_if($isUsed, 422, 'This activity type is used by existing CI Activities and cannot be permanently deleted.');
+            if ($isUsed) {
+                if ($definition->is_active) {
+                    $definition->update(['is_active' => false]);
+                }
+                $this->recordAudit($actor, $folder, $definition, 'activity_definition.deactivated', 'A reusable CI activity type in use was removed from future selection.');
+
+                return false;
+            }
 
             $definition->delete();
             $this->recordAudit($actor, $folder, $definition, 'activity_definition.deleted', 'An unused reusable CI activity type was permanently deleted.');
+
+            return true;
         });
     }
 

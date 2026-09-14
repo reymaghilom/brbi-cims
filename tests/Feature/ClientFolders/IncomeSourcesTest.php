@@ -111,7 +111,7 @@ class IncomeSourcesTest extends TestCase
         [$ci, $folder, $first] = $this->createSource('leasing_non_agricultural');
         $firstPayload = $this->businessPayload();
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $first]), $firstPayload)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $first]), $firstPayload + ['expected_revision' => $first->fresh()->revision])
             ->assertRedirect();
         $clientCount = ClientFolder::query()->count();
 
@@ -132,7 +132,7 @@ class IncomeSourcesTest extends TestCase
         $secondPayload['business_name'] = 'Second Business';
         $secondPayload['is_primary'] = false;
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $second]), $secondPayload)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $second]), $secondPayload + ['expected_revision' => $second->fresh()->revision])
             ->assertRedirect();
 
         $this->assertSame('Sample Apartments', $first->fresh()->businessReport->business_name);
@@ -432,6 +432,7 @@ class IncomeSourcesTest extends TestCase
 
         foreach ($sources as $index => $source) {
             $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+                'expected_revision' => $source->fresh()->revision,
                 'intent' => 'stay',
                 'source_name' => $source->source_name,
                 'business_name' => $source->source_name,
@@ -496,6 +497,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertDatabaseCount('general_income_source_reports', 0);
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Custom Income Activity',
             'business_name' => 'Other Business/Source of Income',
@@ -506,6 +508,7 @@ class IncomeSourcesTest extends TestCase
         ])->assertSessionHasErrors('template_data.fields.income_sources');
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Custom Income Activity',
             'business_name' => 'Other Business/Source of Income',
@@ -579,7 +582,7 @@ class IncomeSourcesTest extends TestCase
         }
 
         $payload = $this->businessPayload() + ['length_of_stay_months' => '18', 'ownership_type' => 'Rented', 'rented_from' => 'Maria Santos', 'monthly_rent' => 'PHP 12,500 / month', 'previous_business_address' => 'Old Market Road', 'previous_business_address_length_of_stay' => '2 years and 6 months'];
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertRedirect();
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertRedirect();
         $source->refresh();
         $this->assertSame(RecordState::Complete, $source->state);
         $this->assertSame('Rented', $source->businessReport->ownership_type);
@@ -600,6 +603,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertDatabaseMissing('business_products', ['business_report_id' => $source->businessReport->id]);
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Apartment Rentals',
             'business_name' => 'Sample Apartments',
@@ -617,6 +621,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertMatchesRegularExpression('/<input id="monthly_rent"[^>]*data-business-monthly-rent[^>]* disabled>/', $mortgagedPage->getContent());
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Apartment Rentals',
             'business_name' => 'Sample Apartments',
@@ -634,6 +639,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertMatchesRegularExpression('/<input id="monthly_rent"[^>]*data-business-monthly-rent[^>]* disabled>/', $ownedPage->getContent());
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Apartment Rentals',
             'business_name' => 'Sample Apartments',
@@ -715,7 +721,7 @@ class IncomeSourcesTest extends TestCase
             ]]],
         ];
 
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertRedirect();
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertRedirect();
 
         $source->refresh();
         $this->assertSame([['brand_model' => 'Toyota Vios', 'plate_number' => 'ABC 1234']], data_get($source->businessReport->template_data, 'tables.units'));
@@ -784,7 +790,7 @@ class IncomeSourcesTest extends TestCase
             ]]]],
         ];
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $pujSource]), $pujPayload)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $pujSource]), $pujPayload + ['expected_revision' => $pujSource->fresh()->revision])
             ->assertSessionHasNoErrors();
 
         [, , $taxiSource] = $this->createSource('taxi_operator', $ci, $folder);
@@ -802,7 +808,7 @@ class IncomeSourcesTest extends TestCase
             ]]]],
         ];
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $taxiSource]), $taxiPayload)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $taxiSource]), $taxiPayload + ['expected_revision' => $taxiSource->fresh()->revision])
             ->assertSessionHasNoErrors();
 
         $pujSource->refresh();
@@ -859,6 +865,7 @@ class IncomeSourcesTest extends TestCase
         $originalRevision = $source->revision;
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $basePayload + [
+            'expected_revision' => $source->fresh()->revision,
             'template_data' => ['tables' => ['properties' => [
                 ['location_area' => 'This partial row must not save'],
                 [],
@@ -875,12 +882,14 @@ class IncomeSourcesTest extends TestCase
         $this->assertNull(data_get($source->businessReport->template_data, 'tables.properties.0.location_area'));
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $basePayload + [
+            'expected_revision' => $source->fresh()->revision,
             'template_data' => ['fields' => $summaryFields, 'tables' => ['properties' => [[], [], []]]],
         ])->assertSessionHasNoErrors();
         $source->refresh();
         $this->assertSame([], data_get($source->businessReport->template_data, 'tables.properties', []));
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $basePayload + [
+            'expected_revision' => $source->fresh()->revision,
             'template_data' => ['fields' => $summaryFields, 'tables' => ['properties' => [
                 ['location_area' => 'Barangay Farm / 4 HA', 'tenant' => 'Maria / 5 years'],
                 [],
@@ -908,6 +917,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertStringContainsString('pendingRepeaterRemoval = { row, repeater }', $script);
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $basePayload + [
+            'expected_revision' => $source->fresh()->revision,
             'template_data' => ['fields' => $summaryFields, 'tables' => ['properties' => []]],
         ])->assertSessionHasNoErrors();
         $source->refresh();
@@ -955,6 +965,7 @@ class IncomeSourcesTest extends TestCase
         ];
         $originalRevision = $source->revision;
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $basePayload + [
+            'expected_revision' => $source->fresh()->revision,
             'template_data' => ['tables' => ['farms' => [
                 ['location_area' => 'This partial row must not save'],
                 [],
@@ -977,12 +988,14 @@ class IncomeSourcesTest extends TestCase
             'reason_not_inspected' => 'Two farms were inaccessible',
         ];
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $basePayload + [
+            'expected_revision' => $source->fresh()->revision,
             'template_data' => ['fields' => $summaryFields, 'tables' => ['farms' => [[], [], []]]],
         ])->assertSessionHasNoErrors();
         $source->refresh();
         $this->assertSame([], data_get($source->businessReport->template_data, 'tables.farms', []));
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $basePayload + [
+            'expected_revision' => $source->fresh()->revision,
             'template_data' => ['fields' => $summaryFields, 'tables' => ['farms' => [
                 ['location_area' => 'North Farm / 6 HA', 'lessor' => 'Ana / 09170000000 / 4 years'],
                 [],
@@ -1026,12 +1039,12 @@ class IncomeSourcesTest extends TestCase
         $blankPayload['intent'] = 'stay';
         $blankPayload['properties'] = [[], [], []];
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $blankPayload)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $blankPayload + ['expected_revision' => $source->fresh()->revision])
             ->assertRedirect();
         $this->assertDatabaseCount('business_properties', 0);
 
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $this->businessPayload())
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $this->businessPayload() + ['expected_revision' => $source->fresh()->revision])
             ->assertRedirect();
 
         $property = $source->refresh()->businessReport->properties()->firstOrFail();
@@ -1112,7 +1125,7 @@ class IncomeSourcesTest extends TestCase
             'remarks' => 'New Leaf / PHP 14,000 monthly / 3 years',
         ]];
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])
             ->assertRedirect();
 
         $this->assertDatabaseHas('business_properties', ['id' => $property->id, 'property_type' => 'Commercial Space', 'is_inspected' => false, 'reason_not_inspected' => 'Client unavailable', 'location' => 'Zone 6, Bugo / 500 SQM', 'remarks' => 'New Leaf / PHP 14,000 monthly / 3 years', 'has_contract' => true]);
@@ -1170,7 +1183,7 @@ class IncomeSourcesTest extends TestCase
             ],
         ];
 
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertRedirect();
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertRedirect();
 
         $source->refresh();
         $this->assertSame('Two shifts', data_get($source->businessReport->template_data, 'fields.operators_count'));
@@ -1271,7 +1284,7 @@ class IncomeSourcesTest extends TestCase
             ],
         ];
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])
             ->assertSessionHasNoErrors();
 
         $source->refresh();
@@ -1394,7 +1407,7 @@ class IncomeSourcesTest extends TestCase
             ],
         ];
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])
             ->assertSessionHasNoErrors();
 
         $source->refresh();
@@ -1447,6 +1460,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame(3, substr_count($blankSupplierRows[1], 'data-repeater-row'));
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Community Pharmacy',
             'business_name' => 'Community Pharmacy',
@@ -1539,6 +1553,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame(3, substr_count($supplierRows[1], 'data-repeater-row'));
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Hardware Store',
             'business_name' => 'Hardware Store',
@@ -1600,6 +1615,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertSame(3, substr_count($supplierRows[1], 'data-repeater-row'));
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Dry Goods Store',
             'business_name' => 'Dry Goods Store',
@@ -1843,6 +1859,7 @@ class IncomeSourcesTest extends TestCase
         $page->assertDontSee('<span class="font-semibold" data-ci-primary-name>'.$editingCi->full_name.'</span>', false);
 
         $this->actingAs($editingCi)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Updated By Different CI',
             'business_name' => 'Updated By Different CI',
@@ -1910,7 +1927,7 @@ class IncomeSourcesTest extends TestCase
         $payload['amount_applied'] = 'PHP 275,000 / approved range';
 
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])
             ->assertSessionHasNoErrors();
 
         $this->assertSame($businessStart, $source->businessReport->fresh()->start_date->toDateString());
@@ -2007,7 +2024,7 @@ class IncomeSourcesTest extends TestCase
         $payload['properties'][0]['id'] = $foreignProperty->id;
         $payload['branches'] = [['location' => 'Not compatible']];
 
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])
             ->assertSessionHasErrors(['properties.0.id', 'branches.0']);
         $this->assertDatabaseHas('business_properties', ['id' => $foreignProperty->id, 'business_report_id' => $other->businessReport->id]);
     }
@@ -2067,6 +2084,7 @@ class IncomeSourcesTest extends TestCase
         ];
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $retail]), [
+            'expected_revision' => $retail->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Neighborhood Grocery',
             'business_name' => 'Neighborhood Grocery',
@@ -2126,6 +2144,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertStringContainsString('How many refrigerators? What other specialized equipment is available?', $observationsSection[0]);
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'City Meatshop',
             'business_name' => 'City Meatshop',
@@ -2206,6 +2225,7 @@ class IncomeSourcesTest extends TestCase
         $this->assertTrue(strpos($page->getContent(), 'data-repeater="template-suppliers"') < strpos($page->getContent(), 'For Additional Validation:'));
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Prime Contractor',
             'business_name' => 'Prime Contractor',
@@ -2280,6 +2300,7 @@ class IncomeSourcesTest extends TestCase
         }
 
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Main Restaurant',
             'business_name' => 'Main Restaurant',
@@ -2365,6 +2386,7 @@ class IncomeSourcesTest extends TestCase
 
         $cornSource = $folder->incomeSources()->whereHas('template', fn ($query) => $query->where('template_type', 'farming_corn'))->firstOrFail();
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $cornSource]), [
+            'expected_revision' => $cornSource->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Corn Farm',
             'business_name' => 'Corn Farm',
@@ -2432,13 +2454,13 @@ class IncomeSourcesTest extends TestCase
             $fields = $requiredFields;
             unset($fields[$missingField]);
             $this->actingAs($ci)
-                ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['fields' => $fields]])
+                ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['fields' => $fields]] + ['expected_revision' => $source->fresh()->revision])
                 ->assertSessionHasErrors('template_data.fields.'.$missingField);
             $this->assertSame($originalRevision, $source->refresh()->revision);
         }
 
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['fields' => $requiredFields]])
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['fields' => $requiredFields]] + ['expected_revision' => $source->fresh()->revision])
             ->assertSessionHasNoErrors();
         $source->refresh();
         foreach ($requiredFields as $fieldKey => $value) {
@@ -2474,13 +2496,13 @@ class IncomeSourcesTest extends TestCase
             $fields = $requiredFields;
             unset($fields[$missingField]);
             $this->actingAs($ci)
-                ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['fields' => $fields]])
+                ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['fields' => $fields]] + ['expected_revision' => $source->fresh()->revision])
                 ->assertSessionHasErrors('template_data.fields.'.$missingField);
             $this->assertSame($originalRevision, $source->refresh()->revision);
         }
 
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['fields' => $requiredFields]])
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['fields' => $requiredFields]] + ['expected_revision' => $source->fresh()->revision])
             ->assertSessionHasNoErrors();
         $source->refresh();
         foreach ($requiredFields as $fieldKey => $value) {
@@ -2504,6 +2526,7 @@ class IncomeSourcesTest extends TestCase
 
         $answers = ['Juan Remitter - 09170000000', 'Singapore', 'Brother', 'Engineer', 'Monthly', 'Main Bank', 'Yes', '50,000', 'None', 'January 2020'];
         $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), [
+            'expected_revision' => $source->fresh()->revision,
             'intent' => 'stay',
             'source_name' => 'Family Remittance',
             'business_name' => 'Family Remittance',
@@ -2539,12 +2562,12 @@ class IncomeSourcesTest extends TestCase
         ];
         $originalRevision = $source->revision;
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['questions' => ['Remitter', 'Singapore', '']]])
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['questions' => ['Remitter', 'Singapore', '']]] + ['expected_revision' => $source->fresh()->revision])
             ->assertSessionHasErrors('template_data.questions.2');
         $this->assertSame($originalRevision, $source->refresh()->revision);
 
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['questions' => ['Remitter', 'Singapore', 'Sibling']]])
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['template_data' => ['questions' => ['Remitter', 'Singapore', 'Sibling']]] + ['expected_revision' => $source->fresh()->revision])
             ->assertSessionHasNoErrors();
         $source->refresh();
         $this->assertSame('Sibling', data_get($source->businessReport->template_data, 'questions.2'));
@@ -2572,12 +2595,12 @@ class IncomeSourcesTest extends TestCase
     {
         [$ci, $folder, $source] = $this->createSource('general_income_sources');
         $media = MediaReference::factory()->create(['client_folder_id' => $folder->id, 'income_source_id' => $source->id]);
-        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]))->assertRedirect(route('client-folders.income-sources.manage', $folder));
+        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $source]), ['expected_revision' => $source->fresh()->revision])->assertRedirect(route('client-folders.income-sources.manage', $folder));
         $this->assertModelMissing($source);
         $this->assertModelMissing($media);
 
         [, , $safe] = $this->createSource('general_income_sources', $ci, $folder);
-        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $safe]))->assertRedirect(route('client-folders.income-sources.manage', $folder));
+        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $safe]), ['expected_revision' => $safe->fresh()->revision])->assertRedirect(route('client-folders.income-sources.manage', $folder));
         $this->assertModelMissing($safe);
     }
 
@@ -2592,7 +2615,7 @@ class IncomeSourcesTest extends TestCase
 
         [, , $draft] = $this->createSource('general_income_sources', $ci, $folder);
         $this->assertFalse($rule->fresh()->is_satisfied);
-        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $draft]));
+        $this->actingAs($ci)->delete(route('client-folders.income-sources.destroy', [$folder, $draft]), ['expected_revision' => $draft->fresh()->revision]);
         $this->assertTrue($rule->fresh()->is_satisfied);
     }
 
@@ -2651,7 +2674,7 @@ class IncomeSourcesTest extends TestCase
         $yong = User::factory()->create(['full_name' => 'YONG P. SANTOS']);
 
         $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$mark->id, $yong->id]];
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors()->assertRedirect();
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertSessionHasNoErrors()->assertRedirect();
 
         $this->assertSame([$ci->id, $mark->id, $yong->id], $this->app->make(CiParticipantService::class)->orderedParticipantIds($source->refresh()));
     }
@@ -2662,7 +2685,7 @@ class IncomeSourcesTest extends TestCase
         $mark = User::factory()->create();
 
         $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$ci->id, $mark->id]];
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors()->assertRedirect();
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertSessionHasNoErrors()->assertRedirect();
 
         $this->assertSame([$mark->id], $source->refresh()->contributors()->pluck('users.id')->all());
     }
@@ -2675,7 +2698,7 @@ class IncomeSourcesTest extends TestCase
         // Duplicates submitted for the same companion (e.g. a stale double-click) are silently
         // deduplicated before validation rather than rejected outright.
         $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$mark->id, $mark->id]];
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors()->assertRedirect();
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertSessionHasNoErrors()->assertRedirect();
 
         $this->assertSame([$mark->id], $source->refresh()->contributors()->pluck('users.id')->all());
     }
@@ -2787,9 +2810,11 @@ class IncomeSourcesTest extends TestCase
         );
         $this->assertStringNotContainsString('>+</span> Add Companion CI<', $content);
 
-        // Primary and companions share the same (smaller) text-xs sizing.
+        // Primary and companions share the same (smaller) sizing. The Business Report header uses
+        // the dedicated .business-report-ci-names rule for it (font-size clamps to at most .72rem,
+        // below text-xs) rather than the utility class the other check forms use.
         $this->assertStringContainsString('data-companion-ci-container', $content);
-        $this->assertMatchesRegularExpression('/text-xs uppercase"\s+data-companion-ci-container/', $content);
+        $this->assertMatchesRegularExpression('/business-report-ci-names[^"]*uppercase"\s+data-companion-ci-container/', $content);
 
         // The companion remove control uses the more noticeable danger-styled circular button.
         $page->assertSee('bg-danger-soft', false);
@@ -2805,7 +2830,7 @@ class IncomeSourcesTest extends TestCase
         $this->app->make(CiParticipantService::class)->syncCompanions($source, [$mark->id, $yong->id]);
 
         $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$yong->id]];
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors()->assertRedirect();
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertSessionHasNoErrors()->assertRedirect();
 
         $this->assertSame([$yong->id], $source->refresh()->contributors()->pluck('users.id')->all());
     }
@@ -2820,7 +2845,7 @@ class IncomeSourcesTest extends TestCase
         // The editor saves without ever opening the Companion CI picker (no contributor_ids
         // submitted at all) — this must never silently add them as a participant.
         $payload = $this->businessPayload();
-        $this->actingAs($editor)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors();
+        $this->actingAs($editor)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertSessionHasNoErrors();
 
         $this->assertSame([$mark->id], $source->refresh()->contributors()->pluck('users.id')->all());
         $this->assertSame($ci->id, $source->created_by);
@@ -2838,10 +2863,10 @@ class IncomeSourcesTest extends TestCase
         $yong = User::factory()->create();
 
         $applicantPayload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$mark->id]];
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $applicantSource]), $applicantPayload)->assertSessionHasNoErrors();
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $applicantSource]), $applicantPayload + ['expected_revision' => $applicantSource->fresh()->revision])->assertSessionHasNoErrors();
 
         $coMakerPayload = $this->businessPayload() + ['co_maker_id' => $coMaker->id, 'contributor_ids_present' => '1', 'contributor_ids' => [$yong->id]];
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $coMakerSource]), $coMakerPayload)->assertSessionHasNoErrors();
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $coMakerSource]), $coMakerPayload + ['expected_revision' => $coMakerSource->fresh()->revision])->assertSessionHasNoErrors();
 
         $this->assertSame([$mark->id], $applicantSource->refresh()->contributors()->pluck('users.id')->all());
         $this->assertSame([$yong->id], $coMakerSource->refresh()->contributors()->pluck('users.id')->all());
@@ -2852,7 +2877,7 @@ class IncomeSourcesTest extends TestCase
         [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
 
         $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [999999]];
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasErrors('contributor_ids.0');
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertSessionHasErrors('contributor_ids.0');
     }
 
     public function test_inactive_or_non_ci_user_is_rejected_as_companion(): void
@@ -2862,10 +2887,10 @@ class IncomeSourcesTest extends TestCase
         $admin = User::factory()->administrator()->create();
 
         $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$disabledCi->id]];
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasErrors('contributor_ids.0');
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertSessionHasErrors('contributor_ids.0');
 
         $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$admin->id]];
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasErrors('contributor_ids.0');
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertSessionHasErrors('contributor_ids.0');
     }
 
     public function test_business_report_no_change_behavior_is_preserved_when_companion_picker_is_untouched(): void
@@ -2875,12 +2900,12 @@ class IncomeSourcesTest extends TestCase
         $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$mark->id]];
         // First save actually establishes this exact state (properties row, companion) — only the
         // second, identical save is the genuine no-change probe.
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHas('statusType', 'success');
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])->assertSessionHas('statusType', 'success');
         $revisionBefore = $source->refresh()->revision;
         $payload['properties'][0]['id'] = $source->businessReport->properties()->firstOrFail()->id;
 
         $this->actingAs($ci)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])
             ->assertRedirect()
             ->assertSessionHas('statusType', 'info');
 

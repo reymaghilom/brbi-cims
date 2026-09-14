@@ -46,7 +46,9 @@ class CiActivityController extends Controller
      * is created. Deliberately name-free: it belongs to that single creation event, never to
      * whichever Activity Type the user selects next.
      */
-    public const ACTIVITY_TYPE_CREATED_MESSAGE = 'Activity type created successfully.';
+    public const ACTIVITY_TYPE_CREATED_MESSAGE = 'Activity Type created successfully.';
+
+    public const ACTIVITY_TYPE_READY_MESSAGE = 'Activity Type is ready to use.';
 
     public function index(
         ClientFolder $clientFolder,
@@ -229,6 +231,38 @@ class CiActivityController extends Controller
             [$clientFolder] + ActivePersonResolver::queryParams($activePerson) + ['status' => 'all'],
         );
 
+        if ($validated['create_new_activity_type']) {
+            $definition = $create->createDefinition(
+                $request->user(),
+                $clientFolder,
+                $validated['new_activity_type'],
+            );
+            $message = $definition->wasRecentlyCreated
+                ? self::ACTIVITY_TYPE_CREATED_MESSAGE
+                : self::ACTIVITY_TYPE_READY_MESSAGE;
+            $oldInput = [
+                'activity_definition_id' => (string) $definition->id,
+                'create_new_activity_type' => false,
+            ];
+
+            if ($request->expectsJson()) {
+                $request->session()->flashInput($oldInput);
+                $request->session()->flash('status', $message);
+                $request->session()->flash('ci_activity_modal_open', true);
+
+                return response()->json([
+                    'activity_created' => false,
+                    'activity_definition_id' => $definition->id,
+                    'redirect' => $destination,
+                ]);
+            }
+
+            return redirect($destination)
+                ->withInput($oldInput)
+                ->with('status', $message)
+                ->with('ci_activity_modal_open', true);
+        }
+
         try {
             $create->execute($request->user(), $clientFolder, $validated);
         } catch (DuplicateCiActivityException $e) {
@@ -252,11 +286,7 @@ class CiActivityController extends Controller
                 ->with('ci_activity_modal_open', true);
         }
 
-        // Only claim the Activity Type was created when this request actually created it — typing
-        // the equivalent of an existing active type reuses it and is an ordinary Add.
-        $message = $create->definitionWasCreated
-            ? 'Activity Type created and activity added successfully.'
-            : 'Activity added successfully.';
+        $message = 'Activity added successfully.';
 
         if ($request->expectsJson()) {
             $request->session()->flash('status', $message);

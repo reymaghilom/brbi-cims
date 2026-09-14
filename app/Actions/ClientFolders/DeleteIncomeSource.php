@@ -2,6 +2,7 @@
 
 namespace App\Actions\ClientFolders;
 
+use App\Exceptions\BusinessReportDeleteConflictException;
 use App\Models\AuditLog;
 use App\Models\BusinessCheck;
 use App\Models\BusinessReport;
@@ -26,14 +27,23 @@ class DeleteIncomeSource
         private readonly ClientMediaUploader $mediaUploader,
     ) {}
 
-    public function execute(User $actor, ClientFolder $folder, IncomeSource $source): void
+    /**
+     * $expectedRevision is the IncomeSource revision the delete screen was rendered with. When
+     * given, it is compared under the exact IncomeSource row lock before any report, check, media
+     * or source is touched, so a stale delete screen can never remove a newer saved version.
+     */
+    public function execute(User $actor, ClientFolder $folder, IncomeSource $source, ?int $expectedRevision = null): void
     {
         // Same deferred-cleanup convention as DeleteBusinessCheck: the linked check's Cloudinary
         // assets are only destroyed once the transaction below has committed.
         $retiredCloudAssets = [];
 
-        DB::transaction(function () use ($actor, $folder, $source, &$retiredCloudAssets): void {
+        DB::transaction(function () use ($actor, $folder, $source, $expectedRevision, &$retiredCloudAssets): void {
             $lockedSource = $this->exactSourceQuery($folder, $source)->lockForUpdate()->firstOrFail();
+            // The HTTP delete route requires the token, so null is only ever an in-process caller.
+            if ($expectedRevision !== null && $expectedRevision !== $lockedSource->revision) {
+                throw BusinessReportDeleteConflictException::forBusiness();
+            }
             $sourceId = $lockedSource->id;
             $templateType = $lockedSource->template_type;
             $coMakerId = $lockedSource->co_maker_id;

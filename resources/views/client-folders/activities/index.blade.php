@@ -33,7 +33,10 @@
         $builtInActivityDefinitions = $definitions->reject->isCustom();
         $customActivityDefinitions = $definitions->filter->isCustom();
         $activityModalStatus = session('status');
-        $activityTypeCreated = $activityModalStatus === App\Http\Controllers\CiActivityController::ACTIVITY_TYPE_CREATED_MESSAGE;
+        $activityTypeCreated = in_array($activityModalStatus, [
+            App\Http\Controllers\CiActivityController::ACTIVITY_TYPE_CREATED_MESSAGE,
+            App\Http\Controllers\CiActivityController::ACTIVITY_TYPE_READY_MESSAGE,
+        ], true);
         $activityModalHasErrors = $errors->getBag('default')->any();
         // ONE duplicate-state flag, used by the advisory panel, the footer swap and the reopen —
         // reading the session separately in each spot would let them disagree.
@@ -672,6 +675,7 @@
                 </div>
 
                 <p class="mt-4 rounded-control border border-ui-border bg-surface-subtle px-3.5 py-3 text-sm font-semibold text-text-muted" data-activity-type-empty hidden>No activity types match this filter.</p>
+                <p class="mt-3 flex items-start gap-1.5 rounded-control border border-success/25 bg-success-soft px-3.5 py-3 text-sm font-semibold text-success" role="status" aria-live="polite" data-activity-type-success hidden><x-ui.icon name="check-circle" size="size-4" class="mt-0.5 shrink-0" /><span data-activity-type-success-message></span></p>
                 <p class="mt-3 flex items-start gap-1.5 rounded-control border border-danger/25 bg-danger-soft px-3.5 py-3 text-sm font-semibold text-danger" role="alert" data-activity-type-error hidden><x-ui.icon name="warning" size="size-4" class="mt-0.5 shrink-0" /><span data-activity-type-error-message></span></p>
 
                 <div class="mt-4 space-y-1.5 rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted">
@@ -700,7 +704,7 @@
                 <div class="px-5 py-5">
                     <label for="activity-type-edit-name" class="ui-label">Activity Type Name</label>
                     <input id="activity-type-edit-name" type="text" class="ui-control" maxlength="255" autocomplete="off" required data-activity-type-edit-name>
-                    <p class="ui-help">This renames the reusable activity type only. Existing CI Activities keep their own records.</p>
+                    <p class="ui-help">This only renames the reusable Activity Type. Existing CI Activities will remain unchanged.</p>
                     <p class="mt-2 flex items-start gap-1.5 rounded-control border border-progress/30 bg-progress-soft px-3 py-2 text-sm font-semibold text-progress" data-activity-type-edit-no-changes role="status" aria-live="polite" hidden><x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" aria-hidden="true" />No changes detected. Nothing needs to be updated.</p>
                     <p class="mt-2 rounded-control border border-danger/25 bg-danger-soft px-3 py-2 text-sm font-semibold text-danger" role="alert" data-activity-type-edit-error hidden></p>
                 </div>
@@ -760,7 +764,7 @@
                                     @php
                                         $alreadyAdded = $existingDefinitionIds->contains($definition->id);
                                     @endphp
-                                    <div class="flex min-w-0 items-center" role="presentation" data-custom-activity-type-row="{{ $definition->id }}"><button type="button" class="flex min-h-10 w-full min-w-0 items-center px-3 py-2 text-left text-sm font-normal leading-5 transition hover:bg-surface-subtle focus:bg-surface-subtle focus:outline-none aria-selected:bg-brand-soft aria-selected:text-brand-primary disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60" role="option" data-activity-type-option data-value="{{ $definition->id }}" data-code="{{ $definition->code }}" data-label="{{ $definition->name }}" aria-selected="{{ (string) $selectedActivityDefinitionId === (string) $definition->id ? 'true' : 'false' }}" @disabled($alreadyAdded)><span class="min-w-0 flex-1 truncate">{{ $definition->name }}</span>@if($alreadyAdded)<span class="shrink-0 pl-3 text-xs font-normal">Already Added</span>@endif</button></div>
+                                    <div class="flex min-w-0 items-center" role="presentation" data-custom-activity-type-row="{{ $definition->id }}"><button type="button" class="flex min-h-10 w-full min-w-0 items-center px-3 py-2 text-left text-sm font-normal leading-5 transition hover:bg-surface-subtle focus:bg-surface-subtle focus:outline-none aria-selected:bg-brand-soft aria-selected:text-brand-primary" role="option" data-activity-type-option data-value="{{ $definition->id }}" data-code="{{ $definition->code }}" data-label="{{ $definition->name }}" aria-selected="{{ (string) $selectedActivityDefinitionId === (string) $definition->id ? 'true' : 'false' }}"><span class="min-w-0 flex-1 truncate">{{ $definition->name }}</span>@if($alreadyAdded)<span class="shrink-0 pl-3 text-xs font-normal text-progress">Already Added</span>@endif</button></div>
                                 @endforeach
                                 </div>
                             @endif
@@ -865,9 +869,7 @@
                         </article>
                     </template>
                 </section>
-                <div class="sm:col-span-2 rounded-control bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-text-muted" data-custom-activity-info @if(! $addingNewActivityType) hidden @endif>
-                    Saving this reusable Activity Type will not create a CI Activity or assign a Creator.
-                </div>
+                <span data-custom-activity-info hidden></span>
                 </div>
             </div>
             <div class="flex shrink-0 flex-col-reverse gap-3 border-t border-ui-border px-5 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" class="ui-button-secondary" data-ci-activity-dialog-close><x-ui.icon name="close" size="size-4" />Cancel</button><button type="submit" class="ui-button-primary" data-ci-activity-submit @if($hasCiActivityDuplicate) name="allow_duplicate" value="1" data-ci-activity-duplicate-continue @endif><x-ui.icon name="plus" size="size-4" /><span data-ci-activity-submit-label>{{ $hasCiActivityDuplicate ? 'Continue Anyway' : ($addingNewActivityType ? 'Add Activity Type' : 'Add Activity') }}</span></button></div>
@@ -1539,7 +1541,7 @@
             };
 
             const syncScheduleAvailability = () => {
-                const parentFieldsEnabled = ! addingBankCoopCheck() && ! addingAssetCheck();
+                const parentFieldsEnabled = ! addingNewActivityType() && ! addingBankCoopCheck() && ! addingAssetCheck();
                 const enabled = parentFieldsEnabled && ['scheduled', 'follow_up'].includes(status.value);
                 if (! enabled) {
                     schedule.value = '';
@@ -1559,11 +1561,9 @@
                 const addingNewType = addingNewActivityType();
                 const bankCoopCheck = ! addingNewType && addingBankCoopCheck();
                 const assetCheck = ! addingNewType && addingAssetCheck();
-                // Typing a new Activity Type no longer hides the activity's own fields: one submit
-                // creates the type AND its activity, so status/schedule/remarks stay available
-                // exactly as for any other custom activity. Only Bank / Coop and Asset still
-                // derive their parent state from their targets.
-                const parentFieldsHidden = bankCoopCheck || assetCheck;
+                // Creating the reusable type is its own catalog-only step. The activity fields come
+                // back after the server reopens this dialog with the definition selected.
+                const parentFieldsHidden = addingNewType || bankCoopCheck || assetCheck;
                 fields.hidden = ! addingNewType;
                 input.required = addingNewType;
                 input.disabled = ! addingNewType;
@@ -1572,8 +1572,10 @@
                 status.disabled = parentFieldsHidden;
                 status.required = ! parentFieldsHidden;
                 remarks.disabled = parentFieldsHidden;
-                form.dataset.submissionMode = 'activity';
-                if (submitLabel && ! submitButton?.dataset.ciActivityDuplicateContinue) submitLabel.textContent = 'Add Activity';
+                form.dataset.submissionMode = addingNewType ? 'activity-type' : 'activity';
+                if (submitLabel && ! submitButton?.dataset.ciActivityDuplicateContinue) {
+                    submitLabel.textContent = addingNewType ? 'Add Activity Type' : 'Add Activity';
+                }
 
                 syncScheduleAvailability();
                 syncBankTargetSection();
@@ -1776,10 +1778,7 @@
             };
 
             const validateActivityForm = () => {
-                // One submit always creates an activity now, so "activity-type only" is gone: a
-                // typed new type simply also needs its name, and every other rule is the ordinary
-                // custom-activity rule.
-                const addingActivityType = false;
+                const addingActivityType = form.dataset.submissionMode === 'activity-type';
                 const typingNewActivityType = activityType.value === @js(App\Models\ActivityDefinition::NEW_TYPE_VALUE);
                 const addingBankActivity = ! bankTargetSection.hidden;
                 const addingAssetActivity = ! assetTargetSection.hidden;
@@ -1905,12 +1904,6 @@
                     ? 'Adding Activity Type…'
                     : 'Adding Activity…';
 
-                // A submit button's own name/value is part of a NATIVE submission but is NOT part
-                // of new FormData(form). No button in this dialog carries one today — the
-                // activity-type vs activity choice rides on form.dataset.submissionMode — so this
-                // changes nothing now. It is a forward guard: the moment a named submit button is
-                // added here, its value would otherwise be dropped silently, which is exactly how
-                // the Bank / Coop and Asset trackers lost theirs.
                 // A submit button's own name/value is part of a NATIVE submission but is NOT part of
                 // new FormData(form). Continue Anyway carries allow_duplicate=1 that way, so without
                 // this the deliberate second activity would post as an ordinary Add and warn again
@@ -1994,6 +1987,8 @@
             const rowsBody = manager?.querySelector('[data-activity-type-rows]');
             const search = manager?.querySelector('[data-activity-type-search]');
             const empty = manager?.querySelector('[data-activity-type-empty]');
+            const success = manager?.querySelector('[data-activity-type-success]');
+            const successMessage = manager?.querySelector('[data-activity-type-success-message]');
             const error = manager?.querySelector('[data-activity-type-error]');
             const errorMessage = manager?.querySelector('[data-activity-type-error-message]');
             const confirmDialog = manager?.querySelector('[data-activity-type-confirm]');
@@ -2057,6 +2052,12 @@
                 error.hidden = false;
             };
             const clearError = () => { if (error instanceof HTMLElement) error.hidden = true; };
+            const showSuccess = (message) => {
+                if (!(success instanceof HTMLElement) || !(successMessage instanceof HTMLElement)) return;
+                successMessage.textContent = message;
+                success.hidden = false;
+            };
+            const clearSuccess = () => { if (success instanceof HTMLElement) success.hidden = true; };
 
             const currentRows = () => [...rowsBody.querySelectorAll('[data-activity-type-row]')];
 
@@ -2154,10 +2155,14 @@
                 const row = trigger?.closest('[data-activity-type-row]');
                 if (!(trigger instanceof HTMLElement) || !(row instanceof HTMLElement)) return;
                 clearError();
+                clearSuccess();
                 activeRow = row;
                 const name = row.dataset.activityTypeName ?? 'this activity type';
 
                 if (trigger.matches('[data-activity-type-edit]')) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    trigger.closest('details[data-context-menu]')?.removeAttribute('open');
                     if (editTitle instanceof HTMLElement) editTitle.textContent = `Edit ${name}`;
                     if (editError instanceof HTMLElement) editError.hidden = true;
                     if (editNoChanges instanceof HTMLElement) editNoChanges.hidden = true;
@@ -2186,7 +2191,7 @@
                     if (acceptIcon instanceof SVGElement) acceptIcon.toggleAttribute('hidden', key !== activeIntent);
                 });
                 confirmDialog.showModal();
-            });
+            }, true);
 
             confirmDialog.querySelector('[data-activity-type-confirm-cancel]')?.addEventListener('click', () => confirmDialog.close());
             confirmAccept.addEventListener('click', async () => {
@@ -2236,8 +2241,9 @@
                     }
                     return;
                 }
+                let payload;
                 try {
-                    await submitAction(urlFor(manager.dataset.activityTypeUpdateUrl, activeRow.dataset.activityTypeId ?? ''), 'PUT', { name });
+                    payload = await submitAction(urlFor(manager.dataset.activityTypeUpdateUrl, activeRow.dataset.activityTypeId ?? ''), 'PUT', { name });
                 } catch (requestError) {
                     // The rename itself was refused — duplicate name, reserved name, or a type that
                     // is no longer available. The dialog stays open with the server's own wording.
@@ -2256,6 +2262,7 @@
 
                 try {
                     await refreshFromServer();
+                    showSuccess(payload.message ?? `${name} activity type updated.`);
                 } catch (refreshError) {
                     showError(refreshError instanceof Error
                         ? refreshError.message

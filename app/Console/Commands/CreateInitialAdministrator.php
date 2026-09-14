@@ -33,14 +33,12 @@ class CreateInitialAdministrator extends Command
         }
 
         $fullName = trim((string) $this->ask('Full name'));
-        $employeeId = trim((string) $this->ask('Employee ID (optional)'));
         $username = Str::lower(trim((string) $this->ask('Username')));
         $password = (string) $this->secret('Password');
         $passwordConfirmation = (string) $this->secret('Confirm password');
 
         $data = [
             'full_name' => $fullName,
-            'employee_id' => $employeeId === '' ? null : $employeeId,
             'username' => $username,
             'password' => $password,
             'password_confirmation' => $passwordConfirmation,
@@ -48,7 +46,6 @@ class CreateInitialAdministrator extends Command
 
         $validator = Validator::make($data, [
             'full_name' => ['required', 'string', 'max:255'],
-            'employee_id' => ['nullable', 'string', 'max:50', 'unique:users,employee_id'],
             'username' => ['required', 'string', 'max:100', 'regex:/^[a-z0-9._-]+$/', 'unique:users,username'],
             'password' => ['required', 'string', 'confirmed', PasswordPolicy::rule()],
         ]);
@@ -66,7 +63,6 @@ class CreateInitialAdministrator extends Command
         $administrator = DB::transaction(function () use ($data): User {
             $administrator = User::create([
                 'full_name' => $data['full_name'],
-                'employee_id' => $data['employee_id'],
                 'username' => $data['username'],
                 'password' => $data['password'],
                 'role' => UserRole::Administrator,
@@ -83,7 +79,6 @@ class CreateInitialAdministrator extends Command
                 'metadata' => [
                     'administrator_user_id' => $administrator->id,
                     'username' => $administrator->username,
-                    'employee_id' => $administrator->employee_id,
                     'source' => 'cli',
                 ],
                 'user_agent' => 'artisan-cli',

@@ -3489,6 +3489,16 @@ window.initBusinessBatchPanel = function initBusinessBatchPanel() {
             input.value = checkbox.value;
             input.dataset.businessBatchIdInput = 'true';
             form.appendChild(input);
+            // Delete Selected only: the revision each selected row was rendered with, keyed by its
+            // exact income_source_id, so the server refuses the whole batch if any row went stale.
+            if (form.matches('[data-business-delete-selected-form]')) {
+                const revision = document.createElement('input');
+                revision.type = 'hidden';
+                revision.name = `expected_revisions[${checkbox.value}]`;
+                revision.value = checkbox.dataset.businessRevision ?? '';
+                revision.dataset.businessBatchIdInput = 'true';
+                form.appendChild(revision);
+            }
         });
     };
 
@@ -4803,6 +4813,10 @@ document.querySelectorAll('[data-editing-presence]').forEach((node) => {
     const type = node.dataset.editingType;
     const id = node.dataset.editingId;
     const label = node.dataset.editingLabel || 'record';
+    // Optional advisory sentence a page may append after the "who is editing" line (e.g. the
+    // Business Report's "first save wins, refresh before saving" guidance). Pages without it keep
+    // their existing wording unchanged.
+    const advice = node.dataset.editingAdvice || '';
     const token = node.querySelector('input[name="_token"]')?.value
         || document.querySelector('input[name="_token"]')?.value;
     if (!type || !id || !token) return;
@@ -4812,13 +4826,13 @@ document.querySelectorAll('[data-editing-presence]').forEach((node) => {
     const renderPresence = (otherEditors) => {
         if (!banner || !text) return;
         if (otherEditors && otherEditors.length > 0) {
-            const names = otherEditors.map((editor) => editor.name);
+            const names = otherEditors.map((editor) => editor.name || 'Another CI');
             const who = names.length === 1
                 ? names[0]
                 : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
             const verb = names.length === 1 ? 'is' : 'are';
             banner.hidden = false;
-            text.textContent = `${who} ${verb} currently editing this ${label}.`;
+            text.textContent = `${who} ${verb} currently editing this ${label}.${advice ? ` ${advice}` : ''}`;
         } else {
             banner.hidden = true;
         }

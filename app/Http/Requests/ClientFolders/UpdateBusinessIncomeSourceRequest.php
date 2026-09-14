@@ -45,7 +45,7 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
         $hiddenProfileFields = (array) data_get($schema, 'hidden_profile_fields', []);
         $rules = [
             'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
-            'expected_revision' => ['nullable', 'integer', 'min:0'],
+            'expected_revision' => [$this->route('incomeSource') ? 'required' : 'nullable', 'integer', 'min:0'],
             'contributor_ids' => ['sometimes', 'array', 'max:10'],
             'contributor_ids.*' => [
                 'integer',

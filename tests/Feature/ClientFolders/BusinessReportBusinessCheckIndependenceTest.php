@@ -247,7 +247,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         ]);
 
         $this->actingAs($ci)
-            ->delete(route('client-folders.income-sources.business-report.destroy', [$folder, $source]))
+            ->delete(route('client-folders.income-sources.business-report.destroy', [$folder, $source]), ['expected_revision' => $source->fresh()->revision])
             ->assertRedirect()
             ->assertSessionHas('status', 'Business Report permanently deleted.');
         $this->assertDatabaseHas('income_sources', ['id' => $source->id, 'deleted_at' => null]);
@@ -685,7 +685,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             ->assertSee('Dropdown Ready Store');
     }
 
-    public function test_deleted_saved_report_with_no_check_disappears_from_the_business_check_dropdown(): void
+    public function test_deleted_saved_report_with_no_check_stays_selectable_in_the_business_check_dropdown(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -694,9 +694,12 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
 
         app(DeleteBusinessReport::class)->execute($ci, $folder, $source->fresh());
 
+        // Report-only delete keeps the IncomeSource, and its Business Check is an independent
+        // requirement, so that exact surviving business stays linkable from a new Business Check.
         $this->actingAs($ci)->get(route('client-folders.business-checks.create', $folder))
             ->assertOk()
-            ->assertDontSee('Deleted Report Store');
+            ->assertSee('<option value="'.$source->id.'"', false)
+            ->assertSee('Deleted Report Store');
     }
 
     public function test_deleted_saved_report_with_surviving_check_disappears_from_the_dropdown_while_check_survives(): void
@@ -1553,6 +1556,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         $response = $this->actingAs($ci)->deleteJson(route('client-folders.income-sources.business-report.destroy-selected', $folder), [
             'co_maker_id' => '',
             'income_source_ids' => [$deleteA->id, $deleteB->id],
+            'expected_revisions' => $this->expectedRevisions($deleteA, $deleteB),
         ]);
 
         $response->assertOk()->assertJson(['deleted' => 2]);
@@ -1589,6 +1593,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         $response = $this->actingAs($ci)->deleteJson(route('client-folders.income-sources.business-report.destroy-selected', $folder), [
             'co_maker_id' => '',
             'income_source_ids' => [$applicantSourceA->id, $applicantSourceB->id, $otherFolderSource->id],
+            'expected_revisions' => $this->expectedRevisions($applicantSourceA, $applicantSourceB, $otherFolderSource),
         ]);
 
         $response->assertStatus(422);
@@ -1614,6 +1619,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         $response = $this->actingAs($ci)->deleteJson(route('client-folders.income-sources.business-report.destroy-selected', $folder), [
             'co_maker_id' => $coMakerA->id,
             'income_source_ids' => [$sourceA1->id, $sourceB->id],
+            'expected_revisions' => $this->expectedRevisions($sourceA1, $sourceB),
         ]);
 
         $response->assertStatus(422);
@@ -1633,6 +1639,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         $response = $this->actingAs($ci)->deleteJson(route('client-folders.income-sources.business-report.destroy-selected', $folder), [
             'co_maker_id' => $coMaker->id,
             'income_source_ids' => [$applicantSource->id],
+            'expected_revisions' => $this->expectedRevisions($applicantSource),
         ]);
 
         $response->assertStatus(422);
@@ -1651,6 +1658,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         $response = $this->actingAs($ci)->deleteJson(route('client-folders.income-sources.business-report.destroy-selected', $folder), [
             'co_maker_id' => '',
             'income_source_ids' => [$coMakerSource->id],
+            'expected_revisions' => $this->expectedRevisions($coMakerSource),
         ]);
 
         $response->assertStatus(422);
@@ -1669,6 +1677,7 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
         $response = $this->actingAs($ci)->deleteJson(route('client-folders.income-sources.business-report.destroy-selected', $folder), [
             'co_maker_id' => '',
             'income_source_ids' => [$sourceA->id, $sourceA->id, $sourceB->id],
+            'expected_revisions' => $this->expectedRevisions($sourceA, $sourceA, $sourceB),
         ]);
 
         $response->assertOk()->assertJson(['deleted' => 2]);
@@ -2103,6 +2112,12 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
 
         $this->assertStringContainsString('overflow-x-auto overflow-y-hidden rounded-card border border-ui-border', $content);
         $this->assertStringContainsString('min-w-[52rem]', $content);
+    }
+
+    /** The revision each Saved Businesses row renders for Delete Selected, keyed by exact income_source_id. */
+    private function expectedRevisions(IncomeSource ...$sources): array
+    {
+        return collect($sources)->mapWithKeys(fn (IncomeSource $source) => [$source->id => $source->fresh()->revision])->all();
     }
 
     private function createBusiness(User $ci, ClientFolder $folder, ?CoMaker $coMaker, string $name, string $templateType = 'retail_grocery_water_refilling'): IncomeSource

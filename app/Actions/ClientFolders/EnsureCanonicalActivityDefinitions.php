@@ -24,6 +24,7 @@ class EnsureCanonicalActivityDefinitions
             ->map(fn (array $definition, string $code): array => [
                 'code' => $code,
                 'name' => $definition['name'],
+                'normalized_name' => ActivityDefinition::normalizedNameKey($definition['name']),
                 'sort_order' => $definition['sort_order'],
                 'is_required' => true,
                 'is_active' => true,
@@ -36,7 +37,7 @@ class EnsureCanonicalActivityDefinitions
         ActivityDefinition::query()->upsert(
             $rows,
             ['code'],
-            ['name', 'sort_order', 'is_required', 'is_active', 'updated_at'],
+            ['name', 'normalized_name', 'sort_order', 'is_required', 'is_active', 'updated_at'],
         );
     }
 }

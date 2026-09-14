@@ -23,7 +23,7 @@ class DemoDataSeeder extends Seeder
         }
 
         DB::transaction(function () {
-            $investigator = User::factory()->create(['employee_id' => 'DEMO-CI', 'full_name' => 'Reasan Mark Q. Gura', 'username' => 'demo.ci']);
+            $investigator = User::factory()->create(['full_name' => 'Reasan Mark Q. Gura', 'username' => 'demo.ci']);
             $dedicated = IncomeSourceTemplate::where('template_type', 'business_source_validation')->firstOrFail();
             $fallback = IncomeSourceTemplate::where('template_type', 'general_income_sources')->firstOrFail();
 

@@ -19,7 +19,6 @@ class StoreUserRequest extends FormRequest
     {
         return [
             'full_name' => ['required', 'string', 'max:255'],
-            'employee_id' => ['nullable', 'string', 'max:50', 'unique:users,employee_id'],
             'username' => ['required', 'string', 'max:100', 'regex:/^[a-zA-Z0-9._-]+$/', 'unique:users,username'],
             'role' => ['required', Rule::enum(UserRole::class)],
             'profile_photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
@@ -30,7 +29,6 @@ class StoreUserRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         $this->merge([
-            'employee_id' => filled($this->employee_id) ? trim((string) $this->employee_id) : null,
             'username' => strtolower(trim((string) $this->username)),
         ]);
     }

@@ -12,8 +12,8 @@
             @include('admin.users._form')
         </x-ui.form-section>
         <x-ui.form-section title="Temporary password" description="The user will be required to replace this password after their first successful sign-in." class="mt-6">
-            <x-form.input name="password" label="Temporary password" type="password" required minlength="12" autocomplete="new-password" help="Use at least 12 characters." />
-            <x-form.input name="password_confirmation" label="Confirm temporary password" type="password" required minlength="12" autocomplete="new-password" />
+            <x-form.input name="password" label="Temporary password" type="password" required minlength="{{ \App\Support\Authentication\PasswordPolicy::MIN_LENGTH }}" autocomplete="new-password" help="Use at least {{ \App\Support\Authentication\PasswordPolicy::MIN_LENGTH }} characters." />
+            <x-form.input name="password_confirmation" label="Confirm temporary password" type="password" required minlength="{{ \App\Support\Authentication\PasswordPolicy::MIN_LENGTH }}" autocomplete="new-password" />
         </x-ui.form-section>
         <x-ui.sticky-form-toolbar>Passwords are stored only as secure hashes.<x-slot:actions><a href="{{ route('admin.users.index') }}" class="ui-button-secondary">Cancel</a><button class="ui-button-primary">Create user</button></x-slot:actions></x-ui.sticky-form-toolbar>
     </form>

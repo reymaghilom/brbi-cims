@@ -40,7 +40,7 @@
                     <select id="assigned_ci_id" name="assigned_ci_id" class="ui-control" aria-describedby="assigned_ci_id-help assigned_ci_id-error">
                         <option value="">Leave unassigned</option>
                         @foreach($creditInvestigators as $investigator)
-                            <option value="{{ $investigator->id }}" @selected((string) old('assigned_ci_id') === (string) $investigator->id)>{{ $investigator->full_name }}{{ $investigator->employee_id ? ' — '.$investigator->employee_id : '' }}</option>
+                            <option value="{{ $investigator->id }}" @selected((string) old('assigned_ci_id') === (string) $investigator->id)>{{ $investigator->full_name }}</option>
                         @endforeach
                     </select>
                     <p id="assigned_ci_id-help" class="ui-help">This does not restrict who can access the folder — it is informational only.</p>

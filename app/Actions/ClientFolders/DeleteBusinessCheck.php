@@ -30,8 +30,9 @@ use Illuminate\Support\Facades\DB;
  *
  *  - DELETE: the business_checks row first, then (only for a linked check) that exact
  *    income_sources row for the suppression marker.
- *  - EDIT (SaveBusinessCheck on an existing check): the business_checks row only. It never takes an
- *    income_sources lock, so it can never hold one while waiting for a check row.
+ *  - EDIT (SaveBusinessCheck on an existing check): the business_checks row first, then — only when
+ *    repointing to a different business — that target income_sources row. Same order as DELETE,
+ *    so it can never hold an income_sources lock while waiting for a check row.
  *  - CREATE: the income_sources row first, then it only INSERTs a business_checks row. Its
  *    duplicate lookup is an ordinary non-locking read, so it never waits on an existing
  *    business_checks row lock and cannot close a cycle with the two paths above.

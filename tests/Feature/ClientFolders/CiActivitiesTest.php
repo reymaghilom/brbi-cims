@@ -1796,7 +1796,9 @@ class CiActivitiesTest extends TestCase
         $this->assertSame(ClientFolderStatus::OnProgress, $folder->status);
         $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()
             ->assertSee(route('client-folders.activities.index', $folder), false)
-            ->assertSee('4 of 4 required activities completed; 0 pending.');
+            // The Overview card follows the same mandatory CI Activity set as progress: Barangay,
+            // Neighbor and Bank / Coop for the Applicant. Only Bank / Coop is completed here.
+            ->assertSee('1 of 3 required activities completed; 2 pending.');
     }
 
     public function test_activity_pages_use_responsive_field_checklist_markup_and_neutral_states(): void

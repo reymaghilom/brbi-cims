@@ -218,9 +218,12 @@ class BusinessCheckController extends Controller
         // only (revision > 1 AND a BusinessReport row exists — the same authoritative "actually
         // saved" convention as IncomeSourceController::dedicatedSources()'s requireReport). A
         // revision-1 draft/Check-first/quick-add shell is not a saved Report and must never appear
-        // here, and neither may a business whose Report row was hard-deleted. A candidate must also
+        // here. A candidate must also
         // have no Business Check of its own yet (no duplicate candidates — server-side rejection in
-        // SaveBusinessCheck stays in place regardless of this listing rule). Orphaned IncomeSources
+        // SaveBusinessCheck stays in place regardless of this listing rule). The one exception to the
+        // saved-Report requirement is a business whose Report was intentionally deleted
+        // (business_report_deleted_at): its IncomeSource survives and still needs its independent
+        // Business Check. Orphaned IncomeSources
         // (no meaningful Report and no Check — see DeleteIncomeSourceIfOrphaned) are force-deleted at
         // delete time and so never reach this query at all. The Business Check currently being
         // edited is the one exception to both rules: its own business must still render (and remain
@@ -236,6 +239,12 @@ class BusinessCheckController extends Controller
             ->whereHas('template', fn ($query) => $query->where('is_fallback', false)->where('form_handler', 'dedicated-business'))
             ->where(fn ($query) => $query
                 ->where(fn ($saved) => $saved->whereHas('businessReport')->where('revision', '>', 1))
+                // A surviving business whose Business Report was intentionally deleted (report-only
+                // delete keeps the IncomeSource). Business Check is independent of that report, and
+                // Reports still lists this person's Pending Business Check for it, so it must stay
+                // linkable here. Every other constraint below (person, template, no existing check)
+                // still applies; only this exact deletion marker admits it, never a draft shell.
+                ->orWhereNotNull('business_report_deleted_at')
                 ->when($businessCheck, fn ($query) => $query->orWhere('id', $businessCheck->income_source_id))
                 ->when($requestedCreateIncomeSourceId, fn ($query, int $incomeSourceId) => $query->orWhere('id', $incomeSourceId)))
             ->where(fn ($query) => $query

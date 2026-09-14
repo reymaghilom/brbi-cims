@@ -36,7 +36,7 @@ class UpdateActivityDefinitionRequest extends FormRequest
                     // (including casing/spacing changes), but must never collide with another one.
                     $existing = ActivityDefinition::equivalentToName($value);
                     if ($existing && $existing->id !== $this->route('activityDefinition')?->id) {
-                        $fail('An activity type with this name already exists.');
+                        $fail('An Activity Type with this name already exists.');
                     }
                 },
             ],

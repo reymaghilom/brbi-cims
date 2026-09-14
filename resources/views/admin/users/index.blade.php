@@ -15,7 +15,7 @@
             <tbody>
                 @foreach ($users as $managedUser)
                     <tr>
-                        <td><div class="flex items-center gap-3">@if ($managedUser->profilePhotoUrl())<img src="{{ $managedUser->profilePhotoUrl() }}" alt="" class="size-9 shrink-0 rounded-full border border-ui-border object-cover [aspect-ratio:1/1]">@else<span class="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft font-bold text-brand-primary">{{ str($managedUser->full_name)->substr(0, 1)->upper() }}</span>@endif<div><p class="font-bold">{{ $managedUser->full_name }}</p><p class="text-xs text-text-muted">{{ $managedUser->employee_id ?: 'No employee ID' }}</p></div></div></td>
+                        <td><div class="flex items-center gap-3">@if ($managedUser->profilePhotoUrl())<img src="{{ $managedUser->profilePhotoUrl() }}" alt="" class="size-9 shrink-0 rounded-full border border-ui-border object-cover [aspect-ratio:1/1]">@else<span class="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft font-bold text-brand-primary">{{ str($managedUser->full_name)->substr(0, 1)->upper() }}</span>@endif<div><p class="font-bold">{{ $managedUser->full_name }}</p></div></div></td>
                         <td class="font-medium">{{ $managedUser->username }}</td>
                         <td>{{ str($managedUser->role->value)->replace('_', ' ')->title() }}</td>
                         <td><x-ui.status-badge :status="$managedUser->status" /></td>

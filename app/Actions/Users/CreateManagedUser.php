@@ -20,7 +20,6 @@ class CreateManagedUser
             return DB::transaction(function () use ($administrator, $data, $photoPath): User {
                 $user = User::create([
                     'full_name' => $data['full_name'],
-                    'employee_id' => $data['employee_id'],
                     'username' => $data['username'],
                     'role' => $data['role'],
                     'status' => UserStatus::Active,
