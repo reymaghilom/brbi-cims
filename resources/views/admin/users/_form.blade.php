@@ -1,4 +1,4 @@
-@php($roleOptions = collect($roles)->mapWithKeys(fn ($role) => [$role->value => str($role->value)->replace('_', ' ')->title()->toString()])->all())
+@php($roleOptions = collect($roles)->mapWithKeys(fn ($role) => [$role->value => $role->label()])->all())
 @php($currentPhotoUrl = isset($managedUser) ? $managedUser->profilePhotoUrl() : null)
 
 <x-form.input name="full_name" label="Full name" :value="$managedUser->full_name ?? null" required class="sm:col-span-2" autocomplete="name" />

@@ -5,7 +5,7 @@
 @section('content')
     <x-ui.breadcrumb :items="[['label' => 'Dashboard', 'url' => route('home')], ['label' => 'Users', 'url' => route('admin.users.index')], ['label' => $managedUser->full_name]]" />
     <x-ui.page-header :title="$managedUser->full_name" eyebrow="Manage user">
-        <x-slot:description>{{ $managedUser->username }} · {{ str($managedUser->role->value)->replace('_', ' ')->title() }}</x-slot:description>
+        <x-slot:description>{{ $managedUser->username }} · {{ $managedUser->role->label() }}</x-slot:description>
         <x-slot:actions><x-ui.status-badge :status="$managedUser->status" /></x-slot:actions>
     </x-ui.page-header>
 

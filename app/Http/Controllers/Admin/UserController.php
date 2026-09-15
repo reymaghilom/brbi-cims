@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Admin;
 use App\Actions\Users\CreateManagedUser;
 use App\Actions\Users\UpdateManagedUser;
 use App\Enums\UserRole;
-use App\Enums\UserStatus;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\StoreUserRequest;
 use App\Http\Requests\Admin\UpdateUserRequest;
@@ -49,7 +48,6 @@ class UserController extends Controller
         return view('admin.users.edit', [
             'managedUser' => $user,
             'roles' => UserRole::cases(),
-            'statuses' => UserStatus::cases(),
         ]);
     }
 

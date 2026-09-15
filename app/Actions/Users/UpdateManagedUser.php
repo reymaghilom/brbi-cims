@@ -30,7 +30,7 @@ class UpdateManagedUser
         $newPhotoPath = $newPhotoUploaded ? $this->photos->store($data['profile_photo']) : null;
 
         try {
-            return DB::transaction(function () use ($administrator, $user, $data, $newPhotoUploaded, $newPhotoPath): User {
+            $updatedUser = DB::transaction(function () use ($administrator, $user, $data, $newPhotoUploaded, $newPhotoPath): User {
                 $previousRole = $user->role->value;
                 $roleChanged = $previousRole !== $data['role'];
 
@@ -70,14 +70,14 @@ class UpdateManagedUser
             }
 
             throw $exception;
-        } finally {
-            // Only reached after a successful commit (the catch above rethrows), so this is the
-            // one safe point to remove the old file: the new path is durably saved by now, and
-            // it's never the shared/default avatar — that's a frontend fallback, never a row in
-            // profile_photo_path.
-            if ($newPhotoUploaded && filled($previousPhotoPath) && ! isset($exception)) {
-                $this->photos->delete($previousPhotoPath);
-            }
         }
+
+        // The replacement path is durably committed before the previous file is removed. The
+        // shared/default avatar is only a frontend fallback and is never stored in this column.
+        if ($newPhotoUploaded && filled($previousPhotoPath)) {
+            $this->photos->delete($previousPhotoPath);
+        }
+
+        return $updatedUser;
     }
 }
