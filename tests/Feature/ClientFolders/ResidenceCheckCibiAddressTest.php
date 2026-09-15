@@ -250,7 +250,7 @@ class ResidenceCheckCibiAddressTest extends TestCase
         $this->assertSame('Tagoloan, Misamis Oriental', $check->location);
 
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id, 'first_name' => 'Co', 'last_name' => 'Maker', 'address' => 'Villanueva, Misamis Oriental',
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision, 'first_name' => 'Co', 'last_name' => 'Maker', 'address' => 'Villanueva, Misamis Oriental',
         ])->assertRedirect();
 
         $this->assertSame('Villanueva, Misamis Oriental', $check->fresh()->location);
@@ -271,7 +271,7 @@ class ResidenceCheckCibiAddressTest extends TestCase
         $checkB = $folder->residenceChecks()->where('co_maker_id', $coMakerB->id)->firstOrFail();
 
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMakerA->id, 'first_name' => 'A', 'last_name' => 'Maker', 'address' => 'Address A Updated',
+            'co_maker_id' => $coMakerA->id, 'expected_revision' => $coMakerA->fresh()?->revision ?? $coMakerA->revision, 'first_name' => 'A', 'last_name' => 'Maker', 'address' => 'Address A Updated',
         ])->assertRedirect();
 
         $this->assertSame('Address A Updated', $checkA->fresh()->location);

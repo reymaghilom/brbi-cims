@@ -990,6 +990,54 @@ const clearFolderEditNoticeOnChange = (event) => {
 document.addEventListener('input', clearFolderEditNoticeOnChange);
 document.addEventListener('change', clearFolderEditNoticeOnChange);
 
+const FOLDER_UNAVAILABLE_MESSAGE = 'This Client Folder is no longer available. It may have been permanently deleted by another user.';
+const FOLDER_DELETE_FAILED_MESSAGE = 'Unable to delete this Client Folder. Please try again.';
+
+// A Client Folder page that was permanently deleted by another user redirects to Client Folders
+// with a notice (MissingClientFolderResponse). When that redirect lands inside a report dialog's
+// iframe, the folder list must not render inside the dialog: the notice is handed to the parent
+// page once, which closes its dialogs and shows it there. Same-origin only; never retried.
+(() => {
+    const marker = document.querySelector('[data-client-folder-missing]');
+    if (marker && window.parent !== window) {
+        document.querySelector('[data-toast-region]')?.replaceChildren();
+        window.parent.postMessage({ type: 'brbi:client-folder-missing', message: marker.dataset.message, returnUrl: marker.dataset.returnUrl }, window.location.origin);
+    }
+
+    let handled = false;
+    window.addEventListener('message', (event) => {
+        if (event.origin !== window.location.origin || event.data?.type !== 'brbi:client-folder-missing' || handled) return;
+        handled = true;
+        document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close());
+        const browser = document.querySelector('[data-folder-browser]');
+        if (browser) {
+            showToast(event.data.message || FOLDER_UNAVAILABLE_MESSAGE, 'error');
+            browser.dispatchEvent(new CustomEvent('folder-browser:refresh'));
+            window.setTimeout(() => { handled = false; }, 1000);
+        } else if (event.data.returnUrl) {
+            // The folder page hosting the dialog is itself stale now: say why, then go to Client Folders.
+            showToast(event.data.message || FOLDER_UNAVAILABLE_MESSAGE, 'error');
+            window.setTimeout(() => window.location.assign(event.data.returnUrl), 2500);
+        }
+    });
+})();
+// The permanent-delete dialog's own inline error region (role="alert"); null clears it.
+const setFolderDeleteError = (form, message) => {
+    const error = form?.closest('dialog')?.querySelector('[data-folder-delete-error]');
+    if (!error) return;
+    error.textContent = message ?? '';
+    error.hidden = !message;
+};
+// A refusal shown in the dialog never reappears when the dialog is opened again later.
+document.addEventListener('close', (event) => {
+    if (!(event.target instanceof HTMLDialogElement)) return;
+    const error = event.target.querySelector('[data-folder-delete-error]');
+    if (error) {
+        error.textContent = '';
+        error.hidden = true;
+    }
+}, true);
+
 document.addEventListener('submit', async (event) => {
     const form = event.target.closest('[data-folder-create-form], [data-folder-rename-form], [data-folder-delete-form]');
     if (!form) return;
@@ -1013,6 +1061,8 @@ document.addEventListener('submit', async (event) => {
         });
         form.querySelectorAll('[aria-invalid="true"]').forEach((field) => field.removeAttribute('aria-invalid'));
     }
+    const isDelete = form.matches('[data-folder-delete-form]');
+    if (isDelete) setFolderDeleteError(form, null);
     submit?.setAttribute('disabled', 'disabled');
     try {
         const response = await fetch(form.action, {
@@ -1020,7 +1070,25 @@ document.addEventListener('submit', async (event) => {
             body: new FormData(form),
             headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         });
-        const payload = await response.json();
+        // A non-JSON body (an HTML error page) must never surface parser text to the user.
+        const payload = await response.json().catch(() => ({}));
+        // The folder no longer exists (deleted elsewhere, stale page). The framework's 404 body
+        // names the model class, so it is never shown: the stale tile is removed and the listing
+        // re-fetched instead.
+        if (response.status === 404) {
+            const browser = form.closest('[data-folder-browser]');
+            form.closest('dialog')?.close();
+            browser?.querySelector(`[data-folder-shell][data-folder-id="${form.dataset.folderId}"]`)?.remove();
+            showToast(FOLDER_UNAVAILABLE_MESSAGE, 'error');
+            browser?.dispatchEvent(new CustomEvent('folder-browser:refresh'));
+            return;
+        }
+        // A refused delete (the folder now contains saved records, or another user has unsaved
+        // work) keeps the dialog open and explains why inside it — no toast.
+        if (isDelete && !response.ok) {
+            setFolderDeleteError(form, response.status === 422 && payload.message ? payload.message : FOLDER_DELETE_FAILED_MESSAGE);
+            return;
+        }
         if (response.status === 422 && form.matches('[data-folder-create-form]')) {
             let firstInvalid;
             Object.entries(payload.errors ?? {}).forEach(([fieldName, messages]) => {
@@ -1118,7 +1186,11 @@ document.addEventListener('submit', async (event) => {
             browser?.dispatchEvent(new CustomEvent('folder-browser:refresh'));
         }
     } catch (error) {
-        showToast(error.message || 'Folder action failed. Please retry.', 'error');
+        if (isDelete) {
+            setFolderDeleteError(form, FOLDER_DELETE_FAILED_MESSAGE);
+        } else {
+            showToast(error.message || 'Folder action failed. Please retry.', 'error');
+        }
     } finally {
         submit?.removeAttribute('disabled');
     }
@@ -1898,6 +1970,10 @@ document.querySelectorAll('[data-unsaved-form]').forEach((form) => {
     queueMicrotask(() => {
         if (baseline === null) baseline = snapshotForm();
     });
+
+    // Read-only view of the same comparison for the editing-presence heartbeat (dirty state). It
+    // ignores `saved`, so a save that fails and keeps the page open still counts as unsaved work.
+    form.hasUnsavedEdits = () => baseline !== null && snapshotForm() !== baseline;
 
     form.addEventListener('submit', () => { saved = true; });
     // Dispatched whenever the current form state should become the new "nothing to lose" baseline
@@ -3057,6 +3133,9 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
         event.preventDefault();
         if (saving) return;
         saving = true;
+        // Same in-flight flag the Residence/Business Check AJAX saves carry; the editing-presence
+        // heartbeat reads it as 'saving' so a folder delete can't land mid-save.
+        form.dataset.submitting = 'true';
         clearErrors();
 
         const submitter = event.submitter;
@@ -3093,6 +3172,8 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
             }
 
             updateOverview(payload);
+            // The saved values are now the server's values: no unsaved work remains on this page.
+            form.dispatchEvent(new Event('unsaved-form-reset'));
             // Inside the CI/BI dialog's iframe (the only way this form is ever loaded), the local
             // toast below would be destroyed the instant the parent closes the dialog before anyone
             // could read it — so the success message travels to the parent's own persistent toast
@@ -3116,11 +3197,87 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
             showErrors({}, 'The report could not be saved. Check your connection and try again.');
         } finally {
             saving = false;
+            delete form.dataset.submitting;
             buttons.forEach((button) => { button.disabled = false; });
         }
     });
 
 });
+
+// Editing presence for the shared Add/Edit Co-Maker dialog — the same viewing / dirty / saving
+// heartbeat every other editable record uses (see [data-editing-presence]), but started and
+// stopped per opened Co-Maker because this one dialog edits whichever Co-Maker was clicked.
+//  - viewing: the Edit dialog is open with the values it loaded (never blocks a delete);
+//  - dirty:   a name field now differs from what was loaded;
+//  - saving:  an update request is in flight.
+// Only another user's dirty/saving work on that exact Co-Maker blocks deleting it (RemoveCoMaker).
+// A refused save (validation, or another user's newer save) keeps the form dirty; closing the
+// dialog — including after a successful save — releases it. Adding a new Co-Maker has no record yet.
+(() => {
+    const form = document.querySelector('[data-co-maker-form]');
+    const dialog = form?.closest('dialog');
+    const token = form?.querySelector('input[name="_token"]')?.value;
+    if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement) || !token) return;
+
+    const fields = ['first_name', 'middle_name', 'last_name', 'suffix'];
+    const snapshot = () => JSON.stringify(fields.map((name) => form.elements.namedItem(name)?.value ?? ''));
+    let coMakerId = null;
+    let baseline = null;
+    let saving = false;
+    let lastState = null;
+    let interval = null;
+    let dirtyCheck = null;
+
+    const currentState = () => {
+        if (saving) return 'saving';
+        return snapshot() !== baseline ? 'dirty' : 'viewing';
+    };
+    const post = (url, body) => fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token },
+        body: JSON.stringify(body),
+        keepalive: true,
+    }).catch(() => {});
+    const ping = () => {
+        if (!coMakerId) return;
+        lastState = currentState();
+        post('/editing-presence/heartbeat', { type: 'co_maker', id: coMakerId, state: lastState });
+    };
+    const release = () => {
+        if (!coMakerId) return;
+        window.clearInterval(interval);
+        post('/editing-presence/release', { type: 'co_maker', id: coMakerId });
+        coMakerId = null;
+        saving = false;
+    };
+
+    form.coMakerPresence = {
+        start(id) {
+            release();
+            if (!id) return;
+            coMakerId = id;
+            baseline = snapshot();
+            ping();
+            interval = window.setInterval(ping, 30000);
+        },
+        release,
+        markSaving(isSaving) {
+            if (!coMakerId) return;
+            saving = isSaving;
+            ping();
+        },
+    };
+
+    const scheduleDirtyCheck = () => {
+        if (!coMakerId) return;
+        window.clearTimeout(dirtyCheck);
+        dirtyCheck = window.setTimeout(() => { if (currentState() !== lastState) ping(); }, 400);
+    };
+    form.addEventListener('input', scheduleDirtyCheck);
+    form.addEventListener('change', scheduleDirtyCheck);
+    dialog.addEventListener('close', release);
+    window.addEventListener('pagehide', release);
+})();
 
 document.addEventListener('click', (event) => {
     const addTrigger = event.target.closest('[data-co-maker-add-trigger]');
@@ -3131,10 +3288,17 @@ document.addEventListener('click', (event) => {
     const submit = document.querySelector('[data-co-maker-submit]');
     const title = document.getElementById('co-maker-dialog-title');
     const idField = form?.querySelector('[data-co-maker-id-field]');
+    const revisionField = form?.querySelector('[data-co-maker-revision-field]');
     if (!form) return;
 
     form.reset();
     if (idField) idField.value = '';
+    if (revisionField) revisionField.value = '';
+    // A freshly opened Add/Edit form starts clean: no leftover "not saved" alert, and saving is
+    // allowed again (a previous "already deleted" response blocked it for that stale record only).
+    setCoMakerFormError(form, null);
+    delete form.dataset.coMakerSaveBlocked;
+    submit?.removeAttribute('disabled');
     form.querySelectorAll('[data-co-maker-error-for]').forEach((error) => {
         error.textContent = '';
         error.hidden = true;
@@ -3145,15 +3309,19 @@ document.addEventListener('click', (event) => {
         // Every edit trigger (header quick-edit, or a specific co-maker's tab menu) carries its
         // own record's data directly, so the form always loads the exact co-maker that was
         // clicked — never whichever one happens to be shown elsewhere on the page.
-        const { coMakerId, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix } = editTrigger.dataset;
+        const { coMakerId, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix, coMakerRevision } = editTrigger.dataset;
         if (idField) idField.value = coMakerId ?? '';
+        if (revisionField) revisionField.value = coMakerRevision ?? '';
         form.elements.namedItem('first_name').value = coMakerFirstName ?? '';
         form.elements.namedItem('middle_name').value = coMakerMiddleName ?? '';
         form.elements.namedItem('last_name').value = coMakerLastName ?? '';
         form.elements.namedItem('suffix').value = coMakerSuffix ?? '';
         if (title) title.textContent = 'Edit Co-Maker';
-    } else if (title) {
-        title.textContent = 'Add Co-Maker';
+        // Presence starts only once the loaded values are in place, so opening is never "dirty".
+        form.coMakerPresence?.start(coMakerId);
+    } else {
+        if (title) title.textContent = 'Add Co-Maker';
+        form.coMakerPresence?.release();
     }
 
     // Only the label element is rewritten. Writing the whole button's textContent (as this did)
@@ -3168,7 +3336,10 @@ document.addEventListener('submit', async (event) => {
     const form = event.target.closest('[data-co-maker-form]');
     if (!form) return;
     event.preventDefault();
+    // The Co-Maker this form was editing is gone: never send it again (Enter key included).
+    if (form.dataset.coMakerSaveBlocked === 'true') return;
 
+    setCoMakerFormError(form, null);
     form.querySelectorAll('[data-co-maker-error-for]').forEach((error) => {
         error.textContent = '';
         error.hidden = true;
@@ -3177,6 +3348,7 @@ document.addEventListener('submit', async (event) => {
 
     const submit = document.querySelector('[data-co-maker-submit]');
     submit?.setAttribute('disabled', 'disabled');
+    form.coMakerPresence?.markSaving(true);
 
     try {
         // The current page's own ?person=co-maker&co_maker_id=... travels with the request so the
@@ -3190,7 +3362,40 @@ document.addEventListener('submit', async (event) => {
             body: new FormData(form),
             headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         });
-        const payload = await response.json();
+        // A non-JSON body (an HTML error page) must never surface parser or exception text.
+        const payload = await response.json().catch(() => ({}));
+
+        if (response.status === 404 && (payload.co_maker_missing || payload.folder_missing)) {
+            // Deleted by another user while this form was open: nothing was saved. The dialog stays
+            // open with the reason inside it, and this form can no longer be sent — the record is
+            // never recreated or redirected to anyone else. Close/Cancel leaves it; reopening the
+            // dialog for a Co-Maker that still exists starts fresh.
+            setCoMakerFormError(form, payload.message || CO_MAKER_DELETED_SAVE_MESSAGE);
+            form.dataset.coMakerSaveBlocked = 'true';
+            form.coMakerPresence?.release();
+            return;
+        }
+
+        if (response.status === 409 && payload.result === 'conflict') {
+            // Another user saved this Co-Maker after the form was opened: nothing was saved. The
+            // dialog stays open with the typed values and the reason inside it. The opened revision
+            // is deliberately left as it is (never refreshed and resubmitted) — the user reloads.
+            setCoMakerFormError(form, payload.message || CO_MAKER_CONFLICT_SAVE_MESSAGE);
+            return;
+        }
+
+        if (response.status === 409 && payload.duplicate_warning) {
+            // Advisory only — nothing was saved. The Add/Edit dialog stays open underneath with the
+            // user's values; the advisory offers Cancel / Continue Anyway.
+            const duplicateDialog = document.getElementById('co-maker-duplicate-dialog');
+            if (duplicateDialog instanceof HTMLDialogElement) {
+                const message = duplicateDialog.querySelector('[data-co-maker-duplicate-message]');
+                if (message && payload.message) message.textContent = payload.message;
+                duplicateDialog.showModal();
+                duplicateDialog.querySelector('[data-modal-close]')?.focus();
+            }
+            return;
+        }
 
         if (response.status === 422) {
             let firstInvalid;
@@ -3228,11 +3433,53 @@ document.addEventListener('submit', async (event) => {
 
         showToast(payload.message, 'success', 3000);
     } catch (error) {
-        showToast(error.message || 'Co-Maker could not be saved. Please retry.', 'error', 3000);
+        showToast(error.message || 'Co-Maker could not be saved. Please retry.', 'error', 3500);
     } finally {
-        submit?.removeAttribute('disabled');
+        // Update stays disabled once the record is known to be deleted; otherwise it is usable again.
+        if (form.dataset.coMakerSaveBlocked !== 'true') submit?.removeAttribute('disabled');
+        // Saving is over whatever the outcome. After a success the dialog has already closed and
+        // released presence; after a refusal (conflict, validation) the form reports dirty again
+        // while the user's edits remain — it is never marked as safely synchronized.
+        form.coMakerPresence?.markSaving(false);
     }
 });
+
+const CO_MAKER_DELETED_SAVE_MESSAGE = 'Your changes were not saved because this Co-Maker has already been deleted.';
+const CO_MAKER_CONFLICT_SAVE_MESSAGE = 'Your changes were not saved because this Co-Maker was updated by another user. Please reload the latest information before trying again.';
+// The Add/Edit Co-Maker form's own "not saved" alert (role="alert"); null clears and hides it.
+function setCoMakerFormError(form, message) {
+    const error = form?.querySelector('[data-co-maker-form-error]');
+    if (!error) return;
+    error.textContent = message ?? '';
+    error.hidden = !message;
+}
+
+// Continue Anyway on the duplicate-name advisory: resubmit the same Add/Edit form once with
+// duplicate_confirmed=1 (so every typed value and the opened revision go through unchanged), then
+// clear the flag so a later, unrelated save never silently carries it. The server still enforces
+// validation, ownership and the stale-revision check — only the name advisory is waived.
+document.addEventListener('click', (event) => {
+    const continueButton = event.target.closest('[data-co-maker-duplicate-continue]');
+    if (!continueButton) return;
+
+    const form = document.querySelector('[data-co-maker-form]');
+    const confirmed = form?.querySelector('[data-co-maker-duplicate-confirmed]');
+    if (!(form instanceof HTMLFormElement) || !(confirmed instanceof HTMLInputElement)) return;
+
+    continueButton.closest('dialog')?.close();
+    confirmed.value = '1';
+    form.requestSubmit();
+    confirmed.value = '';
+});
+
+const CO_MAKER_DELETE_FAILED_MESSAGE = 'Unable to delete this Co-Maker. Please try again.';
+// The Co-Maker delete dialog's own inline error region (role="alert"); null clears it.
+function setCoMakerDeleteError(dialog, message) {
+    const error = dialog?.querySelector('[data-co-maker-delete-error]');
+    if (!error) return;
+    error.textContent = message ?? '';
+    error.hidden = !message;
+}
 
 document.addEventListener('click', (event) => {
     const removeTrigger = event.target.closest('[data-co-maker-remove-trigger]');
@@ -3252,6 +3499,24 @@ document.addEventListener('click', (event) => {
     removeForm.dataset.coMakerRemoveId = coMakerId;
     removeDialog.querySelector('[data-co-maker-remove-name]').textContent = coMakerFullName || 'this co-maker';
 
+    // Which state this exact Co-Maker's dialog shows. Informational only — RemoveCoMaker re-checks.
+    //  - still empty: the normal confirmation (every role);
+    //  - saved records + Senior CI / Administrator: the destructive confirmation;
+    //  - saved records + Credit Investigator: "Cannot Delete Co-Maker", Close only.
+    const hasSavedRecords = removeTrigger.dataset.coMakerHasSavedRecords === '1';
+    const unavailable = hasSavedRecords && removeDialog.dataset.coMakerDeleteSavedAllowed !== '1';
+    const title = removeDialog.querySelector(`#${removeDialog.id}-title`);
+    if (title) title.textContent = unavailable ? 'Cannot Delete Co-Maker' : 'Delete Co-Maker?';
+    removeDialog.querySelector('[data-co-maker-delete-confirm]')?.toggleAttribute('hidden', unavailable);
+    removeDialog.querySelector('[data-co-maker-delete-unavailable]')?.toggleAttribute('hidden', !unavailable);
+    removeDialog.querySelector('[data-co-maker-delete-empty-warning]')?.toggleAttribute('hidden', hasSavedRecords);
+    removeDialog.querySelector('[data-co-maker-delete-data-warning]')?.toggleAttribute('hidden', !hasSavedRecords || unavailable);
+    removeDialog.querySelector('[data-co-maker-delete-actions]')?.toggleAttribute('hidden', unavailable);
+    removeDialog.querySelector('[data-co-maker-delete-close]')?.toggleAttribute('hidden', !unavailable);
+    const submitButton = removeDialog.querySelector('[data-co-maker-remove-submit]');
+    if (submitButton instanceof HTMLButtonElement) submitButton.disabled = unavailable;
+    setCoMakerDeleteError(removeDialog, null);
+
     removeTrigger.closest('dialog')?.close();
     removeDialog.showModal();
     removeDialog.querySelector('[data-modal-close], [autofocus]')?.focus();
@@ -3263,6 +3528,8 @@ document.addEventListener('submit', async (event) => {
     event.preventDefault();
 
     const submit = document.querySelector('[data-co-maker-remove-submit]');
+    const dialog = form.closest('dialog');
+    setCoMakerDeleteError(dialog, null);
     submit?.setAttribute('disabled', 'disabled');
 
     // Removing the currently active co-maker leaves nothing valid for the URL's ?co_maker_id to
@@ -3280,10 +3547,25 @@ document.addEventListener('submit', async (event) => {
             body: new FormData(form),
             headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.message || 'Co-Maker could not be removed.');
+        // A non-JSON body (an HTML error page) must never surface parser or exception text.
+        const payload = await response.json().catch(() => ({}));
+        if (response.status === 404 && (payload.co_maker_missing || payload.folder_missing)) {
+            // Already gone (another user removed it, or the whole folder): say so once and leave
+            // the stale view — the server's friendly message, never a retry.
+            dialog?.close();
+            showToast(payload.message, 'error', 3500);
+            const destination = payload.folder_missing ? '/client-folders' : window.location.pathname;
+            window.setTimeout(() => window.location.assign(destination), 1500);
+            return;
+        }
+        if (!response.ok) {
+            // Refused (saved investigation records, another user's unsaved work) or failed: explain
+            // it inside the dialog, which stays open. No toast for the same failure.
+            setCoMakerDeleteError(dialog, response.status === 422 && payload.message ? payload.message : CO_MAKER_DELETE_FAILED_MESSAGE);
+            return;
+        }
 
-        form.closest('dialog')?.close();
+        dialog?.close();
         showToast(payload.message, 'success', 3000);
 
         if (removingActivePerson) {
@@ -3301,8 +3583,8 @@ document.addEventListener('submit', async (event) => {
         if (personSwitchRegion && typeof payload.person_switch_html === 'string') personSwitchRegion.innerHTML = payload.person_switch_html;
         const recentActivityBody = document.querySelector('[data-recent-activity-body]');
         if (recentActivityBody && typeof payload.recent_activity_html === 'string') recentActivityBody.innerHTML = payload.recent_activity_html;
-    } catch (error) {
-        showToast(error.message || 'Co-Maker could not be removed. Please retry.', 'error', 3000);
+    } catch {
+        setCoMakerDeleteError(dialog, CO_MAKER_DELETE_FAILED_MESSAGE);
     } finally {
         submit?.removeAttribute('disabled');
     }
@@ -3352,10 +3634,11 @@ function openCoMakerActionMenu(trigger) {
     // re-stamps them with the clicked trigger's own record data — never a stale or mixed one.
     const editBtn = menu.querySelector('[data-co-maker-edit-trigger]');
     const removeBtn = menu.querySelector('[data-co-maker-remove-trigger]');
-    const { coMakerId, coMakerFullName, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix, coMakerAddress, coMakerDestroyBaseUrl } = trigger.dataset;
+    const { coMakerId, coMakerFullName, coMakerFirstName, coMakerMiddleName, coMakerLastName, coMakerSuffix, coMakerAddress, coMakerDestroyBaseUrl, coMakerHasSavedRecords, coMakerRevision } = trigger.dataset;
 
     if (editBtn instanceof HTMLElement) {
         editBtn.dataset.coMakerId = coMakerId ?? '';
+        editBtn.dataset.coMakerRevision = coMakerRevision ?? '';
         editBtn.dataset.coMakerFirstName = coMakerFirstName ?? '';
         editBtn.dataset.coMakerMiddleName = coMakerMiddleName ?? '';
         editBtn.dataset.coMakerLastName = coMakerLastName ?? '';
@@ -3366,6 +3649,7 @@ function openCoMakerActionMenu(trigger) {
         removeBtn.dataset.coMakerId = coMakerId ?? '';
         removeBtn.dataset.coMakerFullName = coMakerFullName ?? '';
         removeBtn.dataset.coMakerDestroyBaseUrl = coMakerDestroyBaseUrl ?? '';
+        removeBtn.dataset.coMakerHasSavedRecords = coMakerHasSavedRecords ?? '0';
     }
 
     coMakerMenuTrigger?.setAttribute('aria-expanded', 'false');
@@ -4838,12 +5122,35 @@ document.querySelectorAll('[data-editing-presence]').forEach((node) => {
         }
     };
 
+    // Work state reported with every heartbeat. Only another user's live 'dirty' or 'saving' state
+    // blocks a permanent Client Folder delete (server-side, see PurgeClientFolder); 'viewing' —
+    // including an open but unchanged form — never does.
+    //  - dirty: the page's own [data-unsaved-form] comparison (so rendering, initialization and
+    //    hidden tokens never count), or a server-rendered validation/stale error, which means a
+    //    save just failed with the CI's input still on the page.
+    //  - saving: from an accepted submit until the page unloads (native save), the form's own
+    //    data-submitting flag clears (AJAX save that stays open), or the form is reset.
+    const form = node.closest('[data-unsaved-form]') ?? document.querySelector('[data-unsaved-form]');
+    let failedSave = form instanceof HTMLFormElement && (
+        [...document.querySelectorAll('[aria-invalid="true"]')].some((field) => field.form === form || form.contains(field))
+        || document.querySelector('[data-business-report-stale-error]') !== null
+    );
+    let saving = false;
+    let lastSentState = null;
+    const currentState = () => {
+        if (saving) return 'saving';
+        if (failedSave || form?.hasUnsavedEdits?.()) return 'dirty';
+        return 'viewing';
+    };
+
     const ping = async () => {
+        const state = currentState();
+        lastSentState = state;
         try {
             const response = await fetch('/editing-presence/heartbeat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token },
-                body: JSON.stringify({ type, id }),
+                body: JSON.stringify({ type, id, state }),
             });
             if (!response.ok) return;
             renderPresence((await response.json()).other_editors);
@@ -4851,14 +5158,50 @@ document.querySelectorAll('[data-editing-presence]').forEach((node) => {
             // Best-effort presence signal — a failed heartbeat should never block editing.
         }
     };
+    const pingIfStateChanged = () => {
+        if (currentState() !== lastSentState) ping();
+    };
 
     ping();
-    const interval = window.setInterval(ping, 30000);
+    window.setInterval(ping, 30000);
 
-    window.addEventListener('beforeunload', () => {
-        window.clearInterval(interval);
+    if (form instanceof HTMLFormElement) {
+        let dirtyCheckTimeout;
+        const scheduleDirtyCheck = () => {
+            window.clearTimeout(dirtyCheckTimeout);
+            dirtyCheckTimeout = window.setTimeout(pingIfStateChanged, 400);
+        };
+        document.addEventListener('input', scheduleDirtyCheck);
+        document.addEventListener('change', scheduleDirtyCheck);
+
+        // Window listener: runs after the form's own handlers. A navigating submit, or an AJAX save
+        // the page flagged as in flight, is saving; a submit cancelled for any other reason is not.
+        window.addEventListener('submit', (event) => {
+            if (event.target !== form || (event.defaultPrevented && form.dataset.submitting !== 'true')) return;
+            saving = true;
+            ping();
+        });
+        new MutationObserver(() => {
+            if (!saving || form.dataset.submitting === 'true') return;
+            saving = false;
+            ping();
+        }).observe(form, { attributes: true, attributeFilter: ['data-submitting'] });
+        form.addEventListener('unsaved-form-reset', () => {
+            saving = false;
+            failedSave = false;
+            ping();
+        });
+    }
+
+    // pagehide (not beforeunload) so the release happens only when the page really goes away: a
+    // cancelled "leave site?" prompt keeps dirty work registered, and a native save stays 'saving'
+    // until its response replaces the page. A page restored from the back/forward cache pings again.
+    window.addEventListener('pagehide', () => {
         navigator.sendBeacon?.('/editing-presence/release', new Blob([JSON.stringify({ type, id, _token: token })], { type: 'application/json' }));
-    }, { once: true });
+    });
+    window.addEventListener('pageshow', (event) => {
+        if (event.persisted) ping();
+    });
 });
 
 // Header "Scheduled Today" bell: auto-update, not auto-refresh. Polls a small authenticated
@@ -5078,6 +5421,52 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
         form.requestSubmit();
         allow.value = '';
     });
+});
+
+// Opt-in single-flight guard for ordinary full-page POST forms marked [data-submit-guard] (the
+// full-page Create Client Folder form and the Business Report edit form). Only the first accepted
+// submit navigates; later clicks, Enter presses or requestSubmit() calls while that request is in
+// flight are cancelled, so a slow network can't create a second folder or replay an old
+// expected_revision into a false "updated by another CI" warning. Nothing about the submitted
+// data changes.
+//  - Listens on window, after every document-level submit handler, so a submit another handler
+//    cancelled (or the browser's own constraint validation, which never fires 'submit') never
+//    locks the form.
+//  - Buttons are disabled on the next task, after the browser has built the entry list, so the
+//    clicked submitter's own name/value (e.g. intent=complete) is still sent.
+//  - form.elements includes buttons associated through a form="" attribute, so the Business
+//    Report toolbar Save button outside the <form> is covered too.
+//  - A validation/stale redirect is a fresh page load, which resets everything; 'pageshow' also
+//    resets a page restored from the back/forward cache after a failed navigation.
+const submitGuardButtons = (form) => [...form.elements]
+    .filter((element) => element instanceof HTMLButtonElement && element.type === 'submit');
+const resetSubmitGuard = (form) => {
+    delete form.dataset.submitting;
+    submitGuardButtons(form).forEach((button) => {
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+    });
+};
+window.addEventListener('submit', (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || !form.matches('[data-submit-guard]')) return;
+    if (form.dataset.submitting === 'true') {
+        event.preventDefault();
+        return;
+    }
+    if (event.defaultPrevented) return;
+
+    form.dataset.submitting = 'true';
+    window.setTimeout(() => {
+        if (form.dataset.submitting !== 'true') return;
+        submitGuardButtons(form).forEach((button) => {
+            button.disabled = true;
+            button.setAttribute('aria-busy', 'true');
+        });
+    }, 0);
+});
+window.addEventListener('pageshow', (event) => {
+    if (event.persisted) document.querySelectorAll('form[data-submit-guard]').forEach(resetSubmitGuard);
 });
 
 // A form marked [data-no-change-guard] refuses to submit while every editable control still

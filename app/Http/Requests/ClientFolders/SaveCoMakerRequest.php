@@ -20,6 +20,11 @@ class SaveCoMakerRequest extends FormRequest
                 'integer',
                 Rule::exists('co_makers', 'id')->where('client_folder_id', $this->route('clientFolder')->id),
             ],
+            // Editing an existing Co-Maker must carry the revision the form was opened with; adding a
+            // new one has no revision yet.
+            'expected_revision' => ['required_with:co_maker_id', 'nullable', 'integer', 'min:1'],
+            // Continue Anyway on the duplicate-name advisory. Waives that advisory only.
+            'duplicate_confirmed' => ['nullable', 'boolean'],
             'last_name' => ['required', 'string', 'max:255'],
             'first_name' => ['required', 'string', 'max:255'],
             'middle_name' => ['nullable', 'string', 'max:255'],

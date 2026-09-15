@@ -173,7 +173,7 @@ class RecentActivityAccountabilityTest extends TestCase
         $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Juan Dela Cruz', 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'address' => 'Co-Maker Address']);
 
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz Jr.', 'address' => 'Co-Maker Address',
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz Jr.', 'address' => 'Co-Maker Address',
         ])->assertRedirect();
 
         $this->assertDatabaseHas('audit_logs', ['client_folder_id' => $folder->id, 'action' => 'co_maker.updated', 'user_id' => $ci->id]);

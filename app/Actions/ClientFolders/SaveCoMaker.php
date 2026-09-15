@@ -2,6 +2,8 @@
 
 namespace App\Actions\ClientFolders;
 
+use App\Exceptions\CoMakerConflictException;
+use App\Exceptions\CoMakerDuplicateNameException;
 use App\Exceptions\NoChangesDetectedException;
 use App\Models\AuditLog;
 use App\Models\ClientFolder;
@@ -16,7 +18,7 @@ class SaveCoMaker
         private readonly ClientProgressService $progress,
     ) {}
 
-    /** @param  array{co_maker_id: ?int, first_name: string, middle_name: ?string, last_name: string, suffix: ?string, address?: ?string}  $data */
+    /** @param  array{co_maker_id: ?int, expected_revision?: ?int, first_name: string, middle_name: ?string, last_name: string, suffix: ?string, address?: ?string}  $data */
     public function execute(User $actor, ClientFolder $folder, array $data): CoMaker
     {
         return DB::transaction(function () use ($actor, $folder, $data): CoMaker {
@@ -51,13 +53,26 @@ class SaveCoMaker
             // SaveCoMakerRequest's validation) — never a new record, so this can never duplicate
             // an existing co-maker no matter how many the folder already has.
             if ($coMakerId !== null) {
-                $coMaker = $folder->coMakers()->findOrFail($coMakerId);
+                // Optimistic concurrency, same convention as Residence/Business Checks: lock and
+                // re-read the exact Co-Maker (this folder only), then compare the revision the form
+                // was opened with. A stale save is refused before anything is written, so it can
+                // never overwrite another user's newer save. A Co-Maker deleted meanwhile answers
+                // as missing (MissingCoMakerResponse) and is never recreated.
+                $coMaker = $folder->coMakers()->whereKey($coMakerId)->lockForUpdate()->firstOrFail();
+                if ((int) ($data['expected_revision'] ?? 0) !== (int) $coMaker->revision) {
+                    throw new CoMakerConflictException;
+                }
                 $coMaker->fill($fields);
                 if (! $coMaker->isDirty(['first_name', 'middle_name', 'last_name', 'suffix', 'full_name', 'address'])) {
                     throw new NoChangesDetectedException;
                 }
+                // Only after the revision check: a stale form is refused as stale, and confirming
+                // the duplicate advisory can never get past it.
+                $this->assertNoUnconfirmedDuplicateName($folder, $data, $coMaker->id);
+                $coMaker->revision = (int) $coMaker->revision + 1;
                 $coMaker->save();
             } else {
+                $this->assertNoUnconfirmedDuplicateName($folder, $data, null);
                 $coMaker = $folder->coMakers()->create($fields);
                 // No CI Activities are seeded for a new Co-Maker. Their Barangay Check and
                 // Neighbor Check are added manually through CI Activities -> Add Activity under
@@ -79,5 +94,37 @@ class SaveCoMaker
 
             return $coMaker;
         });
+    }
+
+    /**
+     * Duplicate-name ADVISORY (never a block, never a merge): another Co-Maker in this same Client
+     * Folder — excluding the Co-Maker being edited — already has the same first and last name,
+     * compared ignoring case and extra spaces. Middle name, suffix and address are not compared.
+     * duplicate_confirmed (Continue Anyway) skips only this advisory.
+     */
+    private function assertNoUnconfirmedDuplicateName(ClientFolder $folder, array $data, ?int $exceptCoMakerId): void
+    {
+        if (filter_var($data['duplicate_confirmed'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            return;
+        }
+
+        $first = self::normalizedName($data['first_name'] ?? '');
+        $last = self::normalizedName($data['last_name'] ?? '');
+
+        $exists = CoMaker::query()
+            ->where('client_folder_id', $folder->id)
+            ->when($exceptCoMakerId !== null, fn ($query) => $query->whereKeyNot($exceptCoMakerId))
+            ->get(['id', 'first_name', 'last_name'])
+            ->contains(fn (CoMaker $other): bool => self::normalizedName((string) $other->first_name) === $first
+                && self::normalizedName((string) $other->last_name) === $last);
+
+        if ($exists) {
+            throw new CoMakerDuplicateNameException;
+        }
+    }
+
+    private static function normalizedName(string $value): string
+    {
+        return mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', $value)));
     }
 }

@@ -8,7 +8,7 @@
         <x-slot:description>Enter the minimum client identity details. The stable folder number will be generated securely after submission.</x-slot:description>
     </x-ui.page-header>
 
-    <form method="POST" action="{{ route('client-folders.store') }}" class="max-w-4xl">
+    <form method="POST" action="{{ route('client-folders.store') }}" class="max-w-4xl" data-submit-guard>
         @csrf
         <x-ui.form-section title="Client identity" description="Names are normalized for the official filing-cabinet display.">
             <div>

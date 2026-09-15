@@ -12,6 +12,14 @@ class CoMaker extends Model
 
     protected $guarded = [];
 
+    /** Mirrors the column default so a just-created Co-Maker reports its first revision. */
+    protected $attributes = ['revision' => 1];
+
+    protected function casts(): array
+    {
+        return ['revision' => 'integer'];
+    }
+
     public function clientFolder(): BelongsTo
     {
         return $this->belongsTo(ClientFolder::class);

@@ -54,7 +54,7 @@ class CoMakerMiddleNameTest extends TestCase
 
         // blank -> full middle name
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'suffix' => 'Jr.',
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'suffix' => 'Jr.',
             'middle_name' => 'Santos', 'address' => 'Fixed Address',
         ])->assertRedirect();
         $coMaker->refresh();
@@ -64,7 +64,7 @@ class CoMakerMiddleNameTest extends TestCase
 
         // full middle name -> initial
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'suffix' => 'Jr.',
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'suffix' => 'Jr.',
             'middle_name' => 'S.', 'address' => 'Fixed Address',
         ])->assertRedirect();
         $coMaker->refresh();
@@ -74,7 +74,7 @@ class CoMakerMiddleNameTest extends TestCase
 
         // initial -> blank again
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'suffix' => 'Jr.',
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'suffix' => 'Jr.',
             'middle_name' => '', 'address' => 'Fixed Address',
         ])->assertRedirect();
         $coMaker->refresh();

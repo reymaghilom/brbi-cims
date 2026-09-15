@@ -3,6 +3,10 @@
         ? route('client-folders.show', $clientFolder).'?person=co-maker&co_maker_id='.$coMaker->id
         : route('client-folders.show', $clientFolder);
     $viewingLabel = $activeCoMaker ? 'Co-Maker — '.mb_strtoupper($activeCoMaker->full_name) : 'Applicant';
+    // Informational only (which delete dialog a Co-Maker's Remove opens); RemoveCoMaker re-checks.
+    $coMakerIdsWithSavedRecords = ($canManageCoMakers ?? false) && $coMakers->isNotEmpty()
+        ? app(App\Services\ClientFolders\CoMakerSavedRecords::class)->idsWithSavedRecords($clientFolder)
+        : collect();
 @endphp
 @if($coMakers->isNotEmpty())
 <section class="ui-panel p-3.5 sm:p-4" aria-labelledby="person-switch-title">
@@ -49,6 +53,8 @@
                                 data-co-maker-suffix="{{ $coMaker->suffix }}"
                                 data-co-maker-address="{{ $coMaker->address }}"
                                 data-co-maker-destroy-base-url="{{ route('client-folders.co-maker.store', $clientFolder) }}"
+                                data-co-maker-revision="{{ $coMaker->revision }}"
+                                data-co-maker-has-saved-records="{{ $coMakerIdsWithSavedRecords->contains($coMaker->id) ? '1' : '0' }}"
                             ><x-ui.icon name="more" size="size-4 rotate-90" /></button>
                         @endif
                     </div>

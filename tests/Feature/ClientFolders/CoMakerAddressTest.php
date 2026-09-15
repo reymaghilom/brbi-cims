@@ -56,16 +56,17 @@ class CoMakerAddressTest extends TestCase
         $this->assertStringContainsString('data-co-maker-submit-label', $submit);
         $this->assertStringContainsString('<span data-co-maker-submit-label>Save Co-Maker</span>', $submit);
 
-        // Remove confirmation: Cancel and the destructive action both carry an icon.
+        // Delete confirmation: Cancel and the destructive action both carry an icon (hidden only on
+        // phones, where the two buttons share equal-width columns).
         $removeDialog = substr($content, strpos($content, 'id="co-maker-remove-dialog"'));
         $removeDialog = substr($removeDialog, 0, strpos($removeDialog, '</dialog>'));
 
-        $removeSubmit = $this->tagFor($removeDialog, 'class="ui-button-danger"', '</button>');
-        $this->assertStringContainsString('<svg', $removeSubmit, 'Remove Co-Maker must show an icon.');
-        $this->assertStringContainsString('Remove Co-Maker', $removeSubmit);
+        $removeSubmit = $this->tagFor($removeDialog, 'class="ui-button-danger', '</button>');
+        $this->assertStringContainsString('<svg', $removeSubmit, 'Delete must show an icon.');
+        $this->assertMatchesRegularExpression('/\sDelete\s*<\/button>$/', $removeSubmit.'</button>');
         $this->assertStringContainsString('data-co-maker-remove-submit', $removeSubmit, 'The destructive action keeps its hook.');
 
-        $cancel = substr($removeDialog, strpos($removeDialog, 'data-modal-close class="ui-button-secondary"'), 600);
+        $cancel = substr($removeDialog, strpos($removeDialog, 'data-modal-close class="ui-button-secondary'), 600);
         $this->assertStringContainsString('<svg', $cancel, 'Remove Co-Maker Cancel must show an icon.');
         $this->assertStringContainsString('Cancel', $cancel);
 
@@ -126,7 +127,7 @@ class CoMakerAddressTest extends TestCase
 
         // Editing the name the way the modal now posts it leaves the address exactly as it was.
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id, 'first_name' => 'Juan', 'middle_name' => '', 'last_name' => 'Dela Cruz Jr.', 'suffix' => '',
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision, 'first_name' => 'Juan', 'middle_name' => '', 'last_name' => 'Dela Cruz Jr.', 'suffix' => '',
         ])->assertSessionHasNoErrors();
 
         $this->assertSame('Dela Cruz Jr.', $coMaker->fresh()->last_name);
@@ -140,7 +141,7 @@ class CoMakerAddressTest extends TestCase
         $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Juan Dela Cruz', 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'address' => 'Old Address']);
 
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'address' => 'New Corrected Address',
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'address' => 'New Corrected Address',
         ])->assertRedirect();
 
         $this->assertSame('New Corrected Address', $coMaker->fresh()->address);
@@ -153,7 +154,7 @@ class CoMakerAddressTest extends TestCase
         $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Juan Dela Cruz', 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'address' => 'Keep This Address']);
 
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz Jr.', 'address' => 'Keep This Address',
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz Jr.', 'address' => 'Keep This Address',
         ])->assertRedirect();
 
         $this->assertSame('Dela Cruz Jr.', $coMaker->fresh()->last_name);
@@ -179,14 +180,14 @@ class CoMakerAddressTest extends TestCase
 
         // Adding the address later, through the same modal in edit mode.
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $created->id, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz',
+            'co_maker_id' => $created->id, 'expected_revision' => $created->fresh()?->revision ?? $created->revision, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz',
             'address' => 'Purok 5, Bulua, Cagayan de Oro City',
         ])->assertSessionHasNoErrors();
         $this->assertSame('Purok 5, Bulua, Cagayan de Oro City', $created->fresh()->address);
 
         // A later name-only edit that never sends the field keeps that address.
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $created->id, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz Jr.',
+            'co_maker_id' => $created->id, 'expected_revision' => $created->fresh()?->revision ?? $created->revision, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz Jr.',
         ])->assertSessionHasNoErrors();
         $this->assertSame('Dela Cruz Jr.', $created->fresh()->last_name);
         $this->assertSame('Purok 5, Bulua, Cagayan de Oro City', $created->fresh()->address);
@@ -282,7 +283,7 @@ class CoMakerAddressTest extends TestCase
         $this->assertSame('Verified Residence Location', $check->location);
 
         $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id,
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision,
             'first_name' => 'Juan',
             'last_name' => 'Dela Cruz',
             'address' => 'Later Master Address',

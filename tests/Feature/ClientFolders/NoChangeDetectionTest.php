@@ -36,7 +36,7 @@ class NoChangeDetectionTest extends TestCase
         $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'first_name' => 'Pedro', 'middle_name' => null, 'last_name' => 'Dela Cruz', 'full_name' => 'Pedro Dela Cruz', 'address' => 'Existing Address']);
 
         $this->actingAs($ci)->postJson(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id, 'first_name' => 'Pedro', 'middle_name' => 'Santos', 'last_name' => 'Dela Cruz', 'address' => 'Existing Address',
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision, 'first_name' => 'Pedro', 'middle_name' => 'Santos', 'last_name' => 'Dela Cruz', 'address' => 'Existing Address',
         ])->assertOk()->assertJsonMissing(['no_change' => true]);
 
         $this->assertDatabaseHas('audit_logs', ['client_folder_id' => $folder->id, 'action' => 'co_maker.updated']);
@@ -53,7 +53,7 @@ class NoChangeDetectionTest extends TestCase
         $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'first_name' => 'Pedro', 'middle_name' => null, 'last_name' => 'Dela Cruz', 'full_name' => 'Pedro Dela Cruz', 'address' => 'Existing Address']);
 
         $response = $this->actingAs($ci)->postJson(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id, 'first_name' => 'Pedro', 'middle_name' => null, 'last_name' => 'Dela Cruz', 'address' => 'Existing Address',
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision, 'first_name' => 'Pedro', 'middle_name' => null, 'last_name' => 'Dela Cruz', 'address' => 'Existing Address',
         ])->assertOk();
 
         $this->assertTrue($response->json('no_change'));

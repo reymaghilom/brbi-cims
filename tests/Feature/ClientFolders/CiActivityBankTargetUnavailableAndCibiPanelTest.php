@@ -205,10 +205,12 @@ class CiActivityBankTargetUnavailableAndCibiPanelTest extends TestCase
     {
         $ci = User::factory()->create();
 
-        // A missing ClientFolder is not a Bank / Coop target: it must not borrow this wording.
-        $response = $this->actingAs($ci)
+        // A missing ClientFolder is not a Bank / Coop target: it must not borrow this wording. It has
+        // its own folder-specific handling (back to Client Folders with a friendly notice).
+        $this->actingAs($ci)
             ->get(route('client-folders.activities.index', 999999))
-            ->assertNotFound();
+            ->assertRedirect(route('client-folders.index'));
+        $response = $this->actingAs($ci)->followingRedirects()->get(route('client-folders.activities.index', 999999))->assertOk();
 
         $this->assertStringNotContainsString(self::UNAVAILABLE, $response->getContent());
         $this->assertStringNotContainsString('data-bank-target-unavailable', $response->getContent());

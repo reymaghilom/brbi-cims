@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Services\ClientFolders\ClientFolderEditingPresence;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -17,6 +18,7 @@ class EditingPresenceRequest extends FormRequest
         return [
             'type' => ['required', Rule::in(array_keys(config('cims.editing_presence_types', [])))],
             'id' => ['required', 'integer'],
+            'state' => ['nullable', Rule::in(ClientFolderEditingPresence::STATES)],
         ];
     }
 }

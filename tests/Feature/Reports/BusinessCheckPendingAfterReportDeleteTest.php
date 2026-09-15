@@ -191,8 +191,12 @@ class BusinessCheckPendingAfterReportDeleteTest extends TestCase
         $json = $this->actingAs($ci)->getJson($previewUrl)->assertNotFound()->assertJson(['message' => self::STALE_LINK]);
         $this->assertNoLeak($json->getContent(), $business);
 
-        // Other missing models and routes keep Laravel's own handling (scope is not global).
-        $this->actingAs($ci)->get(route('client-folders.show', 999999))->assertNotFound()->assertDontSee(self::STALE_LINK);
+        // Other missing models and routes do not borrow this wording (scope is not global). A missing
+        // Client Folder has its own handling: back to Client Folders with a folder-specific notice.
+        $this->actingAs($ci)->get(route('client-folders.show', 999999))
+            ->assertRedirect(route('client-folders.index'))
+            ->assertSessionMissing('errors');
+        $this->actingAs($ci)->followingRedirects()->get(route('client-folders.show', 999999))->assertDontSee(self::STALE_LINK);
     }
 
     private function assertNoLeak(string $body, IncomeSource $source): void

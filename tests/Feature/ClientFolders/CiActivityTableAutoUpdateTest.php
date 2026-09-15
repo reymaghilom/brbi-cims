@@ -8,6 +8,7 @@ use App\Models\AuditLog;
 use App\Models\CiActivity;
 use App\Models\CiActivityBankTarget;
 use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use App\Models\User;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -211,6 +212,59 @@ class CiActivityTableAutoUpdateTest extends TestCase
         $response->assertOk();
         $this->assertDatabaseHas('ci_activities', ['id' => $applicant->id, 'co_maker_id' => null]);
         $this->assertNotNull($applicant->fresh()->submitted_at);
+    }
+
+    public function test_co_maker_json_submission_returns_ok_scoped_to_the_exact_co_maker_and_folder(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Co-Maker A']);
+        $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Co-Maker B']);
+        $activityA = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['status' => ActivityStatus::Completed, 'co_maker_id' => $coMakerA->id]);
+        $activityB = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['status' => ActivityStatus::Completed, 'co_maker_id' => $coMakerB->id]);
+        $otherFolder = $this->folderFor($ci);
+        $otherCoMaker = CoMaker::create(['client_folder_id' => $otherFolder->id, 'full_name' => 'Other Folder Co-Maker']);
+
+        $response = $this->actingAs($ci)->patchJson(route('client-folders.activities.submit', [$folder, $activityA]), [
+            'submission_activity_id' => $activityA->id,
+            'co_maker_id' => $coMakerA->id,
+            'submitted_to' => 'Jane Analyst',
+        ]);
+
+        $response->assertOk()->assertJson(['submitted' => true])->assertJsonStructure(['submitted', 'cell', 'history']);
+        $this->assertStringContainsString('submit-activity-'.$activityA->id, $response->json('cell'));
+        $this->assertStringNotContainsString('submit-activity-'.$activityB->id, $response->json('cell'));
+        $audit = AuditLog::where('action', 'ci_activity.submitted')->where('metadata->activity_id', $activityA->id)->sole();
+        $this->assertCount(1, $response->json('history'));
+        $this->assertStringContainsString('data-ci-history-entry-id="'.$audit->id.'"', $response->json('history')[0]);
+        $this->assertNotNull($activityA->fresh()->submitted_at);
+        $this->assertNull($activityB->fresh()->submitted_at);
+        $this->assertSame(0, AuditLog::where('action', 'ci_activity.submitted')->where('metadata->activity_id', $activityB->id)->count());
+
+        // Another Co-Maker's id, or another folder's Co-Maker, must not submit this activity.
+        foreach ([$coMakerA->id, $otherCoMaker->id] as $wrongCoMakerId) {
+            $wrongPersonResponse = $this->actingAs($ci)->patchJson(route('client-folders.activities.submit', [$folder, $activityB]), [
+                'submission_activity_id' => $activityB->id,
+                'co_maker_id' => $wrongCoMakerId,
+            ]);
+            $this->assertContains($wrongPersonResponse->status(), [403, 404, 422]);
+        }
+        $this->assertNull($activityB->fresh()->submitted_at);
+    }
+
+    public function test_normal_form_submission_still_redirects_to_the_activities_index_with_person_context(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Co-Maker A']);
+        $activity = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, ['status' => ActivityStatus::Completed, 'co_maker_id' => $coMaker->id]);
+
+        $this->actingAs($ci)->patch(route('client-folders.activities.submit', [$folder, $activity]), [
+            'submission_activity_id' => $activity->id,
+            'co_maker_id' => $coMaker->id,
+        ])->assertRedirect(route('client-folders.activities.index', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id, 'status' => 'completed']));
+
+        $this->assertSame(1, AuditLog::where('action', 'ci_activity.submitted')->where('metadata->activity_id', $activity->id)->count());
     }
 
     private function activity(ClientFolder $folder, User $creator, string $code, array $overrides = []): CiActivity

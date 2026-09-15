@@ -289,19 +289,27 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertNull(ClientFolder::withTrashed()->find($folder->id));
     }
 
-    public function test_assigned_ci_can_permanently_delete_folder_and_its_owned_children(): void
+    public function test_assigned_ci_can_permanently_delete_an_empty_folder_but_not_one_with_client_information(): void
     {
         $investigator = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $investigator->id, 'display_name' => 'KEPT CLIENT']);
-        $information = ClientInformation::factory()->create(['client_folder_id' => $folder->id]);
 
         $this->actingAs($investigator)->delete(route('client-folders.destroy', $folder))
             ->assertRedirect(route('client-folders.index'));
 
         $this->assertNull(ClientFolder::withTrashed()->find($folder->id));
-        $this->assertDatabaseMissing('client_information', ['id' => $information->id]);
         $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.recycled', 'client_folder_id' => $folder->id]);
         $this->actingAs($investigator)->get(route('client-folders.index'))->assertDontSee('KEPT CLIENT');
+
+        // Saved Client Information makes a folder non-empty: refused, nothing removed.
+        $withInformation = ClientFolder::factory()->create(['assigned_ci_id' => $investigator->id]);
+        $information = ClientInformation::factory()->create(['client_folder_id' => $withInformation->id]);
+
+        $this->actingAs($investigator)->from(route('client-folders.index'))->delete(route('client-folders.destroy', $withInformation))
+            ->assertRedirect(route('client-folders.index'))
+            ->assertSessionHasErrors(['confirmation' => 'This Client Folder can no longer be deleted because it already contains saved records.']);
+        $this->assertNotNull($withInformation->fresh());
+        $this->assertDatabaseHas('client_information', ['id' => $information->id, 'client_folder_id' => $withInformation->id]);
     }
 
     public function test_senior_ci_can_permanently_delete_an_eligible_shared_folder(): void
@@ -315,7 +323,7 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertNull(ClientFolder::withTrashed()->find($folder->id));
     }
 
-    public function test_administrator_permanently_deletes_an_active_folder_with_its_owned_records(): void
+    public function test_administrator_permanently_deletes_a_folder_with_saved_records_but_ci_and_senior_cannot(): void
     {
         $administrator = User::factory()->administrator()->create();
         $investigator = User::factory()->create();
@@ -328,6 +336,16 @@ class ClientFolderLifecycleTest extends TestCase
         $unrelatedCoMaker = CoMaker::create(['client_folder_id' => $unrelatedFolder->id, 'full_name' => 'PRESERVED CO-MAKER']);
         $number = $folder->folder_number;
 
+        // Credit Investigator and Senior CI: a folder with saved records is refused, untouched.
+        foreach ([$investigator, User::factory()->seniorCreditInvestigator()->create()] as $actor) {
+            $this->actingAs($actor)->from(route('client-folders.index'))->delete(route('client-folders.destroy', $folder))
+                ->assertRedirect(route('client-folders.index'))
+                ->assertSessionHasErrors(['confirmation' => 'This Client Folder can no longer be deleted because it already contains saved records.']);
+            $this->assertDatabaseHas('co_makers', ['id' => $coMaker->id, 'client_folder_id' => $folder->id]);
+        }
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.permanently_deleted']);
+
+        // Administrator: permanently removes the folder and its owned records, nothing else.
         $this->actingAs($administrator)->delete(route('client-folders.destroy', $folder))
             ->assertRedirect(route('client-folders.index'));
 
@@ -339,12 +357,13 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertDatabaseHas('client_folders', ['id' => $unrelatedFolder->id]);
         $this->assertDatabaseHas('client_information', ['id' => $unrelatedInformation->id, 'client_folder_id' => $unrelatedFolder->id]);
         $this->assertDatabaseHas('co_makers', ['id' => $unrelatedCoMaker->id, 'client_folder_id' => $unrelatedFolder->id]);
-        $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.recycled']);
 
         // The audit row itself survives the folder it describes (client_folder_id nulls out).
         $audit = AuditLog::where('action', 'client_folder.permanently_deleted')->sole();
         $this->assertNull($audit->client_folder_id);
         $this->assertSame($number, $audit->metadata['folder_number']);
+        $this->assertSame($administrator->id, $audit->user_id);
+        $this->assertTrue($audit->metadata['had_saved_records']);
     }
 
     public function test_deleting_a_folder_over_ajax_reports_permanent_deletion_without_navigation(): void
@@ -363,10 +382,11 @@ class ClientFolderLifecycleTest extends TestCase
 
     public function test_permanent_delete_is_safely_blocked_when_external_cleanup_is_required(): void
     {
+        // Credit Investigator and Senior CI only: an Administrator may purge a folder with saved
+        // records (files included) - see ClientFolderRoleDeleteTest.
         $actors = [
             User::factory()->create(),
             User::factory()->seniorCreditInvestigator()->create(),
-            User::factory()->administrator()->create(),
         ];
 
         foreach ($actors as $actor) {
@@ -378,7 +398,7 @@ class ClientFolderLifecycleTest extends TestCase
                 ->assertRedirect(route('client-folders.index'))
                 ->assertSessionHasErrors('confirmation');
 
-            // Blocked for every authorized role, never silently force-deleted or half-removed.
+            // Blocked for both roles, never silently force-deleted or half-removed.
             $this->assertNotNull(ClientFolder::find($folder->id));
             $this->assertDatabaseHas('media_references', ['id' => $media->id, 'client_folder_id' => $folder->id]);
             $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.permanently_deleted', 'client_folder_id' => $folder->id]);
@@ -387,10 +407,11 @@ class ClientFolderLifecycleTest extends TestCase
 
     public function test_permanent_delete_is_safely_blocked_when_generated_report_cleanup_is_required(): void
     {
+        // Credit Investigator and Senior CI only: an Administrator may purge a folder with saved
+        // records (files included) - see ClientFolderRoleDeleteTest.
         $actors = [
             User::factory()->create(),
             User::factory()->seniorCreditInvestigator()->create(),
-            User::factory()->administrator()->create(),
         ];
 
         foreach ($actors as $actor) {

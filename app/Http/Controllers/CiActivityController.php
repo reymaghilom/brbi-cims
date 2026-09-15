@@ -576,9 +576,10 @@ class CiActivityController extends Controller
         $validated = $request->validated();
         $activePerson = ActivePersonResolver::resolve($clientFolder, $validated['co_maker_id'] ?? null);
         ActivePersonResolver::assertOwnedBy($ciActivity, $activePerson);
+        $personParams = ActivePersonResolver::queryParams($activePerson);
         $destination = route(
             'client-folders.activities.index',
-            [$clientFolder] + ActivePersonResolver::queryParams($activePerson) + ['status' => 'completed'],
+            [$clientFolder] + $personParams + ['status' => 'completed'],
         );
 
         $watermark = CiActivityHistoryFeed::watermark();

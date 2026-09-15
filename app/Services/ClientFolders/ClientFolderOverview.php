@@ -22,7 +22,7 @@ class ClientFolderOverview
                 'assignedInvestigator:id,full_name',
                 'information:id,client_folder_id,completion_state,updated_at',
                 'cibiReport' => fn ($query) => $query->where('co_maker_id', $personId)->select('id', 'client_folder_id', 'co_maker_id', 'state', 'updated_at'),
-                'coMakers:id,client_folder_id,full_name,first_name,middle_name,last_name,relationship_to_applicant,contact_number,address',
+                'coMakers:id,client_folder_id,full_name,first_name,middle_name,last_name,relationship_to_applicant,contact_number,address,revision',
             ])
             ->withCount([
                 // A dedicated-business IncomeSource only counts once its Business Report has

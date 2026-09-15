@@ -83,15 +83,30 @@ class FolderBrowserInteractionTest extends TestCase
         ]);
 
         $javascript = file_get_contents(resource_path('js/app.js'));
-        $submitStart = strpos($javascript, "document.addEventListener('submit', async (event) => {");
-        $clientNoChangeCheck = strpos($javascript, '!folderEditHasChanges(form)', $submitStart);
-        $request = strpos($javascript, 'const response = await fetch(form.action', $submitStart);
+        // Scope every position check to the exact Client Folder create/rename/delete submit handler:
+        // from its own addEventListener('submit', ...) line to the end of that listener. (Byte
+        // positions across the whole file would compare against unrelated submit handlers.)
+        $handlerSelector = strpos($javascript, "const form = event.target.closest('[data-folder-create-form], [data-folder-rename-form], [data-folder-delete-form]');");
+        $this->assertNotFalse($handlerSelector, 'The Client Folder submit handler exists.');
+        $handlerStart = strrpos(substr($javascript, 0, $handlerSelector), "document.addEventListener('submit', async (event) => {");
+        $this->assertNotFalse($handlerStart);
+        $handlerEnd = strpos($javascript, "\n});\n", $handlerSelector);
+        $handler = substr($javascript, $handlerStart, $handlerEnd - $handlerStart);
+        $this->assertSame(1, substr_count($handler, "addEventListener('submit'"), 'Exactly one submit handler is in scope.');
+
+        $clientNoChangeCheck = strpos($handler, "if (form.matches('[data-folder-rename-form]') && !folderEditHasChanges(form)) {");
+        $request = strpos($handler, 'const response = await fetch(form.action');
+        $this->assertNotFalse($clientNoChangeCheck);
+        $this->assertNotFalse($request);
         $this->assertStringContainsString("const FOLDER_EDIT_NO_CHANGES_MESSAGE = 'No changes detected.'", $javascript);
         $this->assertStringContainsString('field.defaultValue', $javascript);
-        $this->assertLessThan($request, $clientNoChangeCheck, 'No-change detection runs before any request.');
-        $clientNoChangeEnd = strpos($javascript, 'const submit = form.querySelector', $clientNoChangeCheck);
-        $clientNoChangeSource = substr($javascript, $clientNoChangeCheck, $clientNoChangeEnd - $clientNoChangeCheck);
+        $this->assertLessThan($request, $clientNoChangeCheck, 'No-change detection runs before this handler sends any request.');
+        $this->assertLessThan($clientNoChangeCheck, strpos($handler, 'event.preventDefault();'), 'Native submission is cancelled first.');
+        $clientNoChangeEnd = strpos($handler, '}', $clientNoChangeCheck + strlen("if (form.matches('[data-folder-rename-form]') && !folderEditHasChanges(form)) {"));
+        $clientNoChangeSource = substr($handler, $clientNoChangeCheck, $clientNoChangeEnd - $clientNoChangeCheck);
         $this->assertStringContainsString('setFolderEditNotice(form, true)', $clientNoChangeSource);
+        $this->assertStringContainsString('return;', $clientNoChangeSource, 'The no-change path returns before the request.');
+        $this->assertStringNotContainsString('dialog', $clientNoChangeSource, 'The modal stays open.');
         $this->assertStringNotContainsString('showToast', $clientNoChangeSource);
         $this->assertStringNotContainsString('folder-browser:refresh', $clientNoChangeSource);
         $this->assertStringContainsString("document.addEventListener('input', clearFolderEditNoticeOnChange)", $javascript);
@@ -101,10 +116,13 @@ class FolderBrowserInteractionTest extends TestCase
         $this->assertStringContainsString("setFolderEditNotice(dialog.querySelector('[data-folder-rename-form]'), false)", $javascript);
         $this->assertStringContainsString("setFolderEditNotice(dialog?.querySelector('[data-folder-rename-form]'), false)", $javascript);
 
-        $branchStart = strpos($javascript, "} else if (form.matches('[data-folder-rename-form]')) {");
-        $noChangeCheck = strpos($javascript, 'if (payload.no_change)', $branchStart);
-        $dialogClose = strpos($javascript, 'dialog?.close()', $noChangeCheck);
+        $branchStart = strpos($handler, "} else if (form.matches('[data-folder-rename-form]')) {");
+        $this->assertNotFalse($branchStart);
+        $noChangeCheck = strpos($handler, 'if (payload.no_change)', $branchStart);
+        $this->assertNotFalse($noChangeCheck);
+        $dialogClose = strpos($handler, 'dialog?.close()', $branchStart);
         $this->assertGreaterThan($noChangeCheck, $dialogClose, 'The modal closes only after the no-change early return.');
+        $this->assertStringContainsString('setFolderEditNotice(form, true);', substr($handler, $noChangeCheck, $dialogClose - $noChangeCheck));
     }
 
     public function test_ajax_create_reuses_existing_action_and_returns_folder_data_without_navigation(): void
@@ -287,11 +305,11 @@ class FolderBrowserInteractionTest extends TestCase
             ->patchJson(route('client-folders.update-name', $folder), ['last_name' => 'Renamed', 'first_name' => 'Other CI'])
             ->assertOk();
 
-        // Delete is the one folder action the shared workspace does NOT open up: it is permanent
-        // (no Recycle Bin) and stays administrator-only, enforced server-side.
+        // Shared delete: any CI may permanently delete a folder assigned to another CI, as long as
+        // it is still empty (a rename is identity history, not saved records).
         $this->actingAs($otherCi)
             ->deleteJson(route('client-folders.destroy', $folder))
-            ->assertForbidden();
-        $this->assertNotNull(ClientFolder::find($folder->id));
+            ->assertOk();
+        $this->assertNull(ClientFolder::find($folder->id));
     }
 }

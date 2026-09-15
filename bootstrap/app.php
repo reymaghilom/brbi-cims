@@ -10,11 +10,15 @@ use App\Models\CiActivityAssetTarget;
 use App\Models\CiActivityBankTarget;
 use App\Models\CustomBusinessCategory;
 use App\Models\IncomeSource;
+use App\Support\ClientFolders\MissingClientFolderResponse;
+use App\Support\ClientFolders\MissingCoMakerResponse;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -31,6 +35,24 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        /**
+         * Registered first so it wins over the model-specific handlers below: when the Client
+         * Folder a request belongs to has been permanently deleted, the user is told that — not
+         * that one of its child records is missing, and never the exception text. Every other
+         * case returns null and falls through unchanged. See MissingClientFolderResponse.
+         */
+        $exceptions->render(fn (NotFoundHttpException $e, Request $request) => MissingClientFolderResponse::for($e, $request));
+        $exceptions->render(fn (QueryException $e, Request $request) => MissingClientFolderResponse::for($e, $request));
+
+        /**
+         * Next: the folder still exists but the exact Co-Maker the request acts on was removed by
+         * another user. Only replaces the wording of a request that already failed — a stale form
+         * never falls back to the Applicant or another Co-Maker. See MissingCoMakerResponse.
+         */
+        $exceptions->render(fn (NotFoundHttpException $e, Request $request) => MissingCoMakerResponse::for($e, $request));
+        $exceptions->render(fn (ValidationException $e, Request $request) => MissingCoMakerResponse::for($e, $request));
+        $exceptions->render(fn (QueryException $e, Request $request) => MissingCoMakerResponse::for($e, $request));
+
         /**
          * A CI Activity that no longer exists is, in practice, always the same story: another user
          * deleted it while this page was still open. Route-model binding (and the authoritative

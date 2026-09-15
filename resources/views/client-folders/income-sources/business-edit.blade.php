@@ -43,7 +43,7 @@
     <form id="business-template-form" method="POST" action="{{ route('client-folders.income-sources.store', $clientFolder) }}" hidden>@csrf<input type="hidden" name="intent" value="complete"><input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}"></form>
 
     @if($incomeSource)
-        <form id="business-report-form" method="POST" action="{{ route('client-folders.income-sources.business.update', [$clientFolder, $incomeSource]) }}" class="business-encoding-page" data-business-report-form data-unsaved-form>
+        <form id="business-report-form" method="POST" action="{{ route('client-folders.income-sources.business.update', [$clientFolder, $incomeSource]) }}" class="business-encoding-page" data-business-report-form data-unsaved-form data-submit-guard>
             @csrf
             @method('PUT')
             <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">

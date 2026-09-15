@@ -152,6 +152,7 @@
             <div class="fixed right-4 top-20 z-[70] w-[calc(100%-2rem)] max-w-sm space-y-3 sm:right-6" data-toast-region aria-live="polite">
                 @if(session('status'))<x-ui.toast :type="session('statusType', 'success')" :message="session('status')" />@endif
             </div>
+            @if(session('client_folder_missing') || session('co_maker_missing'))<span hidden data-client-folder-missing data-message="{{ session('status') }}" data-return-url="{{ session('stale_return_url', route('client-folders.index')) }}"></span>@endif
             @yield('content')
         </main>
     </div>

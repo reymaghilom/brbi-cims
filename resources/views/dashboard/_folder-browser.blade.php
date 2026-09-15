@@ -331,29 +331,45 @@
         @endcan
 
         @can('forceDelete', $clientFolder)
-            @php($folderHasMeaningfulData = $clientFolder->has_cibi_data || $clientFolder->has_co_maker_data || $clientFolder->has_income_source_data || $clientFolder->has_residence_business_data || $clientFolder->has_residence_check_data || $clientFolder->has_business_check_data || $clientFolder->has_activity_data || $clientFolder->has_media_data || $clientFolder->has_generated_report_data || $clientFolder->has_completion_data)
-            <x-ui.modal id="dashboard-delete-dialog-{{ $clientFolder->id }}" title="Delete Client Folder Permanently?" size="max-w-md">
-                @if($folderHasMeaningfulData)
-                    <div class="flex items-start gap-3 rounded-control border border-danger/30 bg-danger-soft p-3.5 text-danger" role="alert" data-folder-delete-data-warning>
+            {{-- Credit Investigators and Senior CIs may only delete a folder that is still empty; an
+                 Administrator may also delete one that already contains saved records. Informational
+                 only: PurgeClientFolder re-checks the same rules and other users' unsaved work. --}}
+            @php($adminDeletesSavedRecords = $clientFolder->has_saved_records && auth()->user()->role === App\Enums\UserRole::Administrator)
+            @if($clientFolder->has_saved_records && ! $adminDeletesSavedRecords)
+                <x-ui.modal id="dashboard-delete-dialog-{{ $clientFolder->id }}" title="Deletion Not Available" size="max-w-md">
+                    <div class="flex items-start gap-3 rounded-control border border-danger/30 bg-danger-soft p-3.5 text-danger" data-folder-delete-unavailable>
                         <x-ui.icon name="warning" size="size-5" class="mt-0.5 shrink-0" aria-hidden="true" />
-                        <div class="min-w-0">
-                            <p class="text-sm font-semibold leading-6">This client folder already contains saved data. Deleting it will permanently remove the folder and its related records, and they cannot be recovered.</p>
-                            <p class="mt-2 text-sm font-bold leading-5">Are you sure you want to continue?</p>
-                        </div>
+                        <p class="min-w-0 text-sm font-semibold leading-6">This Client Folder already contains saved records and can no longer be permanently deleted.</p>
                     </div>
-                @else
-                    <p class="text-sm leading-6 text-text-muted" data-folder-delete-empty-warning>Are you sure you want to permanently delete this client folder?</p>
-                    <p class="mt-2 text-sm leading-6 text-text-muted">This action cannot be undone.</p>
-                @endif
-                <x-slot:footer>
-                    <button type="button" data-modal-close class="ui-button-secondary shrink-0 whitespace-nowrap"><x-ui.icon name="close" size="size-4" />Cancel</button>
-                    <form method="POST" action="{{ route('client-folders.destroy', $clientFolder) }}" data-folder-delete-form data-folder-id="{{ $clientFolder->id }}" data-folder-status="{{ $clientFolder->status->value }}">
-                        @csrf
-                        @method('DELETE')
-                        <button class="ui-button-danger shrink-0 whitespace-nowrap"><x-ui.icon name="trash" size="size-4" />Delete Permanently</button>
-                    </form>
-                </x-slot:footer>
-            </x-ui.modal>
+                    <x-slot:footer>
+                        <button type="button" data-modal-close class="ui-button-secondary w-full shrink-0 whitespace-nowrap sm:w-auto"><x-ui.icon name="close" size="size-4" />Close</button>
+                    </x-slot:footer>
+                </x-ui.modal>
+            @else
+                <x-ui.modal id="dashboard-delete-dialog-{{ $clientFolder->id }}" title="Delete Client Folder Permanently?" size="max-w-md">
+                    @if($adminDeletesSavedRecords)
+                        <div class="flex items-start gap-3 rounded-control border border-danger/30 bg-danger-soft p-3.5 text-danger" data-folder-delete-data-warning>
+                            <x-ui.icon name="warning" size="size-5" class="mt-0.5 shrink-0" aria-hidden="true" />
+                            <p class="min-w-0 text-sm font-semibold leading-6">This Client Folder contains saved records. Deleting it will permanently remove the folder, its investigation records, and related data. This action cannot be undone.</p>
+                        </div>
+                    @else
+                        <p class="text-sm leading-6 text-text-muted" data-folder-delete-empty-warning>This Client Folder does not contain any saved records yet. Deleting it will permanently remove the folder. This action cannot be undone.</p>
+                    @endif
+                    {{-- A refusal from the server (saved records, another user's unsaved work, a failure) is shown here, in the dialog. --}}
+                    <p class="mt-3 flex items-start gap-2 rounded-control border border-danger/30 bg-danger-soft p-3 text-sm font-semibold text-danger" role="alert" data-folder-delete-error hidden></p>
+                    <x-slot:footer>
+                        {{-- Phones: two equal columns (icons hidden, text may wrap; the grid keeps both the same height). Inline from sm up. --}}
+                        <div class="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:justify-end" data-folder-delete-actions>
+                            <button type="button" data-modal-close class="ui-button-secondary w-full shrink-0 px-2 text-center leading-5 sm:w-auto sm:whitespace-nowrap sm:px-4"><x-ui.icon name="close" size="size-4" class="hidden sm:block" />Cancel</button>
+                            <form method="POST" action="{{ route('client-folders.destroy', $clientFolder) }}" class="flex w-full sm:w-auto" data-folder-delete-form data-folder-id="{{ $clientFolder->id }}" data-folder-status="{{ $clientFolder->status->value }}">
+                                @csrf
+                                @method('DELETE')
+                                <button class="ui-button-danger w-full shrink-0 px-2 text-center leading-5 sm:w-auto sm:whitespace-nowrap sm:px-4"><x-ui.icon name="trash" size="size-4" class="hidden sm:block" />Delete Permanently</button>
+                            </form>
+                        </div>
+                    </x-slot:footer>
+                </x-ui.modal>
+            @endif
         @endcan
     @endforeach
 

@@ -130,7 +130,7 @@ class FolderContentsAutoUpdateTest extends TestCase
 
         // Applicant is the active view (no ?person=co-maker) while a different Co-Maker's tab is edited.
         $response = $this->actingAs($ci)->postJson(route('client-folders.co-maker.store', $folder), [
-            'co_maker_id' => $coMaker->id,
+            'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision,
             'first_name' => 'Updated', 'last_name' => 'Name',
             'address' => $coMaker->address ?? 'Some Address',
         ])->assertOk();

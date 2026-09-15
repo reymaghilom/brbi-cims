@@ -154,9 +154,12 @@ class StaleCiActivityMessagingTest extends TestCase
     {
         $folder = $this->folder();
 
+        // A missing Client Folder is not rewritten as a CI Activity; it has its own folder-specific
+        // handling (back to Client Folders with a friendly notice).
         $this->actingAs($this->ci)
             ->get(route('client-folders.activities.index', $folder->id + 999))
-            ->assertNotFound();
+            ->assertRedirect(route('client-folders.index'))
+            ->assertSessionHas('status', 'This Client Folder is no longer available. It may have been permanently deleted by another user.');
     }
 
     private function auditCount(ClientFolder $folder, string $action): int

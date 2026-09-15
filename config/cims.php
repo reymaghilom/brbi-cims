@@ -3,6 +3,7 @@
 use App\Models\BusinessCheck;
 use App\Models\CiActivity;
 use App\Models\CibiReport;
+use App\Models\CoMaker;
 use App\Models\IncomeSource;
 use App\Models\ResidenceCheck;
 
@@ -53,5 +54,7 @@ return [
         'residence_check' => ResidenceCheck::class,
         'business_check' => BusinessCheck::class,
         'ci_activity' => CiActivity::class,
+        // The shared Add/Edit Co-Maker dialog while it edits one exact Co-Maker.
+        'co_maker' => CoMaker::class,
     ],
 ];

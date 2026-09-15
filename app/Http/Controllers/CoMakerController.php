@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Actions\ClientFolders\RemoveCoMaker;
 use App\Actions\ClientFolders\SaveCoMaker;
+use App\Exceptions\CoMakerConflictException;
+use App\Exceptions\CoMakerDuplicateNameException;
 use App\Exceptions\NoChangesDetectedException;
 use App\Http\Requests\ClientFolders\SaveCoMakerRequest;
 use App\Models\ClientFolder;
@@ -15,6 +17,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 
 class CoMakerController extends Controller
 {
@@ -24,6 +27,23 @@ class CoMakerController extends Controller
 
         try {
             $coMaker = $action->execute($request->user(), $clientFolder, $request->validated());
+        } catch (CoMakerDuplicateNameException $e) {
+            // Advisory only: nothing was saved. The dialog asks Cancel / Continue Anyway, and
+            // Continue Anyway resubmits the same form with duplicate_confirmed=1.
+            if ($request->expectsJson()) {
+                return response()->json(['result' => 'duplicate_warning', 'duplicate_warning' => true, 'message' => $e->getMessage(), 'status_type' => 'warning'], 409);
+            }
+
+            return redirect()->route('client-folders.show', $clientFolder)
+                ->withInput()->with('status', $e->getMessage())->with('statusType', 'warning');
+        } catch (CoMakerConflictException $e) {
+            // Another user saved this Co-Maker after the form was opened: nothing was written.
+            if ($request->expectsJson()) {
+                return response()->json(['result' => 'conflict', 'message' => $e->getMessage(), 'status_type' => 'error'], 409);
+            }
+
+            return redirect()->route('client-folders.show', $clientFolder)
+                ->with('status', $e->getMessage())->with('statusType', 'error');
         } catch (NoChangesDetectedException $e) {
             if ($request->expectsJson()) {
                 return response()->json(['message' => $e->getMessage(), 'no_change' => true]);
@@ -45,6 +65,7 @@ class CoMakerController extends Controller
                     'middle_name' => $coMaker->middle_name,
                     'last_name' => $coMaker->last_name,
                     'suffix' => $coMaker->suffix,
+                    'revision' => (int) $coMaker->revision,
                 ],
             ] + $this->folderContentsFragments($request, $clientFolder, $overview));
         }
@@ -56,7 +77,18 @@ class CoMakerController extends Controller
     {
         Gate::authorize('update', $clientFolder);
 
-        $action->execute($request->user(), $clientFolder, $coMaker);
+        try {
+            $action->execute($request->user(), $clientFolder, $coMaker);
+        } catch (ValidationException $exception) {
+            // Saved investigation records (CI / Senior CI), another user's unsaved work, or a failed
+            // delete: a plain message for the delete dialog's inline error region.
+            if ($request->expectsJson()) {
+                return response()->json(['message' => $exception->validator->errors()->first()], 422);
+            }
+
+            return redirect()->route('client-folders.show', $clientFolder)
+                ->with('status', $exception->validator->errors()->first())->with('statusType', 'error');
+        }
         $message = 'Co-Maker removed successfully.';
 
         if ($request->expectsJson()) {
