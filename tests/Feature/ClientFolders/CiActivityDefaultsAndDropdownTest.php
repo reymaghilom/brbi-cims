@@ -13,15 +13,26 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
+/**
+ * Barangay Check and Neighbor Check are no longer auto-generated: opening the CI Activities page
+ * creates nothing, and all four canonical types are manually addable built-ins. The canonical
+ * definitions themselves come from reference data (ReferenceDataSeeder runs the same action).
+ */
 class CiActivityDefaultsAndDropdownTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_fresh_applicant_gets_pending_defaults_and_only_canonical_addable_types(): void
+    protected function setUp(): void
+    {
+        parent::setUp();
+        app(EnsureCanonicalActivityDefinitions::class)->execute();
+    }
+
+    public function test_fresh_applicant_gets_no_generated_activities_and_only_canonical_addable_types(): void
     {
         $user = User::factory()->create();
         $folder = $this->folderFor($user);
-        $this->assertSame(0, ActivityDefinition::query()->count());
+        $this->assertSame(4, ActivityDefinition::query()->count());
         ActivityDefinition::query()->create([
             'code' => 'test_only_definition',
             'name' => 'Test Only Definition',
@@ -42,7 +53,12 @@ class CiActivityDefaultsAndDropdownTest extends TestCase
             ->assertSee('+ Add New Activity Type');
 
         $this->assertSame(
-            [ActivityDefinition::ASSET_CHECK_CODE, ActivityDefinition::BANK_COOP_CHECK_CODE],
+            [
+                ActivityDefinition::BARANGAY_CHECK_CODE,
+                ActivityDefinition::NEIGHBOR_CHECK_CODE,
+                ActivityDefinition::ASSET_CHECK_CODE,
+                ActivityDefinition::BANK_COOP_CHECK_CODE,
+            ],
             $response->viewData('definitions')->pluck('code')->all(),
         );
         $this->assertSame(
@@ -64,8 +80,8 @@ class CiActivityDefaultsAndDropdownTest extends TestCase
                 ->values()
                 ->all(),
         );
-        $this->assertDefaultStatus($folder, null, ActivityDefinition::BARANGAY_CHECK_CODE, ActivityStatus::Pending);
-        $this->assertDefaultStatus($folder, null, ActivityDefinition::NEIGHBOR_CHECK_CODE, ActivityStatus::Pending);
+        // Nothing is generated just by opening the page.
+        $this->assertSame(0, CiActivity::query()->where('client_folder_id', $folder->id)->count());
     }
 
     public function test_existing_active_custom_types_appear_but_inactive_and_non_custom_types_do_not(): void
@@ -107,6 +123,8 @@ class CiActivityDefaultsAndDropdownTest extends TestCase
         $this->assertStringNotContainsString('data-label="Inactive Custom Inquiry"', $content);
 
         $this->assertSame([
+            ActivityDefinition::BARANGAY_CHECK_CODE,
+            ActivityDefinition::NEIGHBOR_CHECK_CODE,
             ActivityDefinition::ASSET_CHECK_CODE,
             ActivityDefinition::BANK_COOP_CHECK_CODE,
             $custom->code,
@@ -143,7 +161,7 @@ class CiActivityDefaultsAndDropdownTest extends TestCase
             'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
             'create_new_activity_type' => true,
             'new_activity_type' => '  Supplier   Interview ',
-        ])->assertRedirect()->assertSessionHasNoErrors();
+        ])->assertRedirect()->assertSessionHasErrors(['new_activity_type' => 'An Activity Type with this name already exists.']);
 
         $this->assertSame(1, ActivityDefinition::query()->where('code', 'like', ActivityDefinition::CUSTOM_CODE_PREFIX.'supplier_interview_%')->count());
         $this->assertSame($initialActivityCount, CiActivity::query()->where('client_folder_id', $folder->id)->count());
@@ -201,7 +219,7 @@ class CiActivityDefaultsAndDropdownTest extends TestCase
         $this->assertSame(0, $this->activitiesFor($folder, $coMakerB->id, $definition->code)->count());
     }
 
-    public function test_repeated_initialization_does_not_duplicate_defaults(): void
+    public function test_repeated_page_visits_never_generate_default_activities(): void
     {
         $user = User::factory()->create();
         $folder = $this->folderFor($user);
@@ -210,15 +228,14 @@ class CiActivityDefaultsAndDropdownTest extends TestCase
         $this->get(route('client-folders.activities.index', $folder))->assertOk();
 
         foreach (ActivityDefinition::MANDATORY_DEFAULT_CODES as $code) {
-            $this->assertSame(1, $this->activitiesFor($folder, null, $code)->count());
+            $this->assertSame(0, $this->activitiesFor($folder, null, $code)->count());
         }
     }
 
-    public function test_restored_completed_default_keeps_all_saved_data(): void
+    public function test_a_deleted_completed_default_is_not_resurrected_by_opening_the_page(): void
     {
         $user = User::factory()->create();
         $folder = $this->folderFor($user);
-        app(EnsureCanonicalActivityDefinitions::class)->execute();
         $definition = $this->definition(ActivityDefinition::BARANGAY_CHECK_CODE);
         $completedAt = now()->subDay()->startOfSecond();
         $activity = CiActivity::query()->create([
@@ -238,15 +255,18 @@ class CiActivityDefaultsAndDropdownTest extends TestCase
 
         $this->actingAs($user)->get(route('client-folders.activities.index', $folder))->assertOk();
 
+        // Deleting is final until the type is re-added: the saved data stays on the trashed row,
+        // but nothing restores it, and no Neighbor Check is generated alongside.
         $activity->refresh();
-        $this->assertNull($activity->deleted_at);
+        $this->assertNotNull($activity->deleted_at);
         $this->assertSame(ActivityStatus::Completed, $activity->status);
         $this->assertSame('Saved completion evidence remains intact.', $activity->remarks);
         $this->assertTrue($activity->completed_at->equalTo($completedAt));
-        $this->assertDefaultStatus($folder, null, ActivityDefinition::NEIGHBOR_CHECK_CODE, ActivityStatus::Pending);
+        $this->assertSame(0, $this->activitiesFor($folder, null, ActivityDefinition::BARANGAY_CHECK_CODE)->count());
+        $this->assertSame(0, $this->activitiesFor($folder, null, ActivityDefinition::NEIGHBOR_CHECK_CODE)->count());
     }
 
-    public function test_applicant_and_each_co_maker_receive_isolated_defaults(): void
+    public function test_applicant_and_co_maker_page_visits_generate_no_default_activities(): void
     {
         $user = User::factory()->create();
         $folder = $this->folderFor($user);
@@ -257,13 +277,7 @@ class CiActivityDefaultsAndDropdownTest extends TestCase
         $this->get($this->personRoute($folder, $coMakerA))->assertOk();
         $this->get($this->personRoute($folder, $coMakerB))->assertOk();
 
-        foreach ([null, $coMakerA->id, $coMakerB->id] as $coMakerId) {
-            foreach (ActivityDefinition::MANDATORY_DEFAULT_CODES as $code) {
-                $this->assertSame(1, $this->activitiesFor($folder, $coMakerId, $code)->count());
-            }
-        }
-
-        $this->assertSame(6, CiActivity::query()->where('client_folder_id', $folder->id)->count());
+        $this->assertSame(0, CiActivity::query()->where('client_folder_id', $folder->id)->count());
     }
 
     public function test_asset_and_bank_coop_checks_remain_addable_with_their_target_architecture(): void
@@ -365,16 +379,5 @@ class CiActivityDefaultsAndDropdownTest extends TestCase
             ->where('co_maker_id', $coMakerId)
             ->whereHas('definition', fn ($query) => $query->where('code', $code))
             ->get();
-    }
-
-    private function assertDefaultStatus(
-        ClientFolder $folder,
-        ?int $coMakerId,
-        string $code,
-        ActivityStatus $status,
-    ): void {
-        $activity = $this->activitiesFor($folder, $coMakerId, $code)->sole();
-
-        $this->assertSame($status, $activity->status);
     }
 }

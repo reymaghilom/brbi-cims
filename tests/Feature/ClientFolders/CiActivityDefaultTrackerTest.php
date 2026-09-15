@@ -24,7 +24,7 @@ class CiActivityDefaultTrackerTest extends TestCase
         $this->seed(ReferenceDataSeeder::class);
     }
 
-    public function test_barangay_and_neighbor_open_trackers_without_redundant_view_or_mandatory_delete_actions(): void
+    public function test_barangay_and_neighbor_open_trackers_without_redundant_view_actions(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
@@ -46,8 +46,9 @@ class CiActivityDefaultTrackerTest extends TestCase
             ->assertDontSee('aria-label="View '.$neighbor->name.'"', false)
             ->assertDontSee('aria-label="View '.$bank->name.'"', false)
             ->assertDontSee('aria-label="View '.$asset->name.'"', false)
-            ->assertDontSee('id="delete-activity-'.$barangay->id.'"', false)
-            ->assertDontSee('id="delete-activity-'.$neighbor->id.'"', false)
+            // Barangay / Neighbor are manually added built-in types now and carry a Delete action too.
+            ->assertSee('id="delete-activity-'.$barangay->id.'"', false)
+            ->assertSee('id="delete-activity-'.$neighbor->id.'"', false)
             ->assertSee('id="delete-activity-'.$bank->id.'"', false)
             ->assertSee('id="delete-activity-'.$asset->id.'"', false);
 
@@ -209,10 +210,11 @@ class CiActivityDefaultTrackerTest extends TestCase
         $neighbor = $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE);
 
         foreach ([$barangay, $neighbor] as $default) {
-            $this->actingAs($ci)->get(route('client-folders.activities.default-check.show', [$folder, $default]))
+            $response = $this->actingAs($ci)->get(route('client-folders.activities.default-check.show', [$folder, $default]));
+            $this->assertMatchesRegularExpression('/data-default-check-cancel>.*?<\/svg>\s*Cancel<\/button>/s', $response->getContent());
+            $response
                 ->assertOk()
                 ->assertSee('data-default-check-cancel', false)
-                ->assertSee('>Cancel<', false)
                 ->assertSee('data-default-check-no-changes', false)
                 ->assertSee('No changes detected. Nothing needs to be updated.')
                 ->assertDontSee('No changes to save.')
@@ -295,7 +297,7 @@ class CiActivityDefaultTrackerTest extends TestCase
 
         $page = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
         $page->assertOk()
-            ->assertSee("submit.textContent = 'Saving Changes…';", false)
+            ->assertSee("submitLabel.textContent = 'Saving Changes…';", false)
             ->assertSee("form.dataset.submitting === 'true'", false)
             ->assertSee('synchronizeTable(freshSource);', false);
 
@@ -380,7 +382,7 @@ class CiActivityDefaultTrackerTest extends TestCase
             '2026-09-08',
             '15:00',
             'Completed after confirmation.',
-        ))->assertOk()->assertJson(['updated' => true]);
+        ) + ['expected_revision' => $activity->fresh()->revision])->assertOk()->assertJson(['updated' => true]);
 
         $activity->refresh();
         $this->assertSame(ActivityStatus::Completed, $activity->status);
@@ -421,7 +423,7 @@ class CiActivityDefaultTrackerTest extends TestCase
             ->assertOk()->assertSee('Co-Maker: '.$makerA->full_name);
         $this->get(route('client-folders.activities.index', [$folder, 'person' => 'co-maker', 'co_maker_id' => $makerA->id, 'status' => 'all']))
             ->assertOk()
-            ->assertSee('aria-label="Edit '.$makerActivity->display_name.'"', false)
+            ->assertSee('aria-label="Actions for '.$makerActivity->display_name.'"', false)
             ->assertSee('data-default-check-url="'.e(route('client-folders.activities.default-check.show', [$folder, $makerActivity, 'person' => 'co-maker', 'co_maker_id' => $makerA->id])).'"', false);
         $this->get(route('client-folders.activities.default-check.show', [$folder, $makerActivity, 'person' => 'co-maker', 'co_maker_id' => $makerB->id]))->assertNotFound();
         $this->get(route('client-folders.activities.default-check.show', [$otherFolder, $applicant]))->assertNotFound();

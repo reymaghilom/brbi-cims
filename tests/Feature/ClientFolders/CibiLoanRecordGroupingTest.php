@@ -248,7 +248,7 @@ class CibiLoanRecordGroupingTest extends TestCase
         // src-match check would skip the reload and reopen the cached "Save CIBI Report" document.
         // Reloading unconditionally is what makes the FIRST reopen show the persisted state.
         $this->assertStringContainsString(
-            "const alwaysReload = dialog.matches('[data-cibi-report-dialog]') || dialog.matches('[data-business-report-dialog]') || dialog.matches('[data-check-report-dialog]');",
+            "const alwaysReload = dialog.matches('[data-cibi-report-dialog]') || dialog.matches('[data-business-report-dialog]') || dialog.matches('[data-check-report-dialog]') || dialog.matches('[data-dashboard-activity-dialog]');",
             $js,
         );
         // …and it re-navigates the IFRAME in place (location.replace, so no history entry and no

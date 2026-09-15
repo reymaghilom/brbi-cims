@@ -18,15 +18,23 @@
         </include>
     </source>
     <php>
+        <!-- Test-only: PDF/report tests need more than PHP's default 512M. Production php.ini is untouched. -->
+        <ini name="memory_limit" value="2G"/>
         <env name="APP_ENV" value="testing" force="true"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="CLOUDINARY_URL" value=""/>
-        <env name="CLOUDINARY_CLOUD_NAME" value=""/>
-        <env name="CLOUDINARY_API_KEY" value=""/>
-        <env name="CLOUDINARY_API_SECRET" value=""/>
+        <!-- Cloudinary credentials are forced empty in both $_ENV/getenv and $_SERVER (which Laravel reads
+             first), so neither .env nor host environment variables can ever reach the test suite. -->
+        <env name="CLOUDINARY_URL" value="" force="true"/>
+        <env name="CLOUDINARY_CLOUD_NAME" value="" force="true"/>
+        <env name="CLOUDINARY_API_KEY" value="" force="true"/>
+        <env name="CLOUDINARY_API_SECRET" value="" force="true"/>
+        <server name="CLOUDINARY_URL" value="" force="true"/>
+        <server name="CLOUDINARY_CLOUD_NAME" value="" force="true"/>
+        <server name="CLOUDINARY_API_KEY" value="" force="true"/>
+        <server name="CLOUDINARY_API_SECRET" value="" force="true"/>
         <env name="DB_CONNECTION" value="sqlite" force="true"/>
         <env name="DB_DATABASE" value=":memory:" force="true"/>
         <env name="DB_URL" value="" force="true"/>

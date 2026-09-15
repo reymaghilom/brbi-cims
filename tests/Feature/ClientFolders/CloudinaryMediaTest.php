@@ -580,6 +580,7 @@ class CloudinaryMediaTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision,
             'income_source_id' => $source->id,
             'ci_date' => $check->ci_date->toDateString(),
             'location' => $check->location,
@@ -619,14 +620,16 @@ class CloudinaryMediaTest extends TestCase
         $photo = $check->photos()->where('cloud_public_id', 'still-here')->firstOrFail();
         $this->mockedCloud->shouldNotReceive('destroy');
 
+        // A stale revision (another user saved first) makes the whole update roll back.
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'check_id' => $check->id,
+            'expected_revision' => $check->revision + 1,
             'income_source_id' => $source->id,
             'ci_date' => $check->ci_date->toDateString(),
             'location' => $check->location,
             'removed_photo_ids' => [$photo->id],
-            'expected_updated_at' => now()->subDay()->toISOString(),
-        ])->assertSessionHasErrors('expected_updated_at');
+        ])->assertSessionHas('statusType', 'error')
+            ->assertSessionHas('status', 'This Business Check was updated by another user while you were working on it. Please review the latest information before saving again.');
 
         $this->assertDatabaseHas('business_check_photos', ['id' => $photo->id, 'cloud_public_id' => 'still-here']);
     }

@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\ClientFolders\BrowseClientFoldersRequest;
 use App\Models\ClientFolder;
-use App\Models\IncomeSource;
 use App\Models\User;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CibiReportFormData;
@@ -51,13 +50,5 @@ class ClientFolderAccessController extends Controller
                 ? User::query()->eligibleCibiSignatories()->get(['id', 'full_name'])
                 : collect(),
         ]);
-    }
-
-    public function showIncomeSource(ClientFolder $clientFolder, IncomeSource $incomeSource): View
-    {
-        Gate::authorize('view', $clientFolder);
-        Gate::authorize('view', $incomeSource);
-
-        return view('client-folders.income-source-authorization-show', compact('clientFolder', 'incomeSource'));
     }
 }

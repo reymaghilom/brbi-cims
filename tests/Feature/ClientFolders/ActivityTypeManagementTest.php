@@ -3,6 +3,7 @@
 namespace Tests\Feature\ClientFolders;
 
 use App\Enums\ActivityStatus;
+use App\Http\Controllers\CiActivityController;
 use App\Models\ActivityDefinition;
 use App\Models\CiActivity;
 use App\Models\ClientFolder;
@@ -214,18 +215,20 @@ class ActivityTypeManagementTest extends TestCase
         $this->assertStringNotContainsString('data-activity-type-option data-value="'.$definition->id.'"', $content);
     }
 
-    public function test_permanent_deletion_of_a_used_custom_type_is_rejected_server_side(): void
+    public function test_removing_a_used_custom_type_only_deactivates_it_and_never_deletes_server_side(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
         $definition = $this->customDefinition('Credit Verification');
         $activity = $this->customActivity($folder, $ci, $definition);
 
+        // A type any CI Activity still references is never permanently deleted: it is removed from
+        // future selection only, and every existing activity keeps it.
         $this->actingAs($ci)
             ->deleteJson(route('client-folders.activity-definitions.destroy', [$folder, $definition]))
-            ->assertStatus(422);
+            ->assertOk();
 
-        $this->assertDatabaseHas('activity_definitions', ['id' => $definition->id, 'is_active' => true]);
+        $this->assertDatabaseHas('activity_definitions', ['id' => $definition->id, 'is_active' => false]);
         $this->assertDatabaseHas('ci_activities', ['id' => $activity->id, 'activity_definition_id' => $definition->id]);
     }
 
@@ -347,12 +350,12 @@ class ActivityTypeManagementTest extends TestCase
             'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
             'create_new_activity_type' => true,
             'new_activity_type' => 'Credit Verification',
-        ])->assertRedirect()->assertSessionHas('status', 'Activity type created successfully.')
+        ])->assertRedirect()->assertSessionHas('status', CiActivityController::ACTIVITY_TYPE_CREATED_MESSAGE)
             ->baseResponse->headers->get('location');
 
         $page = $this->get($content)->assertOk()->getContent();
         $this->assertStringContainsString('role="status" data-ci-activity-success>', $page);
-        $this->assertStringContainsString('Activity type created successfully.', $page);
+        $this->assertStringContainsString(CiActivityController::ACTIVITY_TYPE_CREATED_MESSAGE, $page);
         // Never names the type, so it can never read as feedback for a later selection.
         $this->assertStringNotContainsString('Credit Verification activity type', $page);
         $this->assertStringNotContainsString('is ready to use', $page);
@@ -386,7 +389,7 @@ class ActivityTypeManagementTest extends TestCase
         $content = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
 
         $this->assertStringNotContainsString('role="status" data-ci-activity-success>', $content);
-        $this->assertStringNotContainsString('Activity type created successfully.', $content);
+        $this->assertStringNotContainsString(CiActivityController::ACTIVITY_TYPE_CREATED_MESSAGE, $content);
     }
 
     public function test_a_later_creation_shows_the_message_again(): void
@@ -401,10 +404,10 @@ class ActivityTypeManagementTest extends TestCase
                 'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
                 'create_new_activity_type' => true,
                 'new_activity_type' => $name,
-            ])->assertRedirect()->assertSessionHas('status', 'Activity type created successfully.')
+            ])->assertRedirect()->assertSessionHas('status', CiActivityController::ACTIVITY_TYPE_CREATED_MESSAGE)
                 ->baseResponse->headers->get('location');
 
-            $this->assertStringContainsString('Activity type created successfully.', $this->get($redirect)->assertOk()->getContent());
+            $this->assertStringContainsString(CiActivityController::ACTIVITY_TYPE_CREATED_MESSAGE, $this->get($redirect)->assertOk()->getContent());
             // The flash is consumed by that render, so the next plain visit is clean again.
             $this->assertStringNotContainsString('role="status" data-ci-activity-success>', $this->get($redirect)->assertOk()->getContent());
         }

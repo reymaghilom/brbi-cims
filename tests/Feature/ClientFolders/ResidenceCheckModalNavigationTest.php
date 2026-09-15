@@ -87,7 +87,7 @@ class ResidenceCheckModalNavigationTest extends TestCase
         $folder = $this->folderFor($ci);
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->newCheckPayload())
-            ->assertSessionHas('status', 'Residence Check saved successfully.');
+            ->assertSessionHas('status', 'Residence Check saved successfully. Files saved to Local Storage.');
     }
 
     public function test_parent_residence_business_list_reflects_the_new_check_after_create(): void
@@ -99,8 +99,9 @@ class ResidenceCheckModalNavigationTest extends TestCase
             'remarks' => 'Newly added residence check',
         ]));
 
+        $check = $folder->residenceChecks()->sole();
         $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))
-            ->assertOk()->assertSee('1 Residence Report');
+            ->assertOk()->assertSee(route('client-folders.residence-checks.edit', [$folder, $check]), false);
     }
 
     public function test_editing_with_a_real_change_succeeds_and_shows_the_updated_message(): void

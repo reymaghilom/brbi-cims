@@ -86,48 +86,48 @@ class CiActivityActionMenuAndBankBulkTest extends TestCase
             ->assertDontSee('View notes');
     }
 
-    public function test_barangay_shows_direct_edit_action_with_no_3dot_menu_and_no_delete(): void
+    // Barangay Check and Neighbor Check are manually added built-in types: they carry the same
+    // Open + Delete Actions menu as Asset Check (see DefaultCheckRowActionsTest for full coverage).
+    public function test_barangay_shows_the_open_and_delete_actions_menu(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
         $barangay = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
 
-        $page = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
-
-        $page->assertOk()
-            ->assertSee('aria-label="Edit '.$barangay->name.'"', false)
-            ->assertSee('data-default-check-open="'.$barangay->id.'"', false);
-        $content = $page->getContent();
-        $this->assertStringNotContainsString('aria-label="Actions for '.$barangay->name.'"', $content);
-        $this->assertStringNotContainsString('id="delete-activity-'.$barangay->id.'"', $content);
+        $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))
+            ->assertOk()
+            ->assertSee('aria-label="Actions for '.$barangay->display_name.'"', false)
+            ->assertSee('data-default-check-open="'.$barangay->id.'"', false)
+            ->assertSee('data-modal-open="delete-activity-'.$barangay->id.'"', false)
+            ->assertSee('id="delete-activity-'.$barangay->id.'"', false);
     }
 
-    public function test_neighbor_shows_direct_edit_action_with_no_3dot_menu_and_no_delete(): void
+    public function test_neighbor_shows_the_open_and_delete_actions_menu(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
         $neighbor = $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE);
 
-        $page = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder));
-
-        $page->assertOk()
-            ->assertSee('aria-label="Edit '.$neighbor->name.'"', false)
-            ->assertSee('data-default-check-open="'.$neighbor->id.'"', false);
-        $content = $page->getContent();
-        $this->assertStringNotContainsString('aria-label="Actions for '.$neighbor->name.'"', $content);
-        $this->assertStringNotContainsString('id="delete-activity-'.$neighbor->id.'"', $content);
+        $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))
+            ->assertOk()
+            ->assertSee('aria-label="Actions for '.$neighbor->display_name.'"', false)
+            ->assertSee('data-default-check-open="'.$neighbor->id.'"', false)
+            ->assertSee('data-modal-open="delete-activity-'.$neighbor->id.'"', false)
+            ->assertSee('id="delete-activity-'.$neighbor->id.'"', false);
     }
 
-    public function test_barangay_and_neighbor_backend_delete_protection_remains(): void
+    public function test_barangay_delete_removes_only_that_activity(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
         $barangay = $this->activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE);
+        $neighbor = $this->activity($folder, $ci, ActivityDefinition::NEIGHBOR_CHECK_CODE);
 
-        $this->actingAs($ci)->delete(route('client-folders.activities.destroy', [$folder, $barangay]), ['co_maker_id' => null])
-            ->assertSessionHasErrors('activity');
+        $this->actingAs($ci)->delete(route('client-folders.activities.destroy', [$folder, $barangay]), ['co_maker_id' => ''])
+            ->assertSessionHasNoErrors();
 
-        $this->assertNotNull($barangay->fresh());
+        $this->assertNull($barangay->fresh());
+        $this->assertNotNull($neighbor->fresh());
     }
 
     public function test_bank_and_asset_delete_requires_confirmation_dialog_present(): void

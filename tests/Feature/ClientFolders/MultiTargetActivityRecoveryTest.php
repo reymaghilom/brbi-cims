@@ -6,7 +6,6 @@ use App\Enums\ActivityStatus;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\CiActivity;
-use App\Models\CiActivityAssetTarget;
 use App\Models\CiActivityBankTarget;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;

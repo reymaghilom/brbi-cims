@@ -205,7 +205,7 @@ class NoChangeDetectionTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.', 'photos' => [$photo],
-        ])->assertSessionHas('status', 'Residence Check updated successfully.');
+        ])->assertSessionHas('status', 'Residence Check updated successfully. Files saved to Local Storage.');
 
         $this->assertSame(2, $check->photos()->count());
     }
@@ -245,7 +245,7 @@ class NoChangeDetectionTest extends TestCase
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'check_id' => $check->id, 'expected_revision' => $check->revision, 'remarks' => 'Residence verified.', 'map_screenshot' => UploadedFile::fake()->image('Replacement.png', 800, 600)->size(400),
-        ])->assertSessionHas('status', 'Residence Check updated successfully.');
+        ])->assertSessionHas('status', 'Residence Check updated successfully. Files saved to Local Storage.');
 
         $this->assertNotSame($originalPath, $check->fresh()->map_screenshot_path);
     }
@@ -378,8 +378,10 @@ class NoChangeDetectionTest extends TestCase
         if ($coMaker) {
             $payload['co_maker_id'] = $coMaker->id;
         }
-        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertRedirect();
+        $this->actingAs($ci)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->revision])->assertRedirect();
         $source->refresh();
+        // Every later resubmission carries the stale-update guard for the revision it was built from.
+        $payload['expected_revision'] = $source->revision;
 
         return [$ci, $folder, $source, $payload];
     }

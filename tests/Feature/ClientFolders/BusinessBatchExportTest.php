@@ -46,9 +46,10 @@ class BusinessBatchExportTest extends TestCase
             ->assertDontSee('data-business-selected-summary-count', false)
             ->assertDontSee('xl:grid-cols-[minmax(0,1fr)_minmax(15rem,23%)]', false)
             // Existing per-row actions must still be present for every saved business.
-            ->assertSee("business-{$truck->id}-export-pdf-form", false)
+            // PDF is a direct GET link (the export route answers GET); Excel still posts its own form.
+            ->assertSee(route('client-folders.income-sources.export-pdf', [$folder, $truck]), false)
             ->assertSee("business-{$truck->id}-export-excel-form", false)
-            ->assertSee("business-{$agri->id}-export-pdf-form", false)
+            ->assertSee(route('client-folders.income-sources.export-pdf', [$folder, $agri]), false)
             ->assertSee("delete-business-{$truck->id}", false)
             ->assertSee("delete-business-{$agri->id}", false)
             ->assertSee(route('client-folders.income-sources.edit', [$folder, $truck]), false)
@@ -102,8 +103,9 @@ class BusinessBatchExportTest extends TestCase
         // Every Download dropdown (batch + one per saved business row) uses
         // the shared floating context-menu component — the panel carries the JS positioning hook
         // that keeps it anchored to its own trigger instead of participating in normal document
-        // flow inside the table's overflow-x-auto wrapper. The fourth menu is the account menu.
-        $this->assertSame(4, substr_count($content, 'data-context-menu-panel'));
+        // flow inside the table's overflow-x-auto wrapper. The remaining two are the layout's own
+        // account menu and Scheduled Today notification menu.
+        $this->assertSame(5, substr_count($content, 'data-context-menu-panel'));
 
         // Each business's own row is scoped between its Update trigger and the
         // next one — its Download menu must submit only that exact business's own export forms,
@@ -115,8 +117,11 @@ class BusinessBatchExportTest extends TestCase
         [$firstStart, $secondStart] = $truckRowStart < $agriRowStart ? [$truckRowStart, $agriRowStart] : [$agriRowStart, $truckRowStart];
         $firstRow = substr($content, $firstStart, $secondStart - $firstStart);
         $firstIsTruck = $firstStart === $truckRowStart;
-        $this->assertStringContainsString('business-'.($firstIsTruck ? $truck->id : $agri->id).'-export-pdf-form', $firstRow);
-        $this->assertStringNotContainsString('business-'.($firstIsTruck ? $agri->id : $truck->id).'-export-pdf-form', $firstRow);
+        [$first, $second] = $firstIsTruck ? [$truck, $agri] : [$agri, $truck];
+        $this->assertStringContainsString(e(route('client-folders.income-sources.export-pdf', [$folder, $first])), $firstRow);
+        $this->assertStringNotContainsString(e(route('client-folders.income-sources.export-pdf', [$folder, $second])), $firstRow);
+        $this->assertStringContainsString('form="business-'.$first->id.'-export-excel-form"', $firstRow);
+        $this->assertStringNotContainsString('form="business-'.$second->id.'-export-excel-form"', $firstRow);
     }
 
     public function test_manage_page_with_no_saved_businesses_shows_the_empty_state_and_no_batch_panel(): void

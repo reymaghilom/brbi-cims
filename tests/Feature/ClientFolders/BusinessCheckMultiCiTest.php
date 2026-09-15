@@ -242,7 +242,7 @@ class BusinessCheckMultiCiTest extends TestCase
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $source->id, 'ci_date' => now()->toDateString(), 'location' => 'Poblacion, San Miguel, Bulacan',
             'photo_groups' => [['photos' => [UploadedFile::fake()->image('Business.jpg', 900, 700)->size(500)]]],
-        ])->assertRedirect()->assertSessionHas('status', 'Business Check saved successfully.');
+        ])->assertRedirect()->assertSessionHas('status', 'Business Check saved successfully. Files saved to Local Storage.');
 
         $check = $folder->businessChecks()->firstOrFail();
 

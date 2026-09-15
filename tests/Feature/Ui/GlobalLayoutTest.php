@@ -70,10 +70,9 @@ class GlobalLayoutTest extends TestCase
         $css = file_get_contents(resource_path('css/app.css'));
 
         $this->assertStringContainsString('hover:bg-white/10', $css);
-        $this->assertStringContainsString('.ui-sidebar-link-active, .ui-sidebar-link-active:hover', $css);
-        $this->assertStringContainsString('bg-brand-sidebar-hover', $css);
-        $this->assertStringContainsString('.ui-sidebar-link-active::before', $css);
-        $this->assertStringContainsString('background: var(--color-brand-soft)', $css);
+        // The left accent bar (::before) was retired; the active item stays distinct through its own
+        // background, weight and colour, which also hold on hover.
+        $this->assertStringContainsString('.ui-sidebar-link-active, .ui-sidebar-link-active:hover { @apply bg-brand-sidebar-hover font-semibold text-white; }', $css);
 
         $ci = User::factory()->create();
 
@@ -396,7 +395,7 @@ class GlobalLayoutTest extends TestCase
 
             $this->actingAs($creator)
                 ->post(route('notifications.ci-activities.read', $applicantNotification->id))
-                ->assertRedirect(route('client-folders.activities.edit', [$folder, $applicantActivity]));
+                ->assertRedirect(route('client-folders.activities.index', [$folder]));
             $this->assertNotNull($applicantNotification->fresh()->read_at);
             $this->assertNull($coMakerNotification->fresh()->read_at);
 
@@ -409,7 +408,7 @@ class GlobalLayoutTest extends TestCase
                 ->assertSee('data-scheduled-notification-state="unread"', false);
 
             $this->post(route('notifications.ci-activities.read', $coMakerNotification->id))
-                ->assertRedirect(route('client-folders.activities.edit', [$folder, $coMakerActivity, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]));
+                ->assertRedirect(route('client-folders.activities.index', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]));
             $this->assertNotNull($coMakerNotification->fresh()->read_at);
 
             $this->get(route('home'))
@@ -493,7 +492,9 @@ class GlobalLayoutTest extends TestCase
         $this->assertStringContainsString("event.key === 'Escape'", $javascript);
         $this->assertStringContainsString("removeAttribute('open')", $javascript);
         $this->assertStringContainsString("setAttribute('aria-expanded', String(menu.open))", $javascript);
-        $this->assertStringContainsString("menu.querySelector(':scope > summary')?.focus()", $javascript);
+        // Escape returns focus to the menu's own summary through the shared close helper.
+        $this->assertStringContainsString('closeContextMenu(menu, { restoreFocus: true });', $javascript);
+        $this->assertStringContainsString('if (restoreFocus) summary?.focus();', $javascript);
     }
 
     public function test_client_search_javascript_supports_debounced_live_results_and_a_clear_action_without_autosuggest(): void

@@ -5,6 +5,7 @@ namespace Tests\Feature\Authorization;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
 use App\Models\User;
+use App\Support\ClientFolders\MissingClientFolderResponse;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -44,7 +45,10 @@ class RouteAuthorizationTest extends TestCase
         $deletedFolder->delete();
 
         $this->actingAs($administrator)->get(route('client-folders.show', $folder))->assertOk();
-        $this->actingAs($administrator)->get(route('client-folders.show', $deletedFolder->id))->assertNotFound();
+        // A missing folder is never rendered: signed-in users are sent back to Client Folders with a notice.
+        $this->actingAs($administrator)->get(route('client-folders.show', $deletedFolder->id))
+            ->assertRedirect(route('client-folders.index'))
+            ->assertSessionHas('status', MissingClientFolderResponse::VIEW_MESSAGE);
     }
 
     public function test_scoped_binding_rejects_a_forged_nested_income_source_id(): void

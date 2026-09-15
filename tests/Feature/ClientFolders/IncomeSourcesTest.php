@@ -13,6 +13,7 @@ use App\Models\IncomeSourceTemplate;
 use App\Models\MediaReference;
 use App\Models\User;
 use App\Services\ClientFolders\CiParticipantService;
+use App\Support\ClientFolders\MissingClientFolderResponse;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
@@ -245,7 +246,9 @@ class IncomeSourcesTest extends TestCase
 
         $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))->assertNotFound();
         $folder->delete();
-        $this->actingAs($ci)->get(route('client-folders.income-sources.index', $folder->id))->assertNotFound();
+        $this->actingAs($ci)->get(route('client-folders.income-sources.index', $folder->id))
+            ->assertRedirect(route('client-folders.index'))
+            ->assertSessionHas('status', MissingClientFolderResponse::VIEW_MESSAGE);
     }
 
     public function test_selector_only_shows_active_templates_and_rejects_inactive_or_forged_ids(): void

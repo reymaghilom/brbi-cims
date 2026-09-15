@@ -35,10 +35,11 @@ class CiActivityQuickCompleteModalTest extends TestCase
             ->assertSee('Complete this activity?')
             ->assertSee('data-quick-complete-edit', false)
             ->assertSee('data-quick-complete-cancel', false)
-            ->assertSee('data-quick-complete-confirm-label>Mark as Completed', false)
+            ->assertSee('data-quick-complete-confirm-label', false)
             ->assertSee('data-completion-status-label="Pending"', false)
             ->assertSee('data-default-check-open="'.$barangay->id.'"', false);
 
+        $this->assertMatchesRegularExpression('/data-quick-complete-confirm-label\s*>Mark as Completed</', $page->getContent());
         $this->assertMatchesRegularExpression('/data-quick-complete-cancel[^>]*>.*?<svg.*?<\/svg>\s*Cancel<\/button>/s', $page->getContent());
         $this->assertMatchesRegularExpression('/data-quick-complete-edit[^>]*>.*?<svg.*?<\/svg>\s*Edit<\/button>/s', $page->getContent());
         $this->assertMatchesRegularExpression('/data-quick-complete-confirm[^>]*>.*?<svg.*?<\/svg>.*?Mark as Completed.*?<\/button>/s', $page->getContent());

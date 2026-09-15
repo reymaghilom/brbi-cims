@@ -196,14 +196,14 @@ class BusinessReportNoChangeModalTest extends TestCase
 
             // Header title: icon component output, then the untouched title wording.
             $this->assertMatchesRegularExpression(
-                '/<h2 id="default-check-title"[^>]*><svg[^>]*class="[^"]*size-5[^"]*"[^>]*>.*?<\/svg>\s*<span[^>]*>'.preg_quote($definition->name, '/').'<\/span><\/h2>/s',
+                '/<h2 id="default-check-title"[^>]*><svg[^>]*class="[^"]*size-5[^"]*"[^>]*>.*?<\/svg>\s*<span[^>]*>Edit '.preg_quote($definition->name, '/').'<\/span><\/h2>/s',
                 $html,
                 $code.' header icon',
             );
 
             // The action buttons keep the icons they already had — nothing duplicated, nothing lost.
             $this->assertMatchesRegularExpression('/data-default-check-cancel><svg[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $html, $code.' cancel');
-            $this->assertMatchesRegularExpression('/data-default-check-submit><svg[^>]*>.*?<\/svg>\s*Save Changes<\/button>/s', $html, $code.' save');
+            $this->assertMatchesRegularExpression('/data-default-check-submit><svg[^>]*>.*?<\/svg>\s*<span data-default-check-submit-label>Save Changes<\/span><\/button>/s', $html, $code.' save');
             $this->assertSame(1, substr_count($html, 'id="default-check-title"'));
         }
     }

@@ -143,7 +143,11 @@ class ResidenceBusinessLayoutRegressionTest extends TestCase
         $response = $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk();
 
         $response->assertSee('Residence Check');
-        $response->assertSee('1 Residence Report');
+        // The report-summary sidebar (with its "N Residence Report" count) was retired; the saved
+        // check is listed with its own edit link instead.
+        $check = $folder->residenceChecks()->sole();
+        $response->assertSee('data-checks-listing', false);
+        $response->assertSee(route('client-folders.residence-checks.edit', [$folder, $check]), false);
     }
 
     public function test_add_business_check_button_remains_present(): void
@@ -198,15 +202,16 @@ class ResidenceBusinessLayoutRegressionTest extends TestCase
         $coMakerResponse->assertSee('co_maker_id='.$coMaker->id, false);
     }
 
-    public function test_report_summary_sidebar_is_narrower_on_desktop_leaving_more_room_for_the_main_content(): void
+    public function test_retired_report_summary_sidebar_leaves_the_main_content_full_width(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
 
         $response = $this->actingAs($ci)->get(route('client-folders.residence-business.edit', $folder))->assertOk();
 
-        $response->assertSee('xl:grid-cols-[minmax(0,1fr)_minmax(180px,210px)]', false);
+        $response->assertDontSee('xl:grid-cols-[minmax(0,1fr)_minmax(180px,210px)]', false);
         $response->assertDontSee('xl:grid-cols-[minmax(0,1fr)_minmax(240px,280px)]', false);
+        $response->assertSee('data-checks-listing', false);
     }
 
     public function test_residence_and_business_tables_both_show_a_visible_actions_column_heading(): void

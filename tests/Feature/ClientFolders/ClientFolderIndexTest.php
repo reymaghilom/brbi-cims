@@ -152,11 +152,13 @@ class ClientFolderIndexTest extends TestCase
             ->assertSee('placeholder="Search client name..."', false)
             ->assertSee('data-client-search-clear', false)
             ->assertSee('px-4 py-3 sm:px-5 sm:py-4', false)
-            ->assertSee('flex flex-col gap-3 sm:flex-row sm:items-center', false)
-            ->assertSee('min-w-0 w-full flex-1', false)
-            ->assertSee('min-h-10 w-full shrink-0 px-4 py-2 sm:w-auto', false)
-            ->assertDontSee('role="combobox"', false)
-            ->assertDontSee('aria-autocomplete="list"', false)
+            // Toolbar stacks on phones and becomes a row from md up; search fills the remaining width.
+            ->assertSee('flex-col gap-3 px-4 py-3 sm:px-5 sm:py-4 md:flex-row md:items-center md:gap-2" data-folder-toolbar', false)
+            ->assertSee('class="w-full min-w-0 md:flex-1" data-folder-toolbar-search', false)
+            ->assertSee('min-h-10 w-full px-4 py-2 md:w-auto', false)
+            // The client-name autosuggest combobox (FolderBrowserInteractionTest) replaced the old list.
+            ->assertSee('role="combobox"', false)
+            ->assertSee('aria-autocomplete="list"', false)
             ->assertDontSee('data-client-search-list', false)
             ->assertDontSee('data-suggestions-url', false)
             ->assertDontSee('client-folder-browser-title', false)
@@ -183,10 +185,12 @@ class ClientFolderIndexTest extends TestCase
         $this->assertStringContainsString('width: 3.2rem; height: 2.4rem', $css);
         $this->assertStringContainsString('@media (max-width: 639px)', $css);
         $this->assertStringContainsString('width: 3rem; height: 2.25rem', $css);
-        $this->assertStringContainsString('height: clamp(34rem, calc(100vh - 10.5rem), 46rem)', $css);
-        $this->assertStringContainsString('min-height: 0; height: 100%; max-height: none', $css);
-        $this->assertStringContainsString('overflow-x: hidden; overflow-y: auto', $css);
-        $this->assertStringContainsString('scrollbar-width: thin', $css);
+        // The fixed-height, internally scrolling results pane was replaced by a paginated grid whose
+        // column count steps with the viewport.
+        $this->assertStringNotContainsString('height: clamp(34rem, calc(100vh - 10.5rem), 46rem)', $css);
+        $this->assertStringContainsString('.client-folder-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }', $css);
+        $this->assertStringContainsString('.client-folder-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }', $css);
+        $this->assertStringContainsString('.client-folder-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }', $css);
     }
 
     public function test_page_reuses_dashboard_compact_preview_without_the_full_progress_section(): void
@@ -335,28 +339,26 @@ class ClientFolderIndexTest extends TestCase
             return substr($html, $start, $end + 9 - $start);
         };
 
+        // Administrator view: an empty folder gets the plain confirmation, a folder with saved records
+        // the explicit data warning (Credit Investigators / Senior CIs are covered by
+        // ClientFolderRoleDeleteTest, where such a folder is "Deletion Not Available").
         $emptyModal = $deleteModal($emptyFolder);
         $this->assertStringContainsString('Delete Client Folder Permanently?', $emptyModal);
         $this->assertStringContainsString('data-folder-delete-empty-warning', $emptyModal);
-        $this->assertStringContainsString('Are you sure you want to permanently delete this client folder?', $emptyModal);
+        $this->assertStringContainsString('This Client Folder does not contain any saved records yet.', $emptyModal);
         $this->assertStringContainsString('This action cannot be undone.', $emptyModal);
         $this->assertStringNotContainsString('data-folder-delete-data-warning', $emptyModal);
 
         $dataModal = $deleteModal($dataFolder);
         $this->assertStringContainsString('data-folder-delete-data-warning', $dataModal);
-        $this->assertStringContainsString('already contains saved data', $dataModal);
-        $this->assertStringContainsString('permanently remove the folder and its related records', $dataModal);
-        $this->assertStringContainsString('cannot be recovered', $dataModal);
-        $this->assertStringContainsString('Are you sure you want to continue?', $dataModal);
+        $this->assertStringContainsString('This Client Folder contains saved records.', $dataModal);
+        $this->assertStringContainsString('permanently remove the folder, its investigation records, and related data', $dataModal);
+        $this->assertStringContainsString('This action cannot be undone.', $dataModal);
         $this->assertStringContainsString('d="M12 3 2.8 20h18.4L12 3Z"', $dataModal);
 
         foreach ([$emptyModal, $dataModal] as $modal) {
-            $this->assertStringContainsString('data-modal-close class="ui-button-secondary shrink-0 whitespace-nowrap"', $modal);
-            $this->assertStringContainsString('d="m6 6 12 12M18 6 6 18"', $modal);
-            $this->assertMatchesRegularExpression('/Cancel\s*<\/button>/', $modal);
-            $this->assertStringContainsString('class="ui-button-danger shrink-0 whitespace-nowrap"', $modal);
-            $this->assertStringContainsString('d="M4.5 7h15M9 3.5h6L16 7H8l1-3.5ZM7 7l1 13h8l1-13M10 10v7M14 10v7"', $modal);
-            $this->assertMatchesRegularExpression('/Delete Permanently\s*<\/button>/', $modal);
+            $this->assertMatchesRegularExpression('/data-modal-close class="ui-button-secondary[^"]*">.*?d="m6 6 12 12M18 6 6 18".*?Cancel\s*<\/button>/s', $modal);
+            $this->assertMatchesRegularExpression('/class="ui-button-danger[^"]*">.*?d="M4\.5 7h15M9 3\.5h6L16 7H8l1-3\.5ZM7 7l1 13h8l1-13M10 10v7M14 10v7".*?Delete Permanently\s*<\/button>/s', $modal);
         }
 
         $this->assertNotNull(ClientFolder::find($emptyFolder->id));
@@ -529,7 +531,9 @@ class ClientFolderIndexTest extends TestCase
         $queryCount = count(DB::getQueryLog());
         DB::disableQueryLog();
 
-        $this->assertLessThanOrEqual(4, $queryCount);
+        // count + page + two eager-loaded user lookups + one batched ClientFolderSavedRecords lookup
+        // (which delete dialog each tile renders). None of them runs per folder.
+        $this->assertLessThanOrEqual(5, $queryCount);
         $this->assertTrue($folders->getCollection()->every(
             fn (ClientFolder $folder): bool => $folder->relationLoaded('assignedInvestigator') && $folder->relationLoaded('creator'),
         ));

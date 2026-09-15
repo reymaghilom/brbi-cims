@@ -6,6 +6,7 @@ use App\Exceptions\CloudMediaUploadException;
 use App\Models\ClientFolder;
 use App\Models\User;
 use App\Services\Media\CloudinaryMediaStorage;
+use App\Services\Storage\CiTeamDocumentStorage;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -74,7 +75,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
     {
         $script = file_get_contents(resource_path('js/app.js'));
 
-        $this->assertStringContainsString('field.getStagedPhotoFiles = () => [...files];', $script);
+        $this->assertStringContainsString('field.getStagedPhotoFiles = () => files.map(({ file }) => file);', $script);
         $this->assertStringContainsString('payload.delete(photoInput.name);', $script);
         $this->assertStringContainsString('stagedPhotos.forEach((file) => payload.append(photoInput.name, file, file.name));', $script);
         $this->assertStringContainsString("statusText.textContent = 'Uploading media to cloud storage…';", $script);
@@ -99,7 +100,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
         $this->mockCloud()->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo-1'));
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
@@ -112,7 +113,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
         $this->mockCloud()->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo-1'));
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
@@ -120,7 +121,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
 
         $this->mockedCloud->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/map-screenshots', 'map_screenshot')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/map-screenshots'), 'map_screenshot')
             ->andReturn($this->fakeCloudAsset('residence-map-1'));
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
@@ -133,7 +134,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
         $this->mockCloud()->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo-1'));
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
@@ -162,7 +163,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->residenceCheckFolder($ci);
         $this->mockCloud()->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo-1'));
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'remarks' => 'Residence verified.', 'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
@@ -218,10 +219,10 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $folder = $this->residenceCheckFolder($ci);
         $this->mockCloud()
             ->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/photos', 'photo')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/photos'), 'photo')
             ->andReturn($this->fakeCloudAsset('residence-photo'));
         $this->mockedCloud->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/map-screenshots', 'map_screenshot')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/map-screenshots'), 'map_screenshot')
             ->andReturn($this->fakeCloudAsset('original-map'));
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
@@ -232,7 +233,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $this->assertSame(1, $check->photos()->count());
 
         $this->mockedCloud->shouldReceive('store')->once()
-            ->with(\Mockery::type(UploadedFile::class), 'residence/map-screenshots', 'map_screenshot')
+            ->with(\Mockery::type(UploadedFile::class), $this->applicantCloudFolder($folder, 'residence/map-screenshots'), 'map_screenshot')
             ->andThrow(new CloudMediaUploadException);
         $this->mockedCloud->shouldNotReceive('destroy');
 
@@ -273,6 +274,15 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
             'cloud_width' => 1600,
             'cloud_height' => 1200,
         ];
+    }
+
+    /** New Applicant uploads mirror the Local CI Team hierarchy — same convention as CloudinaryMediaTest. */
+    private function applicantCloudFolder(ClientFolder $folder, string $mediaFolder): string
+    {
+        return app(CiTeamDocumentStorage::class)->clientDirectory($folder).'/'.[
+            'residence/photos' => 'Residence Check Report/Pictures',
+            'residence/map-screenshots' => 'Residence Check Report/Google Map',
+        ][$mediaFolder];
     }
 
     private function residenceCheckFolder(User $ci): ClientFolder

@@ -173,7 +173,7 @@ class ActivityTypeAuditTrailTest extends TestCase
         $this->assertStringContainsString($userB->full_name, $panel);
     }
 
-    public function test_a_rejected_deletion_writes_no_event(): void
+    public function test_removing_a_used_type_records_one_deactivation_event_and_never_a_deletion(): void
     {
         [$userA] = $this->users();
         $folder = $this->folderFor($userA);
@@ -182,11 +182,11 @@ class ActivityTypeAuditTrailTest extends TestCase
 
         $this->actingAs($userA)
             ->deleteJson(route('client-folders.activity-definitions.destroy', [$folder, $definition]))
-            ->assertStatus(422);
+            ->assertOk();
 
-        $this->assertDatabaseHas('activity_definitions', ['id' => $definition->id]);
+        $this->assertDatabaseHas('activity_definitions', ['id' => $definition->id, 'is_active' => false]);
         $this->assertDatabaseHas('ci_activities', ['id' => $activity->id]);
-        $this->assertCount(0, $this->definitionEvents());
+        $this->assertSame(['activity_definition.deactivated'], $this->definitionEvents()->pluck('action')->all());
         $this->assertStringNotContainsString('Deleted Activity Type', $this->historyPanel($userA, $folder));
     }
 

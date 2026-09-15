@@ -129,7 +129,7 @@ class PairedBusinessRecycleBinTest extends TestCase
         $this->assertPairIntact($source, $report, $check);
     }
 
-    public function test_deleting_both_report_and_check_removes_the_now_orphaned_income_source(): void
+    public function test_deleting_both_report_and_check_leaves_the_parent_income_source_in_place(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci, 'Orphan Cleanup Folder');
@@ -140,7 +140,11 @@ class PairedBusinessRecycleBinTest extends TestCase
 
         app(DeleteBusinessCheck::class)->execute($ci, $folder, $check);
 
-        $this->assertDatabaseMissing('income_sources', ['id' => $source->id]);
+        // Independence rule: deleting a Business Report or a Business Check never removes the
+        // parent IncomeSource — only deleting the IncomeSource itself does. The check deletion is
+        // recorded on that exact source so the Reports workspace does not regenerate it.
+        $this->assertDatabaseHas('income_sources', ['id' => $source->id]);
+        $this->assertNotNull($source->fresh()->business_check_deleted_at);
         $this->assertDatabaseMissing('business_reports', ['id' => $report->id]);
         $this->assertDatabaseMissing('business_checks', ['id' => $check->id]);
     }

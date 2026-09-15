@@ -8,6 +8,7 @@ use App\Models\IncomeSourceTemplate;
 use App\Models\User;
 use App\Services\Reports\OfficialReportDataBuilder;
 use App\Services\Storage\CiTeamDocumentStorage;
+use App\Support\ClientFolders\MissingClientFolderResponse;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -43,7 +44,9 @@ class ResidenceBusinessReportTest extends TestCase
         $this->actingAs($admin)->get(route('client-folders.residence-business.edit', $folder))->assertOk();
         $this->actingAs($other)->get(route('client-folders.residence-business.edit', $folder))->assertOk();
         $folder->delete();
-        $this->actingAs($admin)->get(route('client-folders.residence-business.edit', $folder->id))->assertNotFound();
+        $this->actingAs($admin)->get(route('client-folders.residence-business.edit', $folder->id))
+            ->assertRedirect(route('client-folders.index'))
+            ->assertSessionHas('status', MissingClientFolderResponse::VIEW_MESSAGE);
     }
 
     public function test_the_old_documentation_section_workflow_is_gone(): void
@@ -1279,6 +1282,9 @@ class ResidenceBusinessReportTest extends TestCase
         $ci = User::factory()->create();
         $folder = $this->folderFor($ci);
         $source = $this->businessSource($folder, 'Sari-Sari Store', 'Poblacion, San Miguel, Bulacan');
+        // The Business Check picker lists only businesses whose Business Report was explicitly
+        // saved (revision > 1), never a revision-1 shell.
+        $source->forceFill(['revision' => 2])->save();
 
         $this->actingAs($ci)->get(route('client-folders.residence-checks.create', $folder))
             ->assertOk()->assertSee('Residence Check')->assertSee('Map Screenshot');

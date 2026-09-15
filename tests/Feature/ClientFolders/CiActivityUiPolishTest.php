@@ -40,8 +40,8 @@ class CiActivityUiPolishTest extends TestCase
         $this->assertStringContainsString('Remove this Bank / Coop record?', $content);
         $this->assertStringContainsString('This row already contains information. Removing it will discard the data entered in this row.', $content);
         $this->assertStringNotContainsString('Remove this Bank / Coop entry?', $content);
-        // The Asset Check twin of this dialog is deliberately left as it is.
-        $this->assertStringContainsString('data-asset-target-remove-confirm>Remove Entry</button>', $content);
+        // The Asset Check twin keeps its own "Remove Entry" wording and now shares the same icon treatment.
+        $this->assertMatchesRegularExpression('/class="ui-button-danger" data-asset-target-remove-confirm><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Remove Entry<\/button>/s', $content);
         $this->assertMatchesRegularExpression('/data-bank-target-remove-cancel><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $content);
         $this->assertMatchesRegularExpression('/class="ui-button-danger" data-bank-target-remove-confirm><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Remove Record<\/button>/s', $content);
     }
@@ -646,7 +646,7 @@ class CiActivityUiPolishTest extends TestCase
                 $code.' cancel',
             );
             $this->assertMatchesRegularExpression(
-                '/<button type="submit" class="ui-button-primary w-full sm:w-auto" data-default-check-submit><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Save Changes<\/button>/s',
+                '/<button type="submit" class="ui-button-primary w-full sm:w-auto" data-default-check-submit><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*<span data-default-check-submit-label>Save Changes<\/span><\/button>/s',
                 $content,
                 $code.' save',
             );
@@ -694,8 +694,8 @@ class CiActivityUiPolishTest extends TestCase
         $content = $this->actingAs($ci)->get(route('client-folders.activities.index', $folder))->assertOk()->getContent();
 
         $this->assertMatchesRegularExpression('/<p class="mt-0\.5 flex items-center gap-1\.5 text-sm text-text-muted"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Complete this activity\?<\/p>/s', $content);
-        $this->assertMatchesRegularExpression('/data-quick-complete-cancel><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $content);
-        $this->assertMatchesRegularExpression('/data-quick-complete-confirm><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*<span data-quick-complete-confirm-label>Mark as Completed<\/span><\/button>/s', $content);
+        $this->assertMatchesRegularExpression('/data-quick-complete-cancel\s*><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $content);
+        $this->assertMatchesRegularExpression('/data-quick-complete-confirm\s*><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*<span\s+data-quick-complete-confirm-label\s*>Mark as Completed<\/span><\/button>/s', $content);
         $this->assertStringContainsString("confirmLabel.textContent = 'Completing…';", $content);
         $this->assertStringNotContainsString("confirm.textContent = 'Mark Completed';", $content);
     }
@@ -731,13 +731,13 @@ class CiActivityUiPolishTest extends TestCase
         $deleteDialog = substr($content, $deleteStart, 2500);
 
         $this->assertStringContainsString(route('client-folders.activities.bank-targets.complete', [$folder, $activity, $activity->bankTargets->sole()]), $completeDialog);
-        $this->assertMatchesRegularExpression('/data-modal-close class="ui-button-secondary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $completeDialog);
-        $this->assertMatchesRegularExpression('/class="ui-button-primary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Mark as Completed<\/button>/s', $completeDialog);
+        $this->assertMatchesRegularExpression('/<button type="button"(?=[^>]*\bdata-modal-close\b)(?=[^>]*class="ui-button-secondary)[^>]*><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $completeDialog);
+        $this->assertMatchesRegularExpression('/<button type="submit" class="ui-button-primary[^"]*"\s*><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*<span\s*>Mark as Completed<\/span><\/button>/s', $completeDialog);
 
         $this->assertStringContainsString(route('client-folders.activities.bank-targets.destroy', [$folder, $activity, $activity->bankTargets->sole()]), $deleteDialog);
-        $this->assertMatchesRegularExpression('/data-modal-close class="ui-button-secondary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $deleteDialog);
+        $this->assertMatchesRegularExpression('/<button type="button"(?=[^>]*\bdata-modal-close\b)(?=[^>]*class="ui-button-secondary)[^>]*><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $deleteDialog);
         $this->assertStringContainsString('Remove Bank / Coop Record?', $deleteDialog);
-        $this->assertMatchesRegularExpression('/class="ui-button-danger"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Delete Record<\/button>/s', $deleteDialog);
+        $this->assertMatchesRegularExpression('/class="ui-button-danger[^"]*"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Delete Record<\/button>/s', $deleteDialog);
         $this->assertStringNotContainsString('Delete Bank / Coop Target?', $deleteDialog);
         $this->assertStringNotContainsString('Delete Target</button>', $deleteDialog);
     }
@@ -784,7 +784,7 @@ class CiActivityUiPolishTest extends TestCase
             ->assertOk()->getContent();
 
         $this->assertMatchesRegularExpression(
-            '/<button type="button" class="ui-button-secondary" data-modal-close><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button><button type="submit" class="ui-button-primary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Add Bank \/ Coop<\/button>/s',
+            '/<button type="button" class="ui-button-secondary[^"]*" data-modal-close><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>\s*<button type="submit" class="ui-button-primary[^"]*"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Add Bank \/ Coop<\/button>/s',
             $content,
         );
     }

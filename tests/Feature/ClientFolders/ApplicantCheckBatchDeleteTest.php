@@ -2,8 +2,9 @@
 
 namespace Tests\Feature\ClientFolders;
 
-use App\Models\ClientFolder;
 use App\Models\BusinessCheck;
+use App\Models\ClientFolder;
+use App\Models\CoMaker;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
@@ -41,9 +42,11 @@ class ApplicantCheckBatchDeleteTest extends TestCase
     public function test_mixed_batch_deletes_only_selected_applicant_checks_and_returns_to_the_listing(): void
     {
         [$ci, $folder] = $this->folderForApplicant();
+        // A person holds at most one Residence Check, so the record left unselected is a second
+        // Applicant Business Check for a different business.
         $selectedResidence = $this->createResidenceCheck($ci, $folder, 'Selected residence');
-        $unselectedResidence = $this->createResidenceCheck($ci, $folder, 'Keep residence');
         $selectedBusiness = $this->createBusinessCheck($ci, $folder);
+        $unselectedBusiness = $this->createBusinessCheck($ci, $folder, 'Keep Hardware');
         $this->markPhotoAsCloud($selectedResidence->photos()->firstOrFail(), 'selected-residence-photo');
         $this->markPhotoAsCloud($selectedBusiness->photos()->firstOrFail(), 'selected-business-photo');
         $cloud = $this->mock(CloudinaryMediaStorage::class);
@@ -59,17 +62,18 @@ class ApplicantCheckBatchDeleteTest extends TestCase
         $response->assertSessionHas('status', 'Selected reports deleted successfully.');
         $this->assertDatabaseMissing('residence_checks', ['id' => $selectedResidence->id]);
         $this->assertDatabaseMissing('business_checks', ['id' => $selectedBusiness->id]);
-        $this->assertDatabaseHas('residence_checks', ['id' => $unselectedResidence->id, 'co_maker_id' => null]);
+        $this->assertDatabaseHas('business_checks', ['id' => $unselectedBusiness->id, 'co_maker_id' => null]);
     }
 
     public function test_a_co_maker_context_cannot_use_the_applicant_batch_endpoint(): void
     {
         [$ci, $folder] = $this->folderForApplicant();
         $check = $this->createResidenceCheck($ci, $folder, 'Applicant residence');
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Batch Context Co-Maker']);
 
         $this->actingAs($ci)->post(route('client-folders.residence-business-checks.batch-delete', $folder), [
             'residence_check_ids' => [$check->id],
-            'co_maker_id' => 999,
+            'co_maker_id' => $coMaker->id,
         ])->assertNotFound();
 
         $this->assertDatabaseHas('residence_checks', ['id' => $check->id, 'co_maker_id' => null]);
@@ -120,9 +124,9 @@ class ApplicantCheckBatchDeleteTest extends TestCase
         return $folder->residenceChecks()->latest('id')->firstOrFail();
     }
 
-    private function createBusinessCheck(User $ci, ClientFolder $folder)
+    private function createBusinessCheck(User $ci, ClientFolder $folder, string $businessName = 'Sari-Sari Store')
     {
-        $source = $this->businessSource($folder);
+        $source = $this->businessSource($folder, $businessName);
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
             'income_source_id' => $source->id,
             'ci_date' => now()->toDateString(),
@@ -133,18 +137,18 @@ class ApplicantCheckBatchDeleteTest extends TestCase
         return $folder->businessChecks()->latest('id')->firstOrFail();
     }
 
-    private function businessSource(ClientFolder $folder): IncomeSource
+    private function businessSource(ClientFolder $folder, string $businessName = 'Sari-Sari Store'): IncomeSource
     {
         $template = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
         $source = $folder->incomeSources()->create([
             'income_source_template_id' => $template->id,
             'template_type' => $template->template_type,
             'template_version' => $template->version,
-            'source_name' => 'Sari-Sari Store',
-            'business_name' => 'Sari-Sari Store',
+            'source_name' => $businessName,
+            'business_name' => $businessName,
         ]);
         $source->businessReport()->create([
-            'business_name' => 'Sari-Sari Store',
+            'business_name' => $businessName,
             'main_business_address' => 'Poblacion, San Miguel, Bulacan',
             'report_category' => 'retail_grocery_water_refilling',
         ]);

@@ -260,7 +260,7 @@ class BusinessReportCompanionOnlyUpdateTest extends TestCase
         ];
 
         $this->actingAs($actor)
-            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)
+            ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->refresh()->revision])
             ->assertSessionHasNoErrors()
             ->assertSessionHas('statusType', 'success');
 

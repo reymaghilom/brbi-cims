@@ -18,6 +18,7 @@ use App\Models\ReportTemplate;
 use App\Models\User;
 use App\Services\Reports\Contracts\PdfGenerator;
 use App\Services\Storage\CiTeamDocumentStorage;
+use App\Support\ClientFolders\MissingClientFolderResponse;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
@@ -203,9 +204,9 @@ class OfficialReportGenerationTest extends TestCase
             ->assertSee('cibi-section-iv-guide', false)
             ->assertSee('.cibi-section-iv-guide{margin:.02in 0 .025in;', false)
             ->assertSee('cibi-signatory-name', false)
-            ->assertSee('cibi-signature-space', false)
+            // Signatory titles sit on their own row beneath the name line.
             ->assertSee('class="cibi-prepared-by"', false)
-            ->assertSee('</span><small>CREDIT INVESTIGATOR</small>', false)
+            ->assertSee('<td class="cibi-signatory-title"><small>CREDIT INVESTIGATOR</small></td>', false)
             ->assertSee('<span class="cibi-signatory-name"></span>', false)
             ->assertDontSee('<span class="cibi-signatory-name">N/A</span>', false)
             ->assertSee('( ✓ ) EXISTING WITH STRONG CAPACITY')
@@ -351,21 +352,33 @@ class OfficialReportGenerationTest extends TestCase
             $this->assertSame(['CI REPORT - CIBI'], $generated->getSheetNames());
             $generatedSheet = $generated->getSheetByName('CI REPORT - CIBI');
             $templateSheet = $template->getSheetByName('CI REPORT - CIBI');
-            $this->assertSame($templateSheet->getMergeCells(), $generatedSheet->getMergeCells());
-            $this->assertSame($templateSheet->getPageSetup()->getPrintArea(), $generatedSheet->getPageSetup()->getPrintArea());
+            // Detail sections (bank accounts onward, from row 36) are resized to the populated rows,
+            // so only the fixed header region above them must stay identical to the template.
+            $headerMerges = fn (array $merges): array => array_values(array_filter(
+                $merges,
+                fn (string $range): bool => (int) preg_replace('/^[A-Z]+(\d+):.*$/', '$1', $range) < 36,
+            ));
+            $this->assertSame($headerMerges($templateSheet->getMergeCells()), $headerMerges($generatedSheet->getMergeCells()));
+            // The print area keeps its shape and follows the total row change of the resized sections.
+            $this->assertSame('B2:AB64', $templateSheet->getPageSetup()->getPrintArea());
+            $this->assertMatchesRegularExpression('/^B2:AB\d+$/', $generatedSheet->getPageSetup()->getPrintArea());
+            $rowShift = (int) substr($generatedSheet->getPageSetup()->getPrintArea(), 5) - 64;
             $this->assertSame($templateSheet->getPageSetup()->getPaperSize(), $generatedSheet->getPageSetup()->getPaperSize());
             $this->assertSame($templateSheet->getPageMargins()->getTop(), $generatedSheet->getPageMargins()->getTop());
             $this->assertSame($templateSheet->getPageMargins()->getLeft(), $generatedSheet->getPageMargins()->getLeft());
             foreach (['B', 'C', 'G', 'L', 'P', 'V', 'AB'] as $column) {
                 $this->assertSame($templateSheet->getColumnDimension($column)->getWidth(), $generatedSheet->getColumnDimension($column)->getWidth());
             }
-            foreach ([3, 10, 27, 34, 43, 58, 64] as $row) {
-                $this->assertSame($templateSheet->getRowDimension($row)->getRowHeight(), $generatedSheet->getRowDimension($row)->getRowHeight());
+            // Header rows are untouched; footer rows (below every resized section) move by $rowShift.
+            foreach ([3 => 3, 10 => 10, 27 => 27, 34 => 34, 58 => 58 + $rowShift, 64 => 64 + $rowShift] as $templateRow => $generatedRow) {
+                $this->assertSame($templateSheet->getRowDimension($templateRow)->getRowHeight(), $generatedSheet->getRowDimension($generatedRow)->getRowHeight());
             }
-            foreach (['C3', 'C10', 'C27', 'C34', 'C43', 'C58', 'G63'] as $cell) {
-                $this->assertSame($templateSheet->getStyle($cell)->getHashCode(), $generatedSheet->getStyle($cell)->getHashCode());
+            foreach (['C3' => 'C3', 'C10' => 'C10', 'C27' => 'C27', 'C34' => 'C34', 'C58' => 'C'.(58 + $rowShift), 'G63' => 'G'.(63 + $rowShift)] as $templateCell => $generatedCell) {
+                $this->assertSame($templateSheet->getStyle($templateCell)->getHashCode(), $generatedSheet->getStyle($generatedCell)->getHashCode());
             }
-            $this->assertSame($templateSheet->getStyle('Q36')->getHashCode(), $generatedSheet->getStyle('Q36')->getHashCode());
+            // Populated bank detail cells are written in the regular 10pt detail font.
+            $this->assertEquals(10, $generatedSheet->getStyle('Q36')->getFont()->getSize());
+            $this->assertFalse($generatedSheet->getStyle('Q36')->getFont()->getBold());
             $this->assertCount(count($templateSheet->getDrawingCollection()), $generatedSheet->getDrawingCollection());
             $this->assertSame('LATEST SAVED EXCEL ADDRESS', $generatedSheet->getCell('G13')->getValue());
             $this->assertSame('LATEST SAVED BANK', $generatedSheet->getCell('C36')->getValue());
@@ -435,9 +448,12 @@ class OfficialReportGenerationTest extends TestCase
             ->assertOk()
             ->getContent();
 
-        $this->assertSame(2, substr_count($html, 'class="cibi-income-stability"'));
+        // One block per saved summary, padded to the official form's three income rows; the
+        // padding row carries no selection.
+        $this->assertSame(3, substr_count($html, 'class="cibi-income-stability"'));
         $this->assertSame(1, substr_count($html, '( ✓ ) EXISTING WITH STRONG CAPACITY'));
         $this->assertSame(1, substr_count($html, '( ✓ ) WAS NOT/CANNOT BE VALIDATED'));
+        $this->assertSame(0, substr_count($html, '( ✓ ) EXISTING BUT WEAK CAPACITY'));
     }
 
     public function test_access_is_policy_scoped_and_forged_cross_folder_sources_and_artifacts_are_rejected(): void
@@ -457,7 +473,9 @@ class OfficialReportGenerationTest extends TestCase
         $foreignArtifact = GeneratedReport::factory()->create(['client_folder_id' => $otherFolder->id]);
         $this->actingAs($assigned)->get(route('client-folders.generated-reports.download', [$folder, $foreignArtifact]))->assertNotFound();
         $folder->delete();
-        $this->actingAs($administrator)->get(route('client-folders.generated-reports.index', $folder->id))->assertNotFound();
+        $this->actingAs($administrator)->get(route('client-folders.generated-reports.index', $folder->id))
+            ->assertRedirect(route('client-folders.index'))
+            ->assertSessionHas('status', MissingClientFolderResponse::VIEW_MESSAGE);
     }
 
     public function test_regeneration_preserves_history_download_is_protected_and_events_are_audited(): void

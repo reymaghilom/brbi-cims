@@ -814,6 +814,8 @@ class BusinessPhotoGroupsTest extends TestCase
             'check_id' => $check->id,
             'expected_revision' => BusinessCheck::query()->whereKey($check->id)->value('revision'),
             'income_source_id' => $check->income_source_id,
+            // The form always submits the (read-only for a linked business) Business Name field.
+            'business_name' => $check->business_name,
             'ci_date' => $check->ci_date->toDateString(),
             'location' => $check->location,
         ];

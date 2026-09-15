@@ -106,7 +106,8 @@ class BusinessReportMultiCiOutputTest extends TestCase
         $source = $this->businessSource($folder, $creator);
 
         // Editor saves the report without ever touching the companion picker.
-        $this->actingAs($editor)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $this->businessPayload());
+        $this->actingAs($editor)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $this->businessPayload() + ['expected_revision' => $source->fresh()->revision])
+            ->assertSessionHasNoErrors();
 
         $output = app(CiParticipantService::class)->fullNames($source->fresh());
         $this->assertSame('REY MAGHILOM', $output);
@@ -122,7 +123,7 @@ class BusinessReportMultiCiOutputTest extends TestCase
 
         $this->assertSame('REY MAGHILOM', app(CiParticipantService::class)->fullNames($source));
 
-        $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$editor->id]];
+        $payload = $this->businessPayload() + ['contributor_ids_present' => '1', 'contributor_ids' => [$editor->id], 'expected_revision' => $source->fresh()->revision];
         $this->actingAs($editor)->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload)->assertSessionHasNoErrors();
 
         $this->assertSame('REY MAGHILOM / YONG EXPLICIT COMPANION', app(CiParticipantService::class)->fullNames($source->fresh()));
@@ -191,7 +192,7 @@ class BusinessReportMultiCiOutputTest extends TestCase
 
         $this->previewFor($creator, $folder, $source)->assertSee('REY MAGHILOM / ANTHONY YONG');
 
-        $response = $this->actingAs($creator)->post(route('client-folders.income-sources.export-pdf', [$folder, $source]))
+        $response = $this->actingAs($creator)->get(route('client-folders.income-sources.export-pdf', [$folder, $source]))
             ->assertOk()
             ->assertHeader('content-type', 'application/pdf');
         $this->assertSame('%PDF', substr($response->streamedContent(), 0, 4));

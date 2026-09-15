@@ -14,6 +14,7 @@ use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
 use App\Services\ClientFolders\ClientFolderOverview;
+use App\Support\ClientFolders\MissingClientFolderResponse;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -30,7 +31,7 @@ class ClientFolderContentsTest extends TestCase
         $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
 
         $this->assertMatchesRegularExpression(
-            '/<button type="button" data-modal-close class="ui-button-secondary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>\s*<button type="submit" form="co-maker-form" class="ui-button-primary" data-co-maker-submit><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Save Co-Maker<\/button>/s',
+            '/<button type="button" data-modal-close class="ui-button-secondary"><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*Cancel<\/button>\s*<button type="submit" form="co-maker-form" class="ui-button-primary" data-co-maker-submit><svg[^>]*class="[^"]*size-4[^"]*"[^>]*>.*?<\/svg>\s*<span data-co-maker-submit-label>Save Co-Maker<\/span><\/button>/s',
             $content,
         );
     }
@@ -56,9 +57,12 @@ class ClientFolderContentsTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $folder->delete();
 
-        $this->actingAs($administrator)->get(route('client-folders.show', $folder->id))->assertNotFound();
-        $this->actingAs($ci)->get(route('client-folders.show', $folder->id))->assertNotFound();
-        $this->actingAs($administrator)->get(route('client-folders.client-information.edit', $folder->id))->assertNotFound();
+        // A missing folder is never rendered: signed-in users are sent back to Client Folders with a notice.
+        foreach ([[$administrator, 'client-folders.show'], [$ci, 'client-folders.show'], [$administrator, 'client-folders.client-information.edit']] as [$user, $route]) {
+            $this->actingAs($user)->get(route($route, $folder->id))
+                ->assertRedirect(route('client-folders.index'))
+                ->assertSessionHas('status', MissingClientFolderResponse::VIEW_MESSAGE);
+        }
     }
 
     public function test_all_module_cards_link_to_authorized_folder_scoped_destinations(): void
@@ -132,27 +136,20 @@ class ClientFolderContentsTest extends TestCase
             ->assertOk();
     }
 
-    public function test_header_progress_matches_shared_cached_folder_progress_and_results_explain_it(): void
+    public function test_folder_progress_is_the_same_stored_value_on_every_page(): void
     {
         $ci = User::factory()->create(['full_name' => 'Assigned CI Name']);
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id, 'progress_percent' => 50]);
-        $completeRule = $this->rule('complete-rule', 'Completed Requirement', 1);
-        $missingRule = $this->rule('missing-rule', 'Missing Required Report', 2);
-        $this->completionResult($folder, $completeRule, true);
-        $this->completionResult($folder, $missingRule, false);
 
-        $contents = $this->actingAs($ci)->get(route('client-folders.show', $folder));
-
-        $contents->assertOk()
-            ->assertSee('aria-valuenow="50"', false)
-            ->assertSee('1 of 2 applicable required items completed.')
-            ->assertSee('Missing Required Report')
-            ->assertSee('Assigned CI Name');
-        $this->actingAs($ci)->get(route('home'))->assertSee('aria-valuenow="50"', false);
+        // The overview reads the stored authoritative progress (ClientProgressService, mandatory
+        // requirements) and the Client Folders tiles render that same value. (The Dashboard no
+        // longer embeds the folder browser — see CreditInvestigatorDashboardTest.)
+        $contents = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk();
+        $this->assertSame(50.0, $contents->viewData('progress')['percentage']);
         $this->actingAs($ci)->get(route('client-folders.index'))->assertSee('aria-valuenow="50"', false);
     }
 
-    public function test_only_active_required_evaluated_results_appear_as_missing_items(): void
+    public function test_retired_completion_rule_checklist_never_renders_rule_labels(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -163,20 +160,22 @@ class ClientFolderContentsTest extends TestCase
         $this->completionResult($folder, $optional, false);
         $this->completionResult($folder, $inactive, false);
 
+        // Progress now follows the mandatory requirements; the old generic checklist was retired.
         $this->actingAs($ci)->get(route('client-folders.show', $folder))
-            ->assertSee('Visible Required Item')
+            ->assertOk()
+            ->assertDontSee('Visible Required Item')
             ->assertDontSee('Hidden Optional Item')
             ->assertDontSee('Hidden Inactive Item');
     }
 
-    public function test_folder_without_evaluated_completion_results_has_neutral_pending_state(): void
+    public function test_folder_overview_has_no_retired_completion_results_messages(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
 
         $this->actingAs($ci)->get(route('client-folders.show', $folder))
             ->assertOk()
-            ->assertSee('No applicable completion results have been evaluated for this folder yet.')
+            ->assertDontSee('No applicable completion results have been evaluated for this folder yet.')
             ->assertDontSee('No missing applicable items.');
     }
 
@@ -186,7 +185,9 @@ class ClientFolderContentsTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         ClientInformation::factory()->create(['client_folder_id' => $folder->id, 'completion_state' => RecordState::Complete]);
         CibiReport::factory()->create(['client_folder_id' => $folder->id, 'ci_in_charge_id' => $ci->id, 'state' => RecordState::Draft]);
-        $template = IncomeSourceTemplate::factory()->create();
+        // A dedicated-business source only counts once its Business Report was explicitly saved;
+        // a fallback (general income) source always counts — so these two drafts are real work.
+        $template = IncomeSourceTemplate::factory()->fallback()->create();
         IncomeSource::factory()->count(2)->create(['client_folder_id' => $folder->id, 'income_source_template_id' => $template->id, 'state' => RecordState::Draft]);
 
         $response = $this->actingAs($ci)->get(route('client-folders.show', $folder));
@@ -235,8 +236,9 @@ class ClientFolderContentsTest extends TestCase
             'metadata' => ['sensitive_internal_value' => 'DO NOT DISPLAY THIS VALUE'],
         ]);
 
+        // Recent Activity renders the event through the audit vocabulary label, never the payload.
         $this->actingAs($ci)->get(route('client-folders.show', $folder))
-            ->assertSee('A client folder was renamed.')
+            ->assertSee('Folder renamed')
             ->assertSee('History Actor')
             ->assertDontSee('DO NOT DISPLAY THIS VALUE')
             ->assertDontSee('sensitive_internal_value');
@@ -250,12 +252,11 @@ class ClientFolderContentsTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.show', $folder))
             ->assertOk()
             ->assertSee('aria-label="Client folder modules"', false)
-            ->assertSee('md:grid-cols-2', false)
-            ->assertSee('xl:grid-cols-[minmax(0,3fr)_minmax(17rem,1fr)]', false)
-            ->assertSee('Folder Summary')
+            ->assertSee('grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3', false)
+            ->assertSee('xl:grid-cols-[minmax(0,1fr)_minmax(15rem,23%)]', false)
             ->assertSee('Recent Activity')
-            ->assertSee('Overall client folder completion')
-            ->assertSee('Assigned Credit Investigator')
+            // The Folder Summary sidebar (with its progress bar and assigned CI) was retired.
+            ->assertDontSee('Folder Summary')
             ->assertDontSee('Digital case folder')
             ->assertDontSee('Required-item checklist')
             ->assertDontSee('Open module')
@@ -361,9 +362,10 @@ class ClientFolderContentsTest extends TestCase
         $this->assertStringContainsString('data-cibi-field-error', $javascript);
         $this->assertStringContainsString("payload.report.state === 'complete'", $javascript);
         $this->assertStringContainsString('outputActions.hidden = false', $javascript);
-        // Only the label span is retitled now, so the submit keeps its save icon across a refresh.
-        $this->assertStringContainsString("payload.report.submit_label || 'Update CIBI Report'", $javascript);
-        $this->assertStringContainsString('[data-cibi-submit-text]', $javascript);
+        // The submit keeps the wording it opened with for the whole session; the server renders the
+        // Save/Update wording the next time the form is opened, so it is never retitled client-side.
+        $this->assertStringContainsString('The submit button deliberately keeps the wording it opened with for the whole session.', $javascript);
+        $this->assertStringNotContainsString('payload.report.submit_label', $javascript);
         $this->assertStringContainsString("event.data?.type !== 'brbi:cibi-saved'", $javascript);
         $this->assertStringContainsString('window.parent.postMessage({', $javascript);
         $this->assertStringContainsString('window.location.assign(returnUrl.href)', $javascript);
@@ -405,11 +407,11 @@ class ClientFolderContentsTest extends TestCase
 
         $response = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk();
 
-        $this->assertSame(1, substr_count($response->getContent(), 'Assigned Credit Investigator'));
+        // The header carries the status badge once; the retired summary metadata is not repeated.
         $this->assertSame(1, substr_count($response->getContent(), 'On Progress'));
-        $response->assertDontSee('Completion Progress')
-            ->assertSee('Overall Progress')
-            ->assertSee('aria-valuenow="40"', false);
+        $response->assertDontSee('Assigned Credit Investigator')
+            ->assertDontSee('Completion Progress')
+            ->assertDontSee('Overall Progress');
     }
 
     public function test_folder_modules_use_one_restrained_icon_treatment(): void

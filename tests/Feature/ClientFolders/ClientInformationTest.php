@@ -10,6 +10,7 @@ use App\Models\ClientAddress;
 use App\Models\ClientFolder;
 use App\Models\ClientInformation;
 use App\Models\User;
+use App\Support\ClientFolders\MissingClientFolderResponse;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -43,8 +44,14 @@ class ClientInformationTest extends TestCase
         $folder = ClientFolder::factory()->create();
         $folder->delete();
 
-        $this->actingAs($admin)->get(route('client-folders.client-information.edit', $folder->id))->assertNotFound();
-        $this->actingAs($admin)->put(route('client-folders.client-information.update', $folder->id), $this->payload())->assertNotFound();
+        // Never rendered and never saved: signed-in users are sent back to Client Folders with a notice.
+        $this->actingAs($admin)->get(route('client-folders.client-information.edit', $folder->id))
+            ->assertRedirect(route('client-folders.index'))
+            ->assertSessionHas('status', MissingClientFolderResponse::VIEW_MESSAGE);
+        $this->actingAs($admin)->put(route('client-folders.client-information.update', $folder->id), $this->payload())
+            ->assertRedirect(route('client-folders.index'))
+            ->assertSessionHas('status', MissingClientFolderResponse::SAVE_MESSAGE);
+        $this->assertDatabaseMissing('client_information', ['client_folder_id' => $folder->id]);
     }
 
     public function test_save_creates_one_record_normalizes_identity_and_creates_address(): void

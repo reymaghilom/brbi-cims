@@ -2784,62 +2784,6 @@ if (cibiLoanSection) {
     renumberLoanRecords();
 }
 
-document.querySelectorAll('[data-photo-sections-form]').forEach((form) => {
-    const rows = form.querySelector('[data-photo-section-rows]');
-    const template = form.querySelector('[data-photo-section-template]');
-    let nextIndex = rows?.children.length ?? 0;
-
-    const filterMedia = (section) => {
-        const category = section.dataset.category;
-        const source = section.querySelector('[data-section-income-source]')?.value ?? '';
-        section.querySelectorAll('[data-section-media]').forEach((item) => {
-            const categoryMatches = item.dataset.mediaCategory === category;
-            const sourceMatches = category !== 'business' || !item.dataset.mediaIncomeSource || item.dataset.mediaIncomeSource === source;
-            item.hidden = !categoryMatches || !sourceMatches;
-            if (item.hidden) item.querySelector('input[type="checkbox"]').checked = false;
-        });
-    };
-
-    form.querySelectorAll('[data-photo-section]').forEach(filterMedia);
-    form.addEventListener('change', (event) => {
-        if (event.target.matches('[data-section-income-source]')) filterMedia(event.target.closest('[data-photo-section]'));
-    });
-    form.addEventListener('click', (event) => {
-        const add = event.target.closest('[data-photo-section-add]');
-        if (add && rows && template) {
-            const category = add.dataset.photoSectionAdd;
-            const label = category === 'business' ? 'Business' : 'Residence';
-            const wrapper = document.createElement('div');
-            wrapper.innerHTML = template.innerHTML.replaceAll('__INDEX__', String(nextIndex++)).replaceAll('__CATEGORY__', category).replaceAll('__CATEGORY_LABEL__', label);
-            const section = wrapper.firstElementChild;
-            if (section) {
-                section.dataset.category = category;
-                section.querySelector('[data-section-category]').value = category;
-                section.querySelector('[data-section-category-label]').textContent = label;
-                section.querySelector('[data-section-heading]').value = category === 'business' ? 'Business Check' : 'Residence Check';
-                section.querySelectorAll('[data-section-business-only]').forEach((element) => { element.hidden = category !== 'business'; });
-                rows.append(section);
-                filterMedia(section);
-                section.querySelector('input:not([type="hidden"]), select, textarea')?.focus();
-                section.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-        }
-        const remove = event.target.closest('[data-photo-section-remove]');
-        if (remove) {
-            const section = remove.closest('[data-photo-section]');
-            const id = section?.querySelector('input[name$="[id]"]')?.value;
-            if (!section) return;
-            if (id) {
-                section.querySelector('[data-delete-field]').value = '1';
-                section.hidden = true;
-            } else {
-                section.remove();
-            }
-            form.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-    });
-});
-
 document.addEventListener('close', (event) => {
     if (!(event.target instanceof HTMLDialogElement)) return;
     const returnFocus = event.target.dataset.returnFocus;

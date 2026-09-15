@@ -62,12 +62,12 @@ class CiActivityScheduledDateRequiredTest extends TestCase
             ->assertJsonValidationErrors(['scheduled_at' => self::MESSAGE]);
         $this->assertSame(ActivityStatus::Scheduled, $activity->fresh()->status);
 
-        $this->putJson($url, $this->payload(ActivityStatus::FollowUp, '2026-09-16'))->assertOk();
+        $this->putJson($url, $this->payload(ActivityStatus::FollowUp, '2026-09-16') + ['expected_revision' => $activity->fresh()->revision])->assertOk();
         $this->assertSame(ActivityStatus::FollowUp, $activity->fresh()->status);
         $this->assertFalse($activity->fresh()->scheduled_has_time);
 
         foreach ([ActivityStatus::Pending, ActivityStatus::Completed] as $status) {
-            $this->putJson($url, $this->payload($status))->assertOk();
+            $this->putJson($url, $this->payload($status) + ['expected_revision' => $activity->fresh()->revision])->assertOk();
             $this->assertSame($status, $activity->fresh()->status);
             $this->assertNull($activity->fresh()->scheduled_at);
         }

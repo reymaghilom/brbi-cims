@@ -106,6 +106,8 @@ class BusinessCheckAjaxSaveTest extends TestCase
             'check_id' => $checkId,
             'expected_revision' => BusinessCheck::query()->whereKey($checkId)->value('revision'),
             'income_source_id' => $source->id,
+            // The form always submits the (read-only for a linked business) Business Name field.
+            'business_name' => BusinessCheck::query()->whereKey($checkId)->value('business_name'),
             'ci_date' => now()->toDateString(),
             'location' => 'Poblacion, San Miguel, Bulacan',
         ], $overrides);

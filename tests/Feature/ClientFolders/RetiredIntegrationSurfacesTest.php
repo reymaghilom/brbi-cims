@@ -58,7 +58,7 @@ class RetiredIntegrationSurfacesTest extends TestCase
             ->assertDontSee('Telegram History')
             // The surviving modules are untouched.
             ->assertSee('CI Activities')
-            ->assertSee('Generated Reports');
+            ->assertSee('Business / Income Sources');
 
         // Their module-placeholder routes were removed with them.
         foreach (['attachments', 'google-drive', 'telegram-history'] as $module) {
