@@ -1165,6 +1165,11 @@
             const customInfo = document.querySelector('[data-custom-activity-info]');
             const form = document.querySelector('[data-ci-activity-create-form]');
             const submitLabel = document.querySelector('[data-ci-activity-submit-label]');
+            // Read by syncNewActivityType() below (the duplicate "Continue Anyway" label check). It
+            // was never declared in this closure, so that line threw a ReferenceError before the
+            // Bank / Coop and Asset target sections were ever synced: choosing either type left its
+            // target entry hidden and disabled, and every Add was refused for missing targets.
+            const submitButton = form?.querySelector('[data-ci-activity-submit]');
             const bankTargetSection = document.querySelector('[data-bank-targets-section]');
             const bankTargetRows = document.querySelector('[data-bank-target-rows]');
             const bankTargetTemplate = document.querySelector('[data-bank-target-template]');

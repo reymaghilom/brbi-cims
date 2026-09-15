@@ -470,10 +470,37 @@ class DashboardData
             'value' => (int) ($counts[$bucket->format($format)] ?? 0),
         ])->values();
 
+        // What the card draws: the same counts, grouped only for readability. 7 Days and 12 Months
+        // keep one bar per day / month; 30 Days sums its daily counts into week-long bars (the last
+        // one may be shorter) so thirty bars never crowd a narrow card. Every bar value is a sum of
+        // the points above, so the bars always add up to the same authoritative total.
+        $value = fn (CarbonImmutable $bucket): int => (int) ($counts[$bucket->format($format)] ?? 0);
+        $bars = match ($range) {
+            '30d' => $buckets->values()->chunk(7)->map(function (Collection $week) use ($value): array {
+                $start = $week->first();
+                $end = $week->last();
+                $label = match (true) {
+                    $start->equalTo($end) => $start->format('M j'),
+                    $start->isSameMonth($end) => $start->format('M j').'–'.$end->format('j'),
+                    default => $start->format('M j').'–'.$end->format('M j'),
+                };
+
+                return ['label' => $label, 'short' => $start->format('M j'), 'tooltip' => $label, 'value' => $week->sum($value)];
+            }),
+            '12m' => $buckets->map(fn (CarbonImmutable $bucket): array => ['label' => $bucket->format('M'), 'short' => $bucket->format('M'), 'tooltip' => $bucket->format('F Y'), 'value' => $value($bucket)]),
+            default => $buckets->map(fn (CarbonImmutable $bucket): array => ['label' => $bucket->format('M j'), 'short' => $bucket->format('j'), 'tooltip' => $bucket->format('M j'), 'value' => $value($bucket)]),
+        };
+
         return [
             'points' => $points->all(),
             'max' => max(1, (int) $points->max('value')),
             'total' => (int) $points->sum('value'),
+            'bars' => $bars->values()->all(),
+            'period_label' => match ($range) {
+                '30d' => 'Last 30 days',
+                '12m' => 'Last 12 months',
+                default => 'Last 7 days',
+            },
         ];
     }
 

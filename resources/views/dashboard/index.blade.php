@@ -123,7 +123,7 @@
                     <span class="grid size-8 shrink-0 place-items-center rounded-control bg-brand-soft text-brand-primary" aria-hidden="true"><x-ui.icon name="chart" size="size-4" /></span>
                     <div class="min-w-0">
                         <h3 id="trend-title" class="font-bold text-text-main">CI Completion Trend</h3>
-                        <p class="text-xs text-text-muted">Number of completed investigations</p>
+                        <p class="text-sm text-text-muted">Completed investigations over time</p>
                     </div>
                 </div>
                 {{-- Every range is rendered up front (see DashboardData::for()'s `trends`), so
@@ -131,11 +131,12 @@
                      instantly, with no request and no loading state. These stay real links to the
                      same GET parameter the controller already re-reads, so without JS they still
                      work exactly as before; app.js only intercepts the click. --}}
-                <div class="flex shrink-0 gap-1 rounded-control bg-surface-muted p-1" role="group" aria-label="Trend range" data-trend-tabs>
+                {{-- Segmented control: equal-width segments, full width on phones, compact from sm up. --}}
+                <div class="grid w-full shrink-0 grid-cols-3 gap-1 rounded-control border border-ui-border bg-surface-muted p-1 sm:w-auto" role="group" aria-label="Trend range" data-trend-tabs>
                     @foreach($trendRanges as $key => $label)
                         <a href="{{ route('home', ['range' => $key]) }}" data-trend-tab="{{ $key }}"
                             @class([
-                                'min-h-8 rounded-control px-3 py-1.5 text-xs font-semibold transition',
+                                'inline-flex min-h-9 items-center justify-center whitespace-nowrap rounded-control px-3 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 focus-visible:ring-offset-1',
                                 'bg-brand-primary text-white shadow-sm' => $trendRange === $key,
                                 'text-text-muted hover:bg-surface hover:text-brand-primary' => $trendRange !== $key,
                             ])
