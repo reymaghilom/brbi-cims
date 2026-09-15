@@ -45,7 +45,7 @@ class CiActivityBankTargetsTest extends TestCase
             ->assertSee('Schedule / Follow-up Date')
             ->assertSee('Short Remarks')
             ->assertSee('addingBankCoopCheck', false)
-            ->assertSee('const addingBankActivity = ! addingActivityType && ! bankTargetSection.hidden;', false)
+            ->assertSee('const addingBankActivity = ! bankTargetSection.hidden;', false)
             ->assertDontSee('const addingBankActivity = ! addingActivityType && addingBankCoopCheck();', false)
             ->assertSee('data-value="'.$definition->id.'"', false);
         $this->assertSame(1, substr_count($page->getContent(), 'data-bank-target-index="0"'));
@@ -65,7 +65,7 @@ class CiActivityBankTargetsTest extends TestCase
             ->assertSee('data-bank-targets-section', false)
             ->assertSee('Bank / Coop Name')
             ->assertSee('Add Another Bank / Coop');
-        $this->assertSame(3, preg_match_all('/data-standard-activity-field[^>]*\shidden(?:\s|>)/', $bankPage->getContent()));
+        $this->assertSame(4, preg_match_all('/data-standard-activity-field[^>]*\shidden(?:\s|>)/', $bankPage->getContent()));
 
         $completedBankPage = $this->withSession(['_old_input' => $this->bankActivityPayload([
             $this->target('BDO', ActivityStatus::Completed),
@@ -437,7 +437,7 @@ class CiActivityBankTargetsTest extends TestCase
         $detail->assertOk()
             ->assertSee('data-bank-coop-modal-source', false)
             ->assertSee('data-bank-coop-activity-id="'.$activity->id.'"', false)
-            ->assertSee('data-bank-coop-context="Applicant: '.$folder->display_name.'"', false)
+            ->assertSee('data-bank-coop-context="Applicant: '.e($folder->display_name).'"', false)
             ->assertSee('data-bank-coop-target-count="3"', false)
             ->assertSee('data-bank-coop-completed-count="2"', false)
             ->assertSee('data-bank-coop-status="follow_up"', false)
@@ -522,7 +522,7 @@ class CiActivityBankTargetsTest extends TestCase
             'institution_name' => 'BDO Updated',
             'branch_location' => 'Carmen Branch',
             'status' => ActivityStatus::FollowUp->value,
-            'scheduled_at' => '',
+            'scheduled_at' => '2026-09-16',
             'scheduled_time' => '',
             'remarks' => 'Bank staff was busy.',
         ])->assertRedirect($detailUrl);
@@ -531,10 +531,10 @@ class CiActivityBankTargetsTest extends TestCase
         $this->assertSame('BDO Updated', $target->institution_name);
         $this->assertSame($creator->id, $target->created_by);
         $this->assertSame($updater->id, $target->updated_by);
-        $this->assertNull($target->scheduled_at);
+        $this->assertTrue($target->scheduled_at->equalTo(Carbon::createFromFormat('!Y-m-d H:i', '2026-09-16 08:00', 'Asia/Manila')->utc()));
         $this->assertFalse($target->scheduled_has_time);
         $this->assertSame(ActivityStatus::FollowUp, $activity->fresh()->status);
-        $this->get($detailUrl)->assertOk()->assertSee('No follow-up date set');
+        $this->get($detailUrl)->assertOk()->assertSee('Sep 16, 2026');
 
         $this->put(route('client-folders.activities.bank-targets.update', [$folder, $activity, $target]), [
             'expected_revision' => $target->fresh()->revision,

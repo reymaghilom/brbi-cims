@@ -134,15 +134,23 @@ class ClientFolderMandatoryProgressTest extends TestCase
         $folder = $this->completeFolder();
         $barangay = $this->activityQuery($folder, ActivityDefinition::BARANGAY_CHECK_CODE)->sole();
         $barangay->update(['status' => ActivityStatus::Pending, 'completed_at' => null]);
-        $url = route('client-folders.activities.update', [$folder, $barangay] + ['expected_revision' => $barangay->fresh()->revision]);
+        $url = route('client-folders.activities.update', [$folder, $barangay]);
 
-        $this->actingAs($this->ci)->putJson($url, ['co_maker_id' => null, 'status' => ActivityStatus::Completed->value])->assertOk();
+        $this->actingAs($this->ci)->putJson($url, [
+            'co_maker_id' => null,
+            'expected_revision' => $barangay->fresh()->revision,
+            'status' => ActivityStatus::Completed->value,
+        ])->assertOk();
         $this->assertStored($folder, 100, ClientFolderStatus::Completed);
         $completedAt = $folder->fresh()->completed_at;
         app(ClientProgressService::class)->recalculate($folder);
         $this->assertTrue($completedAt->equalTo($folder->fresh()->completed_at), 'Recalculation must preserve the original completion timestamp.');
 
-        $this->putJson($url, ['co_maker_id' => null, 'status' => ActivityStatus::Pending->value])->assertOk();
+        $this->putJson($url, [
+            'co_maker_id' => null,
+            'expected_revision' => $barangay->fresh()->revision,
+            'status' => ActivityStatus::Pending->value,
+        ])->assertOk();
         $this->assertStored($folder, 85.71, ClientFolderStatus::OnProgress);
     }
 

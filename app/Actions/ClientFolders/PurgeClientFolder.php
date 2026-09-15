@@ -25,8 +25,9 @@ use Throwable;
  *  - Every role: another user's live unsaved/saving work in the folder blocks the delete
  *    (ClientFolderEditingPresence).
  *
- * Any refusal or failure rolls the whole transaction back: nothing is removed, no file is touched,
- * and no successful-delete audit is written.
+ * Any refusal or failure before commit rolls the whole transaction back: nothing is removed, no
+ * file is touched, and no successful-delete audit is written. Post-commit storage failures leave
+ * the DB deletion committed and retain their durable cleanup tasks for retry.
  */
 class PurgeClientFolder
 {
@@ -50,7 +51,7 @@ class PurgeClientFolder
         try {
             // Held around the whole check-and-delete, so no heartbeat can record new unsaved or
             // saving work between the presence check and the delete itself.
-            $files = $this->editingPresence->whileLocked($folder->id, fn (): array => $this->purge($actor, $folder, $mayDeleteSavedRecords));
+            $cleanupTaskIds = $this->editingPresence->whileLocked($folder->id, fn (): array => $this->purge($actor, $folder, $mayDeleteSavedRecords));
         } catch (ValidationException $exception) {
             throw $exception;
         } catch (LockTimeoutException) {
@@ -64,7 +65,7 @@ class PurgeClientFolder
             throw ValidationException::withMessages(['confirmation' => self::FAILED]);
         }
 
-        $this->fileCleanup->retire($files);
+        $this->fileCleanup->retire($cleanupTaskIds);
     }
 
     private function assertStillEmpty(ClientFolder $folder): void
@@ -106,6 +107,7 @@ class PurgeClientFolder
 
             $hadSavedRecords = $this->savedRecords->hasSavedRecords($folder);
             $files = $hadSavedRecords ? $this->fileCleanup->collect($folder) : [];
+            $cleanupTaskIds = $this->fileCleanup->stage($files);
 
             AuditLog::create([
                 'user_id' => $actor->id,
@@ -126,7 +128,7 @@ class PurgeClientFolder
 
             $folder->forceDelete();
 
-            return $files;
+            return $cleanupTaskIds;
         });
     }
 }

@@ -168,7 +168,7 @@
                 <span class="grid size-8 shrink-0 place-items-center rounded-control bg-brand-soft text-brand-primary" aria-hidden="true"><x-ui.icon name="activity" size="size-4" /></span>
                 <h3 id="progress-title" class="font-bold text-text-main">CI Activity Progress</h3>
             </div>
-            <ul class="mt-4 space-y-4">
+            <ul class="mt-4 space-y-4" data-activity-progress-list>
                 @foreach($activityProgress as $bar)
                     <li>
                         <div class="flex items-baseline justify-between gap-3">
@@ -177,7 +177,7 @@
                         </div>
                         <div class="mt-2 h-2 w-full overflow-hidden rounded-full bg-surface-muted" role="img"
                             aria-label="{{ $bar['label'] }}: {{ $bar['percent'] }} percent complete.">
-                            <span class="block h-full rounded-full bg-brand-primary" style="width: {{ $bar['percent'] }}%"></span>
+                            <span class="block h-full rounded-full bg-brand-primary" style="width: {{ $bar['percent'] }}%; --dashboard-entry-delay: {{ $loop->index * 70 }}ms" data-activity-progress-fill></span>
                         </div>
                         <p class="mt-1.5 text-xs text-text-subtle">
                             @if($bar['applicable'] === 0)

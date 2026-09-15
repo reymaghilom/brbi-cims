@@ -159,7 +159,7 @@ class DashboardTest extends TestCase
             ->assertSee('Residence &amp; Business Report', false)
             ->assertSee('CI Activities')
             ->assertDontSee('/client-folders/'.$folder->id.'/media', false)
-            ->assertSee('Generated Reports')
+            ->assertDontSee('Generated Reports')
             ->assertDontSee('Attachments / Documents')
             ->assertDontSee('View Client Info')
             ->assertDontSee('Client Information')
@@ -168,7 +168,7 @@ class DashboardTest extends TestCase
             ->assertSee(route('client-folders.income-sources.index', $folder), false)
             ->assertSee(route('client-folders.residence-business.edit', $folder), false)
             ->assertSee(route('client-folders.activities.index', $folder), false)
-            ->assertSee(route('client-folders.generated-reports.index', $folder), false)
+            ->assertDontSee(route('client-folders.generated-reports.index', $folder), false)
             ->assertDontSee('Overall Progress')
             ->assertDontSee('Completion details are not yet available.')
             ->assertSee('bg-brand-soft/55 p-3 sm:p-4', false)
@@ -225,7 +225,10 @@ class DashboardTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED']);
+        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), [
+            'last_name' => 'RENAMED',
+            'first_name' => 'CLIENT',
+        ])->assertSessionHasNoErrors();
 
         $this->actingAs($ci)->get(route('client-folders.index'))
             ->assertOk()
@@ -248,8 +251,15 @@ class DashboardTest extends TestCase
         $second = User::factory()->create(['full_name' => 'REY C. MAGHILOM']);
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $first->id, 'display_name' => 'JUAN REYES']);
 
-        $this->actingAs($first)->patch(route('client-folders.update-name', $folder), ['display_name' => 'REYES, JUAN']);
-        $this->actingAs($second)->patch(route('client-folders.update-name', $folder), ['display_name' => 'REYES, JUAN JR.']);
+        $this->actingAs($first)->patch(route('client-folders.update-name', $folder), [
+            'last_name' => 'REYES',
+            'first_name' => 'JUAN',
+        ])->assertSessionHasNoErrors();
+        $this->actingAs($second)->patch(route('client-folders.update-name', $folder), [
+            'last_name' => 'REYES',
+            'first_name' => 'JUAN',
+            'suffix' => 'JR.',
+        ])->assertSessionHasNoErrors();
 
         // audit_logs.created_at uses a DB-level CURRENT_TIMESTAMP default (the model disables
         // Eloquent timestamps), so travelTo() can't fake it — set deterministic times directly.
@@ -290,7 +300,10 @@ class DashboardTest extends TestCase
     {
         $ci = User::factory()->create(['full_name' => 'REY C. MAGHILOM']);
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED']);
+        $this->actingAs($ci)->patch(route('client-folders.update-name', $folder), [
+            'last_name' => 'RENAMED',
+            'first_name' => 'CLIENT',
+        ])->assertSessionHasNoErrors();
         foreach ([
             ['action' => 'client_folder.recycled', 'module' => 'client_folders', 'description' => 'x'],
             ['action' => 'client_folder.restored', 'module' => 'client_folders', 'description' => 'x'],
@@ -327,7 +340,10 @@ class DashboardTest extends TestCase
         $owner = User::factory()->create();
         $other = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $owner->id]);
-        $this->actingAs($owner)->patch(route('client-folders.update-name', $folder), ['display_name' => 'RENAMED']);
+        $this->actingAs($owner)->patch(route('client-folders.update-name', $folder), [
+            'last_name' => 'RENAMED',
+            'first_name' => 'CLIENT',
+        ])->assertSessionHasNoErrors();
 
         $this->actingAs($other)->get(route('client-folders.index'))
             ->assertOk()
@@ -355,13 +371,13 @@ class DashboardTest extends TestCase
             ->assertSee('id="folder-rename-dialog-'.$own->id.'"', false)
             ->assertSee('aria-haspopup="menu"', false)
             ->assertSeeText('Open')
-            // Deleting is permanent and administrator-only, so a CI gets no delete affordance at
-            // all — neither the menu entry nor its dialog is rendered, and that is enforced again
-            // server-side by ClientFolderDeleteController (see ClientFolderLifecycleTest). The
-            // destroy URI itself is not asserted on: DELETE and the GET show route share
-            // /client-folders/{id}, so its presence says nothing either way.
-            ->assertDontSee('dashboard-delete-dialog-'.$own->id, false)
-            ->assertDontSee('Delete Permanently');
+            // Credit Investigators may permanently delete empty folders anywhere in the shared
+            // workspace; folders with saved investigation data remain protected server-side.
+            ->assertSee('data-modal-open="dashboard-delete-dialog-'.$own->id.'"', false)
+            ->assertSee('id="dashboard-delete-dialog-'.$own->id.'"', false)
+            ->assertSee('data-modal-open="dashboard-delete-dialog-'.$other->id.'"', false)
+            ->assertSee('id="dashboard-delete-dialog-'.$other->id.'"', false)
+            ->assertSee('Delete Permanently');
 
         $this->assertGreaterThanOrEqual(3, substr_count($response->getContent(), route('client-folders.show', $own)));
 

@@ -2,22 +2,22 @@
 
 namespace App\Http\Middleware;
 
+use App\Actions\Authentication\LogoutCurrentSession;
 use App\Enums\UserStatus;
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsureCurrentAuthenticationSession
 {
+    public function __construct(private readonly LogoutCurrentSession $logout) {}
+
     public function handle(Request $request, Closure $next): Response
     {
         $user = $request->user();
 
         if ($user->status !== UserStatus::Active) {
-            Auth::guard('web')->logout();
-            $request->session()->invalidate();
-            $request->session()->regenerateToken();
+            $this->logout->execute($request);
 
             return redirect()->route('login')->withErrors([
                 'authentication' => 'Your account is currently unavailable. Please contact the system administrator.',
@@ -33,9 +33,7 @@ class EnsureCurrentAuthenticationSession
         }
 
         if ((int) $sessionVersion !== $user->auth_session_version) {
-            Auth::guard('web')->logout();
-            $request->session()->invalidate();
-            $request->session()->regenerateToken();
+            $this->logout->execute($request);
 
             return redirect()->route('login')->withErrors([
                 'authentication' => 'Your session has expired. Please log in again.',

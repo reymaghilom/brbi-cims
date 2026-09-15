@@ -29,7 +29,9 @@ use Throwable;
  *    Co-Maker), and its stored files are retired only after the transaction commits.
  *  - Every role: another user's live unsaved/saving work on THIS Co-Maker's records blocks.
  *
- * A refusal or failure rolls everything back: nothing removed, no file touched, no audit.
+ * A refusal or failure before commit rolls everything back: nothing removed, no file touched, no
+ * audit. A post-commit storage failure cannot roll back the delete; its durable cleanup task stays
+ * pending while this operation remains successful for the user.
  */
 class RemoveCoMaker
 {
@@ -58,7 +60,7 @@ class RemoveCoMaker
         }
 
         try {
-            $files = $this->editingPresence->whileLocked($folder->id, fn (): array => $this->remove($actor, $folder, $coMaker, $mayDeleteSavedRecords));
+            $cleanupTaskIds = $this->editingPresence->whileLocked($folder->id, fn (): array => $this->remove($actor, $folder, $coMaker, $mayDeleteSavedRecords));
         } catch (ValidationException|ModelNotFoundException $exception) {
             throw $exception;
         } catch (LockTimeoutException) {
@@ -71,7 +73,7 @@ class RemoveCoMaker
             throw ValidationException::withMessages(['co_maker' => self::FAILED]);
         }
 
-        $this->fileCleanup->retire($files);
+        $this->fileCleanup->retire($cleanupTaskIds);
     }
 
     /**
@@ -115,6 +117,7 @@ class RemoveCoMaker
 
             $hadSavedRecords = $this->savedRecords->hasSavedRecords($locked);
             $files = $hadSavedRecords ? $this->fileCleanup->collect($folder, $locked) : [];
+            $cleanupTaskIds = $this->fileCleanup->stage($files);
             $fullName = $locked->full_name;
             $coMakerId = $locked->id;
 
@@ -138,7 +141,7 @@ class RemoveCoMaker
                 'user_agent' => request()?->userAgent(),
             ]);
 
-            return $files;
+            return $cleanupTaskIds;
         });
     }
 }

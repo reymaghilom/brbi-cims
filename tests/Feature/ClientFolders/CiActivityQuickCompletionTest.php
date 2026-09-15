@@ -51,8 +51,8 @@ class CiActivityQuickCompletionTest extends TestCase
         $this->assertStringContainsString('data-default-check-open="'.$neighbor->id.'"', $content);
         $this->assertStringContainsString('data-bank-coop-open="'.$bank->id.'"', $content);
         $this->assertStringContainsString('data-asset-check-open="'.$asset->id.'"', $content);
-        $this->assertStringContainsString('aria-label="Edit Barangay Check"', $content);
-        $this->assertStringContainsString('aria-label="Edit Neighbor Check"', $content);
+        $this->assertStringContainsString('aria-label="Actions for Barangay Check"', $content);
+        $this->assertStringContainsString('aria-label="Actions for Neighbor Check"', $content);
         $this->assertStringContainsString('aria-label="Actions for Bank / Coop Check"', $content);
         $this->assertStringContainsString('aria-label="Actions for Asset Check"', $content);
         $this->assertStringContainsString('aria-label="Mark Barangay Check as completed"', $content);
@@ -60,8 +60,8 @@ class CiActivityQuickCompletionTest extends TestCase
         $this->assertStringContainsString('aria-label="Open Bank / Coop Check tracker to complete remaining targets"', $content);
         $this->assertStringContainsString('aria-label="Open Asset Check tracker to complete remaining targets"', $content);
         $this->assertStringNotContainsString('title="View"', $content);
-        $this->assertStringNotContainsString('id="delete-activity-'.$barangay->id.'"', $content);
-        $this->assertStringNotContainsString('id="delete-activity-'.$neighbor->id.'"', $content);
+        $this->assertStringContainsString('id="delete-activity-'.$barangay->id.'"', $content);
+        $this->assertStringContainsString('id="delete-activity-'.$neighbor->id.'"', $content);
         $this->assertStringContainsString('id="delete-activity-'.$bank->id.'"', $content);
         $this->assertStringContainsString('id="delete-activity-'.$asset->id.'"', $content);
     }
@@ -160,6 +160,7 @@ class CiActivityQuickCompletionTest extends TestCase
 
             $this->actingAs($ci)->putJson(route('client-folders.activities.update', [$folder, $activity]), [
                 'co_maker_id' => null,
+                'expected_revision' => $activity->fresh()->revision,
                 'status' => ActivityStatus::Completed->value,
             ])->assertUnprocessable()->assertJsonValidationErrors('status');
 

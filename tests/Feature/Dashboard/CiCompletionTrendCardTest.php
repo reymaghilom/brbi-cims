@@ -156,6 +156,36 @@ class CiCompletionTrendCardTest extends TestCase
         $this->assertNotNull($response->viewData('activityProgress'));
     }
 
+    public function test_trend_and_activity_progress_use_accessible_transform_only_entry_animations(): void
+    {
+        $this->completed(now());
+
+        $html = $this->actingAs($this->ci)->get(route('home'))->assertOk()->getContent();
+        $css = file_get_contents(resource_path('css/app.css'));
+        $javascript = file_get_contents(resource_path('js/app.js'));
+        $dashboardView = file_get_contents(resource_path('views/dashboard/index.blade.php'));
+
+        $this->assertStringContainsString('data-trend-bar-fill', $this->panel($html, '7d'));
+        $this->assertStringContainsString('data-activity-progress-list', $html);
+        $this->assertStringContainsString('data-activity-progress-fill', $html);
+        $this->assertStringContainsString("width: {{ \$bar['percent'] }}%", $dashboardView, 'The authoritative percentage width remains unchanged.');
+
+        $animationStart = strpos($css, '/* Dashboard analytics entry animations.');
+        $animationEnd = strpos($css, '/* End Dashboard analytics entry animations. */');
+        $animationCss = substr($css, $animationStart, $animationEnd - $animationStart);
+        $this->assertStringContainsString('transform: scaleY(0)', $animationCss);
+        $this->assertStringContainsString('transform-origin: bottom center', $animationCss);
+        $this->assertStringContainsString('transform: scaleX(0)', $animationCss);
+        $this->assertStringContainsString('transform-origin: left center', $animationCss);
+        $this->assertStringContainsString('@media (prefers-reduced-motion: reduce)', $animationCss);
+        $this->assertStringNotContainsString('transition: width', $animationCss);
+        $this->assertStringNotContainsString('transition: height', $animationCss);
+
+        $this->assertStringContainsString("document.querySelectorAll('[data-trend-panel]:not([hidden])').forEach(replayDashboardTrendAnimation);", $javascript);
+        $this->assertStringContainsString("if (name === 'activity-progress') replayDashboardProgressAnimation(current);", $javascript);
+        $this->assertStringContainsString('replayDashboardTrendAnimation(selected);', $javascript);
+    }
+
     private function completed(Carbon $at): ClientFolder
     {
         return ClientFolder::factory()->create(['assigned_ci_id' => $this->ci->id, 'created_by' => $this->ci->id, 'status' => ClientFolderStatus::Completed, 'completed_at' => $at]);

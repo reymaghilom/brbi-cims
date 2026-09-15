@@ -15,16 +15,20 @@ use App\Models\MediaReference;
 use App\Models\ResidenceCheckPhoto;
 use App\Models\User;
 use App\Services\ClientFolders\ClientFolderEditingPresence;
+use App\Services\ClientFolders\ClientFolderFileCleanup;
 use App\Services\Media\ClientMediaUploader;
+use App\Services\Media\PrivateMediaStorage;
 use App\Support\ClientFolders\MissingCoMakerResponse;
 use Closure;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use PHPUnit\Framework\Attributes\DataProvider;
+use RuntimeException;
 use Tests\TestCase;
 
 /**
@@ -220,6 +224,91 @@ class CoMakerDeleteTest extends TestCase
         $this->assertSame([['proofs/co-maker', 'image', 'upload']], $retired);
         $this->assertSame(2, MediaReference::query()->where('client_folder_id', $folder->id)->whereNull('co_maker_id')->count());
         $this->assertSame(1, MediaReference::query()->where('co_maker_id', $other->id)->count());
+        $this->assertDatabaseCount('pending_file_cleanups', 0);
+    }
+
+    public function test_failed_post_commit_cleanup_stays_pending_and_a_later_retry_is_idempotent(): void
+    {
+        Exceptions::fake();
+        $senior = User::factory()->seniorCreditInvestigator()->create();
+        $folder = ClientFolder::factory()->create(['progress_percent' => 80]);
+        $deleted = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Deleted Maker']);
+        $kept = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Kept Maker']);
+        $disk = Storage::disk('local');
+        $disk->put('client-media/deleted.jpg', 'deleted');
+        $disk->put('client-media/applicant.jpg', 'applicant');
+        $disk->put('client-media/kept.jpg', 'kept');
+        MediaReference::factory()->create(['client_folder_id' => $folder->id, 'co_maker_id' => $deleted->id, 'uploaded_by' => $senior->id, 'temporary_local_path' => 'client-media/deleted.jpg']);
+        MediaReference::factory()->create(['client_folder_id' => $folder->id, 'co_maker_id' => null, 'uploaded_by' => $senior->id, 'temporary_local_path' => 'client-media/applicant.jpg']);
+        MediaReference::factory()->create(['client_folder_id' => $folder->id, 'co_maker_id' => $kept->id, 'uploaded_by' => $senior->id, 'temporary_local_path' => 'client-media/kept.jpg']);
+
+        $attempts = 0;
+        $this->mock(PrivateMediaStorage::class, function (MockInterface $mock) use (&$attempts, $disk): void {
+            $mock->shouldReceive('deleteStoredFiles')->twice()->andReturnUsing(function (array $paths) use (&$attempts, $disk): void {
+                $attempts++;
+                if ($attempts === 1) {
+                    throw new RuntimeException('Simulated post-commit storage failure.');
+                }
+                $disk->delete($paths);
+            });
+        });
+
+        $this->actingAs($senior)->deleteJson(route('client-folders.co-maker.destroy', [$folder, $deleted]))
+            ->assertOk()->assertJsonPath('message', 'Co-Maker removed successfully.');
+
+        $this->assertNull($deleted->fresh());
+        $this->assertNotNull($kept->fresh());
+        $disk->assertExists(['client-media/deleted.jpg', 'client-media/applicant.jpg', 'client-media/kept.jpg']);
+        $this->assertDatabaseHas('pending_file_cleanups', [
+            'kind' => 'local', 'path' => 'client-media/deleted.jpg', 'attempts' => 1, 'claimed_at' => null,
+        ]);
+        Exceptions::assertReported(RuntimeException::class);
+        $auditCount = AuditLog::query()->count();
+        $progressAfterDelete = $folder->fresh()->only(['progress_percent', 'status', 'completed_at']);
+
+        $this->assertSame(1, app(ClientFolderFileCleanup::class)->retryPending());
+        $this->assertDatabaseCount('pending_file_cleanups', 0);
+        $disk->assertMissing('client-media/deleted.jpg');
+        $disk->assertExists(['client-media/applicant.jpg', 'client-media/kept.jpg']);
+        $this->assertSame($auditCount, AuditLog::query()->count(), 'Retry creates no success audit.');
+        $this->assertSame($progressAfterDelete, $folder->fresh()->only(['progress_percent', 'status', 'completed_at']), 'Retry never recalculates progress.');
+
+        $this->assertSame(0, app(ClientFolderFileCleanup::class)->retryPending(), 'A completed retry is safe to run again.');
+        $this->assertSame($auditCount, AuditLog::query()->count());
+    }
+
+    public function test_missing_files_succeed_and_a_claimed_task_cannot_be_processed_twice(): void
+    {
+        $cleanup = app(ClientFolderFileCleanup::class);
+        $missing = $cleanup->stage(['local' => [['path' => 'client-media/already-gone.jpg', 'provider' => MediaReference::STORAGE_PROVIDER_LOCAL]]]);
+        $this->assertSame(1, $cleanup->retire($missing));
+        $this->assertDatabaseCount('pending_file_cleanups', 0);
+
+        $taskIds = $cleanup->stage(['local' => [['path' => 'client-media/claimed.jpg', 'provider' => MediaReference::STORAGE_PROVIDER_LOCAL]]]);
+        $competingAttempts = null;
+        $this->mock(PrivateMediaStorage::class, function (MockInterface $mock) use (&$competingAttempts): void {
+            $mock->shouldReceive('deleteStoredFiles')->once()->andReturnUsing(function () use (&$competingAttempts): void {
+                $competingAttempts = app(ClientFolderFileCleanup::class)->retryPending();
+            });
+        });
+
+        $this->assertSame(1, app(ClientFolderFileCleanup::class)->retire($taskIds));
+        $this->assertSame(0, $competingAttempts, 'A second worker cannot claim the in-flight item.');
+        $this->assertDatabaseCount('pending_file_cleanups', 0);
+    }
+
+    public function test_pending_cleanup_retry_command_is_safe_to_run_repeatedly(): void
+    {
+        app(ClientFolderFileCleanup::class)->stage([
+            'local' => [['path' => 'client-media/already-missing.jpg', 'provider' => MediaReference::STORAGE_PROVIDER_LOCAL]],
+        ]);
+
+        $this->artisan('file-cleanup:retry', ['--limit' => 1])
+            ->expectsOutput('Attempted 1 cleanup task(s); 0 remain pending.')
+            ->assertSuccessful();
+        $this->artisan('file-cleanup:retry', ['--limit' => 1])
+            ->expectsOutput('Attempted 0 cleanup task(s); 0 remain pending.')
+            ->assertSuccessful();
     }
 
     // ---------------------------------------------------------------- Multi-user

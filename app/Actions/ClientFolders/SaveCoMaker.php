@@ -72,13 +72,18 @@ class SaveCoMaker
                 $coMaker->revision = (int) $coMaker->revision + 1;
                 $coMaker->save();
             } else {
-                $this->assertNoUnconfirmedDuplicateName($folder, $data, null);
-                $coMaker = $folder->coMakers()->create($fields);
+                // There may be no Co-Maker row to lock on the first Add. Serialize every Add for
+                // this exact folder on its stable parent row so a waiting request performs its
+                // duplicate-name check only after the preceding Add has committed. This remains
+                // advisory: a confirmed duplicate still creates its own independent record.
+                $lockedFolder = ClientFolder::query()->whereKey($folder->getKey())->lockForUpdate()->firstOrFail();
+                $this->assertNoUnconfirmedDuplicateName($lockedFolder, $data, null);
+                $coMaker = $lockedFolder->coMakers()->create($fields);
                 // No CI Activities are seeded for a new Co-Maker. Their Barangay Check and
                 // Neighbor Check are added manually through CI Activities -> Add Activity under
                 // this exact Co-Maker, which is what makes the adding CI their Creator.
                 // A new Co-Maker adds their own four mandatory requirements to the folder.
-                $this->progress->recalculate($folder);
+                $this->progress->recalculate($lockedFolder);
             }
 
             AuditLog::create([

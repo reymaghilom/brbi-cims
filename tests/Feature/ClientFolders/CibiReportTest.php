@@ -18,6 +18,7 @@ use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
 use App\Services\Reports\OfficialReportDataBuilder;
+use App\Support\ClientFolders\MissingClientFolderResponse;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -46,7 +47,10 @@ class CibiReportTest extends TestCase
         $this->actingAs($other)->get(route('client-folders.cibi-report.edit', $folder))->assertOk();
         $this->actingAs($other)->put(route('client-folders.cibi-report.update', $folder), $this->payload())->assertRedirect();
         $folder->delete();
-        $this->actingAs($admin)->get(route('client-folders.cibi-report.edit', $folder->id))->assertNotFound();
+        $this->actingAs($admin)->get(route('client-folders.cibi-report.edit', $folder->id))
+            ->assertRedirect(route('client-folders.index'))
+            ->assertSessionHas('status', MissingClientFolderResponse::VIEW_MESSAGE)
+            ->assertSessionHas('statusType', 'error');
     }
 
     public function test_signatory_is_the_first_saving_actor_and_stays_immutable_on_later_saves_by_others(): void

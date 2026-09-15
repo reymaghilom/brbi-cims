@@ -128,6 +128,7 @@ class ClientFolderRoleDeleteTest extends TestCase
         $this->assertSame(0, MediaReference::withTrashed()->where('client_folder_id', $folder->id)->count());
         $this->assertSame(1, MediaReference::query()->where('client_folder_id', $other->id)->count());
         $this->assertSame(0, GeneratedReport::query()->where('client_folder_id', $folder->id)->count());
+        $this->assertDatabaseCount('pending_file_cleanups', 0);
     }
 
     public function test_a_failed_administrator_purge_changes_nothing_and_writes_no_success_audit(): void
@@ -149,6 +150,7 @@ class ClientFolderRoleDeleteTest extends TestCase
         $this->assertSame(1, MediaReference::query()->where('client_folder_id', $folder->id)->count());
         Storage::disk('local')->assertExists('client-media/kept.jpg');
         $this->assertDatabaseMissing('audit_logs', ['action' => 'client_folder.permanently_deleted']);
+        $this->assertDatabaseCount('pending_file_cleanups', 0);
     }
 
     // ---------------------------------------------------------------- Smart presence, every role

@@ -636,7 +636,7 @@ class CiActivityAttachmentAvailabilityTest extends TestCase
         $response->assertOk()
             ->assertJson(['activity_created' => false])
             ->assertSessionHas('ci_activity_modal_open', true)
-            ->assertSessionHas('status', 'Activity type created successfully.');
+            ->assertSessionHas('status', 'Activity Type created successfully.');
         $this->get($response->json('redirect'))
             ->assertOk()
             ->assertSee('open data-ci-activity-initial-open', false)

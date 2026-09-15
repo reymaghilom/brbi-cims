@@ -211,11 +211,12 @@ class ResidenceCheckCibiAddressTest extends TestCase
         $this->assertSame('Manually Verified Applicant Residence', $folder->residenceChecks()->firstOrFail()->location);
     }
 
-    public function test_co_maker_with_no_address_remains_blocked_and_cannot_forge_a_manual_location(): void
+    public function test_co_maker_with_no_address_can_save_a_manual_location_in_exact_person_scope(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Co Maker Without Address']);
+        $otherCoMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Other Co Maker', 'address' => 'Other Address']);
         $folder->cibiReports()->create([
             'co_maker_id' => $coMaker->id,
             'ci_in_charge_id' => $ci->id,
@@ -224,19 +225,26 @@ class ResidenceCheckCibiAddressTest extends TestCase
 
         $this->actingAs($ci)->get(route('client-folders.residence-checks.create', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMaker->id]))
             ->assertOk()
-            ->assertSee("Please update the co-maker's address before creating a Residence Check.")
-            ->assertDontSee('name="location"', false);
+            ->assertSee('No saved address is available for this person yet. Enter the Residence Location.')
+            ->assertSee('name="location"', false)
+            ->assertSee('required maxlength="2000"', false);
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), $this->withPhoto([
             'co_maker_id' => $coMaker->id,
             'ci_date' => now()->toDateString(),
-            'location' => 'Forged Co-Maker Location',
-        ]))->assertSessionHasErrors('location');
+            'location' => 'Manually Verified Co-Maker Residence',
+        ]))->assertSessionHasNoErrors();
 
-        $this->assertDatabaseCount('residence_checks', 0);
+        $this->assertDatabaseHas('residence_checks', [
+            'client_folder_id' => $folder->id,
+            'co_maker_id' => $coMaker->id,
+            'location' => 'Manually Verified Co-Maker Residence',
+        ]);
+        $this->assertDatabaseMissing('residence_checks', ['client_folder_id' => $folder->id, 'co_maker_id' => null]);
+        $this->assertDatabaseMissing('residence_checks', ['client_folder_id' => $folder->id, 'co_maker_id' => $otherCoMaker->id]);
     }
 
-    public function test_updating_a_co_makers_address_syncs_that_co_makers_existing_residence_check(): void
+    public function test_updating_a_co_makers_address_preserves_the_existing_residence_snapshot(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
@@ -253,7 +261,7 @@ class ResidenceCheckCibiAddressTest extends TestCase
             'co_maker_id' => $coMaker->id, 'expected_revision' => $coMaker->fresh()?->revision ?? $coMaker->revision, 'first_name' => 'Co', 'last_name' => 'Maker', 'address' => 'Villanueva, Misamis Oriental',
         ])->assertRedirect();
 
-        $this->assertSame('Villanueva, Misamis Oriental', $check->fresh()->location);
+        $this->assertSame('Tagoloan, Misamis Oriental', $check->fresh()->location);
     }
 
     public function test_updating_one_co_makers_address_does_not_change_another_co_makers_residence_check(): void
@@ -274,7 +282,7 @@ class ResidenceCheckCibiAddressTest extends TestCase
             'co_maker_id' => $coMakerA->id, 'expected_revision' => $coMakerA->fresh()?->revision ?? $coMakerA->revision, 'first_name' => 'A', 'last_name' => 'Maker', 'address' => 'Address A Updated',
         ])->assertRedirect();
 
-        $this->assertSame('Address A Updated', $checkA->fresh()->location);
+        $this->assertSame('Address A', $checkA->fresh()->location);
         $this->assertSame('Address B', $checkB->fresh()->location);
     }
 

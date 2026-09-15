@@ -18,9 +18,11 @@ use Throwable;
  *
  * The target Co-Maker is read exactly as the request names it: the {coMaker} route parameter, or
  * the co_maker_id the page/form carries. It applies only when that exact Co-Maker is not found
- * under this folder AND the request already failed (not found, validation — e.g. the co_maker_id
- * exists rule — or a database error). A stale form therefore never falls back to the Applicant or
- * another Co-Maker: it fails, and this only replaces the wording. Nothing is written.
+ * under this folder, no longer exists anywhere, AND the request already failed (not found,
+ * validation — e.g. the co_maker_id exists rule — or a database error). An id that still belongs
+ * to another folder receives an ordinary non-disclosing 404. A
+ * stale form therefore never falls back to the Applicant or another Co-Maker: it fails, and this
+ * only replaces the wording for a genuinely deleted person. Nothing is written.
  *
  *  - Page request (GET/HEAD), or deleting that Co-Maker again: back to the Client Folder overview
  *    with "already been deleted by another user".
@@ -50,6 +52,19 @@ class MissingCoMakerResponse
         if (blank($coMakerId) || ! is_numeric($coMakerId)
             || CoMaker::query()->whereKey((int) $coMakerId)->where('client_folder_id', $folder->getKey())->exists()) {
             return null;
+        }
+
+        // A real Co-Maker owned by another folder is a forged/mismatched nested identifier, not a
+        // stale deleted-person request. A NotFound exception can follow Laravel's native renderer;
+        // validation/query failures need conversion here or they would leak as 422/500 instead.
+        if (CoMaker::query()->whereKey((int) $coMakerId)->exists()) {
+            if ($exception instanceof NotFoundHttpException) {
+                return null;
+            }
+
+            return $request->expectsJson()
+                ? response()->json(['message' => Response::$statusTexts[404]], 404)
+                : response(Response::$statusTexts[404], 404);
         }
 
         $isRead = $request->isMethod('GET') || $request->isMethod('HEAD') || $request->route()?->getName() === 'client-folders.co-maker.destroy';

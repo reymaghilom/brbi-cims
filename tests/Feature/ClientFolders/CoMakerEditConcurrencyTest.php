@@ -139,7 +139,7 @@ class CoMakerEditConcurrencyTest extends TestCase
 
         // A Co-Maker id from another folder is never edited through this folder.
         $this->actingAs($ci)->postJson(route('client-folders.co-maker.store', $folder), ['co_maker_id' => $elsewhere->id, 'expected_revision' => 1, 'first_name' => 'Same', 'last_name' => 'Hijacked'])
-            ->assertStatus(404);
+            ->assertStatus(404)->assertJsonPath('message', 'Not Found')->assertJsonMissingPath('co_maker_missing');
         $this->assertSame('Name', $elsewhere->fresh()->last_name);
     }
 
@@ -185,12 +185,15 @@ class CoMakerEditConcurrencyTest extends TestCase
     public function test_the_edit_dialog_reports_viewing_dirty_and_saving_and_keeps_a_refused_save_dirty(): void
     {
         $js = file_get_contents(resource_path('js/app.js'));
-        $driver = substr($js, strpos($js, "const form = document.querySelector('[data-co-maker-form]');\n    const dialog = form?.closest('dialog');"), 2600);
+        $driver = substr($js, strpos($js, "const form = document.querySelector('[data-co-maker-form]');\n    const dialog = form?.closest('dialog');"), 3400);
 
         $this->assertStringContainsString("if (saving) return 'saving';", $driver);
         $this->assertStringContainsString("return snapshot() !== baseline ? 'dirty' : 'viewing';", $driver);
         $this->assertStringContainsString("post('/editing-presence/heartbeat', { type: 'co_maker', id: coMakerId, state: lastState });", $driver);
-        $this->assertStringContainsString("dialog.addEventListener('close', release);", $driver);
+        $this->assertStringContainsString('dialog.addEventListener(\'close\', () => {', $driver);
+        $this->assertStringContainsString('release();', $driver);
+        $this->assertStringContainsString('const deletedCoMakerId = form.dataset.deletedCoMakerId;', $driver);
+        $this->assertStringContainsString('window.location.assign(overviewUrl);', $driver);
         $this->assertStringContainsString('baseline = snapshot();', $driver, 'Opening the dialog is clean, not dirty.');
 
         $submitStart = strpos($js, "const form = event.target.closest('[data-co-maker-form]');");
@@ -213,6 +216,7 @@ class CoMakerEditConcurrencyTest extends TestCase
         $form = substr($form, 0, strpos($form, '</form>'));
         $this->assertMatchesRegularExpression('/<p [^>]*role="alert" aria-live="assertive" data-co-maker-form-error hidden><\/p>/', $form);
         $this->assertLessThan(strpos($form, 'name="last_name"'), strpos($form, 'data-co-maker-form-error'), 'The alert sits before the fields.');
+        $this->assertStringContainsString('data-co-maker-overview-url="'.route('client-folders.show', $folder).'"', $form);
 
         $js = file_get_contents(resource_path('js/app.js'));
         $this->assertStringContainsString("const CO_MAKER_DELETED_SAVE_MESSAGE = 'Your changes were not saved because this Co-Maker has already been deleted.';", $js);
@@ -231,6 +235,9 @@ class CoMakerEditConcurrencyTest extends TestCase
         $deleted = $block('if (response.status === 404 && (payload.co_maker_missing || payload.folder_missing)) {');
         $this->assertStringContainsString('setCoMakerFormError(form, payload.message || CO_MAKER_DELETED_SAVE_MESSAGE);', $deleted);
         $this->assertStringContainsString("form.dataset.coMakerSaveBlocked = 'true';", $deleted);
+        $this->assertStringContainsString('const deletedCoMakerId = form.querySelector(\'[data-co-maker-id-field]\')?.value;', $deleted);
+        $this->assertStringContainsString('if (deletedCoMakerId) form.dataset.deletedCoMakerId = deletedCoMakerId;', $deleted);
+        $this->assertStringContainsString('form.coMakerPresence?.release();', $deleted);
         $this->assertStringNotContainsString('close()', $deleted);
         $this->assertStringNotContainsString('showToast', $deleted);
         $this->assertStringContainsString("if (form.dataset.coMakerSaveBlocked === 'true') return;", $submit);
@@ -243,8 +250,13 @@ class CoMakerEditConcurrencyTest extends TestCase
         $this->assertStringNotContainsString('showToast', $conflict);
         $this->assertStringNotContainsString('revisionField', $conflict);
         $this->assertStringNotContainsString('requestSubmit', $conflict);
+        $this->assertStringNotContainsString('deletedCoMakerId', $conflict);
         // The conflict is handled before the duplicate advisory, so a stale confirmed save never reopens it.
         $this->assertLessThan(strpos($submit, 'payload.duplicate_warning'), strpos($submit, "payload.result === 'conflict'"));
+        $duplicate = $block('if (response.status === 409 && payload.duplicate_warning) {');
+        $this->assertStringNotContainsString('deletedCoMakerId', $duplicate);
+        $success = substr($submit, strpos($submit, 'if (!response.ok) throw new Error'));
+        $this->assertStringNotContainsString('deletedCoMakerId', $success);
         // Ordinary field validation is unchanged.
         $this->assertStringContainsString('if (response.status === 422) {', $submit);
         $this->assertStringContainsString('form.querySelector(`[data-co-maker-error-for="${fieldName}"]`)', $submit);
@@ -287,6 +299,12 @@ class CoMakerEditConcurrencyTest extends TestCase
         $this->assertSame(['Same', 'Name', 1], [$elsewhere->fresh()->first_name, $elsewhere->fresh()->last_name, $elsewhere->fresh()->revision]);
         $this->assertSame('APPLICANT NAME', $folder->fresh()->display_name);
         $this->assertSame($audits, AuditLog::query()->count(), 'No success audit for a deleted-record save.');
+
+        // The post-acknowledgment overview is authoritative: Applicant and B remain, only A is gone.
+        $overview = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        $this->assertStringContainsString('Applicant', $overview);
+        $this->assertStringContainsString('data-co-maker-tab="'.$coMakerB->id.'"', $overview);
+        $this->assertStringNotContainsString('data-co-maker-tab="'.$coMakerA->id.'"', $overview);
     }
 
     // ---------------------------------------------------------------- Delete vs save races

@@ -10,7 +10,7 @@
          Scoped the same way the folder-rename dialog already scopes its own flag. --}}
     data-open-on-error="{{ $errors->hasAny(['co_maker_id', 'last_name', 'first_name', 'middle_name', 'suffix']) ? 'true' : 'false' }}"
 >
-    <form id="co-maker-form" method="POST" action="{{ route('client-folders.co-maker.store', $clientFolder) }}" data-co-maker-form novalidate>
+    <form id="co-maker-form" method="POST" action="{{ route('client-folders.co-maker.store', $clientFolder) }}" data-co-maker-form data-co-maker-overview-url="{{ route('client-folders.show', $clientFolder) }}" novalidate>
         @csrf
         <input type="hidden" name="co_maker_id" value="{{ old('co_maker_id') }}" data-co-maker-id-field>
         {{-- Editing only: the revision this form was opened with, so a save that another user already

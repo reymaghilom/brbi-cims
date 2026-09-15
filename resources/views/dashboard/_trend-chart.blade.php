@@ -70,7 +70,7 @@
                             @endphp
                             <li class="group relative flex min-w-0 flex-1 items-end justify-center rounded-t-[4px] outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40" tabindex="0" data-trend-bar data-value="{{ $bar['value'] }}">
                                 <span class="absolute inset-0 rounded-t-[4px] bg-brand-soft/0 transition group-hover:bg-brand-soft/60 group-focus-visible:bg-brand-soft/60" aria-hidden="true"></span>
-                                <span class="relative block w-full max-w-10 rounded-t-[4px] bg-brand-primary transition group-hover:bg-brand-primary/85" style="height: {{ $height }}%" aria-hidden="true"></span>
+                                <span class="relative block w-full max-w-10 rounded-t-[4px] bg-brand-primary transition group-hover:bg-brand-primary/85" style="height: {{ $height }}%; --dashboard-entry-delay: {{ $index * 60 }}ms" data-trend-bar-fill aria-hidden="true"></span>
                                 <span class="sr-only">{{ $bar['tooltip'] }}: {{ $plural((int) $bar['value']) }}</span>
                                 {{-- Tooltip: shown on hover and keyboard focus; edge bars anchor inward so it stays inside a phone viewport. --}}
                                 <span role="tooltip" class="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-[10.5rem] rounded-control border border-ui-border bg-surface px-2.5 py-1.5 text-left shadow-float group-hover:block group-focus-visible:block {{ $tooltipAlign }}" data-trend-tooltip aria-hidden="true">

@@ -48,7 +48,7 @@ class ManualBarangayNeighborActivityTest extends TestCase
     }
 
     /** The Add Activity request the existing UI submits. */
-    private function addActivity(User $actor, ClientFolder $folder, string $code, ?int $coMakerId = null)
+    private function addActivity(User $actor, ClientFolder $folder, string $code, ?int $coMakerId = null, bool $allowDuplicate = false)
     {
         return $this->actingAs($actor)->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $coMakerId ?? '',
@@ -56,6 +56,7 @@ class ManualBarangayNeighborActivityTest extends TestCase
             'activity_definition_id' => $this->definition($code)->id,
             'status' => ActivityStatus::Pending->value,
             'intent' => 'return',
+            'allow_duplicate' => $allowDuplicate,
         ]);
     }
 
@@ -163,7 +164,8 @@ class ManualBarangayNeighborActivityTest extends TestCase
 
         // A later update by someone else never rewrites provenance.
         $this->actingAs($maria)->put(route('client-folders.activities.update', [$folder, $barangay]), [
-            'co_maker_id' => '', 'status' => ActivityStatus::Completed->value, 'intent' => 'return',
+            'co_maker_id' => '', 'status' => ActivityStatus::Completed->value,
+            'expected_revision' => $barangay->fresh()->revision, 'intent' => 'return',
         ])->assertSessionHasNoErrors();
         $this->assertSame($juan->id, $barangay->fresh()->creator_id);
         $this->assertSame($maria->id, $barangay->fresh()->updated_by);
@@ -183,7 +185,7 @@ class ManualBarangayNeighborActivityTest extends TestCase
         $this->assertTrue($created->every(fn (AuditLog $log): bool => $log->client_folder_id === $folder->id));
     }
 
-    public function test_a_forged_duplicate_is_rejected_for_the_exact_person(): void
+    public function test_a_duplicate_is_advisory_and_continue_anyway_is_scoped_to_the_exact_person(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci);
@@ -192,13 +194,24 @@ class ManualBarangayNeighborActivityTest extends TestCase
         $this->addActivity($ci, $folder, ActivityDefinition::BARANGAY_CHECK_CODE)->assertSessionHasNoErrors();
         $this->addActivity($ci, $folder, ActivityDefinition::NEIGHBOR_CHECK_CODE, $maria->id)->assertSessionHasNoErrors();
 
-        // A second request for the same exact person is refused even though the UI hid the option.
+        // A second request for the same exact person is advisory and writes nothing by default.
         $this->addActivity($ci, $folder, ActivityDefinition::BARANGAY_CHECK_CODE)
-            ->assertSessionHasErrors('activity_definition_id');
+            ->assertSessionHas('ci_activity_duplicate')
+            ->assertSessionHasNoErrors();
         $this->addActivity($ci, $folder, ActivityDefinition::NEIGHBOR_CHECK_CODE, $maria->id)
-            ->assertSessionHasErrors('activity_definition_id');
+            ->assertSessionHas('ci_activity_duplicate')
+            ->assertSessionHasNoErrors();
 
         $this->assertSame(2, CiActivity::query()->count(), 'Nothing extra was written.');
+
+        // Continue Anyway creates independent rows only in each request's exact person scope.
+        $this->addActivity($ci, $folder, ActivityDefinition::BARANGAY_CHECK_CODE, null, true)
+            ->assertSessionHasNoErrors();
+        $this->addActivity($ci, $folder, ActivityDefinition::NEIGHBOR_CHECK_CODE, $maria->id, true)
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(2, CiActivity::query()->whereNull('co_maker_id')->count());
+        $this->assertSame(2, CiActivity::query()->where('co_maker_id', $maria->id)->count());
     }
 
     // =====================================================================================
@@ -266,6 +279,7 @@ class ManualBarangayNeighborActivityTest extends TestCase
             'co_maker_id' => '',
             'status' => ActivityStatus::Scheduled->value,
             'scheduled_at' => now(config('cims.display_timezone'))->toDateString(),
+            'expected_revision' => $barangay->fresh()->revision,
             'intent' => 'return',
         ])->assertSessionHasNoErrors();
 
@@ -287,6 +301,7 @@ class ManualBarangayNeighborActivityTest extends TestCase
             'co_maker_id' => '',
             'status' => ActivityStatus::FollowUp->value,
             'scheduled_at' => now(config('cims.display_timezone'))->toDateString(),
+            'expected_revision' => $neighbor->fresh()->revision,
             'intent' => 'return',
         ])->assertSessionHasNoErrors();
 

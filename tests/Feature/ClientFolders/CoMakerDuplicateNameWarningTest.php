@@ -118,7 +118,7 @@ class CoMakerDuplicateNameWarningTest extends TestCase
         $foreign = $this->coMaker($otherFolder, 'Foreign', 'Maker');
         $this->actingAs($this->ci)->postJson(route('client-folders.co-maker.store', $this->folder), [
             'co_maker_id' => $foreign->id, 'expected_revision' => 1, 'first_name' => 'Juan', 'last_name' => 'Dela Cruz', 'duplicate_confirmed' => '1',
-        ])->assertStatus(404);
+        ])->assertStatus(404)->assertJsonPath('message', 'Not Found')->assertJsonMissingPath('co_maker_missing');
         $this->assertSame('Maker', $foreign->fresh()->last_name);
         $this->get('/logout');
         auth()->logout();
@@ -168,6 +168,37 @@ class CoMakerDuplicateNameWarningTest extends TestCase
     }
 
     // ---------------------------------------------------------------- Concurrency
+
+    public function test_add_re_reads_the_parent_inside_the_transaction_before_checking_for_duplicates_and_inserting(): void
+    {
+        $queries = [];
+        DB::listen(function ($query) use (&$queries): void {
+            $queries[] = [
+                'sql' => $query->sql,
+                'transaction_level' => DB::transactionLevel(),
+            ];
+        });
+
+        $this->actingAs($this->ci)->postJson(route('client-folders.co-maker.store', $this->folder), [
+            'first_name' => 'Pedro', 'last_name' => 'Reyes',
+        ])->assertOk();
+
+        $parentRead = collect($queries)->search(fn (array $query): bool => str_contains($query['sql'], 'from "client_folders"')
+            && str_contains($query['sql'], 'limit 1'));
+        $duplicateRead = collect($queries)->search(fn (array $query): bool => str_contains($query['sql'], 'from "co_makers"')
+            && str_contains($query['sql'], '"first_name"')
+            && str_contains($query['sql'], '"last_name"'));
+        $insert = collect($queries)->search(fn (array $query): bool => str_starts_with($query['sql'], 'insert into "co_makers"'));
+
+        $this->assertIsInt($parentRead, 'The Add path must re-read its stable parent row for locking.');
+        $this->assertIsInt($duplicateRead, 'The duplicate advisory must be checked after locking the parent.');
+        $this->assertIsInt($insert);
+        $this->assertLessThan($duplicateRead, $parentRead);
+        $this->assertLessThan($insert, $duplicateRead);
+        $this->assertGreaterThan(0, $queries[$parentRead]['transaction_level']);
+        $this->assertGreaterThan(0, $queries[$duplicateRead]['transaction_level']);
+        $this->assertGreaterThan(0, $queries[$insert]['transaction_level']);
+    }
 
     public function test_continue_anyway_never_bypasses_the_stale_revision_check(): void
     {

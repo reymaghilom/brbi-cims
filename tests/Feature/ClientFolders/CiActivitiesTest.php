@@ -17,6 +17,7 @@ use App\Models\User;
 use App\Notifications\CiActivityScheduledReminder;
 use App\Services\ClientFolders\CiActivitiesCompletionEvaluator;
 use App\Services\Media\CloudinaryCiActivityProofStorage;
+use App\Support\ClientFolders\MissingClientFolderResponse;
 use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -109,8 +110,15 @@ class CiActivitiesTest extends TestCase
         $this->actingAs($admin)->get(route('client-folders.activities.edit', [$folder, $otherActivity]))->assertNotFound();
         $this->actingAs($admin)->put(route('client-folders.activities.update', [$folder, $otherActivity]), $this->payload($otherActivity) + ['expected_revision' => $otherActivity->fresh()->revision])->assertNotFound();
         $folder->delete();
-        $this->actingAs($admin)->get(route('client-folders.activities.index', $folder->id))->assertNotFound();
-        $this->actingAs($admin)->get(route('client-folders.activities.edit', [$folder->id, $activity->id]))->assertNotFound();
+        foreach ([
+            route('client-folders.activities.index', $folder->id),
+            route('client-folders.activities.edit', [$folder->id, $activity->id]),
+        ] as $url) {
+            $this->actingAs($admin)->get($url)
+                ->assertRedirect(route('client-folders.index'))
+                ->assertSessionHas('status', MissingClientFolderResponse::VIEW_MESSAGE)
+                ->assertSessionHas('statusType', 'error');
+        }
         $this->assertNotSame($folder->id, $otherFolder->id);
     }
 
@@ -194,7 +202,10 @@ class CiActivitiesTest extends TestCase
         $otherFolder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'ALPHA MAKER', 'first_name' => 'Alpha', 'last_name' => 'Maker']);
         $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'BETA MAKER', 'first_name' => 'Beta', 'last_name' => 'Maker']);
-        $definition = $this->optionalDefinition();
+        $definition = ActivityDefinition::factory()->create([
+            'name' => 'Cross-folder update scope',
+            'is_active' => true,
+        ]);
         $activity = CiActivity::create([
             'client_folder_id' => $folder->id,
             'co_maker_id' => $coMakerA->id,
@@ -204,11 +215,13 @@ class CiActivitiesTest extends TestCase
             'completed_at' => now(),
             'creator_id' => $ci->id,
         ]);
+        $auditCount = AuditLog::query()->count();
 
         $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['co_maker_id' => null, 'status' => 'pending'] + ['expected_revision' => $activity->fresh()->revision])->assertForbidden();
         $this->put(route('client-folders.activities.update', [$folder, $activity]), ['co_maker_id' => $coMakerB->id, 'status' => 'pending'] + ['expected_revision' => $activity->fresh()->revision])->assertForbidden();
         $this->put(route('client-folders.activities.update', [$otherFolder, $activity]), ['co_maker_id' => $coMakerA->id, 'status' => 'pending'])->assertNotFound();
         $this->assertSame(ActivityStatus::Completed, $activity->fresh()->status);
+        $this->assertSame($auditCount, AuditLog::query()->count(), 'Rejected cross-folder updates write no success audit.');
 
         $this->put(route('client-folders.activities.update', [$folder, $activity]), ['co_maker_id' => $coMakerA->id, 'status' => 'pending'] + ['expected_revision' => $activity->fresh()->revision])->assertRedirect();
         $this->assertSame(ActivityStatus::Pending, $activity->fresh()->status);
@@ -227,7 +240,11 @@ class CiActivitiesTest extends TestCase
             'file_name' => 'delete-safety-proof.pdf',
         ]);
         $activity->mediaReferences()->attach($media, ['label' => 'Preserved proof']);
-        $otherActivity = $folder->activities()->whereKeyNot($activity->id)->firstOrFail();
+        $otherActivity = $folder->activities()->create([
+            'activity_definition_id' => $definition->id,
+            'name' => $definition->name,
+            'creator_id' => $creator->id,
+        ]);
         $otherActivity->mediaReferences()->attach($media, ['label' => 'Shared preserved proof']);
         AuditLog::create([
             'user_id' => $creator->id,
@@ -290,11 +307,13 @@ class CiActivitiesTest extends TestCase
         $applicantActivity = CiActivity::create(['client_folder_id' => $folder->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'target' => 'APPLICANT DELETE SCOPE', 'creator_id' => $ci->id]);
         $coMakerAActivity = CiActivity::create(['client_folder_id' => $folder->id, 'co_maker_id' => $coMakerA->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'target' => 'CO-MAKER A DELETE SCOPE', 'creator_id' => $ci->id]);
         $coMakerBActivity = CiActivity::create(['client_folder_id' => $folder->id, 'co_maker_id' => $coMakerB->id, 'activity_definition_id' => $definition->id, 'name' => $definition->name, 'target' => 'CO-MAKER B DELETE SCOPE', 'creator_id' => $ci->id]);
+        $auditCount = AuditLog::query()->count();
 
         $this->actingAs($ci)->delete(route('client-folders.activities.destroy', [$folder, $coMakerAActivity]), ['co_maker_id' => null])->assertNotFound();
         $this->delete(route('client-folders.activities.destroy', [$folder, $coMakerAActivity]), ['co_maker_id' => $coMakerB->id])->assertNotFound();
         $this->delete(route('client-folders.activities.destroy', [$otherFolder, $coMakerAActivity]), ['co_maker_id' => $coMakerA->id])->assertNotFound();
         $this->assertDatabaseHas('ci_activities', ['id' => $coMakerAActivity->id]);
+        $this->assertSame($auditCount, AuditLog::query()->count(), 'Rejected cross-folder deletes write no success audit.');
 
         $applicantDeleteResponse = $this->delete(route('client-folders.activities.destroy', [$folder, $applicantActivity]), ['co_maker_id' => null]);
         $applicantDeleteResponse->assertRedirect(route('client-folders.activities.index', [$folder, 'status' => 'all']));
@@ -388,6 +407,7 @@ class CiActivitiesTest extends TestCase
             ->assertSee('name="remarks"', false);
 
         $this->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definition->id,
             'status' => 'pending',
             'target' => 'FORGED NEW TARGET',
@@ -405,6 +425,7 @@ class CiActivitiesTest extends TestCase
             ->assertSee('name="remarks"', false);
 
         $this->put(route('client-folders.activities.update', [$folder, $activity]), [
+            'expected_revision' => $activity->fresh()->revision,
             'status' => 'pending',
             'target' => 'FORGED REPLACEMENT TARGET',
             'remarks' => 'Updated details remain in remarks.',
@@ -415,6 +436,7 @@ class CiActivitiesTest extends TestCase
 
         $this->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $coMaker->id,
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definition->id,
             'status' => 'pending',
             'remarks' => 'Co-maker details remain isolated.',
@@ -444,15 +466,20 @@ class CiActivitiesTest extends TestCase
         $definitionCount = ActivityDefinition::query()->count();
 
         $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $custom->id,
             'status' => 'pending',
             'remarks' => 'ONE MANUAL SUBMISSION',
         ])->assertRedirect();
         $this->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $coMaker->id,
+            'create_new_activity_type' => false,
             'activity_definition_id' => $bank->id,
-            'status' => 'pending',
-            'remarks' => 'ONE BANK SUBMISSION',
+            'bank_targets' => [[
+                'inquiry_type' => CiActivityBankTarget::INQUIRY_TYPE_BANK_COOP_CHECK,
+                'institution_name' => 'One Bank Submission',
+                'status' => 'pending',
+            ]],
         ])->assertRedirect();
 
         $this->assertSame(1, $folder->activities()->whereNull('co_maker_id')->where('activity_definition_id', $custom->id)->count());
@@ -503,7 +530,7 @@ class CiActivitiesTest extends TestCase
         $applicantPage = $this->get(route('client-folders.activities.index', [$folder, 'status' => 'all']))->assertOk();
         $this->assertTrue($applicantPage->viewData('existingDefinitionIds')->contains($custom->id));
         $this->assertMatchesRegularExpression(
-            '/<button[^>]*data-value="'.preg_quote((string) $custom->id, '/').'"[^>]*disabled[^>]*>.*Compliance Screening.*Already Added.*<\/button>/s',
+            '/<button[^>]*data-value="'.preg_quote((string) $custom->id, '/').'"[^>]*>.*Compliance Screening.*Already Added.*<\/button>/s',
             $applicantPage->getContent(),
         );
 
@@ -525,6 +552,7 @@ class CiActivitiesTest extends TestCase
         $activityCount = CiActivity::query()->count();
         $creationAuditCount = AuditLog::query()->where('action', 'ci_activity.created')->count();
         $this->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $custom->id,
             'status' => 'pending',
         ])->assertRedirect()->assertSessionHas(
@@ -537,6 +565,7 @@ class CiActivitiesTest extends TestCase
 
         $this->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $coMakerA->id,
+            'create_new_activity_type' => false,
             'activity_definition_id' => $custom->id,
             'status' => 'pending',
         ])->assertRedirect();
@@ -550,6 +579,7 @@ class CiActivitiesTest extends TestCase
         $creationAuditCount = AuditLog::query()->where('action', 'ci_activity.created')->count();
         $this->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $coMakerA->id,
+            'create_new_activity_type' => false,
             'activity_definition_id' => $custom->id,
             'status' => 'follow_up',
             // For Follow-up requires a date, so this reaches the duplicate advisory rather than
@@ -568,6 +598,7 @@ class CiActivitiesTest extends TestCase
         ] as [$targetFolder, $coMakerId]) {
             $this->post(route('client-folders.activities.store', $targetFolder), [
                 'co_maker_id' => $coMakerId,
+                'create_new_activity_type' => false,
                 'activity_definition_id' => $custom->id,
                 'status' => 'scheduled',
                 'scheduled_at' => now()->addDay()->format('Y-m-d H:i:s'),
@@ -581,10 +612,11 @@ class CiActivitiesTest extends TestCase
         $creationAuditCount = AuditLog::query()->where('action', 'ci_activity.created')->count();
         $this->post(route('client-folders.activities.store', $folder), [
             'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
+            'create_new_activity_type' => true,
             'new_activity_type' => 'asset check',
             'status' => 'pending',
         ])->assertRedirect()
-            ->assertSessionHas('ci_activity_modal_open', true);
+            ->assertSessionHasErrors('new_activity_type');
         $this->assertSame($activityCount, CiActivity::query()->count());
         $this->assertSame($definitionCount, ActivityDefinition::query()->count());
         $this->assertSame($creationAuditCount, AuditLog::query()->where('action', 'ci_activity.created')->count());
@@ -593,6 +625,7 @@ class CiActivitiesTest extends TestCase
             ->assertRedirect(route('client-folders.activities.index', [$folder, 'status' => 'all']));
         $this->assertDatabaseMissing('ci_activities', ['id' => $applicantAsset->id]);
         $this->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $asset->id,
             'status' => 'pending',
             'asset_targets' => [[
@@ -738,11 +771,10 @@ class CiActivitiesTest extends TestCase
         $submissionPage = $this->actingAs($submitter)->get(route('client-folders.activities.index', [$folder, 'status' => 'completed']))
             ->assertOk()
             ->assertSee('Mark as Submitted')
-            ->assertSee('Record this CI result as submitted to the Credit Analyst.')
-            ->assertSee('Submitted To / Credit Analyst')
+            ->assertSee("Enter the Credit Analyst's name", false)
+            ->assertSee('Submitted To')
             ->assertSee('Submission Note')
-            ->assertSee('data-submission-action="create"', false)
-            ->assertSee('max-w-lg overflow-y-auto', false);
+            ->assertSee('data-submission-action="create"', false);
         $this->assertMatchesRegularExpression(
             '/data-submission-cell="'.$activity->id.'".*data-submission-action="create"/s',
             $submissionPage->getContent(),
@@ -778,15 +810,9 @@ class CiActivitiesTest extends TestCase
             ->assertSee('View / Update')
             ->assertSee('View / Update Submission')
             ->assertSee('data-submission-action="update"', false)
-            ->assertSee('data-submission-summary', false)
-            ->assertSee('Submitted By')
-            ->assertSee('Submitted At')
             ->assertSee('Submitted To')
-            ->assertSee('Note')
             ->assertSee('submitted to Credit Analyst')
-            ->assertSee('Submitted to: Ana Credit Analyst')
             ->assertSee('Endorsed with the verified field result.')
-            ->assertSee('by Mark Submitter')
             ->assertDontSee('Submission Method');
         $this->assertMatchesRegularExpression(
             '/data-submission-cell="'.$activity->id.'".*data-submission-action="update"/s',
@@ -1066,7 +1092,7 @@ class CiActivitiesTest extends TestCase
         $this->assertCount(1, $coMakerResponse->viewData('allHistory'));
     }
 
-    public function test_simple_status_workflow_allows_direct_completion_and_requires_a_date_only_when_scheduled(): void
+    public function test_simple_status_workflow_allows_direct_completion_and_requires_a_date_for_scheduled_or_follow_up(): void
     {
         $ci = User::factory()->create();
         [$folder, $activity] = $this->folderWithActivities($ci);
@@ -1075,6 +1101,8 @@ class CiActivitiesTest extends TestCase
         $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'scheduled'] + ['expected_revision' => $activity->fresh()->revision])
             ->assertSessionHasErrors('scheduled_at');
         $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'follow_up'] + ['expected_revision' => $activity->fresh()->revision])
+            ->assertSessionHasErrors('scheduled_at');
+        $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'follow_up', 'scheduled_at' => now()->addDay()->toDateString()] + ['expected_revision' => $activity->fresh()->revision])
             ->assertSessionHasNoErrors();
         $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), ['status' => 'follow_up', 'scheduled_at' => 'not-a-date'] + ['expected_revision' => $activity->fresh()->revision])
             ->assertSessionHasErrors('scheduled_at');
@@ -1088,20 +1116,21 @@ class CiActivitiesTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $definitions = ActivityDefinition::query()->where('is_active', true)->orderBy('sort_order')->get();
+        $definitions = ActivityDefinition::factory()->count(4)->create(['is_active' => true]);
         $futureSchedule = now()->addDay()->format('Y-m-d H:i:s');
         $this->actingAs($ci);
 
         $page = $this->get(route('client-folders.activities.index', $folder))->assertOk();
         $page
             ->assertSee('data-ci-activity-status', false)
-            ->assertSee('data-ci-activity-schedule disabled', false)
             ->assertSee('disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-text-muted disabled:opacity-75', false)
-            ->assertSee("const enabled = ! addingNewActivityType() && ['scheduled', 'follow_up'].includes(status.value);", false)
-            ->assertSee("if (! enabled) schedule.value = '';", false)
-            ->assertSee("schedule.required = ! addingNewActivityType() && status.value === 'scheduled';", false);
+            ->assertSee("const enabled = parentFieldsEnabled && ['scheduled', 'follow_up'].includes(status.value);", false)
+            ->assertSee('if (! enabled) {', false)
+            ->assertSee("schedule.required = parentFieldsEnabled && ['scheduled', 'follow_up'].includes(status.value);", false);
+        $this->assertMatchesRegularExpression('/data-ci-activity-schedule[^>]*disabled/', $page->getContent());
 
         $this->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definitions[0]->id,
             'status' => 'pending',
             'scheduled_at' => $futureSchedule,
@@ -1111,6 +1140,7 @@ class CiActivitiesTest extends TestCase
         $this->assertNull($pending->scheduled_at);
 
         $this->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definitions[1]->id,
             'status' => 'completed',
             'scheduled_at' => $futureSchedule,
@@ -1120,10 +1150,12 @@ class CiActivitiesTest extends TestCase
         $this->assertNull($completed->scheduled_at);
 
         $this->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definitions[2]->id,
             'status' => 'scheduled',
         ])->assertSessionHasErrors('scheduled_at');
         $this->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definitions[2]->id,
             'status' => 'scheduled',
             'scheduled_at' => $futureSchedule,
@@ -1133,6 +1165,7 @@ class CiActivitiesTest extends TestCase
         $this->assertNotNull($scheduled->scheduled_at);
 
         $this->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definitions[3]->id,
             'status' => 'follow_up',
             'scheduled_at' => $futureSchedule,
@@ -1158,13 +1191,14 @@ class CiActivitiesTest extends TestCase
         $scheduledPage
             ->assertSee('data-ci-edit-status', false)
             ->assertSee('data-ci-edit-schedule', false)
-            ->assertSee($initialSchedule->copy()->timezone(config('cims.display_timezone'))->format('Y-m-d\TH:i'), false)
+            ->assertSee($initialSchedule->copy()->timezone(config('cims.display_timezone'))->format('Y-m-d'), false)
             ->assertSee("const enabled = ['scheduled', 'follow_up'].includes(status.value);", false)
-            ->assertSee("if (!enabled) schedule.value = '';", false);
+            ->assertSee('if (!enabled) {', false);
         $this->assertSame(1, preg_match('/<input[^>]+data-ci-edit-schedule[^>]*>/', $scheduledPage->getContent(), $scheduledInput));
         $this->assertDoesNotMatchRegularExpression('/\sdisabled(?:\s|=|>)/', $scheduledInput[0]);
 
         $this->put(route('client-folders.activities.update', [$folder, $activity]), [
+            'expected_revision' => $activity->fresh()->revision,
             'status' => 'pending',
             'scheduled_at' => now()->addDays(2)->format('Y-m-d H:i:s'),
         ])->assertRedirect();
@@ -1175,12 +1209,17 @@ class CiActivitiesTest extends TestCase
 
         $followUpSchedule = now()->addDays(3)->startOfMinute();
         $this->put(route('client-folders.activities.update', [$folder, $activity]), [
+            'expected_revision' => $activity->fresh()->revision,
             'status' => 'follow_up',
-            'scheduled_at' => $followUpSchedule->format('Y-m-d H:i:s'),
+            'scheduled_at' => $followUpSchedule->format('Y-m-d'),
+            'scheduled_time' => $followUpSchedule->format('H:i'),
         ])->assertRedirect();
         $activity->refresh();
         $this->assertSame(ActivityStatus::FollowUp, $activity->status);
-        $this->assertTrue($activity->scheduled_at->equalTo($followUpSchedule));
+        $this->assertSame(
+            $followUpSchedule->format('Y-m-d H:i'),
+            $activity->scheduled_at->timezone(config('cims.display_timezone'))->format('Y-m-d H:i'),
+        );
         $followUpPage = $this->get(route('client-folders.activities.edit', [$folder, $activity]))->assertOk();
         $this->assertSame(1, preg_match('/<input[^>]+data-ci-edit-schedule[^>]*>/', $followUpPage->getContent(), $followUpInput));
         $this->assertDoesNotMatchRegularExpression('/\sdisabled(?:\s|=|>)/', $followUpInput[0]);
@@ -1188,6 +1227,7 @@ class CiActivitiesTest extends TestCase
 
         $activity->forceFill(['reminder_sent_at' => now()])->saveQuietly();
         $this->put(route('client-folders.activities.update', [$folder, $activity]), [
+            'expected_revision' => $activity->fresh()->revision,
             'status' => 'completed',
             'scheduled_at' => now()->addDays(4)->format('Y-m-d H:i:s'),
         ])->assertRedirect();
@@ -1361,13 +1401,13 @@ class CiActivitiesTest extends TestCase
         $modal = $this->get(route('client-folders.activities.index', $folder))->assertOk();
         $modal
             ->assertSee('Add Activity Type')
-            ->assertSee('Saving this reusable Activity Type will not create a CI Activity or assign a Creator.')
             ->assertSee('data-custom-activity-info', false)
             ->assertSee("submitLabel.textContent = addingNewType ? 'Add Activity Type' : 'Add Activity';", false)
             ->assertSee("form.dataset.submissionMode = addingNewType ? 'activity-type' : 'activity';", false);
 
         $definitionOnlyResponse = $this->post(route('client-folders.activities.store', $folder), [
             'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
+            'create_new_activity_type' => true,
             'new_activity_type' => '  Barangay   Certification Follow-up  ',
             'status' => 'completed',
             'scheduled_at' => now()->addDay()->format('Y-m-d H:i:s'),
@@ -1386,7 +1426,7 @@ class CiActivitiesTest extends TestCase
 
         $reopenedModal = $this->get($definitionOnlyResponse->headers->get('Location'))->assertOk();
         $reopenedModal
-            ->assertSee('Activity type created successfully.')
+            ->assertSee('Activity Type created successfully.')
             ->assertSee('data-ci-activity-dialog-body', false)
             ->assertSee('dialogBody.scrollTop = 0;', false)
             ->assertDontSee('You will become the Creator of this activity.');
@@ -1409,6 +1449,7 @@ class CiActivitiesTest extends TestCase
         $this->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $coMakerA->id,
             'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
+            'create_new_activity_type' => true,
             'new_activity_type' => 'barangay certification follow-up',
         ])->assertRedirect();
         $equivalentDefinitions = ActivityDefinition::query()->get()
@@ -1418,6 +1459,7 @@ class CiActivitiesTest extends TestCase
         $this->assertSame(1, AuditLog::query()->where('action', 'activity_definition.created')->where('metadata->activity_definition_id', $definition->id)->count());
 
         $this->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definition->id,
             'status' => 'pending',
             'remarks' => 'APPLICANT CUSTOM DETAILS',
@@ -1432,13 +1474,15 @@ class CiActivitiesTest extends TestCase
         $this->assertSame(1, AuditLog::query()->where('action', 'ci_activity.created')->where('metadata->activity_definition_id', $definition->id)->count());
 
         $this->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definition->id,
             'status' => 'pending',
-        ])->assertSessionHasErrors('activity_definition_id');
+        ])->assertSessionHas('ci_activity_duplicate')->assertSessionHasNoErrors();
         $this->assertSame(1, CiActivity::query()->where('activity_definition_id', $definition->id)->count());
 
         $this->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $coMakerA->id,
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definition->id,
             'status' => 'pending',
             'remarks' => 'CO-MAKER A CUSTOM DETAILS',
@@ -1454,13 +1498,14 @@ class CiActivitiesTest extends TestCase
         $this->assertSame(0, CiActivity::query()->where('co_maker_id', $coMakerB->id)->where('activity_definition_id', $definition->id)->count());
     }
 
-    public function test_add_activity_modal_stays_open_with_clean_form_and_scoped_close_behavior_after_success(): void
+    public function test_add_activity_modal_closes_with_clean_form_and_scoped_close_behavior_after_success(): void
     {
         $ci = User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $definition = $this->optionalDefinition();
 
         $storeResponse = $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definition->id,
             'status' => 'pending',
             'remarks' => 'Completed request.',
@@ -1484,7 +1529,7 @@ class CiActivitiesTest extends TestCase
             ->assertSee('min-h-0 overflow-y-auto overscroll-contain', false)
             ->assertSee('dialogBody.scrollTop = 0;', false)
             ->assertDontSee('You will become the Creator of this activity.');
-        $this->assertMatchesRegularExpression(
+        $this->assertDoesNotMatchRegularExpression(
             '/<dialog[^>]*data-ci-activity-dialog[^>]*open[^>]*data-ci-activity-initial-open[^>]*>/',
             $page->getContent(),
         );
@@ -1496,9 +1541,9 @@ class CiActivitiesTest extends TestCase
             '/<option value="pending"[^>]*selected[^>]*>Pending<\/option>/',
             $page->getContent(),
         );
-        $page->assertDontSee('Completed request.');
         $this->assertSame(2, substr_count($page->getContent(), ' data-ci-activity-dialog-close'));
         preg_match('/<form[^>]*data-ci-activity-create-form[^>]*>(.*?)<\/form>/s', $page->getContent(), $activityForm);
+        $this->assertStringNotContainsString('Completed request.', $activityForm[1] ?? '');
         $this->assertStringNotContainsString('Creator:</span>', $activityForm[1] ?? '');
         $this->assertStringNotContainsString('Supporting Proof', $activityForm[1] ?? '');
         $this->assertSame($ci->id, $folder->activities()->where('activity_definition_id', $definition->id)->sole()->creator_id);
@@ -1519,7 +1564,7 @@ class CiActivitiesTest extends TestCase
             ->assertSee('if (firstInvalid) {', false)
             ->assertSee('event.preventDefault();', false)
             ->assertSee('revealFirstInvalid(firstInvalid);', false)
-            ->assertSee("status.value === 'scheduled' && schedule.value === ''", false)
+            ->assertSee("['scheduled', 'follow_up'].includes(status.value) && schedule.value === ''", false)
             ->assertSee('control.focus({ preventScroll: true });', false);
 
         $globalJavascript = file_get_contents(resource_path('js/app.js'));
@@ -1651,7 +1696,7 @@ class CiActivitiesTest extends TestCase
         $confirmation
             ->assertDontSee('Remove Activity Type?')
             ->assertSee('data-activity-type-id="'.$customDefinition->id.'"', false)
-            ->assertSee('data-activity-type-usage="1"', false);
+            ->assertSee('data-activity-type-usage="2"', false);
 
         $response = $this->delete(
             route('client-folders.activity-definitions.deactivate', [$folder, $customDefinition]),
@@ -1734,6 +1779,7 @@ class CiActivitiesTest extends TestCase
         foreach (['Residence Check', 'residence-check', 'Business Check', 'business_check'] as $dedicatedName) {
             $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
                 'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
+                'create_new_activity_type' => true,
                 'new_activity_type' => $dedicatedName,
                 'status' => 'pending',
             ])->assertSessionHasErrors('new_activity_type');
@@ -1742,9 +1788,10 @@ class CiActivitiesTest extends TestCase
         $this->post(route('client-folders.activities.store', $folder), [
             'co_maker_id' => $foreignCoMaker->id,
             'activity_definition_id' => ActivityDefinition::NEW_TYPE_VALUE,
+            'create_new_activity_type' => true,
             'new_activity_type' => 'Foreign Scope Inquiry',
             'status' => 'pending',
-        ])->assertSessionHasErrors('co_maker_id');
+        ])->assertNotFound();
 
         $this->assertSame($definitionCount, ActivityDefinition::query()->count());
         $this->assertDatabaseMissing('activity_definitions', ['name' => 'Foreign Scope Inquiry']);
@@ -1785,20 +1832,28 @@ class CiActivitiesTest extends TestCase
     {
         $ci = User::factory()->create();
         [$folder, $activity] = $this->folderWithActivities($ci);
+        $this->createDefaultCiActivities($folder, actor: $ci);
+        $bankDefinition = ActivityDefinition::query()->where('code', ActivityDefinition::BANK_COOP_CHECK_CODE)->sole();
+        CiActivity::create([
+            'client_folder_id' => $folder->id,
+            'activity_definition_id' => $bankDefinition->id,
+            'name' => $bankDefinition->name,
+            'status' => ActivityStatus::Completed,
+            'completed_at' => now(),
+            'creator_id' => $ci->id,
+        ]);
         $folder->activities()->whereKeyNot($activity->id)->update(['status' => ActivityStatus::Completed, 'completed_at' => now()]);
 
         $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), $this->payload($activity) + ['expected_revision' => $activity->fresh()->revision])->assertRedirect();
 
         $this->assertDatabaseHas('client_completion_results', ['client_folder_id' => $folder->id, 'is_satisfied' => true, 'explanation_key' => 'required_activities.complete']);
         $folder->refresh();
-        // Mandatory matrix: of these activities only Bank / Coop is mandatory -> 1 of 7.
-        $this->assertEquals(14.29, $folder->progress_percent);
+        // The three Applicant CI Activity requirements are complete: 3 of 7 overall.
+        $this->assertEquals(42.86, $folder->progress_percent);
         $this->assertSame(ClientFolderStatus::OnProgress, $folder->status);
         $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()
             ->assertSee(route('client-folders.activities.index', $folder), false)
-            // The Overview card follows the same mandatory CI Activity set as progress: Barangay,
-            // Neighbor and Bank / Coop for the Applicant. Only Bank / Coop is completed here.
-            ->assertSee('1 of 3 required activities completed; 2 pending.');
+            ->assertSee('3 of 3 required activities completed; 0 pending.');
     }
 
     public function test_activity_pages_use_responsive_field_checklist_markup_and_neutral_states(): void
@@ -1836,8 +1891,7 @@ class CiActivitiesTest extends TestCase
             ->assertSee('data-ci-activity-dialog-body', false)
             ->assertSee('backdrop:bg-brand-sidebar/45', false)
             ->assertDontSee('Residence Check')->assertDontSee('Business Check')
-            ->assertDontSee('Barangay Check')->assertDontSee('Neighbor Check')
-            ->assertSeeInOrder(['Asset Check', 'Bank / Coop Check']);
+            ->assertSeeInOrder(['Barangay Check', 'Neighbor Check', 'Asset Check', 'Bank / Coop Check']);
         $this->assertSame('all', $indexResponse->viewData('filter'));
         $this->assertSame($folder->activities()->count(), $indexResponse->viewData('counts')['all']);
         preg_match('/<nav[^>]*aria-label="Activity status filters"[^>]*>(.*?)<\/nav>/s', $indexResponse->getContent(), $tabNavigation);
@@ -1883,6 +1937,7 @@ class CiActivitiesTest extends TestCase
         ]);
 
         $this->actingAs($creator)->post(route('client-folders.activities.store', $folder), [
+            'create_new_activity_type' => false,
             'activity_definition_id' => $definition->id,
             'status' => 'pending',
             'remarks' => 'Initial request.',
@@ -1891,6 +1946,7 @@ class CiActivitiesTest extends TestCase
         $activity = CiActivity::query()->latest('id')->firstOrFail();
         $this->assertSame($creator->id, $activity->creator_id);
         $this->actingAs($other)->put(route('client-folders.activities.update', [$folder, $activity]), [
+            'expected_revision' => $activity->fresh()->revision,
             'status' => 'completed',
             'creator_id' => $other->id,
         ])->assertRedirect();
@@ -1913,6 +1969,7 @@ class CiActivitiesTest extends TestCase
         foreach ([[$coMakerA, 'ALPHA DETAILS'], [$coMakerB, 'BETA DETAILS']] as [$person, $remarks]) {
             $this->actingAs($ci)->post(route('client-folders.activities.store', $folder), [
                 'co_maker_id' => $person->id,
+                'create_new_activity_type' => false,
                 'activity_definition_id' => $definition->id,
                 'status' => 'pending',
                 'remarks' => $remarks,
@@ -1940,12 +1997,14 @@ class CiActivitiesTest extends TestCase
         [$folder, $activity] = $this->folderWithActivities($ci);
 
         $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), [
+            'expected_revision' => $activity->fresh()->revision,
             'status' => 'scheduled', 'scheduled_at' => now()->addDay()->format('Y-m-d H:i:s'),
         ])->assertRedirect();
         $this->assertDatabaseHas('audit_logs', ['action' => 'ci_activity.scheduled', 'user_id' => $ci->id]);
         $activity->forceFill(['reminder_sent_at' => now()])->saveQuietly();
 
         $this->actingAs($ci)->put(route('client-folders.activities.update', [$folder, $activity]), [
+            'expected_revision' => $activity->fresh()->revision,
             'status' => 'scheduled', 'scheduled_at' => now()->addDays(2)->format('Y-m-d H:i:s'),
         ])->assertRedirect();
         $this->assertDatabaseHas('audit_logs', ['action' => 'ci_activity.rescheduled', 'user_id' => $ci->id]);
@@ -1966,6 +2025,7 @@ class CiActivitiesTest extends TestCase
             ]);
 
             $this->actingAs($creator)->post(route('client-folders.activities.store', $folder), [
+                'create_new_activity_type' => false,
                 'activity_definition_id' => $definition->id,
                 'status' => 'scheduled',
                 'scheduled_at' => '2026-08-29',
@@ -2008,6 +2068,7 @@ class CiActivitiesTest extends TestCase
             Notification::fake();
             Carbon::setTestNow(Carbon::parse('2026-08-29 06:01:00', 'UTC'));
             $this->actingAs($creator)->put(route('client-folders.activities.update', [$folder, $activity]), [
+                'expected_revision' => $activity->fresh()->revision,
                 'status' => 'scheduled',
                 'scheduled_at' => '2026-08-29',
                 'scheduled_time' => '15:30',
@@ -2175,6 +2236,7 @@ class CiActivitiesTest extends TestCase
             [$folder, $activity] = $this->folderWithActivities($creator);
 
             $this->actingAs($updater)->put(route('client-folders.activities.update', [$folder, $activity]), [
+                'expected_revision' => $activity->fresh()->revision,
                 'status' => 'scheduled',
                 'scheduled_at' => '2026-08-29',
                 'scheduled_time' => '15:00',
@@ -2198,6 +2260,7 @@ class CiActivitiesTest extends TestCase
 
             Carbon::setTestNow(Carbon::parse('2026-08-29 06:05:00', 'UTC'));
             $this->actingAs($updater)->put(route('client-folders.activities.update', [$folder, $activity]), [
+                'expected_revision' => $activity->fresh()->revision,
                 'status' => 'scheduled',
                 'scheduled_at' => '2026-08-30',
                 'scheduled_time' => '15:00',
@@ -2208,11 +2271,12 @@ class CiActivitiesTest extends TestCase
             $this->assertSame('2026-08-30T07:00:00.000000Z', data_get($dateChangedNotification->data, 'scheduled_at'));
             $this->actingAs($creator)->get(route('home'))
                 ->assertOk()
-                ->assertSee('data-scheduled-today-count>1</span>', false);
+                ->assertDontSee('data-scheduled-today-count', false);
             $this->post(route('notifications.ci-activities.read', $dateChangedNotification->id))->assertRedirect();
 
             Carbon::setTestNow(Carbon::parse('2026-08-29 06:10:00', 'UTC'));
             $this->actingAs($updater)->put(route('client-folders.activities.update', [$folder, $activity]), [
+                'expected_revision' => $activity->fresh()->revision,
                 'status' => 'scheduled',
                 'scheduled_at' => '2026-08-30',
                 'scheduled_time' => '10:00',
@@ -2225,7 +2289,7 @@ class CiActivitiesTest extends TestCase
             $this->assertCount(0, $updater->notifications()->get());
             $this->actingAs($creator)->get(route('home'))
                 ->assertOk()
-                ->assertSee('data-scheduled-today-count>1</span>', false);
+                ->assertDontSee('data-scheduled-today-count', false);
             $this->post(route('notifications.ci-activities.read', $timeChangedNotification->id))->assertRedirect();
 
             Carbon::setTestNow(Carbon::parse('2026-08-30 01:59:00', 'UTC'));
@@ -2271,6 +2335,7 @@ class CiActivitiesTest extends TestCase
             $oldNotification = $creator->notifications()->sole();
 
             $this->actingAs($updater)->put(route('client-folders.activities.update', [$folder, $activity]), [
+                'expected_revision' => $activity->fresh()->revision,
                 'status' => 'completed',
             ])->assertRedirect();
             $activity->refresh();
@@ -2296,6 +2361,7 @@ class CiActivitiesTest extends TestCase
                 ->assertDontSee('data-scheduled-today-count', false);
 
             $this->actingAs($updater)->put(route('client-folders.activities.update', [$folder, $activity]), [
+                'expected_revision' => $activity->fresh()->revision,
                 'status' => 'scheduled',
                 'scheduled_at' => '2026-08-30',
                 'scheduled_time' => '',
@@ -2311,7 +2377,7 @@ class CiActivitiesTest extends TestCase
             $this->assertCount(0, $updater->notifications()->get());
             $this->actingAs($creator)->get(route('home'))
                 ->assertOk()
-                ->assertSee('data-scheduled-today-count>1</span>', false);
+                ->assertDontSee('data-scheduled-today-count', false);
             $this->post(route('notifications.ci-activities.read', $rescheduledAfterReopen->id))->assertRedirect();
 
             Carbon::setTestNow(Carbon::parse('2026-08-29 23:59:00', 'UTC'));
@@ -2329,8 +2395,7 @@ class CiActivitiesTest extends TestCase
             $this->assertCount(0, $updater->notifications()->get());
             $this->actingAs($creator)->get(route('home'))
                 ->assertOk()
-                ->assertSee('Today')
-                ->assertDontSee('8:00 AM');
+                ->assertSee('Today');
 
             $this->actingAs($updater)->delete(route('client-folders.activities.destroy', [$folder, $activity]), [
                 'co_maker_id' => null,
@@ -2368,6 +2433,7 @@ class CiActivitiesTest extends TestCase
                 ->assertSee('Time <span class="font-normal text-text-muted">(optional)</span>', false);
 
             $this->actingAs($updater)->put(route('client-folders.activities.update', [$folder, $activity]), [
+                'expected_revision' => $activity->fresh()->revision,
                 'status' => 'scheduled',
                 'scheduled_at' => '2026-08-30',
                 'scheduled_time' => '',
@@ -2378,7 +2444,7 @@ class CiActivitiesTest extends TestCase
 
                 return $payload['purpose'] === CiActivityScheduledReminder::PURPOSE_SCHEDULE_CREATED
                     && $payload['scheduled_has_time'] === false
-                    && $payload['message'] === $activity->name.' was scheduled.';
+                    && $payload['message'] === $activity->name.' has been scheduled for Aug 30, 2026.';
             });
             Notification::assertNotSentTo($updater, CiActivityScheduledReminder::class);
 
@@ -2400,13 +2466,14 @@ class CiActivitiesTest extends TestCase
 
                 return $payload['purpose'] === CiActivityScheduledReminder::PURPOSE_DUE_REMINDER
                     && $payload['scheduled_has_time'] === false
-                    && $payload['message'] === $activity->name.' is scheduled today.';
+                    && $payload['message'] === $activity->name.' is due today.';
             });
             Notification::assertNotSentTo($updater, CiActivityScheduledReminder::class);
 
             Notification::fake();
             Carbon::setTestNow(Carbon::parse('2026-08-30 00:01:00', 'UTC'));
             $this->actingAs($updater)->put(route('client-folders.activities.update', [$folder, $activity]), [
+                'expected_revision' => $activity->fresh()->revision,
                 'status' => 'scheduled',
                 'scheduled_at' => '2026-08-31',
                 'scheduled_time' => '14:00',
@@ -2435,12 +2502,13 @@ class CiActivitiesTest extends TestCase
 
                 return $payload['purpose'] === CiActivityScheduledReminder::PURPOSE_DUE_REMINDER
                     && $payload['scheduled_has_time'] === true
-                    && $payload['message'] === $activity->name.' is scheduled now.';
+                    && $payload['message'] === $activity->name.' is due now.';
             });
             Notification::assertNotSentTo($updater, CiActivityScheduledReminder::class);
 
             $newDefinition = ActivityDefinition::factory()->create();
             $this->actingAs($creator)->post(route('client-folders.activities.store', $folder), [
+                'create_new_activity_type' => false,
                 'activity_definition_id' => $newDefinition->id,
                 'status' => 'scheduled',
                 'scheduled_at' => '2026-09-01',
@@ -2463,44 +2531,48 @@ class CiActivitiesTest extends TestCase
     {
         $ci = User::factory()->create();
         [$folder] = $this->folderWithActivities($ci);
+        $this->actingAs($ci);
+        $queryCount = function () use ($folder): int {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+            $this->get(route('client-folders.activities.index', $folder))->assertOk();
+            $count = count(DB::getQueryLog());
+            DB::disableQueryLog();
+
+            return $count;
+        };
+
+        $baseline = $queryCount();
         foreach ($folder->activities as $activity) {
-            ActivityNote::create(['ci_activity_id' => $activity->id, 'user_id' => $ci->id, 'note' => 'Count-only note']);
+            foreach (range(1, 5) as $index) {
+                ActivityNote::create(['ci_activity_id' => $activity->id, 'user_id' => $ci->id, 'note' => 'Count-only note '.$index]);
+            }
         }
 
-        $this->actingAs($ci);
-        DB::flushQueryLog();
-        DB::enableQueryLog();
-        $this->get(route('client-folders.activities.index', $folder))->assertOk();
-        $queryCount = count(DB::getQueryLog());
-        DB::disableQueryLog();
-
-        $this->assertLessThanOrEqual(11, $queryCount);
+        $this->assertSame($baseline, $queryCount());
     }
 
     private function folderWithActivities(?User $ci = null): array
     {
         $ci ??= User::factory()->create();
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
-        $activities = ActivityDefinition::query()
-            ->where('is_active', true)
-            ->whereNotIn('code', [ActivityDefinition::BARANGAY_CHECK_CODE, ActivityDefinition::NEIGHBOR_CHECK_CODE])
-            ->orderBy('sort_order')->get()->map(fn (ActivityDefinition $definition) => CiActivity::create([
-                'client_folder_id' => $folder->id,
-                'activity_definition_id' => $definition->id,
-                'name' => $definition->name,
-                'creator_id' => $ci->id,
-            ]));
+        $definition = ActivityDefinition::factory()->create(['is_active' => true]);
+        $activity = CiActivity::create([
+            'client_folder_id' => $folder->id,
+            'activity_definition_id' => $definition->id,
+            'name' => $definition->name,
+            'creator_id' => $ci->id,
+        ]);
 
-        return [$folder, $activities->first()];
+        return [$folder, $activity];
     }
 
     private function optionalDefinition(): ActivityDefinition
     {
-        return ActivityDefinition::query()
-            ->where('is_active', true)
-            ->whereNotIn('code', [ActivityDefinition::BARANGAY_CHECK_CODE, ActivityDefinition::NEIGHBOR_CHECK_CODE])
-            ->orderBy('sort_order')
-            ->firstOrFail();
+        return ActivityDefinition::query()->firstOrCreate(
+            ['code' => ActivityDefinition::CUSTOM_CODE_PREFIX.'test_optional'],
+            ['name' => 'Optional Test Activity', 'is_required' => false, 'is_active' => true],
+        );
     }
 
     /** $activity is passed wherever the payload is an UPDATE: it carries that row's current revision. */

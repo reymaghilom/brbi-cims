@@ -82,8 +82,8 @@ class RecentActivityScopingTest extends TestCase
         $this->log($ci, $folder, 'ci_activity.completed', 'ci_activities', ['activity_id' => 1, 'co_maker_id' => null, 'activity_definition_id' => 1, 'activity_title' => 'Neighborhood Check', 'status' => 'completed']);
 
         $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
-        $this->assertStringContainsString('CI Activity updated', $content);
-        $this->assertStringContainsString('CI Activity completed', $content);
+        $this->assertStringContainsString('Neighborhood Check updated', $content);
+        $this->assertStringContainsString('Neighborhood Check completed', $content);
         // 4, not 2: each event's title renders once in the compact panel and once more in the
         // always-rendered "View more" modal.
         $this->assertSame(4, substr_count($content, 'Neighborhood Check'));

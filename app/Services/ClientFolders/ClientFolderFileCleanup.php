@@ -14,6 +14,7 @@ use App\Services\Media\PrivateMediaStorage;
 use App\Services\Storage\CiTeamDocumentStorage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -36,11 +37,14 @@ use Throwable;
  *
  * A file or Cloudinary asset that any record OUTSIDE that scope (another folder, or — for a
  * Co-Maker — the Applicant or another Co-Maker) still references is never
- * retired. A retirement that fails after commit is reported and skipped — a stray file is safer
- * than rolling back a delete that already happened, and no database reference to it remains.
+ * retired. Each eligible reference is staged durably in the business deletion transaction. A
+ * retirement failure after commit is reported and remains pending; it cannot roll back the DB
+ * deletion that already committed.
  */
 class ClientFolderFileCleanup
 {
+    private const CLAIM_TIMEOUT_MINUTES = 15;
+
     public function __construct(
         private readonly PrivateMediaStorage $storage,
         private readonly ClientMediaUploader $mediaUploader,
@@ -124,24 +128,58 @@ class ClientFolderFileCleanup
         ];
     }
 
-    /** Call only after the delete transaction has committed. */
-    public function retire(array $files): void
+    /**
+     * Persist cleanup intent on the caller's current transaction, before its business delete commits.
+     *
+     * @return list<int>
+     */
+    public function stage(array $files): array
     {
+        $tasks = [];
         foreach ($files['local'] ?? [] as $file) {
-            $this->attempt(fn () => $this->storage->deleteStoredFiles([$file['path']], $file['provider']));
+            $tasks[] = ['kind' => 'local', 'path' => $file['path'], 'storage_provider' => $file['provider']];
         }
         foreach ($files['proof_cloud'] ?? [] as $asset) {
-            $this->attempt(fn () => $this->proofCloud->delete($asset['public_id'], $asset['resource_type']));
+            $tasks[] = ['kind' => 'proof_cloud', 'public_id' => $asset['public_id'], 'resource_type' => $asset['resource_type']];
         }
         foreach ($files['cloud'] ?? [] as $asset) {
-            $this->attempt(fn () => $this->mediaUploader->retireCloudAsset($asset['public_id'], $asset['resource_type'], $asset['delivery_type']));
+            $tasks[] = ['kind' => 'cloud', 'public_id' => $asset['public_id'], 'resource_type' => $asset['resource_type'], 'delivery_type' => $asset['delivery_type']];
         }
         foreach ($files['reports'] ?? [] as $path) {
-            $this->attempt(function () use ($path): void {
-                $disk = $this->documents->isLegacyReportPath($path) ? Storage::disk(config('cims.report_disk')) : $this->documents->disk();
-                $disk->delete($path);
-            });
+            $tasks[] = ['kind' => 'report', 'path' => $path];
         }
+
+        $now = now();
+
+        return array_map(fn (array $task): int => (int) DB::table('pending_file_cleanups')->insertGetId($task + [
+            'attempts' => 0,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]), $tasks);
+    }
+
+    /** Call only after the delete transaction has committed. */
+    public function retire(array $taskIds): int
+    {
+        if ($taskIds === []) {
+            return 0;
+        }
+
+        try {
+            return $this->retryTasks(count($taskIds), $taskIds);
+        } catch (Throwable $exception) {
+            // The owning database delete has already committed. Reporting a cleanup/outbox error
+            // must never turn that successful delete into a false user-facing failure.
+            report($exception);
+
+            return 0;
+        }
+    }
+
+    /** Safe for repeated command/worker runs; each invocation attempts a task at most once. */
+    public function retryPending(int $limit = 100): int
+    {
+        return $this->retryTasks(max(0, $limit));
     }
 
     private function mediaSharedOutside(ClientFolder $folder, ?CoMaker $coMaker, string $column, string $value): bool
@@ -163,12 +201,83 @@ class ClientFolderFileCleanup
             ->when($coMaker !== null, fn ($other) => $other->orWhereNull('co_maker_id')->orWhere('co_maker_id', '!=', $coMaker->id)));
     }
 
-    private function attempt(callable $retire): void
+    /** @param list<int>|null $onlyIds */
+    private function retryTasks(int $limit, ?array $onlyIds = null): int
     {
-        try {
-            $retire();
-        } catch (Throwable $exception) {
-            report($exception);
+        $attemptedIds = [];
+
+        while (count($attemptedIds) < $limit) {
+            $task = $this->claim($attemptedIds, $onlyIds);
+            if ($task === null) {
+                break;
+            }
+
+            $attemptedIds[] = (int) $task->id;
+
+            try {
+                $this->retireTask($task);
+                DB::table('pending_file_cleanups')->where('id', $task->id)->where('claim_token', $task->claim_token)->delete();
+            } catch (Throwable $exception) {
+                report($exception);
+                DB::table('pending_file_cleanups')->where('id', $task->id)->where('claim_token', $task->claim_token)->update([
+                    'claim_token' => null,
+                    'claimed_at' => null,
+                    'last_error' => 'Cleanup failed ('.class_basename($exception).'). See application logs.',
+                    'updated_at' => now(),
+                ]);
+            }
         }
+
+        return count($attemptedIds);
+    }
+
+    /**
+     * @param  list<int>  $attemptedIds
+     * @param  list<int>|null  $onlyIds
+     */
+    private function claim(array $attemptedIds, ?array $onlyIds): ?object
+    {
+        return DB::transaction(function () use ($attemptedIds, $onlyIds): ?object {
+            $task = DB::table('pending_file_cleanups')
+                ->where(fn ($claimable) => $claimable->whereNull('claimed_at')->orWhere('claimed_at', '<=', now()->subMinutes(self::CLAIM_TIMEOUT_MINUTES)))
+                ->when($attemptedIds !== [], fn ($pending) => $pending->whereNotIn('id', $attemptedIds))
+                ->when($onlyIds !== null, fn ($pending) => $pending->whereIn('id', $onlyIds))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->first();
+            if ($task === null) {
+                return null;
+            }
+
+            $claimToken = (string) Str::uuid();
+            DB::table('pending_file_cleanups')->where('id', $task->id)->update([
+                'attempts' => DB::raw('attempts + 1'),
+                'claim_token' => $claimToken,
+                'claimed_at' => now(),
+                'last_attempted_at' => now(),
+                'last_error' => null,
+                'updated_at' => now(),
+            ]);
+            $task->claim_token = $claimToken;
+
+            return $task;
+        });
+    }
+
+    private function retireTask(object $task): void
+    {
+        match ($task->kind) {
+            'local' => $this->storage->deleteStoredFiles([$task->path], $task->storage_provider),
+            'proof_cloud' => $this->proofCloud->delete($task->public_id, $task->resource_type),
+            'cloud' => $this->mediaUploader->retireCloudAsset($task->public_id, $task->resource_type, $task->delivery_type),
+            'report' => $this->deleteReport($task->path),
+            default => throw new \LogicException('Unknown pending file cleanup kind.'),
+        };
+    }
+
+    private function deleteReport(string $path): void
+    {
+        $disk = $this->documents->isLegacyReportPath($path) ? Storage::disk(config('cims.report_disk')) : $this->documents->disk();
+        $disk->delete($path);
     }
 }

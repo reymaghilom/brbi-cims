@@ -83,8 +83,8 @@ class CustomCiActivityWorkflowUiTest extends TestCase
         $this->assertStringContainsString('Short Remarks', $content);
         $this->assertStringContainsString('name="remarks"', $content);
         $this->assertStringContainsString('Verify employment tenure.', $content);
-        $this->assertMatchesRegularExpression('/data-default-check-cancel><svg[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $content);
-        $this->assertMatchesRegularExpression('/data-default-check-submit><svg[^>]*>.*?<\/svg>\s*Save Changes<\/button>/s', $content);
+        $this->assertMatchesRegularExpression('/data-default-check-cancel[^>]*>.*?<svg[^>]*>.*?<\/svg>\s*Cancel\s*<\/button>/s', $content);
+        $this->assertMatchesRegularExpression('/data-default-check-submit[^>]*>.*?<svg[^>]*>.*?<\/svg>\s*<span[^>]*data-default-check-submit-label[^>]*>Save Changes<\/span>\s*<\/button>/s', $content);
     }
 
     public function test_saving_changes_updates_the_same_custom_activity_without_creating_another(): void
@@ -223,9 +223,9 @@ class CustomCiActivityWorkflowUiTest extends TestCase
         $dialog = substr($content, $start, strpos($content, '</dialog>', $start) - $start);
 
         $this->assertMatchesRegularExpression('/<svg[^>]*>.*?<\/svg>\s*Complete this activity\?/s', $dialog);
-        $this->assertMatchesRegularExpression('/data-quick-complete-cancel><svg[^>]*>.*?<\/svg>\s*Cancel<\/button>/s', $dialog);
-        $this->assertMatchesRegularExpression('/data-quick-complete-edit><svg[^>]*>.*?<\/svg>\s*Edit<\/button>/s', $dialog);
-        $this->assertMatchesRegularExpression('/data-quick-complete-confirm><svg[^>]*>.*?<\/svg>/s', $dialog);
+        $this->assertMatchesRegularExpression('/data-quick-complete-cancel[^>]*>.*?<svg[^>]*data-completion-icon="cancel"[^>]*>.*?<\/svg>\s*Cancel\s*<\/button>/s', $dialog);
+        $this->assertMatchesRegularExpression('/data-quick-complete-edit[^>]*>.*?<svg[^>]*data-completion-icon="edit"[^>]*>.*?<\/svg>\s*Edit\s*<\/button>/s', $dialog);
+        $this->assertMatchesRegularExpression('/data-quick-complete-confirm[^>]*>.*?<svg[^>]*data-completion-icon="confirm"[^>]*>.*?<\/svg>\s*<span[^>]*data-quick-complete-confirm-label[^>]*>Mark as Completed<\/span>\s*<\/button>/s', $dialog);
     }
 
     public function test_custom_delete_dialog_uses_iconed_cancel_and_delete_for_the_exact_activity(): void

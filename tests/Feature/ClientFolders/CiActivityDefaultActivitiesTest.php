@@ -80,12 +80,14 @@ class CiActivityDefaultActivitiesTest extends TestCase
 
         $this->actingAs($updater)->put(route('client-folders.activities.update', [$folder, $barangay]), [
             'co_maker_id' => null,
+            'expected_revision' => $barangay->fresh()->revision,
             'status' => ActivityStatus::Completed->value,
             'remarks' => 'Barangay verification completed.',
             'intent' => 'return',
         ])->assertRedirect();
         $this->put(route('client-folders.activities.update', [$folder, $neighbor]), [
             'co_maker_id' => $coMaker->id,
+            'expected_revision' => $neighbor->fresh()->revision,
             'status' => ActivityStatus::Completed->value,
             'remarks' => 'Neighbor verification completed.',
             'intent' => 'return',

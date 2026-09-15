@@ -1041,9 +1041,31 @@
     .client-folder-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* Dashboard analytics entry animations. The rendered height/width remains authoritative; only
+   transform and opacity move, so neither chart participates in layout while it enters. */
+[data-trend-bar-fill] { transform-origin: bottom center; }
+[data-activity-progress-fill] { transform-origin: left center; }
+@keyframes dashboard-trend-entry { from { opacity: .6; transform: scaleY(0); } to { opacity: 1; transform: scaleY(1); } }
+@keyframes dashboard-progress-entry { from { opacity: .6; transform: scaleX(0); } to { opacity: 1; transform: scaleX(1); } }
+
+@media (prefers-reduced-motion: no-preference) {
+    [data-trend-panel][data-entry-animation="running"] [data-trend-bar-fill] {
+        animation: dashboard-trend-entry 750ms cubic-bezier(0.22, 1, 0.36, 1) both;
+        animation-delay: var(--dashboard-entry-delay, 0ms);
+        will-change: transform, opacity;
+    }
+    [data-activity-progress-list][data-entry-animation="running"] [data-activity-progress-fill] {
+        animation: dashboard-progress-entry 750ms cubic-bezier(0.22, 1, 0.36, 1) both;
+        animation-delay: var(--dashboard-entry-delay, 0ms);
+        will-change: transform, opacity;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     *, ::before, ::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+    [data-trend-bar-fill], [data-activity-progress-fill] { opacity: 1 !important; transform: none !important; animation-delay: 0ms !important; will-change: auto; }
 }
+/* End Dashboard analytics entry animations. */
 
 /* Desktop sidebar collapse (layouts/app.blade.php's [data-drawer-toggle] button, driven by
    setSidebarCollapsed() in app.js). Unlayered on purpose — every rule here needs to beat

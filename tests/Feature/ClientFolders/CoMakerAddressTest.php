@@ -77,6 +77,37 @@ class CoMakerAddressTest extends TestCase
         $this->assertStringContainsString('[data-co-maker-submit-label]', $script);
     }
 
+    public function test_editing_an_unrelated_name_part_preserves_the_rendered_suffix_and_full_name(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $withSuffix = $folder->coMakers()->create([
+            'full_name' => 'Juan Cruz Jr.', 'first_name' => 'Juan', 'last_name' => 'Cruz', 'suffix' => 'Jr.',
+        ]);
+        $withoutSuffix = $folder->coMakers()->create([
+            'full_name' => 'Maria Santos', 'first_name' => 'Maria', 'last_name' => 'Santos', 'suffix' => null,
+        ]);
+
+        $content = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk()->getContent();
+        $this->assertMatchesRegularExpression('/data-co-maker-id="'.$withSuffix->id.'"(?:(?!<\/button>).)*data-co-maker-suffix="Jr\."/s', $content);
+        $this->assertMatchesRegularExpression('/data-co-maker-id="'.$withoutSuffix->id.'"(?:(?!<\/button>).)*data-co-maker-suffix=""/s', $content);
+
+        $this->actingAs($ci)->post(route('client-folders.co-maker.store', $folder), [
+            'co_maker_id' => $withSuffix->id,
+            'expected_revision' => $withSuffix->revision,
+            'first_name' => 'Juan',
+            'middle_name' => 'Santos',
+            'last_name' => 'Cruz',
+            'suffix' => 'Jr.',
+        ])->assertSessionHasNoErrors();
+
+        $withSuffix->refresh();
+        $this->assertSame('Santos', $withSuffix->middle_name);
+        $this->assertSame('Jr.', $withSuffix->suffix);
+        $this->assertSame('Juan Santos Cruz Jr.', $withSuffix->full_name);
+        $this->assertNull($withoutSuffix->fresh()->suffix);
+    }
+
     /** Closing any co-maker dialog leaves the folder page alone; only its own errors reopen it. */
     public function test_the_co_maker_dialogs_stay_isolated_from_one_another(): void
     {

@@ -315,6 +315,34 @@ if (isDashboardActivityModalDocument) {
 
 let dashboardRefreshSequence = 0;
 
+const dashboardReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+function replayDashboardEntryAnimation(container, itemSelector) {
+    if (!(container instanceof HTMLElement)) return;
+    container.removeAttribute('data-entry-animation');
+    if (dashboardReducedMotion.matches || !container.querySelector(itemSelector)) return;
+
+    container.dataset.entryAnimation = 'ready';
+    // Commit the transform-only starting state before enabling the short CSS transition. This is
+    // one synchronous style flush per card entry, never a frame loop or a layout animation.
+    void container.offsetWidth;
+    container.dataset.entryAnimation = 'running';
+}
+
+function replayDashboardTrendAnimation(panel) {
+    replayDashboardEntryAnimation(panel, '[data-trend-bar-fill]');
+}
+
+function replayDashboardProgressAnimation(root = document) {
+    const list = root.matches?.('[data-activity-progress-list]')
+        ? root
+        : root.querySelector?.('[data-activity-progress-list]');
+    replayDashboardEntryAnimation(list, '[data-activity-progress-fill]');
+}
+
+document.querySelectorAll('[data-trend-panel]:not([hidden])').forEach(replayDashboardTrendAnimation);
+document.querySelectorAll('[data-activity-progress-list]').forEach(replayDashboardProgressAnimation);
+
 async function refreshDashboard() {
     const refreshSequence = ++dashboardRefreshSequence;
     const regions = [...document.querySelectorAll('[data-dashboard-refresh-region]')];
@@ -335,7 +363,10 @@ async function refreshDashboard() {
     regions.forEach((current) => {
         const name = current.dataset.dashboardRefreshRegion;
         const fresh = name ? page.querySelector(`[data-dashboard-refresh-region="${name}"]`) : null;
-        if (fresh instanceof HTMLElement) current.innerHTML = fresh.innerHTML;
+        if (fresh instanceof HTMLElement) {
+            current.innerHTML = fresh.innerHTML;
+            if (name === 'activity-progress') replayDashboardProgressAnimation(current);
+        }
     });
 
     const region = document.querySelector('[data-work-today-region]');
@@ -3275,7 +3306,18 @@ document.querySelectorAll('[data-cibi-form]').forEach((form) => {
     };
     form.addEventListener('input', scheduleDirtyCheck);
     form.addEventListener('change', scheduleDirtyCheck);
-    dialog.addEventListener('close', release);
+    dialog.addEventListener('close', () => {
+        release();
+
+        // Keep the server-confirmed deleted warning visible until the user dismisses the dialog.
+        // Once acknowledged, return to the server-rendered folder overview so its authoritative
+        // person list and active-person content replace every stale reference to this exact id.
+        const deletedCoMakerId = form.dataset.deletedCoMakerId;
+        const overviewUrl = form.dataset.coMakerOverviewUrl;
+        if (!deletedCoMakerId || !overviewUrl) return;
+        delete form.dataset.deletedCoMakerId;
+        window.location.assign(overviewUrl);
+    });
     window.addEventListener('pagehide', release);
 })();
 
@@ -3298,6 +3340,7 @@ document.addEventListener('click', (event) => {
     // allowed again (a previous "already deleted" response blocked it for that stale record only).
     setCoMakerFormError(form, null);
     delete form.dataset.coMakerSaveBlocked;
+    delete form.dataset.deletedCoMakerId;
     submit?.removeAttribute('disabled');
     form.querySelectorAll('[data-co-maker-error-for]').forEach((error) => {
         error.textContent = '';
@@ -3372,6 +3415,10 @@ document.addEventListener('submit', async (event) => {
             // dialog for a Co-Maker that still exists starts fresh.
             setCoMakerFormError(form, payload.message || CO_MAKER_DELETED_SAVE_MESSAGE);
             form.dataset.coMakerSaveBlocked = 'true';
+            if (payload.co_maker_missing) {
+                const deletedCoMakerId = form.querySelector('[data-co-maker-id-field]')?.value;
+                if (deletedCoMakerId) form.dataset.deletedCoMakerId = deletedCoMakerId;
+            }
             form.coMakerPresence?.release();
             return;
         }
@@ -5810,6 +5857,7 @@ document.addEventListener('input', (event) => {
         panels.forEach((panel) => {
             panel.hidden = panel !== selected;
         });
+        replayDashboardTrendAnimation(selected);
 
         tabs.querySelectorAll('[data-trend-tab]').forEach((other) => {
             const isActive = other === tab;
