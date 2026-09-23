@@ -182,7 +182,7 @@ class CibiReportTest extends TestCase
         $newer['other_remarks'] = 'Protected newer report data.';
         $this->actingAs($other)->put(route('client-folders.cibi-report.update', $folder), $newer + ['expected_revision' => 1])->assertRedirect();
 
-        $message = "{$other->full_name} updated this report while you were editing. Please review the latest version before saving again.";
+        $message = "{$other->full_name} updated this CI/BI Report while you were editing it. Your changes were not saved. Please refresh the report or reopen it to review the latest information before editing again.";
         $this->actingAs($ci)->from($editRoute)->put(route('client-folders.cibi-report.update', $folder), $this->payload() + ['expected_revision' => 1])
             ->assertRedirect($editRoute)
             ->assertSessionHasErrors(['expected_revision' => $message]);
@@ -214,7 +214,7 @@ class CibiReportTest extends TestCase
             ->assertStatus(422);
 
         $this->assertSame(
-            "{$other->full_name} updated this report while you were editing. Please review the latest version before saving again.",
+            "{$other->full_name} updated this CI/BI Report while you were editing it. Your changes were not saved. Please refresh the report or reopen it to review the latest information before editing again.",
             $response->json('errors.expected_revision.0'),
         );
     }
@@ -329,7 +329,7 @@ class CibiReportTest extends TestCase
             ->assertJsonValidationErrors('expected_revision');
 
         $this->assertSame(
-            "{$first->full_name} updated this report while you were editing. Please review the latest version before saving again.",
+            "{$first->full_name} updated this CI/BI Report while you were editing it. Your changes were not saved. Please refresh the report or reopen it to review the latest information before editing again.",
             $response->json('errors.expected_revision.0'),
         );
         $this->assertSame(1, $report->fresh()->revision);
@@ -960,6 +960,50 @@ class CibiReportTest extends TestCase
         );
     }
 
+    public function test_applicant_and_co_maker_web_and_print_previews_fit_their_content_without_changing_pdf_layout(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'PREVIEW CO MAKER']);
+
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $this->payload())->assertRedirect();
+        $coMakerPayload = $this->payload();
+        $coMakerPayload['co_maker_id'] = $coMaker->id;
+        $coMakerPayload['party_type'] = 'co_maker';
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $coMakerPayload)->assertRedirect();
+
+        $naturalHeightRule = '@media screen,print{.report-sheet{min-height:0}}';
+        $pageSizeRule = '@page{size:8.5in 13in;margin:.28in}';
+        $applicantHtml = $this->get(route('client-folders.generated-reports.preview', [$folder, 'report_type' => 'cibi']))
+            ->assertOk()->getContent();
+        $coMakerHtml = $this->get(route('client-folders.generated-reports.preview', [
+            $folder,
+            'report_type' => 'cibi',
+            'co_maker_id' => $coMaker->id,
+        ]))->assertOk()->getContent();
+
+        $this->assertStringContainsString($naturalHeightRule, $applicantHtml);
+        $this->assertStringContainsString($naturalHeightRule, $coMakerHtml);
+        $this->assertStringContainsString($pageSizeRule, $applicantHtml);
+        $this->assertStringContainsString($pageSizeRule, $coMakerHtml);
+        $this->assertStringContainsString('class="report-sheet"', $applicantHtml);
+        $this->assertStringContainsString('class="report-sheet"', $coMakerHtml);
+
+        $pdfDocument = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi);
+        $pdfHtml = view('reports.official.document', [
+            'document' => $pdfDocument,
+            'pdfMode' => true,
+            'clientFolder' => $folder,
+            'type' => OfficialReportType::Cibi,
+            'source' => null,
+            'personParams' => [],
+        ])->render();
+
+        $this->assertStringNotContainsString($naturalHeightRule, $pdfHtml);
+        $this->assertStringContainsString($pageSizeRule, $pdfHtml);
+        $this->assertStringContainsString('.cibi-official-sheet{width:96%', $pdfHtml);
+    }
+
     public function test_json_save_stays_on_encoding_page_and_automatically_completes(): void
     {
         $ci = User::factory()->create();
@@ -1039,7 +1083,7 @@ class CibiReportTest extends TestCase
             'revision' => 4,
         ]);
         $payload = $this->payload();
-        $payload['branch_name'] = 'UPDATED BRANCH';
+        $payload['branch_name'] = 'BLU MALITBOG';
         $payload['expected_revision'] = 4;
 
         $this->actingAs($ci)->putJson(route('client-folders.cibi-report.update', $folder), $payload)
@@ -1056,7 +1100,7 @@ class CibiReportTest extends TestCase
             'id' => $report->id,
             'client_folder_id' => $folder->id,
             'state' => RecordState::Complete->value,
-            'branch_name' => 'UPDATED BRANCH',
+            'branch_name' => 'BLU MALITBOG',
         ]);
     }
 
@@ -1615,6 +1659,95 @@ class CibiReportTest extends TestCase
         }
         $page->assertDontSee('name="loan_records[0][original_amount]" value="5 digits" inputmode="decimal"', false);
         $page->assertDontSee('name="loan_records[0][original_amount]" value="5 digits" data-number-format', false);
+    }
+
+    public function test_branch_dropdown_and_business_report_first_prefill_are_exact_person_create_time_snapshots(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO-MAKER A']);
+        $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO-MAKER B']);
+        $template = IncomeSourceTemplate::where('form_handler', 'dedicated-business')->firstOrFail();
+
+        $makeSavedBusiness = function (?CoMaker $person, string $branch, string $officer, string $amount) use ($ci, $folder, $template): IncomeSource {
+            $source = $folder->incomeSources()->create([
+                'co_maker_id' => $person?->id,
+                'income_source_template_id' => $template->id,
+                'template_type' => $template->template_type,
+                'template_version' => $template->version,
+                'source_name' => $person ? 'Co-Maker Business' : 'Applicant Business',
+                'business_name' => $person ? 'Co-Maker Business' : 'Applicant Business',
+                'branch_name' => $branch,
+                'account_officer_name' => $officer,
+                'amount_applied' => $amount,
+                'state' => RecordState::Complete,
+                'created_by' => $ci->id,
+                'last_edited_by' => $ci->id,
+                'revision' => 2,
+                'sort_order' => 1,
+            ]);
+            $source->businessReport()->create(['business_name' => $source->business_name, 'report_category' => $template->business_category ?: $template->name]);
+
+            return $source;
+        };
+
+        $makeSavedBusiness(null, 'CM RECTO', 'APPLICANT OFFICER', '111000.00');
+        $coMakerBusiness = $makeSavedBusiness($coMakerA, 'BLU SALAY', 'CO-MAKER A OFFICER', '222000.00');
+
+        $applicantPage = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))->assertOk();
+        $applicantPage->assertSee('<select id="branch_name" name="branch_name"', false)
+            ->assertSee('<option value="CM RECTO" selected>', false)
+            ->assertSee('value="APPLICANT OFFICER"', false)
+            ->assertSee('value="111000.00"', false);
+        $html = $applicantPage->getContent();
+        $previous = -1;
+        foreach (['CM RECTO', 'BLU ALUBIJID', 'BLU TIANO', 'BAUNGON', 'BLU TIN-AO', 'BLU MANOLO', 'BALINGASAG', 'BLU SALAY', 'BLU SUGBONGCOGON', 'BLU MEDINA', 'BLU CLAVERIA', 'BLU MALITBOG'] as $branch) {
+            $position = strpos($html, '<option value="'.$branch.'"');
+            $this->assertNotFalse($position);
+            $this->assertGreaterThan($previous, $position);
+            $previous = $position;
+        }
+
+        $coMakerPage = $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMakerA->id]))->assertOk();
+        $coMakerPage->assertSee('<option value="BLU SALAY" selected>', false)
+            ->assertSee('value="CO-MAKER A OFFICER"', false)
+            ->assertSee('value="222000.00"', false)
+            ->assertDontSee('APPLICANT OFFICER');
+
+        $this->actingAs($ci)
+            ->get(route('client-folders.cibi-report.edit', [$folder, 'person' => 'co-maker', 'co_maker_id' => $coMakerB->id]))
+            ->assertOk()
+            ->assertDontSee('APPLICANT OFFICER')
+            ->assertDontSee('CO-MAKER A OFFICER');
+
+        $payload = $this->payload();
+        $payload['co_maker_id'] = $coMakerA->id;
+        $payload['branch_name'] = 'BLU SALAY';
+        $payload['account_officer_name'] = 'CO-MAKER A OFFICER';
+        $payload['amount_applied'] = '222000.00';
+        $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+        $savedCibi = $folder->cibiReport()->where('co_maker_id', $coMakerA->id)->sole();
+        $coMakerBusiness->update(['branch_name' => 'BLU MEDINA', 'account_officer_name' => 'CHANGED BUSINESS', 'amount_applied' => '999000.00']);
+        $this->assertSame('BLU SALAY', $savedCibi->fresh()->branch_name);
+        $this->assertSame('CO-MAKER A OFFICER', $savedCibi->account_officer_name);
+        $this->assertSame('222000.00', $savedCibi->amount_applied);
+
+        $savedCibi->update(['branch_name' => 'BLU CLAVERIA', 'account_officer_name' => 'CHANGED CIBI', 'amount_applied' => 333000]);
+        $this->assertSame('BLU MEDINA', $coMakerBusiness->fresh()->branch_name);
+        $this->assertSame('CHANGED BUSINESS', $coMakerBusiness->account_officer_name);
+        $this->assertSame('999000.00', $coMakerBusiness->amount_applied);
+    }
+
+    public function test_historical_cibi_branch_is_preserved_as_a_legacy_dropdown_option(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        CibiReport::factory()->create(['client_folder_id' => $folder->id, 'ci_in_charge_id' => $ci->id, 'branch_name' => 'HISTORICAL BRANCH']);
+
+        $this->actingAs($ci)->get(route('client-folders.cibi-report.edit', $folder))
+            ->assertOk()
+            ->assertSee('<option value="HISTORICAL BRANCH" selected>', false);
     }
 
     /**

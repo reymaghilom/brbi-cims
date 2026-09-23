@@ -20,6 +20,8 @@ class CibiExcelExporter
 
     private const INCOME_CAPACITY = 3;
 
+    public function __construct(private readonly ReportTemporaryFiles $temporaryFiles) {}
+
     public function generate(ClientFolder $folder, ?CoMaker $activePerson = null): string
     {
         $report = $folder->cibiReport()->where('co_maker_id', $activePerson?->id)->with([
@@ -33,7 +35,12 @@ class CibiExcelExporter
         abort_unless($report->state === RecordState::Complete, 422, 'Complete the CI / BI report before downloading Excel.');
 
         $banks = $this->populated($report->bankAccounts, ['institution', 'branch', 'year_opened', 'adb_level', 'capital_share_amount', 'capital_share_text', 'relevant_remarks']);
-        $loans = $this->populated($report->loanRecords, ['institution', 'original_amount', 'remaining_balance', 'amortization_amount', 'granted_date', 'maturity_date', 'cycle_number', 'cycle_label', 'security_type', 'payment_performance', 'remarks']);
+        $loans = $this->populated($report->loanRecords, ['institution', 'original_amount', 'remaining_balance', 'amortization_amount', 'granted_date', 'maturity_date', 'cycle_number', 'cycle_label', 'security_type', 'payment_performance', 'remarks'])
+            // Match OfficialReportDataBuilder's first-occurrence institution groups. Only the
+            // workbook presentation changes; persisted ids and sort_order stay untouched.
+            ->groupBy(fn ($loan): string => mb_strtolower(trim((string) $loan->institution)))
+            ->flatMap(fn (Collection $group): array => $group->all())
+            ->values();
         $incomes = $this->populated($report->incomeSourceSummaries, ['source_name', 'stability_result', 'key_information']);
         abort_if($incomes->count() > self::INCOME_CAPACITY, 422, 'The official Excel template supports up to 3 Income Source records.');
 
@@ -198,8 +205,7 @@ class CibiExcelExporter
             ->setSubject('Saved CI / BI report data');
         $book->setActiveSheetIndexByName(self::SHEET);
 
-        $temporary = tempnam(sys_get_temp_dir(), 'brbi-cibi-xlsx-');
-        abort_if($temporary === false, 500, 'Unable to prepare the Excel report.');
+        $temporary = $this->temporaryFiles->create('brbi-cibi-xlsx-');
         try {
             (new Xlsx($book))->save($temporary);
             $bytes = file_get_contents($temporary);

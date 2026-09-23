@@ -125,6 +125,63 @@ class FolderBrowserInteractionTest extends TestCase
         $this->assertStringContainsString('setFolderEditNotice(form, true);', substr($handler, $noChangeCheck, $dialogClose - $noChangeCheck));
     }
 
+    public function test_edit_modal_restores_all_server_rendered_name_fields_on_every_open(): void
+    {
+        $javascript = file_get_contents(resource_path('js/app.js'));
+        $openHandlerStart = strpos($javascript, 'const modalTrigger = event.target.closest(\'[data-modal-open]\');');
+        $openHandlerEnd = strpos($javascript, '// A modal-open trigger is a single, self-contained action', $openHandlerStart);
+        $openHandler = substr($javascript, $openHandlerStart, $openHandlerEnd - $openHandlerStart);
+
+        $reset = 'dialog.querySelector(\'[data-folder-rename-form]\')?.reset();';
+        $show = 'dialog.showModal();';
+        $this->assertStringContainsString($reset, $openHandler);
+        $this->assertStringContainsString($show, $openHandler);
+        $this->assertLessThan(strpos($openHandler, $show), strpos($openHandler, $reset));
+
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create([
+            'assigned_ci_id' => $ci->id,
+            'first_name' => 'JUAN',
+            'middle_name' => 'SANTOS',
+            'last_name' => 'DELA CRUZ',
+            'suffix' => 'JR.',
+        ]);
+        $html = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
+        $modalStart = strpos($html, 'id="folder-rename-dialog-'.$folder->id.'"');
+        $modalEnd = strpos($html, '</dialog>', $modalStart);
+        $modal = substr($html, $modalStart, $modalEnd - $modalStart);
+
+        foreach ([
+            'first_name' => 'JUAN',
+            'middle_name' => 'SANTOS',
+            'last_name' => 'DELA CRUZ',
+            'suffix' => 'JR.',
+        ] as $field => $savedValue) {
+            $this->assertStringContainsString('name="'.$field.'" value="'.$savedValue.'"', $modal);
+        }
+
+        $this->actingAs($ci)->patchJson(route('client-folders.update-name', $folder), [
+            'first_name' => 'PEDRO',
+            'middle_name' => 'REYES',
+            'last_name' => 'SANTOS',
+            'suffix' => 'SR.',
+        ])->assertOk();
+
+        $updatedHtml = $this->get(route('client-folders.index'))->assertOk()->getContent();
+        $updatedModalStart = strpos($updatedHtml, 'id="folder-rename-dialog-'.$folder->id.'"');
+        $updatedModalEnd = strpos($updatedHtml, '</dialog>', $updatedModalStart);
+        $updatedModal = substr($updatedHtml, $updatedModalStart, $updatedModalEnd - $updatedModalStart);
+
+        foreach ([
+            'first_name' => 'PEDRO',
+            'middle_name' => 'REYES',
+            'last_name' => 'SANTOS',
+            'suffix' => 'SR.',
+        ] as $field => $savedValue) {
+            $this->assertStringContainsString('name="'.$field.'" value="'.$savedValue.'"', $updatedModal);
+        }
+    }
+
     public function test_ajax_create_reuses_existing_action_and_returns_folder_data_without_navigation(): void
     {
         $ci = User::factory()->create();

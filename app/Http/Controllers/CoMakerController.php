@@ -12,6 +12,7 @@ use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\ClientFolderOverview;
+use App\Services\ClientFolders\CoMakerSavedRecords;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -21,7 +22,7 @@ use Illuminate\Validation\ValidationException;
 
 class CoMakerController extends Controller
 {
-    public function store(SaveCoMakerRequest $request, ClientFolder $clientFolder, SaveCoMaker $action, ClientFolderOverview $overview): RedirectResponse|JsonResponse
+    public function store(SaveCoMakerRequest $request, ClientFolder $clientFolder, SaveCoMaker $action, ClientFolderOverview $overview, CoMakerSavedRecords $savedRecords): RedirectResponse|JsonResponse
     {
         $isEdit = filled($request->validated('co_maker_id'));
 
@@ -67,13 +68,13 @@ class CoMakerController extends Controller
                     'suffix' => $coMaker->suffix,
                     'revision' => (int) $coMaker->revision,
                 ],
-            ] + $this->folderContentsFragments($request, $clientFolder, $overview));
+            ] + $this->folderContentsFragments($request, $clientFolder, $overview, $savedRecords));
         }
 
         return redirect()->route('client-folders.show', $clientFolder)->with('status', $message);
     }
 
-    public function destroy(Request $request, ClientFolder $clientFolder, CoMaker $coMaker, RemoveCoMaker $action, ClientFolderOverview $overview): RedirectResponse|JsonResponse
+    public function destroy(Request $request, ClientFolder $clientFolder, CoMaker $coMaker, RemoveCoMaker $action, ClientFolderOverview $overview, CoMakerSavedRecords $savedRecords): RedirectResponse|JsonResponse
     {
         Gate::authorize('update', $clientFolder);
 
@@ -92,7 +93,7 @@ class CoMakerController extends Controller
         $message = 'Co-Maker removed successfully.';
 
         if ($request->expectsJson()) {
-            return response()->json(['message' => $message] + $this->folderContentsFragments($request, $clientFolder, $overview));
+            return response()->json(['message' => $message] + $this->folderContentsFragments($request, $clientFolder, $overview, $savedRecords));
         }
 
         return redirect()->route('client-folders.show', $clientFolder)->with('status', $message);
@@ -107,7 +108,7 @@ class CoMakerController extends Controller
      * guessed from the co-maker record that was just added/edited/removed — that person is not
      * necessarily who the CI is currently viewing.
      */
-    private function folderContentsFragments(Request $request, ClientFolder $clientFolder, ClientFolderOverview $overview): array
+    private function folderContentsFragments(Request $request, ClientFolder $clientFolder, ClientFolderOverview $overview, CoMakerSavedRecords $savedRecords): array
     {
         $clientFolder->refresh();
         // The co-maker referenced by the page's own ?co_maker_id could be the one just removed
@@ -119,13 +120,18 @@ class CoMakerController extends Controller
         } catch (ModelNotFoundException) {
             $activeCoMaker = null;
         }
+        $coMakers = $clientFolder->coMakers;
+        $canManageCoMakers = $request->user()->can('update', $clientFolder);
 
         return [
             'person_switch_html' => view('client-folders.partials.person-switch', [
                 'clientFolder' => $clientFolder,
-                'coMakers' => $clientFolder->coMakers,
+                'coMakers' => $coMakers,
                 'activeCoMaker' => $activeCoMaker,
-                'canManageCoMakers' => $request->user()->can('update', $clientFolder),
+                'canManageCoMakers' => $canManageCoMakers,
+                'coMakerIdsWithSavedRecords' => $canManageCoMakers && $coMakers->isNotEmpty()
+                    ? $savedRecords->idsWithSavedRecords($clientFolder)
+                    : collect(),
             ])->render(),
             'recent_activity_html' => view('client-folders.partials.recent-activity-body', [
                 'recentPersonActivity' => $overview->recentPersonActivity($clientFolder, $activeCoMaker),

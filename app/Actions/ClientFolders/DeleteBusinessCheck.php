@@ -7,6 +7,7 @@ use App\Models\BusinessCheck;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
 use App\Models\User;
+use App\Services\ClientFolders\ClientFolderFileCleanup;
 use App\Services\ClientFolders\IncomeSourcesCompletionEvaluator;
 use App\Services\ClientFolders\ResidenceBusinessCheckCompletionEvaluator;
 use App\Services\Media\BusinessCheckMediaCleanup;
@@ -47,6 +48,7 @@ class DeleteBusinessCheck
         private readonly IncomeSourcesCompletionEvaluator $incomeCompletion,
         private readonly ClientProgressService $progress,
         private readonly BusinessCheckMediaCleanup $mediaCleanup,
+        private readonly ClientFolderFileCleanup $fileCleanup,
         private readonly ClientMediaUploader $mediaUploader,
     ) {}
 
@@ -56,8 +58,9 @@ class DeleteBusinessCheck
         // Screenshot) is only ever actually destroyed once the transaction below has committed —
         // same deferred-cleanup convention as DeleteResidenceCheck/SaveBusinessCheck.
         $retiredCloudAssets = [];
+        $cleanupTaskIds = [];
 
-        DB::transaction(function () use ($actor, $folder, $check, &$retiredCloudAssets): void {
+        DB::transaction(function () use ($actor, $folder, $check, &$retiredCloudAssets, &$cleanupTaskIds): void {
             $lockedCheck = $this->exactCheckQuery($folder, $check)->lockForUpdate()->firstOrFail();
             // A standalone Business Check (income_source_id = null — a fully supported mode, see
             // SaveBusinessCheck and BusinessCheckIndependentArchitectureTest) references no
@@ -73,7 +76,7 @@ class DeleteBusinessCheck
             $location = $lockedCheck->location;
             $businessName = $lockedCheck->business_name;
 
-            $retiredCloudAssets = $this->mediaCleanup->purgeLocalFilesAndCollectCloudAssets($lockedCheck);
+            $retiredCloudAssets = $this->mediaCleanup->stageLocalFilesAndCollectCloudAssets($lockedCheck, $cleanupTaskIds);
 
             $lockedCheck->delete();
 
@@ -110,7 +113,8 @@ class DeleteBusinessCheck
             $this->progress->recalculate($folder);
         });
 
-        DB::afterCommit(function () use ($retiredCloudAssets): void {
+        DB::afterCommit(function () use ($cleanupTaskIds, $retiredCloudAssets): void {
+            $this->fileCleanup->retire($cleanupTaskIds);
             foreach ($retiredCloudAssets as $asset) {
                 $this->mediaUploader->retireCloudAsset($asset['public_id'], $asset['resource_type'], $asset['delivery_type']);
             }

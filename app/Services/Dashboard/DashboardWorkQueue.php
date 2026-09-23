@@ -237,13 +237,15 @@ class DashboardWorkQueue
     ): array {
         $isOverdue = $this->isOverdue($work, $now);
         $status = $work->status;
-        $directCompletion = $isOverdue && (($modalKind === 'default'
-            && in_array($activity->definition?->code, [
-                ActivityDefinition::BARANGAY_CHECK_CODE,
-                ActivityDefinition::NEIGHBOR_CHECK_CODE,
+        $hasCompletionEndpoint = ($work instanceof CiActivity
+            && ! in_array($activity->definition?->code, [
+                ActivityDefinition::BANK_COOP_CHECK_CODE,
+                ActivityDefinition::ASSET_CHECK_CODE,
             ], true))
             || ($modalKind === 'asset' && $work instanceof CiActivityAssetTarget)
-            || ($modalKind === 'bank' && $work instanceof CiActivityBankTarget));
+            || ($modalKind === 'bank' && $work instanceof CiActivityBankTarget);
+        $directCompletion = $hasCompletionEndpoint
+            && in_array($status, [ActivityStatus::Scheduled, ActivityStatus::FollowUp], true);
         $modalUrl = $modalKind === null ? null : $url.((str_contains($url, '?')) ? '&' : '?').http_build_query([
             'dashboard_modal' => 1,
             'dashboard_kind' => $modalKind,
@@ -296,7 +298,7 @@ class DashboardWorkQueue
                 ? $work->scheduled_at->timezone(config('cims.display_timezone'))->format('M j, Y').' · '.($work->scheduled_has_time ? $work->scheduled_at->timezone(config('cims.display_timezone'))->format('g:i A') : 'No specific time')
                 : null,
             'completion_remarks' => $directCompletion ? $work->remarks : null,
-            'action' => $isOverdue ? 'Continue' : 'Open',
+            'action' => $directCompletion ? 'Mark as Completed' : 'Open',
             'sort_priority' => match (true) {
                 $isOverdue => 0,
                 $status === ActivityStatus::Scheduled => 1,

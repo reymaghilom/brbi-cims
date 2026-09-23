@@ -13,6 +13,7 @@ use App\Models\AuditLog;
 use App\Models\BusinessReport;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
+use App\Models\CustomBusinessCategory;
 use App\Models\IncomeSource;
 use App\Models\IncomeSourceTemplate;
 use App\Models\User;
@@ -75,6 +76,60 @@ class BusinessReportBusinessCheckIndependenceTest extends TestCase
             ->assertOk()
             ->assertSee('value="Carmen, CDO"', false)
             ->assertDontSee('value="Lapasan"', false);
+    }
+
+    public function test_other_business_check_snapshots_checked_labels_instead_of_the_generic_template_name(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $category = CustomBusinessCategory::create(['name' => 'Employment / Salary', 'created_by' => $ci->id, 'updated_by' => $ci->id]);
+        $source = $this->createBusiness($ci, $folder, null, 'Other Business/Source of Income', 'other_business_source_of_income');
+        $payload = $this->reportPayload($source, null, 'OTHER BUSINESS/SOURCE OF INCOME', 'Carmen, CDO', '2026-09-02');
+        $payload['report_remarks'] = 'Verified source.';
+        $payload['template_data'] = ['fields' => ['income_sources' => [$category->optionKey()]]];
+        app(SaveBusinessIncomeSource::class)->execute($ci, $folder, $source, $payload);
+
+        $check = app(SaveBusinessCheck::class)->execute($ci, $folder, [
+            'check_id' => null, 'co_maker_id' => null, 'income_source_id' => $source->id,
+            'ci_date' => '2026-09-02', 'location' => 'Carmen, CDO',
+        ]);
+
+        $this->assertSame('Employment / Salary', $check->business_name);
+        $this->assertSame('Employment / Salary', $check->resolvedSubjectName());
+        $this->assertSame('Employment / Salary', app(OfficialReportDataBuilder::class)->businessCheckSection(
+            $check->load('photos', 'photoGroups.photos', 'incomeSource.template'),
+            $folder->display_name,
+        )['business_name']);
+        $this->actingAs($ci)
+            ->get(route('client-folders.residence-business.edit', $folder))
+            ->assertOk()
+            ->assertSee('Employment / Salary')
+            ->assertDontSee('OTHER BUSINESS/SOURCE OF INCOME');
+        $this->actingAs($ci)
+            ->get(route('reports.index'))
+            ->assertOk()
+            ->assertSee('Employment / Salary');
+
+        $payload = $this->reportPayload($source->fresh(), null, 'OTHER BUSINESS/SOURCE OF INCOME', 'Carmen, CDO', '2026-09-02');
+        $payload['report_remarks'] = 'Changed source.';
+        $payload['template_data'] = ['fields' => ['income_sources' => ['government_agency_corporation']]];
+        app(SaveBusinessIncomeSource::class)->execute($ci, $folder, $source->fresh(), $payload);
+
+        $this->assertSame('Employment / Salary', $check->fresh()->business_name);
+    }
+
+    public function test_standalone_business_check_keeps_its_own_source_label_snapshot(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+
+        $check = app(SaveBusinessCheck::class)->execute($ci, $folder, [
+            'check_id' => null, 'co_maker_id' => null, 'income_source_id' => null,
+            'business_name' => 'Online Selling', 'ci_date' => '2026-09-02', 'location' => 'Carmen, CDO',
+        ]);
+
+        $this->assertNull($check->income_source_id);
+        $this->assertSame('Online Selling', $check->resolvedSubjectName());
     }
 
     public function test_applicant_check_first_never_prefills_the_draft_report(): void

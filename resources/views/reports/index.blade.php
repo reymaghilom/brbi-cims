@@ -17,7 +17,7 @@
     // Switching a tab keeps the search and every other filter that is already applied.
     $tabQuery = fn (string $value) => array_filter(['tab' => $value] + collect($filters)->except('tab')->all(), fn ($item) => filled($item));
 
-    $hasFilters = collect($filters)->except('tab')->filter(fn ($value) => filled($value))->isNotEmpty();
+    $hasFilters = collect($filters)->except(['tab', 'per_page'])->filter(fn ($value) => filled($value))->isNotEmpty();
 
     // One compact trigger stands in for the two date fields. It reads back whichever half of the
     // range is actually set, so the toolbar stays narrow without hiding what is filtering the list.
@@ -72,7 +72,7 @@
     </nav>
 
     {{-- Filters are plain GET fields, so a filtered view is bookmarkable and survives pagination. --}}
-    <form method="GET" action="{{ route('reports.index') }}" class="ui-card mt-4 p-3 sm:p-4" data-reports-filters>
+    <form method="GET" action="{{ route('reports.index') }}" id="global-reports-filter" class="ui-card mt-4 p-3 sm:p-4" data-reports-filters>
         <h2 class="sr-only">Filter reports</h2>
         {{-- One toolbar row. The search absorbs the leftover width while every other control keeps
              a fixed, predictable size, so the bar reads the same on every screen it fits on. It

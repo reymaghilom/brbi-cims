@@ -1844,20 +1844,19 @@ class GlobalReportsPageTest extends TestCase
         $this->assertTrue($reports[$businessA->id]->isCompleted);
         $this->assertFalse($reports[$businessB->id]->isCompleted);
 
-        // Business Check: A's own saved check is business-specific and Completed; B does not get a
-        // Pending row of its own — the one remaining Pending row is the generic entry point.
+        // Business Check: A's own saved check is the only row. B remains an independent Business
+        // Report and does not manufacture a Pending Business Check or keep the placeholder alive.
         $checkRowA = $checks->firstWhere('incomeSourceId', $businessA->id);
         $this->assertTrue($checkRowA->isCompleted);
         $this->assertNull($checks->firstWhere('incomeSourceId', $businessB->id));
         $pending = $checks->reject(fn (ReportWorkItem $row): bool => $row->isCompleted)->values();
-        $this->assertCount(1, $pending);
-        $this->assertNull($pending[0]->incomeSourceId);
+        $this->assertCount(0, $pending);
+        $this->assertCount(1, $checks);
 
         // No action on A can address B, and vice versa.
         $this->assertStringContainsString('income_source_id='.$businessA->id, $reports[$businessA->id]->previewAction()['url']);
         $this->assertStringNotContainsString('income_source_id='.$businessB->id, $reports[$businessA->id]->previewAction()['url']);
         $this->assertSame(['business_check_ids[]' => $checkA->id], $checkRowA->previewAction()['fields']);
-        $this->assertNull($pending[0]->previewAction());
         $this->assertSame(route('client-folders.income-sources.edit', [$folder->id, $businessB->id]), $reports[$businessB->id]->continueUrl());
     }
 
@@ -2331,31 +2330,63 @@ class GlobalReportsPageTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci, 'ALPHA, CLIENT');
-        foreach (range(1, 17) as $index) {
+        foreach (range(1, 7) as $index) {
             $this->business($folder, 'BUSINESS '.$index);
         }
 
         $page = $this->actingAs($ci)->get(route('reports.index', ['report_type' => 'business_report', 'page' => 2]))->assertOk();
         $items = $page->viewData('items');
 
-        $this->assertSame(17, $items->total(), 'Only the filtered type is paginated.');
+        $this->assertSame(7, $items->total(), 'Only the filtered type is paginated.');
         $this->assertSame(2, $items->currentPage());
         $this->assertCount(2, $items->items(), 'The page is bounded server-side, never sliced in PHP.');
         $page->assertSee('report_type=business_report', false);
-        $page->assertSee('Showing 16 to 17 of 17 reports');
+        $page->assertSee('Showing 6 to 7 of 7 reports');
 
         // The date range rides through pagination on the same query string.
         $today = now(config('cims.display_timezone'))->toDateString();
         $dated = $this->actingAs($ci)->get(route('reports.index', ['report_type' => 'business_report', 'from' => $today, 'page' => 2]))->assertOk();
-        $this->assertSame(17, $dated->viewData('items')->total());
+        $this->assertSame(7, $dated->viewData('items')->total());
         $dated->assertSee('from='.$today, false);
+    }
+
+    public function test_page_size_options_match_global_ci_activities_and_reset_to_page_one(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folder($ci, 'PAGE SIZE CLIENT');
+        foreach (range(1, 22) as $index) {
+            $this->business($folder, 'BUSINESS '.$index);
+        }
+
+        foreach ([5, 10, 20, 50] as $perPage) {
+            $response = $this->actingAs($ci)->get(route('reports.index', [
+                'report_type' => 'business_report',
+                'per_page' => $perPage,
+            ]))->assertOk();
+
+            $this->assertSame(min($perPage, 22), $response->viewData('items')->count());
+            $this->assertSame($perPage, $response->viewData('items')->perPage());
+            $response->assertSee($perPage.' / page');
+        }
+
+        $html = $this->actingAs($ci)->get(route('reports.index', [
+            'report_type' => 'business_report',
+            'per_page' => 10,
+            'page' => 2,
+        ]))->assertOk()->getContent();
+        $this->assertStringContainsString('form="global-reports-filter"', $html);
+        $this->assertStringNotContainsString('name="page"', $html, 'Changing page size must submit without the current page.');
+
+        $this->actingAs($ci)->get(route('reports.index', ['per_page' => 15]))
+            ->assertRedirect()
+            ->assertSessionHasErrors('per_page');
     }
 
     public function test_pagination_links_carry_every_filter_sort_and_tab(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci, 'ALPHA, CLIENT', 'BRBI-CI-2026-00111');
-        foreach (range(1, 17) as $index) {
+        foreach (range(1, 7) as $index) {
             $this->business($folder, 'BUSINESS '.str_pad((string) $index, 2, '0', STR_PAD_LEFT));
         }
         $today = now(config('cims.display_timezone'))->toDateString();
@@ -2363,14 +2394,14 @@ class GlobalReportsPageTest extends TestCase
         $query = [
             'tab' => 'pending', 'search' => 'ALPHA', 'report_type' => 'business_report',
             'person' => 'applicant', 'from' => $today, 'to' => $today,
-            'sort' => 'client', 'direction' => 'desc',
+            'sort' => 'client', 'direction' => 'desc', 'per_page' => 5,
         ];
         $response = $this->actingAs($ci)->get(route('reports.index', $query))->assertOk();
         $html = str_replace('&amp;', '&', $response->getContent());
 
         // Every pagination link rebuilds the whole authoritative query, not just ?page=.
         foreach (['tab=pending', 'search=ALPHA', 'report_type=business_report', 'person=applicant',
-            'from='.$today, 'to='.$today, 'sort=client', 'direction=desc', 'page=2'] as $carried) {
+            'from='.$today, 'to='.$today, 'sort=client', 'direction=desc', 'per_page=5', 'page=2'] as $carried) {
             $this->assertStringContainsString($carried, $html, $carried.' survives pagination.');
         }
 
@@ -2384,7 +2415,7 @@ class GlobalReportsPageTest extends TestCase
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci, 'ALPHA, CLIENT');
-        foreach (range(1, 17) as $index) {
+        foreach (range(1, 7) as $index) {
             $this->business($folder, 'BUSINESS '.str_pad((string) $index, 2, '0', STR_PAD_LEFT));
         }
 
@@ -2392,21 +2423,22 @@ class GlobalReportsPageTest extends TestCase
         $pageOne = $this->items($ci, $query + ['page' => 1]);
         $pageTwo = $this->items($ci, $query + ['page' => 2]);
 
-        $this->assertCount(15, $pageOne);
+        $this->assertCount(5, $pageOne);
         $this->assertCount(2, $pageTwo, 'The second page is produced by the database, not by slicing in the view.');
         $this->assertEmpty(array_intersect($pageOne->pluck('incomeSourceId')->all(), $pageTwo->pluck('incomeSourceId')->all()));
+        $this->assertCount(7, $pageOne->concat($pageTwo)->pluck('incomeSourceId')->unique());
 
         // The mobile cards render exactly the same paginated rows as the desktop table.
         $html = $this->actingAs($ci)->get(route('reports.index', $query + ['page' => 2]))->assertOk()->getContent();
         $this->assertSame(2, substr_count($html, 'data-report-card'));
-        $this->assertStringContainsString('Showing 16 to 17 of 17 reports', $html);
+        $this->assertStringContainsString('Showing 6 to 7 of 7 reports', $html);
     }
 
     public function test_a_pagination_click_can_fetch_the_listing_alone(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci, 'ALPHA, CLIENT');
-        foreach (range(1, 17) as $index) {
+        foreach (range(1, 7) as $index) {
             $this->business($folder, 'BUSINESS '.str_pad((string) $index, 2, '0', STR_PAD_LEFT));
         }
 
@@ -2652,7 +2684,7 @@ class GlobalReportsPageTest extends TestCase
         $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Co-Maker A']);
         $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Co-Maker B']);
 
-        $businessItems = $this->items($ci, ['client_folder_id' => $folder->id])
+        $businessItems = $this->items($ci, ['client_folder_id' => $folder->id, 'per_page' => 50])
             ->whereIn('kind', ['business_report', 'business_check'])
             ->values();
 

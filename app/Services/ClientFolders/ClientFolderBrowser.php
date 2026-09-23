@@ -2,9 +2,11 @@
 
 namespace App\Services\ClientFolders;
 
+use App\Models\AuditLog;
 use App\Models\ClientFolder;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 
 class ClientFolderBrowser
 {
@@ -27,6 +29,8 @@ class ClientFolderBrowser
                 'display_name',
                 'last_name',
                 'first_name',
+                'middle_name',
+                'suffix',
                 'assigned_ci_id',
                 'created_by',
                 'updated_by',
@@ -66,5 +70,21 @@ class ClientFolderBrowser
         $folders->each(fn (ClientFolder $folder) => $folder->setAttribute('has_saved_records', $withSavedRecords->has($folder->id)));
 
         return $paginator;
+    }
+
+    /**
+     * All creation and rename events for the current page's preview panels, keyed by folder id.
+     * Keep the full history and its existing ordering; other operational audit events stay out.
+     */
+    public function previewHistoryFor(LengthAwarePaginator $clientFolders): Collection
+    {
+        return AuditLog::query()
+            ->whereIn('client_folder_id', $clientFolders->pluck('id'))
+            ->whereIn('action', ['client_folder.created', 'client_folder.renamed'])
+            ->with('user:id,full_name')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->get(['id', 'client_folder_id', 'user_id', 'action', 'metadata', 'created_at'])
+            ->groupBy('client_folder_id');
     }
 }

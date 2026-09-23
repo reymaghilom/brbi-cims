@@ -3,6 +3,7 @@
 use App\Http\Middleware\EnsureCurrentAuthenticationSession;
 use App\Http\Middleware\EnsurePasswordHasBeenChanged;
 use App\Http\Middleware\EnsureUserHasRole;
+use App\Http\Middleware\PreventAuthenticatedResponseCaching;
 use App\Models\ActivityDefinition;
 use App\Models\BusinessReport;
 use App\Models\CiActivity;
@@ -30,6 +31,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'auth.session.current' => EnsureCurrentAuthenticationSession::class,
+            'auth.no-cache' => PreventAuthenticatedResponseCaching::class,
             'password.changed' => EnsurePasswordHasBeenChanged::class,
             'role' => EnsureUserHasRole::class,
         ]);

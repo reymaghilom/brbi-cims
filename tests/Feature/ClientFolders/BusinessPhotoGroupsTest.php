@@ -37,6 +37,22 @@ class BusinessPhotoGroupsTest extends TestCase
         $this->assertDatabaseCount('business_checks', 0);
     }
 
+    public function test_upload_in_a_deleted_group_cannot_satisfy_required_business_photo(): void
+    {
+        [$ci, $folder, $source] = $this->setUpBusiness();
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'income_source_id' => $source->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'Poblacion, San Miguel, Bulacan',
+            'photo_groups' => [['_delete' => '1', 'photos' => [UploadedFile::fake()->image('discard.jpg')]]],
+            'competitor_photos' => [UploadedFile::fake()->image('competitor.jpg')],
+            'map_screenshot' => UploadedFile::fake()->image('map.jpg'),
+        ])->assertSessionHasErrors('photo_groups');
+
+        $this->assertDatabaseCount('business_checks', 0);
+    }
+
     public function test_a_new_business_check_with_one_photo_in_the_default_area_succeeds(): void
     {
         [$ci, $folder, $source] = $this->setUpBusiness();

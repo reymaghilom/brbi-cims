@@ -19,7 +19,10 @@ class ResidenceBusinessCheckBatchDocxExporter
 {
     use BuildsOfficialReportDocx;
 
-    public function __construct(private readonly ReportMediaResolver $mediaResolver) {}
+    public function __construct(
+        private readonly ReportMediaResolver $mediaResolver,
+        private readonly ReportTemporaryFiles $temporaryFiles,
+    ) {}
 
     /**
      * $title is only ever used as invisible OOXML document metadata (Word's own "Properties"
@@ -59,18 +62,14 @@ class ResidenceBusinessCheckBatchDocxExporter
             $this->photoSection($section, $photoSection);
         }
 
-        // Suppressed: on some server environments sys_get_temp_dir() itself isn't writable by the
-        // PHP process (e.g. resolves to a protected system directory), and tempnam() falls back to
-        // its own OS-level temp location automatically — it still returns a real, writable path
-        // either way. Without the @, that fallback's own informational E_WARNING gets escalated
-        // into an uncaught ErrorException by Laravel's error handler, crashing this export outright
-        // even though nothing was actually broken.
-        $temporary = @tempnam(sys_get_temp_dir(), 'brbi-batch-docx-');
-        if ($temporary === false) {
-            throw new \RuntimeException('A temporary report file could not be created.');
-        }
+        // The shared service keeps the writer inside Laravel-owned storage on every platform.
+        $temporary = $this->temporaryFiles->create('brbi-batch-docx-');
         try {
-            IOFactory::createWriter($phpWord, 'Word2007')->save($temporary);
+            $this->temporaryFiles->withPhpWordTempDirectory(function () use ($phpWord, $temporary): void {
+                $writer = IOFactory::createWriter($phpWord, 'Word2007');
+                $this->temporaryFiles->configurePhpWord($writer);
+                $writer->save($temporary);
+            });
             $bytes = file_get_contents($temporary);
             if ($bytes === false) {
                 throw new \RuntimeException('The DOCX report could not be generated.');

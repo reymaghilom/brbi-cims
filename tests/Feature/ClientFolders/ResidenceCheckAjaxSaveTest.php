@@ -37,6 +37,31 @@ class ResidenceCheckAjaxSaveTest extends TestCase
         Storage::fake('local');
     }
 
+    public function test_standalone_success_navigates_to_the_authoritative_return_url(): void
+    {
+        $script = file_get_contents(resource_path('js/app.js'));
+        $start = strpos($script, "document.querySelectorAll('[data-residence-check-form]')");
+        $end = strpos($script, '// Live character counter', $start);
+        $handler = substr($script, $start, $end - $start);
+
+        $this->assertMatchesRegularExpression(
+            '/if \(window\.parent !== window\) \{\s*window\.parent\.postMessage\(\{ type: .brbi:check-saved.[^;]+;\s*\} else \{\s*window\.location\.assign\(payload\.return_url\);\s*\}/s',
+            $handler,
+        );
+    }
+
+    public function test_residence_ajax_handler_distinguishes_a_missing_record_from_a_connection_failure(): void
+    {
+        $script = file_get_contents(resource_path('js/app.js'));
+        $start = strpos($script, "document.querySelectorAll('[data-residence-check-form]')");
+        $end = strpos($script, '// Live character counter', $start);
+        $handler = substr($script, $start, $end - $start);
+
+        $this->assertStringContainsString('if (xhr.status === 404)', $handler);
+        $this->assertStringContainsString('This Residence Check is no longer available.', $handler);
+        $this->assertStringContainsString('Please check your connection and try again.', $handler);
+    }
+
     public function test_ajax_create_with_a_new_photo_returns_a_success_payload_with_the_cloud_photo_message(): void
     {
         $ci = User::factory()->create();

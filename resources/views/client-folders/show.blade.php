@@ -23,7 +23,7 @@
             'income-sources' => route('client-folders.income-sources.manage', [$clientFolder] + $personParams),
             'residence-business' => route('client-folders.residence-business.edit', [$clientFolder] + $personParams),
         ];
-        $moduleHref = fn (array $module) => $moduleRoutes[$module['key']] ?? route('client-folders.modules.show', [$clientFolder, $module['key']]);
+        $moduleHref = fn (array $module) => $moduleRoutes[$module['key']];
         $displayTimezone = config('cims.display_timezone');
         $countBadge = fn (int $count, string $singular) => $count > 0 ? $count.' '.\Illuminate\Support\Str::plural($singular, $count) : null;
         $moduleBadges = [
@@ -56,7 +56,7 @@
         </x-ui.client-header>
 
         <div data-person-switch-region>
-            @include('client-folders.partials.person-switch', ['clientFolder' => $clientFolder, 'coMakers' => $coMakers, 'activeCoMaker' => $activeCoMaker, 'canManageCoMakers' => $canManageCoMakers])
+            @include('client-folders.partials.person-switch', ['clientFolder' => $clientFolder, 'coMakers' => $coMakers, 'activeCoMaker' => $activeCoMaker, 'canManageCoMakers' => $canManageCoMakers, 'coMakerIdsWithSavedRecords' => $coMakerIdsWithSavedRecords])
         </div>
 
         <div class="client-folder-contents-layout grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(15rem,23%)]">

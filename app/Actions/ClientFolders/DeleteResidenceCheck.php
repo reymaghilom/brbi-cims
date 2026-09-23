@@ -4,11 +4,12 @@ namespace App\Actions\ClientFolders;
 
 use App\Models\AuditLog;
 use App\Models\ClientFolder;
+use App\Models\MediaReference;
 use App\Models\ResidenceCheck;
 use App\Models\User;
+use App\Services\ClientFolders\ClientFolderFileCleanup;
 use App\Services\ClientFolders\ResidenceBusinessCheckCompletionEvaluator;
 use App\Services\Media\ClientMediaUploader;
-use App\Services\Media\PrivateMediaStorage;
 use App\Services\Progress\ClientProgressService;
 use Illuminate\Support\Facades\DB;
 
@@ -30,7 +31,7 @@ use Illuminate\Support\Facades\DB;
 class DeleteResidenceCheck
 {
     public function __construct(
-        private readonly PrivateMediaStorage $storage,
+        private readonly ClientFolderFileCleanup $fileCleanup,
         private readonly ClientMediaUploader $mediaUploader,
         private readonly ResidenceBusinessCheckCompletionEvaluator $completion,
         private readonly ClientProgressService $progress,
@@ -45,8 +46,9 @@ class DeleteResidenceCheck
         // CloudinaryMediaStorage::destroy() is itself a safe no-op for a blank/already-gone public
         // id, so this stays idempotent even if the same delete is somehow retried.
         $retiredCloudAssets = [];
+        $cleanupTaskIds = [];
 
-        DB::transaction(function () use ($actor, $folder, $check, &$retiredCloudAssets): void {
+        DB::transaction(function () use ($actor, $folder, $check, &$retiredCloudAssets, &$cleanupTaskIds): void {
             // The route-bound instance is a snapshot from before this request's transaction, so it
             // is never treated as authoritative here: the row is re-read and locked first, exactly
             // like SaveResidenceCheck's edit path does, and everything below reads from that locked
@@ -88,7 +90,10 @@ class DeleteResidenceCheck
                 }
             }
 
-            $this->storage->deleteStoredFiles($localPaths);
+            $cleanupTaskIds = $this->fileCleanup->stage(['local' => array_map(
+                fn (string $path): array => ['path' => $path, 'provider' => MediaReference::STORAGE_PROVIDER_LOCAL],
+                array_values(array_unique(array_filter($localPaths))),
+            )]);
             $check->delete();
 
             AuditLog::create([
@@ -106,6 +111,7 @@ class DeleteResidenceCheck
             $this->progress->recalculate($folder);
         });
 
+        $this->fileCleanup->retire($cleanupTaskIds);
         DB::afterCommit(function () use ($retiredCloudAssets): void {
             foreach ($retiredCloudAssets as $asset) {
                 $this->mediaUploader->retireCloudAsset($asset['public_id'], $asset['resource_type'], $asset['delivery_type']);

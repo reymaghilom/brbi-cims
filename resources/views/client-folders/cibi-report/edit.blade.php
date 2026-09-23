@@ -17,7 +17,7 @@
         </div>
 
         @if($report)
-            <div data-editing-presence data-editing-type="cibi_report" data-editing-id="{{ $report->id }}" data-editing-label="CI/BI Report">
+            <div data-editing-presence data-editing-type="cibi_report" data-editing-id="{{ $report->id }}" data-editing-label="CI/BI Report" data-editing-advice="You may continue reviewing the form, but if they save changes first, you will need to refresh before saving your changes.">
                 <div data-editing-presence-banner hidden role="status" class="mb-3 flex items-start gap-2 rounded-control border border-progress/30 bg-progress-soft p-3 text-sm text-progress">
                     <x-ui.icon name="info" size="size-4" class="mt-0.5 shrink-0" />
                     <span data-editing-presence-text></span>

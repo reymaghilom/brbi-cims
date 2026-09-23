@@ -11,9 +11,11 @@ use App\Models\BusinessCheck;
 use App\Models\BusinessCheckPhoto;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
+use App\Models\MediaReference;
 use App\Models\User;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CiParticipantService;
+use App\Services\ClientFolders\ClientFolderFileCleanup;
 use App\Services\ClientFolders\ResidenceBusinessCheckCompletionEvaluator;
 use App\Services\Media\ClientMediaUploader;
 use App\Services\Progress\ClientProgressService;
@@ -33,6 +35,7 @@ class SaveBusinessCheck
         private readonly CiParticipantService $participants,
         private readonly UpdateBusinessCheckContributors $updateContributors,
         private readonly ClientProgressService $progress,
+        private readonly ClientFolderFileCleanup $fileCleanup,
     ) {}
 
     /** @param  array<string, mixed>  $data */
@@ -123,11 +126,12 @@ class SaveBusinessCheck
         // A replaced/removed Cloudinary asset must only ever be destroyed once the DB transaction
         // that stopped using it has actually committed — never from inside it, never if it rolls
         // back — so these are only acted on after DB::transaction() returns successfully below.
-        // Local-file removal has no such constraint and keeps running immediately as it already did.
         $retiredCloudAssets = [];
+        $retiredLocalPaths = [];
+        $cleanupTaskIds = [];
 
         try {
-            $check = DB::transaction(function () use ($actor, $folder, $data, $checkId, $activePerson, &$storedUploads, &$retiredCloudAssets): BusinessCheck {
+            $check = DB::transaction(function () use ($actor, $folder, $data, $checkId, $activePerson, &$storedUploads, &$retiredCloudAssets, &$retiredLocalPaths, &$cleanupTaskIds): BusinessCheck {
                 // Referencing an existing business is optional. A manual Business Check (no
                 // income_source_id) has no business row to serialize against and no
                 // one-check-per-business rule to enforce, so both guards below apply only to a
@@ -172,9 +176,8 @@ class SaveBusinessCheck
                 // both compare against the same value before either wrote and the later request
                 // silently overwrote the earlier one. The scope — this folder, this exact person,
                 // this exact check id — is unchanged, so no other person's or folder's check is
-                // reachable here. income_source_id is deliberately NOT part of the lookup: it is a
-                // mutable field of the check (a CI may repoint a check at a different business),
-                // and identity is the check id itself.
+                // reachable here. income_source_id is deliberately NOT part of the lookup because
+                // the locked row itself is the authoritative source identity for an update.
                 $check = $checkId !== null
                     ? $folder->businessChecks()->where('co_maker_id', $activePerson?->id)->lockForUpdate()->findOrFail((int) $checkId)
                     : $folder->businessChecks()->make(['co_maker_id' => $activePerson?->id]);
@@ -184,25 +187,14 @@ class SaveBusinessCheck
                     throw new BusinessCheckConflictException;
                 }
 
-                // Repointing an existing check at a different business is held to the same
-                // one-check-per-business rule as a create, and serialized on the same exact
-                // income_sources row, so a create and an edit (or two edits) racing for one
-                // business cannot both win. Lock order stays check row -> income_sources row, the
-                // same order DeleteBusinessCheck uses. The duplicate lookup runs only after that
-                // lock is held and excludes this check itself, so keeping the current business
-                // (or a manual check staying manual) is never blocked.
-                if (! $created && $referencedSourceId !== null
-                    && ($check->income_source_id === null || (int) $check->income_source_id !== $referencedSourceId)) {
-                    $folder->incomeSources()
-                        ->where('co_maker_id', $activePerson?->id)
-                        ->whereKey($referencedSourceId)
-                        ->lockForUpdate()
-                        ->firstOrFail();
-                    if (BusinessCheck::query()->where('income_source_id', $referencedSourceId)->whereKeyNot($check->id)->exists()) {
-                        throw ValidationException::withMessages([
-                            'income_source_id' => 'This business is already linked to another Business Check.',
-                        ]);
-                    }
+                // The selected business is create-time identity. Enforce immutability again under
+                // the Business Check row lock so direct action callers and concurrent requests
+                // cannot bypass the form request and repoint a saved snapshot.
+                $savedIncomeSourceId = $check->income_source_id === null ? null : (int) $check->income_source_id;
+                if (! $created && $referencedSourceId !== $savedIncomeSourceId) {
+                    throw ValidationException::withMessages([
+                        'income_source_id' => 'Business / Income Source cannot be changed after a Business Check is saved.',
+                    ]);
                 }
 
                 $check->fill(Arr::only($data, self::FIELDS));
@@ -236,7 +228,7 @@ class SaveBusinessCheck
                     // does the mandatory CI Date. Main Business Address can genuinely be blank, in
                     // which case the address the CI typed here is kept and stored on this Business
                     // Check ALONE — the Business Report is never written to from here.
-                    $check->business_name = $source?->resolvedBusinessName() ?: $check->business_name;
+                    $check->business_name = $source?->businessCheckSnapshotName() ?: $check->business_name;
                     $check->location = $source?->businessReport?->main_business_address ?: $check->location;
                     $check->ci_date = $source?->businessReport?->start_date ?: $check->ci_date;
                 }
@@ -266,14 +258,14 @@ class SaveBusinessCheck
                         if ($photo->isCloud()) {
                             $retiredCloudAssets[] = ['public_id' => $photo->cloud_public_id, 'resource_type' => $photo->cloud_resource_type, 'delivery_type' => $photo->cloud_delivery_type];
                         } else {
-                            $this->mediaUploader->deleteLocal($photo->path, $photo->thumbnail_path);
+                            array_push($retiredLocalPaths, $photo->path, $photo->thumbnail_path);
                         }
                         $photo->delete();
                         $photosRemoved++;
                     }
                 }
 
-                [$groupsPhotosUploaded, $groupsPhotosRemoved, $groupsChanged] = $this->syncPhotoGroups($folder, $check, $actor, $data['photo_groups'] ?? [], $storedUploads, $retiredCloudAssets);
+                [$groupsPhotosUploaded, $groupsPhotosRemoved, $groupsChanged] = $this->syncPhotoGroups($folder, $check, $actor, $data['photo_groups'] ?? [], $storedUploads, $retiredCloudAssets, $retiredLocalPaths);
                 $photosRemoved += $groupsPhotosRemoved;
 
                 $mapScreenshotChanged = false;
@@ -286,7 +278,7 @@ class SaveBusinessCheck
                     if ($check->hasCloudMapScreenshot()) {
                         $retiredCloudAssets[] = ['public_id' => $check->map_screenshot_cloud_public_id, 'resource_type' => $check->map_screenshot_cloud_resource_type, 'delivery_type' => $check->map_screenshot_cloud_delivery_type];
                     } else {
-                        $this->mediaUploader->deleteLocal($check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
+                        array_push($retiredLocalPaths, $check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
                     }
                     $check->fill([
                         'map_screenshot_file_name' => null,
@@ -310,7 +302,7 @@ class SaveBusinessCheck
                         if ($check->hasCloudMapScreenshot()) {
                             $retiredCloudAssets[] = ['public_id' => $check->map_screenshot_cloud_public_id, 'resource_type' => $check->map_screenshot_cloud_resource_type, 'delivery_type' => $check->map_screenshot_cloud_delivery_type];
                         } else {
-                            $this->mediaUploader->deleteLocal($check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
+                            array_push($retiredLocalPaths, $check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
                         }
                     }
                     $stored = $this->mediaUploader->store($folder, $data['map_screenshot'], 'business/map-screenshots', 'map_screenshot', $check->co_maker_id === null, $activePerson);
@@ -367,9 +359,15 @@ class SaveBusinessCheck
                 $this->completion->evaluate($folder, $activePerson?->id);
                 $this->progress->recalculate($folder);
 
+                $cleanupTaskIds = $this->fileCleanup->stage(['local' => array_map(
+                    fn (string $path): array => ['path' => $path, 'provider' => MediaReference::STORAGE_PROVIDER_LOCAL],
+                    array_values(array_unique(array_filter($retiredLocalPaths))),
+                )]);
+
                 return $check->refresh();
             });
 
+            DB::afterCommit(fn () => $this->fileCleanup->retire($cleanupTaskIds));
             // The DB transaction has actually committed at this point — only now is it safe to
             // destroy any Cloudinary asset a replace/remove retired above.
             foreach ($retiredCloudAssets as $asset) {
@@ -438,7 +436,7 @@ class SaveBusinessCheck
      * @param  list<array<string, mixed>>  $retiredCloudAssets
      * @return array{0: int, 1: int, 2: bool} [photosUploaded, photosRemoved, anyGroupChanged]
      */
-    private function syncPhotoGroups(ClientFolder $folder, BusinessCheck $check, User $actor, array $groupsData, array &$storedUploads, array &$retiredCloudAssets): array
+    private function syncPhotoGroups(ClientFolder $folder, BusinessCheck $check, User $actor, array $groupsData, array &$storedUploads, array &$retiredCloudAssets, array &$retiredLocalPaths): array
     {
         $photosUploaded = 0;
         $photosRemoved = 0;
@@ -452,7 +450,7 @@ class SaveBusinessCheck
             if ($delete) {
                 if ($existingGroup) {
                     foreach ($existingGroup->photos as $photo) {
-                        $this->retirePhoto($photo, $retiredCloudAssets);
+                        $this->retirePhoto($photo, $retiredCloudAssets, $retiredLocalPaths);
                         $photosRemoved++;
                     }
                     $existingGroup->delete();
@@ -479,7 +477,7 @@ class SaveBusinessCheck
                 foreach ($removedIds as $photoId) {
                     $photo = $group->photos()->find($photoId);
                     if ($photo) {
-                        $this->retirePhoto($photo, $retiredCloudAssets);
+                        $this->retirePhoto($photo, $retiredCloudAssets, $retiredLocalPaths);
                         $photosRemoved++;
                         $changed = true;
                     }
@@ -521,12 +519,12 @@ class SaveBusinessCheck
         return [$photosUploaded, $photosRemoved, $changed];
     }
 
-    private function retirePhoto(BusinessCheckPhoto $photo, array &$retiredCloudAssets): void
+    private function retirePhoto(BusinessCheckPhoto $photo, array &$retiredCloudAssets, array &$retiredLocalPaths): void
     {
         if ($photo->isCloud()) {
             $retiredCloudAssets[] = ['public_id' => $photo->cloud_public_id, 'resource_type' => $photo->cloud_resource_type, 'delivery_type' => $photo->cloud_delivery_type];
         } else {
-            $this->mediaUploader->deleteLocal($photo->path, $photo->thumbnail_path);
+            array_push($retiredLocalPaths, $photo->path, $photo->thumbnail_path);
         }
         $photo->delete();
     }

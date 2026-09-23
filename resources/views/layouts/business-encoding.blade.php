@@ -36,6 +36,14 @@
             <span hidden data-business-saved-notify data-business-saved-return-url="{{ route('client-folders.income-sources.manage', [$clientFolder] + \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null)) }}" data-business-saved-payload="{{ json_encode(session('business_manage_refresh')) }}" data-business-saved-message="{{ session('status') }}" data-business-saved-status-type="{{ session('statusType', 'success') }}"></span>
         @endif
 
+        @if(session('business_report_deleted'))
+            <span hidden data-business-deleted-notify data-business-deleted-return-url="{{ session('business_report_deleted.return_url') }}" data-business-deleted-income-source-id="{{ $incomeSource?->id }}" data-business-deleted-message="{{ session('business_report_deleted.message') }}"></span>
+        @endif
+
+        @if(isset($clientFolder))
+            <span hidden data-business-list-return-url="{{ route('client-folders.income-sources.manage', [$clientFolder] + \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null)) }}"></span>
+        @endif
+
         @yield('content')
     </main>
 </body>

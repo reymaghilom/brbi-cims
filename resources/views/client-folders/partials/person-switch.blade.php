@@ -3,10 +3,6 @@
         ? route('client-folders.show', $clientFolder).'?person=co-maker&co_maker_id='.$coMaker->id
         : route('client-folders.show', $clientFolder);
     $viewingLabel = $activeCoMaker ? 'Co-Maker — '.mb_strtoupper($activeCoMaker->full_name) : 'Applicant';
-    // Informational only (which delete dialog a Co-Maker's Remove opens); RemoveCoMaker re-checks.
-    $coMakerIdsWithSavedRecords = ($canManageCoMakers ?? false) && $coMakers->isNotEmpty()
-        ? app(App\Services\ClientFolders\CoMakerSavedRecords::class)->idsWithSavedRecords($clientFolder)
-        : collect();
 @endphp
 @if($coMakers->isNotEmpty())
 <section class="ui-panel p-3.5 sm:p-4" aria-labelledby="person-switch-title">

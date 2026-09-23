@@ -3,6 +3,7 @@
 namespace Tests\Feature\ClientFolders;
 
 use App\Actions\ClientFolders\CreateIncomeSource;
+use App\Actions\ClientFolders\SaveBusinessCheck;
 use App\Enums\RecordState;
 use App\Http\Controllers\IncomeSourceController;
 use App\Models\BusinessCheck;
@@ -17,6 +18,7 @@ use Database\Seeders\ReferenceDataSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 /**
@@ -155,6 +157,8 @@ class BusinessCheckIndependentArchitectureTest extends TestCase
             ->assertOk()->getContent();
 
         $this->assertStringContainsString('ALPHA TRADING', $html);
+        $this->assertStringContainsString('Business / Income Source', $html);
+        $this->assertMatchesRegularExpression('/<select id="business-check-income-source"[^>]*name="income_source_id"/', $html);
         $this->assertMatchesRegularExpression('/<input id="business-check-business-name"[^>]*value="ALPHA TRADING"/', $html);
         $this->assertMatchesRegularExpression('/<input id="business-check-location"[^>]*value="Alpha Address"/', $html);
         $this->assertMatchesRegularExpression('/id="ci_date"[^>]*value="2026-01-15"/', $html);
@@ -368,7 +372,78 @@ class BusinessCheckIndependentArchitectureTest extends TestCase
         $html = $this->actingAs($ci)->get(route('client-folders.business-checks.edit', [$folder, $check]))->assertOk()->getContent();
         $this->assertMatchesRegularExpression('/<input id="business-check-business-name"[^>]*value="ALPHA TRADING"/', $html);
         $this->assertMatchesRegularExpression('/<input id="business-check-location"[^>]*value="Alpha Address"/', $html);
-        $this->assertMatchesRegularExpression('/<option value="'.$business->id.'"[^>]*selected/', $html);
+        $this->assertMatchesRegularExpression('/<input type="hidden" name="income_source_id" value="'.$business->id.'">/', $html);
+        $this->assertStringNotContainsString('Business / Income Source', $html);
+        $this->assertStringNotContainsString('data-business-check-income-source-locked', $html);
+        $this->assertStringNotContainsString('id="business-check-income-source"', $html);
+        $this->assertDoesNotMatchRegularExpression('/<select id="business-check-income-source"/', $html);
+        foreach (['business-check-business-name', 'business-check-location', 'ci_date'] as $id) {
+            $this->assertDoesNotMatchRegularExpression('/<input id="'.$id.'"[^>]*readonly/', $html, $id.' remains editable on an existing snapshot.');
+        }
+    }
+
+    public function test_manipulated_update_cannot_change_the_saved_business_source(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $originalBusiness = $this->savedBusiness($folder, 'ORIGINAL BUSINESS', 'Original Address', '2026-01-15');
+        $otherBusiness = $this->savedBusiness($folder, 'OTHER BUSINESS', 'Other Address', '2026-02-20');
+        $check = BusinessCheck::create([
+            'client_folder_id' => $folder->id, 'income_source_id' => $originalBusiness->id, 'ci_user_id' => $ci->id,
+            'business_name' => 'ORIGINAL BUSINESS', 'location' => 'Original Address', 'ci_date' => '2026-01-15',
+        ]);
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'check_id' => $check->id,
+            'expected_revision' => $check->revision,
+            'income_source_id' => $otherBusiness->id,
+            'business_name' => 'FORGED BUSINESS',
+            'location' => 'Forged Address',
+            'ci_date' => '2026-03-01',
+        ])->assertSessionHasErrors('income_source_id');
+
+        $saved = $check->fresh();
+        $this->assertSame($originalBusiness->id, $saved->income_source_id);
+        $this->assertSame('ORIGINAL BUSINESS', $saved->business_name);
+        $this->assertSame('Original Address', $saved->location);
+        $this->assertSame(1, $saved->revision);
+    }
+
+    public function test_action_rejects_reassignment_but_allows_editing_the_saved_snapshot(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folderFor($ci);
+        $originalBusiness = $this->savedBusiness($folder, 'ORIGINAL BUSINESS', 'Report Address', '2026-01-15');
+        $otherBusiness = $this->savedBusiness($folder, 'OTHER BUSINESS', 'Other Address', '2026-02-20');
+        $check = BusinessCheck::create([
+            'client_folder_id' => $folder->id, 'income_source_id' => $originalBusiness->id, 'ci_user_id' => $ci->id,
+            'business_name' => 'ORIGINAL SNAPSHOT', 'location' => 'Snapshot Address', 'ci_date' => '2026-01-15',
+        ])->refresh();
+
+        try {
+            app(SaveBusinessCheck::class)->execute($ci, $folder, [
+                'check_id' => $check->id, 'expected_revision' => $check->revision, 'co_maker_id' => null,
+                'income_source_id' => $otherBusiness->id, 'business_name' => 'FORGED',
+                'location' => 'Forged Address', 'ci_date' => '2026-03-01',
+            ]);
+            $this->fail('A saved Business Check must reject Business / Income Source reassignment.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('income_source_id', $exception->errors());
+        }
+
+        $saved = app(SaveBusinessCheck::class)->execute($ci, $folder, [
+            'check_id' => $check->id, 'expected_revision' => $check->fresh()->revision, 'co_maker_id' => null,
+            'income_source_id' => $originalBusiness->id, 'business_name' => 'EDITED SNAPSHOT',
+            'location' => 'Edited Snapshot Address', 'ci_date' => '2026-03-02', 'remarks' => 'Normal edit remains available.',
+        ]);
+
+        $this->assertSame($originalBusiness->id, $saved->income_source_id);
+        $this->assertSame('EDITED SNAPSHOT', $saved->business_name);
+        $this->assertSame('Edited Snapshot Address', $saved->location);
+        $this->assertSame('2026-03-02', $saved->ci_date->toDateString());
+        $this->assertSame('Normal edit remains available.', $saved->remarks);
+        $this->assertSame('ORIGINAL BUSINESS', $originalBusiness->businessReport->fresh()->business_name);
+        $this->assertSame('Report Address', $originalBusiness->businessReport->fresh()->main_business_address);
     }
 
     public function test_a_check_whose_business_was_deleted_still_loads_and_relinks_to_nothing(): void

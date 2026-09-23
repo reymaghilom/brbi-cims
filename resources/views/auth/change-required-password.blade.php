@@ -2,6 +2,10 @@
 
 @section('title', 'Change password')
 
+@section('auth-introduction')
+    <p class="mt-6 text-center text-sm font-semibold leading-6 text-slate-700 sm:text-base">Credit Investigation Management System</p>
+@endsection
+
 @section('content')
     <div>
         <p class="text-xs font-bold uppercase tracking-[0.16em] text-progress">Security required</p>
@@ -15,11 +19,9 @@
         <x-form.input name="current_password" label="Temporary password" type="password" required autocomplete="current-password" />
         <x-form.input name="password" label="New password" type="password" help="Use at least {{ \App\Support\Authentication\PasswordPolicy::MIN_LENGTH }} characters." required minlength="{{ \App\Support\Authentication\PasswordPolicy::MIN_LENGTH }}" autocomplete="new-password" />
         <x-form.input name="password_confirmation" label="Confirm new password" type="password" required minlength="{{ \App\Support\Authentication\PasswordPolicy::MIN_LENGTH }}" autocomplete="new-password" />
-        <button type="submit" class="ui-button-primary w-full">Change password and continue</button>
-    </form>
-
-    <form method="POST" action="{{ route('logout') }}" class="mt-3">
-        @csrf
-        <button class="ui-button-secondary w-full">Sign out instead</button>
+        <button type="submit" class="ui-button-primary w-full">
+            <x-ui.icon name="key" size="size-4" data-action-icon="key" />
+            <span>Change password</span>
+        </button>
     </form>
 @endsection

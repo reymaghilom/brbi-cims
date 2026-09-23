@@ -3,6 +3,7 @@
 namespace App\Actions\ClientFolders;
 
 use App\Enums\RecordState;
+use App\Exceptions\BusinessReportDeletedWhileEditingException;
 use App\Exceptions\NoChangesDetectedException;
 use App\Models\AuditLog;
 use App\Models\BusinessReport;
@@ -21,7 +22,7 @@ use Illuminate\Validation\ValidationException;
 
 class SaveBusinessIncomeSource
 {
-    private const SOURCE_FIELDS = ['source_name', 'business_name', 'contribution_rank', 'estimated_monthly_contribution', 'is_primary', 'branch_name', 'account_officer_name'];
+    private const SOURCE_FIELDS = ['source_name', 'business_name', 'contribution_rank', 'estimated_monthly_contribution', 'is_primary', 'branch_name', 'account_officer_name', 'amount_applied'];
 
     private const REPORT_FIELDS = ['business_name', 'report_category', 'start_date', 'submitted_date', 'main_business_address', 'previous_business_address', 'previous_business_address_length_of_stay', 'reason_for_transfer', 'registered_owner', 'relationship_to_borrower', 'year_established', 'length_of_stay_months', 'monthly_rent', 'ownership_type', 'rented_from', 'business_type', 'scale', 'informant', 'report_remarks', 'template_data', 'branches_declared', 'branches_inspected', 'branches_not_inspected', 'branches_reason_not_inspected'];
 
@@ -69,10 +70,12 @@ class SaveBusinessIncomeSource
                 $deletedMeanwhile = $source->business_report_deleted_at !== null
                     && ! BusinessReport::query()->where('income_source_id', $source->id)->exists();
 
+                if ($deletedMeanwhile) {
+                    throw new BusinessReportDeletedWhileEditingException;
+                }
+
                 throw ValidationException::withMessages([
-                    'expected_revision' => $deletedMeanwhile
-                        ? 'This Business Report was deleted by another CI while you were editing it. Your changes were not saved. Please refresh or return to the Business Reports page.'
-                        : 'This Business Report was updated by another CI while you were editing it. Your changes were not saved. Please refresh the report to review the latest information before editing again.',
+                    'expected_revision' => 'This Business Report was updated by another CI while you were editing it. Your changes were not saved. Please refresh the report to review the latest information before editing again.',
                 ]);
             }
 

@@ -56,7 +56,7 @@
                     :badge="$folder['progress'] ? $folder['progress']['percent'].'% complete' : null"
                     :badge-class="$folder['status'] === 'Completed' ? 'bg-success-soft text-success' : 'bg-brand-soft text-brand-primary'"
                     :label="$folder['client'].', '.$folder['status'].'. Open client folder'" data-kpi-detail-row>
-                    <p class="mt-1 text-xs leading-5 text-text-muted">{{ $folder['status'] }}@if($folder['ci']) <span aria-hidden="true">&bull;</span> <span class="font-semibold tracking-tight text-text-main">{{ $folder['ci'] }}</span>@endif @if($folder['updated'])<span aria-hidden="true">&bull;</span> Updated {{ $folder['updated'] }}@endif</p>
+                    <p class="mt-1 text-xs leading-5 text-text-muted">{{ $folder['status'] }}@if($folder['creator']) <span aria-hidden="true">&bull;</span> Created By: <span class="font-semibold tracking-tight text-text-main">{{ $folder['creator'] }}</span>@endif @if($folder['updated'])<span aria-hidden="true">&bull;</span> Updated {{ $folder['updated'] }}@endif</p>
                 </x-ui.detail-row>
             @endforeach
         </ul>
@@ -91,7 +91,7 @@
             @foreach($kpiDetails['completed_this_month'] as $folder)
                 <x-ui.detail-row :url="$folder['url']" :title="$folder['client']" icon="check-circle" badge="Completed" badge-class="bg-success-soft text-success"
                     :label="$folder['client'].', completed '.$folder['completed_on'].'. Open client folder'" data-kpi-detail-row>
-                    <p class="mt-1 text-xs leading-5 text-text-muted">Completed {{ $folder['completed_on'] }}@if($folder['ci']) <span aria-hidden="true">&bull;</span> <span class="font-semibold tracking-tight text-text-main">{{ $folder['ci'] }}</span>@endif</p>
+                    <p class="mt-1 text-xs leading-5 text-text-muted">Completed {{ $folder['completed_on'] }}@if($folder['creator']) <span aria-hidden="true">&bull;</span> Created By: <span class="font-semibold tracking-tight text-text-main">{{ $folder['creator'] }}</span>@endif</p>
                 </x-ui.detail-row>
             @endforeach
         </ul>

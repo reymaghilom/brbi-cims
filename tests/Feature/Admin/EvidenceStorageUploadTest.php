@@ -46,7 +46,8 @@ class EvidenceStorageUploadTest extends TestCase
     public function test_residence_check_picture_is_stored_locally_in_the_ci_team_tree_in_local_mode(): void
     {
         $ci = User::factory()->create();
-        $folder = $this->folder($ci);
+        $folder = $this->folder($ci, 'MICABALO, RONILO CHAVEZ JR');
+        $folder->forceFill(['folder_number' => 'BRBI-CI-2026-053'])->save();
 
         $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
@@ -56,13 +57,16 @@ class EvidenceStorageUploadTest extends TestCase
         $check = $folder->residenceChecks()->firstOrFail();
         $photo = $check->photos()->firstOrFail();
         $documents = app(CiTeamDocumentStorage::class);
+        $canonical = 'CI-2026-053 - MICABALO, RONILO CHAVEZ JR';
 
         $this->assertFalse($photo->isCloud());
         $this->assertNull($photo->cloud_public_id);
-        $this->assertStringStartsWith($documents->residenceCheckPicturesDirectory($folder).'/', $photo->path);
-        $this->assertStringStartsWith($documents->residenceCheckMapDirectory($folder).'/', $check->map_screenshot_path);
+        $this->assertStringStartsWith($canonical.'/Residence Check Report/Pictures/', $photo->path);
+        $this->assertStringStartsWith($canonical.'/Residence Check Report/Google Map/', $check->map_screenshot_path);
         $this->assertTrue($documents->disk()->exists($photo->path));
         $this->assertTrue($documents->disk()->exists($check->map_screenshot_path));
+        $this->assertFalse($documents->disk()->directoryExists('MICABALO, RONILO CHAVEZ JR'));
+        $this->assertSame($canonical.'/CIBI Report', $documents->cibiReportDirectory($folder));
     }
 
     public function test_residence_check_picture_is_stored_on_cloudinary_in_cloud_mode(): void
@@ -85,7 +89,8 @@ class EvidenceStorageUploadTest extends TestCase
     public function test_co_maker_residence_pictures_are_stored_under_that_exact_co_maker_directory(): void
     {
         $ci = User::factory()->create();
-        $folder = $this->folder($ci);
+        $folder = $this->folder($ci, 'MICABALO, RONILO CHAVEZ JR');
+        $folder->forceFill(['folder_number' => 'BRBI-CI-2026-053'])->save();
         $first = $folder->coMakers()->create(['full_name' => 'Maria Santos', 'first_name' => 'Maria', 'last_name' => 'Santos']);
         $second = $folder->coMakers()->create(['full_name' => 'Jose Cruz', 'first_name' => 'Jose', 'last_name' => 'Cruz']);
         $documents = app(CiTeamDocumentStorage::class);
@@ -99,7 +104,9 @@ class EvidenceStorageUploadTest extends TestCase
 
         $photo = $folder->residenceChecks()->where('co_maker_id', $first->id)->firstOrFail()->photos()->firstOrFail();
         $this->assertStringStartsWith($documents->residenceCheckPicturesDirectory($folder, $first).'/', $photo->path);
+        $this->assertStringStartsWith('CI-2026-053 - MICABALO, RONILO CHAVEZ JR/Co-Makers/', $photo->path);
         $this->assertStringNotContainsString($documents->personDirectory($folder, $second), $photo->path);
+        $this->assertFalse($documents->disk()->directoryExists('MICABALO, RONILO CHAVEZ JR'));
     }
 
     // ---------------------------------------------------------------- Business Check
@@ -107,7 +114,8 @@ class EvidenceStorageUploadTest extends TestCase
     public function test_business_check_picture_is_stored_locally_in_the_ci_team_tree_in_local_mode(): void
     {
         $ci = User::factory()->create();
-        $folder = $this->folder($ci);
+        $folder = $this->folder($ci, 'MICABALO, RONILO CHAVEZ JR');
+        $folder->forceFill(['folder_number' => 'BRBI-CI-2026-053'])->save();
         $source = $this->businessSource($folder, 'Sari-Sari Store', 'Poblacion, San Miguel, Bulacan');
 
         $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
@@ -119,11 +127,43 @@ class EvidenceStorageUploadTest extends TestCase
         $check = $folder->businessChecks()->firstOrFail();
         $photo = $check->photos()->firstOrFail();
         $documents = app(CiTeamDocumentStorage::class);
+        $canonical = 'CI-2026-053 - MICABALO, RONILO CHAVEZ JR';
 
         $this->assertNull($photo->cloud_public_id);
-        $this->assertStringStartsWith($documents->businessCheckPicturesDirectory($folder).'/', $photo->path);
-        $this->assertStringStartsWith($documents->businessCheckMapDirectory($folder).'/', $check->map_screenshot_path);
+        $this->assertStringStartsWith($canonical.'/Business Check Report/Pictures/', $photo->path);
+        $this->assertStringStartsWith($canonical.'/Business Check Report/Google Map/', $check->map_screenshot_path);
         $this->assertTrue($documents->disk()->exists($photo->path));
+        $this->assertTrue($documents->disk()->exists($check->map_screenshot_path));
+        $this->assertFalse($documents->disk()->directoryExists('MICABALO, RONILO CHAVEZ JR'));
+    }
+
+    public function test_co_maker_business_check_media_is_stored_under_the_canonical_co_maker_directory(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folder($ci, 'MICABALO, RONILO CHAVEZ JR');
+        $folder->forceFill(['folder_number' => 'BRBI-CI-2026-053'])->save();
+        $coMaker = $folder->coMakers()->create(['full_name' => 'Maria Santos', 'first_name' => 'Maria', 'last_name' => 'Santos']);
+        $source = $this->businessSource($folder, 'Maria Store', 'San Miguel, Bulacan', $coMaker->id);
+
+        $this->actingAs($ci)->post(route('client-folders.business-checks.store', $folder), [
+            'co_maker_id' => $coMaker->id,
+            'income_source_id' => $source->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'San Miguel, Bulacan',
+            'business_photos' => [UploadedFile::fake()->image('Store.jpg', 900, 700)->size(500)],
+            'map_screenshot' => UploadedFile::fake()->image('Map.png', 1000, 800)->size(600),
+        ])->assertSessionHasNoErrors();
+
+        $check = $folder->businessChecks()->where('co_maker_id', $coMaker->id)->firstOrFail();
+        $photo = $check->photos()->firstOrFail();
+        $documents = app(CiTeamDocumentStorage::class);
+        $canonicalBranch = $documents->personDirectory($folder, $coMaker).'/Business Check Report';
+
+        $this->assertStringStartsWith($canonicalBranch.'/Pictures/', $photo->path);
+        $this->assertStringStartsWith($canonicalBranch.'/Google Map/', $check->map_screenshot_path);
+        $this->assertTrue($documents->disk()->exists($photo->path));
+        $this->assertTrue($documents->disk()->exists($check->map_screenshot_path));
+        $this->assertFalse($documents->disk()->directoryExists('MICABALO, RONILO CHAVEZ JR'));
     }
 
     public function test_business_check_picture_is_stored_on_cloudinary_in_cloud_mode_for_the_exact_business(): void
@@ -464,33 +504,37 @@ class EvidenceStorageUploadTest extends TestCase
 
     // ---------------------------------------------------------------- Local directory safety
 
-    public function test_local_evidence_uses_a_client_name_only_top_level_directory(): void
+    public function test_residence_and_business_local_evidence_use_the_canonical_numbered_client_directory(): void
     {
         $ci = User::factory()->create();
-        $folder = $this->folder($ci, 'FF, FFF FF');
+        $folder = $this->folder($ci, 'MICABALO, RONILO CHAVEZ JR');
+        $folder->forceFill(['folder_number' => 'BRBI-CI-2026-053'])->save();
         $documents = app(CiTeamDocumentStorage::class);
+        $canonical = 'CI-2026-053 - MICABALO, RONILO CHAVEZ JR';
 
-        $this->assertSame('FF, FFF FF', $documents->evidenceClientDirectory($folder));
-        $this->assertSame('FF, FFF FF/Residence Check Report/Pictures', $documents->residenceCheckPicturesDirectory($folder));
-        $this->assertSame('FF, FFF FF/Residence Check Report/Google Map', $documents->residenceCheckMapDirectory($folder));
-        $this->assertSame('FF, FFF FF/Business Check Report/Pictures', $documents->businessCheckPicturesDirectory($folder));
-        $this->assertSame('FF, FFF FF/Business Check Report/Google Map', $documents->businessCheckMapDirectory($folder));
-        $this->assertSame('FF, FFF FF/CI Activities/Supporting Proof', $documents->ciActivityProofDirectory($folder));
-        $this->assertStringNotContainsString('CI-', $documents->evidenceClientDirectory($folder));
+        $this->assertSame($canonical, $documents->clientDirectory($folder));
+        $this->assertSame($canonical.'/Residence Check Report/Pictures', $documents->residenceCheckPicturesDirectory($folder));
+        $this->assertSame($canonical.'/Residence Check Report/Google Map', $documents->residenceCheckMapDirectory($folder));
+        $this->assertSame($canonical.'/Business Check Report/Pictures', $documents->businessCheckPicturesDirectory($folder));
+        $this->assertSame($canonical.'/Business Check Report/Google Map', $documents->businessCheckMapDirectory($folder));
+        $this->assertSame('MICABALO, RONILO CHAVEZ JR/CI Activities/Supporting Proof', $documents->ciActivityProofDirectory($folder));
         $this->assertStringNotContainsString('Clients/', $documents->residenceCheckPicturesDirectory($folder));
     }
 
-    public function test_co_maker_evidence_stays_in_its_own_branch_of_the_client_name_directory(): void
+    public function test_co_maker_residence_and_business_evidence_use_the_canonical_branch_without_changing_ci_activities(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci, 'FF, FFF FF');
         $coMaker = $folder->coMakers()->create(['full_name' => 'Maria Santos', 'first_name' => 'Maria', 'last_name' => 'Santos']);
         $documents = app(CiTeamDocumentStorage::class);
-        $branch = 'FF, FFF FF/Co-Makers/CM-'.str_pad((string) $coMaker->id, 6, '0', STR_PAD_LEFT).' - Maria Santos';
+        $personSegment = '/Co-Makers/CM-'.str_pad((string) $coMaker->id, 6, '0', STR_PAD_LEFT).' - Maria Santos';
+        $canonicalBranch = $documents->clientDirectory($folder).$personSegment;
+        $evidenceBranch = 'FF, FFF FF'.$personSegment;
 
-        $this->assertSame($branch.'/Residence Check Report/Pictures', $documents->residenceCheckPicturesDirectory($folder, $coMaker));
-        $this->assertSame($branch.'/Business Check Report/Pictures', $documents->businessCheckPicturesDirectory($folder, $coMaker));
-        $this->assertSame($branch.'/CI Activities/Supporting Proof', $documents->ciActivityProofDirectory($folder, $coMaker));
+        $this->assertSame($canonicalBranch.'/Residence Check Report/Pictures', $documents->residenceCheckPicturesDirectory($folder, $coMaker));
+        $this->assertSame($canonicalBranch.'/Business Check Report/Pictures', $documents->businessCheckPicturesDirectory($folder, $coMaker));
+        $this->assertSame($canonicalBranch.'/Business Check Report/Google Map', $documents->businessCheckMapDirectory($folder, $coMaker));
+        $this->assertSame($evidenceBranch.'/CI Activities/Supporting Proof', $documents->ciActivityProofDirectory($folder, $coMaker));
         $this->assertStringNotContainsString('/Co-Makers/', $documents->residenceCheckPicturesDirectory($folder));
     }
 
@@ -511,7 +555,8 @@ class EvidenceStorageUploadTest extends TestCase
             'photos' => [UploadedFile::fake()->image('Front.jpg', 900, 700)->size(500)],
         ])->assertSessionHasNoErrors();
 
-        $this->assertSame(['FF, FFF FF'], $documents->disk()->directories());
+        $this->assertSame([$documents->clientDirectory($folder)], $documents->disk()->directories());
+        $this->assertFalse($documents->disk()->directoryExists('FF, FFF FF'));
         $this->assertDirectoryDoesNotExist($documents->root().DIRECTORY_SEPARATOR.'Clients');
     }
 
@@ -607,11 +652,11 @@ class EvidenceStorageUploadTest extends TestCase
         return $folder;
     }
 
-    private function businessSource(ClientFolder $folder, string $name, string $address): IncomeSource
+    private function businessSource(ClientFolder $folder, string $name, string $address, ?int $coMakerId = null): IncomeSource
     {
         $template = IncomeSourceTemplate::where('template_type', 'retail_grocery_water_refilling')->firstOrFail();
         $source = $folder->incomeSources()->create([
-            'co_maker_id' => null, 'income_source_template_id' => $template->id, 'template_type' => $template->template_type,
+            'co_maker_id' => $coMakerId, 'income_source_template_id' => $template->id, 'template_type' => $template->template_type,
             'template_version' => $template->version, 'source_name' => $name, 'business_name' => $name,
         ]);
         $source->businessReport()->create(['business_name' => $name, 'main_business_address' => $address, 'report_category' => 'retail_grocery_water_refilling']);

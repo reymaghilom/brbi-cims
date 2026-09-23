@@ -10,6 +10,7 @@ use App\Services\ClientFolders\CibiReportFormData;
 use App\Services\ClientFolders\ClientFolderBrowser;
 use App\Services\ClientFolders\ClientFolderCreationOptions;
 use App\Services\ClientFolders\ClientFolderOverview;
+use App\Services\ClientFolders\CoMakerSavedRecords;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
@@ -28,19 +29,24 @@ class ClientFolderAccessController extends Controller
 
         return view('client-folders.index', [
             'clientFolders' => $clientFolders,
+            'folderHistoryByFolder' => $browser->previewHistoryFor($clientFolders),
             'filters' => $filters,
             'creditInvestigators' => $creationOptions->creditInvestigatorsFor($request->user()),
         ]);
     }
 
-    public function show(ClientFolder $clientFolder, ClientFolderOverview $overview, CibiReportFormData $cibiFormData): View
+    public function show(ClientFolder $clientFolder, ClientFolderOverview $overview, CibiReportFormData $cibiFormData, CoMakerSavedRecords $savedRecords): View
     {
         Gate::authorize('view', $clientFolder);
         $activePerson = ActivePersonResolver::resolveFromQuery($clientFolder, request());
 
         $data = $overview->for($clientFolder, $activePerson);
+        $canManageCoMakers = request()->user()->can('update', $clientFolder);
 
         return view('client-folders.show', $data + $cibiFormData->for($data['clientFolder'], $activePerson) + [
+            'coMakerIdsWithSavedRecords' => $canManageCoMakers && $data['clientFolder']->coMakers->isNotEmpty()
+                ? $savedRecords->idsWithSavedRecords($data['clientFolder'])
+                : collect(),
             // Signatory candidates are their own list, not the folder-assignment one: who may be
             // signed as Prepared By (both Credit Investigator grades, active) is a different rule
             // from who may be assigned a folder, and the reassignment dropdown must be populated

@@ -51,12 +51,15 @@ class CiActivityProofPhotoLimitTest extends TestCase
             ->assertJsonValidationErrors(['photos' => self::MESSAGE]);
         $this->assertSame(10, $activity->mediaReferences()->count());
 
-        $directory = app(CiTeamDocumentStorage::class)->ciActivityProofDirectory($folder).'/';
+        $documents = app(CiTeamDocumentStorage::class);
+        $directory = $documents->personDirectory($folder).'/CI Activities/Supporting Proof/';
         $activity->mediaReferences()->get()->each(function (MediaReference $media) use ($directory): void {
             $this->assertSame(MediaReference::STORAGE_PROVIDER_CI_TEAM, $media->storage_provider);
             $this->assertNull($media->co_maker_id);
             $this->assertStringStartsWith($directory, $media->temporary_local_path);
         });
+        $this->assertTrue($documents->disk()->directoryExists(rtrim($directory, '/')));
+        $this->assertFalse($documents->disk()->directoryExists($documents->evidenceClientDirectory($folder)));
     }
 
     public function test_local_direct_request_with_eleven_photos_at_once_is_rejected_without_storing_anything(): void
@@ -100,12 +103,14 @@ class CiActivityProofPhotoLimitTest extends TestCase
 
         $documents = app(CiTeamDocumentStorage::class);
         foreach ([[$activityA, $makerA], [$activityB, $makerB], [$applicantActivity, null]] as [$activity, $maker]) {
-            $directory = $documents->ciActivityProofDirectory($folder, $maker).'/';
+            $directory = $documents->personDirectory($folder, $maker).'/CI Activities/Supporting Proof/';
             $activity->mediaReferences()->get()->each(function (MediaReference $media) use ($maker, $directory): void {
                 $this->assertSame($maker?->id, $media->co_maker_id);
                 $this->assertStringStartsWith($directory, $media->temporary_local_path);
             });
+            $this->assertTrue($documents->disk()->directoryExists(rtrim($directory, '/')));
         }
+        $this->assertFalse($documents->disk()->directoryExists($documents->evidenceClientDirectory($folder)));
     }
 
     public function test_cloudinary_co_maker_proof_accepts_ten_and_rejects_the_eleventh_using_the_mocked_uploader(): void

@@ -2,6 +2,7 @@
 
 namespace App\Services\Media;
 
+use App\Services\Reports\ReportTemporaryFiles;
 use Illuminate\Support\Facades\Http;
 
 /**
@@ -20,10 +21,13 @@ use Illuminate\Support\Facades\Http;
  */
 class ReportMediaResolver
 {
-    public function __construct(private readonly CloudinaryMediaStorage $cloud) {}
+    public function __construct(
+        private readonly CloudinaryMediaStorage $cloud,
+        private readonly ReportTemporaryFiles $reportTemporaryFiles,
+    ) {}
 
     /** @var list<string> */
-    private array $temporaryFiles = [];
+    private array $temporaryPaths = [];
 
     /**
      * @param  array<int, array<string, mixed>>  $photoSections
@@ -81,10 +85,10 @@ class ReportMediaResolver
     /** Deletes every temp file resolve() downloaded so far. Safe to call even if resolve() found nothing to download. */
     public function cleanup(): void
     {
-        foreach ($this->temporaryFiles as $path) {
+        foreach ($this->temporaryPaths as $path) {
             @unlink($path);
         }
-        $this->temporaryFiles = [];
+        $this->temporaryPaths = [];
     }
 
     /** @param  array<string, mixed>  $item */
@@ -111,27 +115,22 @@ class ReportMediaResolver
             if (! $response->successful()) {
                 return null;
             }
-
-            // Deliberately NOT sys_get_temp_dir(): Dompdf's own `chroot` option only allows it to
-            // load local images from inside storage_path('app/private') (and public_path()) — see
-            // ResidenceBusinessCheckBatchPdfExporter/DompdfOfficialReportGenerator. A temp file
-            // outside that boundary would silently fail to render for PDF, so every caller
-            // (PDF or DOCX) gets its Cloudinary downloads from the same safe location.
-            $directory = storage_path('app/private/tmp/cloud-media');
-            if (! is_dir($directory)) {
-                @mkdir($directory, 0755, true);
-            }
-            $temporary = @tempnam($directory, 'brbi-cloud-img-');
-            if ($temporary === false || file_put_contents($temporary, $response->body()) === false) {
-                return null;
-            }
-            $this->temporaryFiles[] = $temporary;
-
-            return $temporary;
         } catch (\Throwable $exception) {
             report($exception);
 
             return null;
         }
+
+        // Dompdf's chroot includes the shared report directory, so PDF and DOCX use the same
+        // application-controlled location for Cloudinary image staging.
+        $temporary = $this->reportTemporaryFiles->create('brbi-cloud-img-');
+        if (@file_put_contents($temporary, $response->body()) === false) {
+            @unlink($temporary);
+
+            throw new \RuntimeException('Temporary report media could not be written to Laravel storage.');
+        }
+        $this->temporaryPaths[] = $temporary;
+
+        return $temporary;
     }
 }

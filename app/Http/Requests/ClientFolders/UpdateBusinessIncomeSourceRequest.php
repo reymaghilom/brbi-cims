@@ -6,6 +6,7 @@ use App\Models\IncomeSourceTemplate;
 use App\Rules\CiContributorRule;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CiParticipantService;
+use App\Support\BranchOptions;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -43,6 +44,8 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             ? ['nullable', 'string', 'max:255']
             : ['nullable', 'integer', 'min:0'];
         $hiddenProfileFields = (array) data_get($schema, 'hidden_profile_fields', []);
+        $source = $this->route('incomeSource');
+        $cibiBranch = $this->route('clientFolder')?->cibiReport()->where('co_maker_id', $source?->co_maker_id ?? $this->input('co_maker_id'))->value('branch_name');
         $rules = [
             'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
             'expected_revision' => [$this->route('incomeSource') ? 'required' : 'nullable', 'integer', 'min:0'],
@@ -55,7 +58,8 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             'intent' => ['required', Rule::in(['stay', 'return', 'complete'])],
             'source_name' => [Rule::requiredIf(! $this->preservesMissingSourceField('source_name')), 'nullable', 'string', 'max:255'], 'business_name' => [Rule::requiredIf(! $this->preservesMissingReportField('business_name')), 'nullable', 'string', 'max:255'],
             'contribution_rank' => ['nullable', 'integer', 'min:1', 'max:65535'], 'estimated_monthly_contribution' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'], 'is_primary' => ['nullable', 'boolean'],
-            'branch_name' => ['nullable', 'string', 'max:255'], 'account_officer_name' => ['nullable', 'string', 'max:255'],
+            'branch_name' => ['nullable', 'string', 'max:255', Rule::in(BranchOptions::allowed($source?->branch_name, $cibiBranch))], 'account_officer_name' => ['nullable', 'string', 'max:255'],
+            'amount_applied' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'],
             // "Start Date of CI" is the authoritative CI Date of the Business Report, and the one
             // Business Check prefills from (see BusinessCheckController::form()'s $currentCiDate).
             // It is required for EVERY active Business template without exception — deliberately
@@ -223,9 +227,12 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
             $data['rented_from'] = null;
         }
         $source = $this->route('incomeSource');
-        $cibiReport = $this->route('clientFolder')?->cibiReport()->where('co_maker_id', $source?->co_maker_id)->first();
-        $data['branch_name'] = $source?->branch_name ?: $cibiReport?->branch_name;
-        $data['account_officer_name'] = $source?->account_officer_name ?: $cibiReport?->account_officer_name;
+        $cibiReport = $this->route('clientFolder')?->cibiReport()
+            ->where('co_maker_id', $source?->co_maker_id ?? (blank($this->input('co_maker_id')) ? null : (int) $this->input('co_maker_id')))
+            ->first();
+        $data['branch_name'] = $this->exists('branch_name') ? $this->short($this->input('branch_name')) : ($source?->branch_name ?? $cibiReport?->branch_name);
+        $data['account_officer_name'] = $this->exists('account_officer_name') ? $this->short($this->input('account_officer_name')) : ($source?->account_officer_name ?? $cibiReport?->account_officer_name);
+        $data['amount_applied'] = $this->exists('amount_applied') ? $this->number($this->input('amount_applied')) : ($source?->amount_applied ?? $cibiReport?->amount_applied);
         foreach (['main_business_address', 'previous_business_address', 'reason_for_transfer', 'report_remarks', 'branches_reason_not_inspected', 'length_of_stay_months', 'branches_declared', 'branches_inspected', 'branches_not_inspected'] as $field) {
             $data[$field] = $this->text($this->input($field));
         }
@@ -423,5 +430,10 @@ class UpdateBusinessIncomeSourceRequest extends FormRequest
         $value = is_string($value) || is_numeric($value) ? trim((string) $value) : '';
 
         return $value === '' ? null : $value;
+    }
+
+    private function number(mixed $value): mixed
+    {
+        return is_string($value) ? str_replace(',', '', trim($value)) : $value;
     }
 }

@@ -530,7 +530,7 @@ class OfficialReportDataBuilder
             // saved (see CLAUDE.md's Business Report ↔ Business Check independence rules). The
             // displayName() fallback exists only for a historical row saved before business_checks
             // gained its own business_name column.
-            'business_name' => $check->business_name ?: $check->incomeSource?->displayName(),
+            'business_name' => $check->resolvedSubjectName(),
             'income_source' => $check->incomeSource?->source_name,
             // The Business Check form's own "Google Maps Link" input was removed — historical
             // records saved before that removal may still carry a custom link, which stays

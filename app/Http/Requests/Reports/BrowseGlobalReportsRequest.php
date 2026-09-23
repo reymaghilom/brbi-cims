@@ -34,6 +34,7 @@ class BrowseGlobalReportsRequest extends FormRequest
             // ReportWorkspaceQuery::SORTS for the key-to-column map.
             'sort' => ['nullable', Rule::in(array_keys(ReportWorkspaceQuery::SORTS))],
             'direction' => ['nullable', Rule::in(['asc', 'desc'])],
+            'per_page' => ['nullable', 'integer', Rule::in(ReportWorkspaceQuery::PER_PAGE_OPTIONS)],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
         ];

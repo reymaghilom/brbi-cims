@@ -15,12 +15,16 @@
         @case('trash') <path d="M4.5 7h15M9 3.5h6L16 7H8l1-3.5ZM7 7l1 13h8l1-13M10 10v7M14 10v7"/> @break
         @case('settings') <circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2-.7-.6-1.4.9-1.9-2.1-2.1-1.9.9-1.4-.6-.7-2h-3l-.7 2-1.4.6-1.9-.9-2.1 2.1.9 1.9-.6 1.4-2 .7v3l2 .7.6 1.4-.9 1.9 2.1 2.1 1.9-.9 1.4.6.7 2h3l.7-2 1.4-.6 1.9.9 2.1-2.1-.9-1.9.6-1.4 2-.7Z"/> @break
         @case('users') <circle cx="9" cy="8" r="3"/><path d="M3.5 20v-2.2c0-3 2.4-5.3 5.5-5.3s5.5 2.3 5.5 5.3V20M15 5.5a3 3 0 0 1 0 5.8M16.5 13c2.3.6 4 2.4 4 4.8V20"/> @break
+        @case('user-plus') <circle cx="9" cy="8" r="3"/><path d="M3.5 20v-2.2c0-3 2.4-5.3 5.5-5.3s5.5 2.3 5.5 5.3V20M17.5 8v6M14.5 11h6"/> @break
         @case('audit') <path d="M5 3.5h14v17H5v-17Z"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/> @break
         @case('menu') <path d="M4 7h16M4 12h16M4 17h16"/> @break
         @case('close') <path d="m6 6 12 12M18 6 6 18"/> @break
+        @case('mail') <rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="m4.5 7 7.5 6 7.5-6"/> @break
+        @case('key') <circle cx="8.5" cy="12" r="4"/><path d="M12.5 12H21m-3 0v3m-3-3v2"/> @break
         @case('chevron-right') <path d="m9 5 7 7-7 7"/> @break
         @case('chevron-down') <path d="m5 9 7 7 7-7"/> @break
         @case('chevron-up') <path d="m5 15 7-7 7 7"/> @break
+        @case('login') <path d="M14 4h5v16h-5M5 12h10m-4-4 4 4-4 4"/> @break
         @case('logout') <path d="M10 4H5v16h5M14 8l4 4-4 4m4-4H9"/> @break
         @case('check') <path d="m5 12 4 4L19 6"/> @break
         @case('check-circle') <circle cx="12" cy="12" r="8.5"/><path d="m8.25 12.25 2.5 2.5 5-5"/> @break

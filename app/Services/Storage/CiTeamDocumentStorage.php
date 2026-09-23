@@ -249,35 +249,31 @@ class CiTeamDocumentStorage
         return $this->personDirectory($client, $coMaker).'/Business Check Report';
     }
 
-    /**
-     * Local homes for the three administrator-controlled evidence kinds, each nested inside the
-     * exact Applicant/Co-Maker directory beneath that client's own name (evidenceClientDirectory).
-     * Nothing here creates a directory — the folder only appears when a real file is written into
-     * it, so resolving a path for a page render leaves the filesystem untouched.
-     */
+    /** Residence and Business Check local evidence share the canonical numbered Client Folder used by CIBI. */
     public function residenceCheckPicturesDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
     {
-        return $this->evidencePersonDirectory($client, $coMaker).'/Residence Check Report/Pictures';
+        return $this->personDirectory($client, $coMaker).'/Residence Check Report/Pictures';
     }
 
     public function residenceCheckMapDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
     {
-        return $this->evidencePersonDirectory($client, $coMaker).'/Residence Check Report/Google Map';
+        return $this->personDirectory($client, $coMaker).'/Residence Check Report/Google Map';
     }
 
     public function businessCheckPicturesDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
     {
-        return $this->evidencePersonDirectory($client, $coMaker).'/Business Check Report/Pictures';
+        return $this->personDirectory($client, $coMaker).'/Business Check Report/Pictures';
     }
 
     public function businessCheckMapDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
     {
-        return $this->evidencePersonDirectory($client, $coMaker).'/Business Check Report/Google Map';
+        return $this->personDirectory($client, $coMaker).'/Business Check Report/Google Map';
     }
 
+    /** CI Activity supporting proof shares the canonical numbered Client Folder used by checks. */
     public function ciActivityProofDirectory(ClientFolder $client, ?CoMaker $coMaker = null): string
     {
-        return $this->evidencePersonDirectory($client, $coMaker).'/CI Activities/Supporting Proof';
+        return $this->personDirectory($client, $coMaker).'/CI Activities/Supporting Proof';
     }
 
     public function officialReportPath(ClientFolder $client, OfficialReportType $type, string $filename, ?CoMaker $coMaker = null): string

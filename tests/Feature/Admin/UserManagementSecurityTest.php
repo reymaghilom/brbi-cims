@@ -118,6 +118,7 @@ class UserManagementSecurityTest extends TestCase
         $this->actingAs($administrator)->post(route('admin.users.store'), [
             'full_name' => 'Audited User',
             'username' => 'audited.user',
+            'email' => 'audited.user@example.com',
             'role' => UserRole::CreditInvestigator->value,
             'password' => 'temporary password',
             'password_confirmation' => 'temporary password',

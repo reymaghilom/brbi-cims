@@ -4,6 +4,7 @@ namespace Tests\Feature\ClientFolders;
 
 use App\Enums\ClientFolderStatus;
 use App\Enums\UserStatus;
+use App\Models\AuditLog;
 use App\Models\CibiReport;
 use App\Models\ClientFolder;
 use App\Models\User;
@@ -424,6 +425,59 @@ class ClientFolderIndexTest extends TestCase
             ->assertDontSeeText('Rename Client Folder');
     }
 
+    public function test_edit_modal_populates_saved_optional_name_fields_and_keeps_missing_values_blank(): void
+    {
+        $ci = User::factory()->create();
+        $middleOnly = ClientFolder::factory()->create([
+            'assigned_ci_id' => $ci->id,
+            'middle_name' => 'SANTOS',
+            'suffix' => null,
+        ]);
+        $suffixOnly = ClientFolder::factory()->create([
+            'assigned_ci_id' => $ci->id,
+            'middle_name' => null,
+            'suffix' => 'JR.',
+        ]);
+        $both = ClientFolder::factory()->create([
+            'assigned_ci_id' => $ci->id,
+            'middle_name' => 'REYES',
+            'suffix' => 'III',
+        ]);
+        $neither = ClientFolder::factory()->create([
+            'assigned_ci_id' => $ci->id,
+            'middle_name' => null,
+            'suffix' => null,
+        ]);
+
+        $html = $this->actingAs($ci)->get(route('client-folders.index'))->assertOk()->getContent();
+        $modal = function (ClientFolder $folder) use ($html): string {
+            $start = strpos($html, 'id="folder-rename-dialog-'.$folder->id.'"');
+            $end = strpos($html, '</dialog>', $start);
+
+            $this->assertNotFalse($start);
+            $this->assertNotFalse($end);
+
+            return substr($html, $start, $end - $start);
+        };
+
+        $this->assertStringContainsString('name="middle_name" value="SANTOS"', $modal($middleOnly));
+        $this->assertStringContainsString('name="suffix" value=""', $modal($middleOnly));
+
+        $this->assertStringContainsString('name="middle_name" value=""', $modal($suffixOnly));
+        $this->assertStringContainsString('name="suffix" value="JR."', $modal($suffixOnly));
+
+        $bothModal = $modal($both);
+        $this->assertStringContainsString('name="middle_name" value="REYES"', $bothModal);
+        $this->assertStringContainsString('name="suffix" value="III"', $bothModal);
+
+        $neitherModal = $modal($neither);
+        $this->assertStringContainsString('name="middle_name" value=""', $neitherModal);
+        $this->assertStringContainsString('name="suffix" value=""', $neitherModal);
+        $this->assertSame(2, substr_count($neitherModal, '(optional)'));
+        $this->assertStringNotContainsString('name="middle_name" value="" class="ui-control" required', $neitherModal);
+        $this->assertStringNotContainsString('name="suffix" value="" class="ui-control" required', $neitherModal);
+    }
+
     public function test_create_uses_the_shared_centered_modal_and_open_actions_share_the_folder_contents_route(): void
     {
         $ci = User::factory()->create();
@@ -453,18 +507,23 @@ class ClientFolderIndexTest extends TestCase
         $activeCi = User::factory()->create(['full_name' => 'VISIBLE MODAL CI']);
         User::factory()->create(['full_name' => 'HIDDEN MODAL CI', 'status' => UserStatus::Disabled]);
 
-        $this->actingAs($administrator)->get(route('client-folders.index'))
+        $administratorResponse = $this->actingAs($administrator)->get(route('client-folders.index'))
             ->assertOk()
             ->assertSee('name="assigned_ci_id"', false)
+            ->assertSeeText('Credit Investigator')
             ->assertSee('VISIBLE MODAL CI')
-            ->assertDontSee('HIDDEN MODAL CI');
+            ->assertDontSee('HIDDEN MODAL CI')
+            ->assertDontSeeText('Client Folders are a shared workspace — every Credit Investigator can open and work on any active folder regardless of this selection.');
+
+        $modalHtml = $administratorResponse->getContent();
+        $this->assertMatchesRegularExpression('/<button type="button" data-modal-close class="ui-button-secondary">\s*<svg[^>]*data-action-icon="close"[^>]*>.*?<\/svg>\s*<span>Cancel<\/span>\s*<\/button>/s', $modalHtml);
+        $this->assertMatchesRegularExpression('/<button type="submit" form="create-client-folder-form" class="ui-button-primary">\s*<svg[^>]*data-action-icon="plus"[^>]*>.*?<\/svg>\s*<span>Create Client Folder<\/span>\s*<\/button>/s', $modalHtml);
 
         $this->actingAs($activeCi)->get(route('client-folders.index'))
             ->assertOk()
-            ->assertSee("You'll be listed as the creator of this folder.", false)
+            ->assertDontSee("You'll be listed as the creator of this folder.", false)
             ->assertDontSee("You'll be recorded as the creator of this folder.", false)
-            // The supporting line names the signed-in CI dynamically — never a hard-coded name.
-            ->assertSee($activeCi->full_name.' · All Credit Investigators can still access and work on this folder.', false)
+            ->assertDontSee($activeCi->full_name.' · All Credit Investigators can still access and work on this folder.', false)
             ->assertDontSee('every Credit Investigator can still open and work on it.', false)
             ->assertDontSee('name="assigned_ci_id"', false);
     }
@@ -537,5 +596,28 @@ class ClientFolderIndexTest extends TestCase
         $this->assertTrue($folders->getCollection()->every(
             fn (ClientFolder $folder): bool => $folder->relationLoaded('assignedInvestigator') && $folder->relationLoaded('creator'),
         ));
+    }
+
+    public function test_preview_history_query_count_is_flat_for_one_and_twelve_folders(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        AuditLog::create(['client_folder_id' => $folder->id, 'user_id' => $ci->id, 'action' => 'client_folder.created', 'module' => 'client_folders', 'description' => 'Created.', 'metadata' => []]);
+
+        $countQueries = function () use ($ci): int {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+            $this->actingAs($ci)->get(route('client-folders.index'))->assertOk();
+            $count = count(DB::getQueryLog());
+            DB::disableQueryLog();
+
+            return $count;
+        };
+
+        $one = $countQueries();
+        ClientFolder::factory()->count(11)->create(['assigned_ci_id' => $ci->id]);
+        $twelve = $countQueries();
+
+        $this->assertSame($one, $twelve);
     }
 }

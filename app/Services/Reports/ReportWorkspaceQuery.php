@@ -41,7 +41,9 @@ use Illuminate\Support\Facades\DB;
  */
 class ReportWorkspaceQuery
 {
-    private const PER_PAGE = 15;
+    public const PER_PAGE_OPTIONS = [5, 10, 20, 50];
+
+    private const DEFAULT_PER_PAGE = 5;
 
     /** The only report-capable modules with a real preview/output workflow. */
     public const KINDS = [
@@ -72,7 +74,7 @@ class ReportWorkspaceQuery
     ];
 
     /**
-     * @param  array{search?: ?string, report_type?: ?string, person?: ?string, tab?: ?string, from?: ?string, to?: ?string}  $filters
+     * @param  array{search?: ?string, report_type?: ?string, person?: ?string, tab?: ?string, from?: ?string, to?: ?string, per_page?: int}  $filters
      * @return LengthAwarePaginator<int, ReportWorkItem>
      */
     public function paginate(User $user, array $filters): LengthAwarePaginator
@@ -94,7 +96,7 @@ class ReportWorkspaceQuery
             // Deterministic tiebreak, so two rows with equal sort values never swap between pages.
             ->orderBy('kind')
             ->orderBy('source_id')
-            ->paginate(self::PER_PAGE)
+            ->paginate($filters['per_page'] ?? self::DEFAULT_PER_PAGE)
             ->withQueryString();
 
         // Resolved once for the whole page rather than per row, so the CI / BI icon costs one extra
@@ -423,7 +425,9 @@ class ReportWorkspaceQuery
                 .' c.co_maker_id as co_maker_id, c.income_source_id as income_source_id, 1 as status_rank,'
                 .' c.updated_at as sort_date, f.display_name as client_name,'
                 .' cm.full_name as person_name,'
-                ." COALESCE(NULLIF(s.business_name, ''), NULLIF(s.source_name, ''), NULLIF(c.business_name, '')) as business_name",
+                ." CASE WHEN s.template_type = 'other_business_source_of_income'"
+                ." THEN COALESCE(NULLIF(c.business_name, ''), NULLIF(s.business_name, ''), NULLIF(s.source_name, ''))"
+                ." ELSE COALESCE(NULLIF(s.business_name, ''), NULLIF(s.source_name, ''), NULLIF(c.business_name, '')) END as business_name",
             );
     }
 
@@ -436,21 +440,25 @@ class ReportWorkspaceQuery
      * business the check is for inside the Business Check form itself. The row therefore carries no
      * income_source_id and no business_name at all, and at most one exists per person.
      *
-     * It is shown while there is still somewhere legitimate for a new Business Check to go:
+     * It is shown only until this exact person has their first saved Business Check, while there is
+     * still somewhere legitimate for that first check to go:
      *
      *   - at least one eligible business of this person's has no saved Business Check yet, OR
      *   - this person has no legitimate business at all AND has not yet recorded a manual,
      *     standalone Business Check (income_source_id NULL) — the zero-business entry point.
      *
-     * Once every eligible business has its own check, and any zero-business case has been answered
-     * by a manual check, no entry point is needed and the row disappears. A legitimate new business
-     * created later brings it back on the next authoritative read. Saved business_checks rows are
-     * never touched by this — they come from businessChecks() above and stay business-specific.
+     * Once any saved check exists, that real row replaces the standard placeholder. Further checks
+     * appear only when the user explicitly creates more business_checks rows; adding more Business
+     * Reports never resurrects or multiplies this placeholder. Saved rows are never touched by this
+     * branch — they come from businessChecks() above and stay independently addressable.
      */
     private function missingBusinessChecksForApplicants(): Builder
     {
         return DB::table('client_folders as f')
             ->whereNull('f.deleted_at')
+            ->whereNotExists(fn (Builder $exists) => $exists->select(DB::raw(1))->from('business_checks as existing_check')
+                ->whereColumn('existing_check.client_folder_id', 'f.id')
+                ->whereNull('existing_check.co_maker_id'))
             ->where(fn (Builder $query) => $query
                 ->whereExists(fn (Builder $exists) => $this->eligibleUncheckedBusiness($exists)
                     ->whereColumn('s.client_folder_id', 'f.id')
@@ -476,6 +484,9 @@ class ReportWorkspaceQuery
         return DB::table('co_makers as cm')
             ->join('client_folders as f', 'f.id', '=', 'cm.client_folder_id')
             ->whereNull('f.deleted_at')
+            ->whereNotExists(fn (Builder $exists) => $exists->select(DB::raw(1))->from('business_checks as existing_check')
+                ->whereColumn('existing_check.client_folder_id', 'f.id')
+                ->whereColumn('existing_check.co_maker_id', 'cm.id'))
             ->where(fn (Builder $query) => $query
                 ->whereExists(fn (Builder $exists) => $this->eligibleUncheckedBusiness($exists)
                     ->whereColumn('s.client_folder_id', 'f.id')

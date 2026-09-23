@@ -5,11 +5,9 @@
 @section('content')
     @php($personParams = \App\Services\ClientFolders\ActivePersonResolver::queryParams($activePerson ?? null))
     @php($hasExistingBusinesses = $businesses->isNotEmpty())
-    {{-- Read-only is decided PER FIELD by the controller, on whether the referenced business
-         actually has that value — not on "is a business referenced" alone. Business Name and CI
-         Date are always present on a saved Business Report, so they lock; Main Business Address
-         can genuinely be blank, and when it is the CI types it here and it stays on the Business
-         Check alone. A manual Business Check keeps all three editable. --}}
+    {{-- A referenced business supplies initial values only while creating a Business Check. Once
+         saved, the Business / Income Source identity is locked and every displayed detail comes
+         from the Business Check's own independently editable snapshot. --}}
     <div class="mx-auto w-full max-w-5xl">
     <x-ui.breadcrumb :items="[
         ['label' => 'Client Folder', 'url' => route('client-folders.index')],
@@ -52,10 +50,16 @@
         </div>
     @endif
 
-        <form id="business-check-form" method="POST" action="{{ route('client-folders.business-checks.store', $clientFolder) }}" enctype="multipart/form-data" class="flex flex-col gap-4 pb-20" data-unsaved-form data-business-check-form>
+        <form id="business-check-form" method="POST" action="{{ route('client-folders.business-checks.store', $clientFolder) }}" enctype="multipart/form-data" class="flex flex-col gap-4 pb-20" data-unsaved-form data-business-check-form data-business-check-list-return-url="{{ route('client-folders.residence-business.edit', [$clientFolder] + $personParams) }}">
             @csrf
             <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
             <input type="hidden" name="check_id" value="{{ $businessCheck?->id }}">
+            @if($businessCheck)
+                {{-- Preserve the saved create-time identity for normal Edit submissions without
+                     presenting it as another Business Check field. Reassignment remains rejected
+                     by both the form request and the locked save action. --}}
+                <input type="hidden" name="income_source_id" value="{{ $businessCheck->income_source_id }}">
+            @endif
             {{-- A monotonic edit token; unlike updated_at, it cannot repeat for two saves in one second. --}}
             <input type="hidden" name="expected_revision" value="{{ $businessCheck?->revision }}">
             {{-- One fresh value per page load — identifies this one loaded copy of the Add form so
@@ -80,29 +84,30 @@
                                 <span class="ui-label">Applicant / Co-Maker Name</span>
                                 <div class="relative"><x-ui.icon name="user" size="size-4" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" /><p class="ui-control bg-surface-subtle pl-9">{{ $personName }}</p></div>
                             </div>
-                            <div>
-                                <label for="business-check-income-source" class="ui-label">Business / Income Source</label>
-                                @if($hasExistingBusinesses)
-                                    <select id="business-check-income-source" name="income_source_id" class="ui-control" data-applied-income-source-id="{{ $selectedIncomeSourceId }}" data-business-check-income-source-select>
-                                        {{-- This branch only renders when the exact person actually
-                                             has selectable businesses, so the placeholder simply
-                                             prompts for one. The manual path is what the zero-business
-                                             branch below covers. --}}
-                                        <option value="">Select an existing business</option>
-                                        @foreach($businesses as $business)
-                                            @php($isCurrentBusiness = $businessCheck && (int) $businessCheck->income_source_id === (int) $business['id'])
-                                            @php($alreadyChecked = filled($business['existing_check_id']) && ! $isCurrentBusiness)
-                                            <option value="{{ $business['id'] }}" data-business-name="{{ $business['name'] }}" data-location="{{ $business['location'] }}" data-ci-date="{{ $business['ci_date'] }}" @disabled($alreadyChecked) @selected((int) $selectedIncomeSourceId === (int) $business['id'])>{{ $business['name'] }}{{ $alreadyChecked ? ' — Business Check already exists.' : '' }}</option>
-                                        @endforeach
-                                    </select>
-                                @else
-                                    {{-- The one and only message under this field: no Business Report
-                                         availability/pending status, no explanation of what Business
-                                         Check does or does not create. --}}
-                                    <p class="mt-1.5 text-xs text-text-muted" data-business-source-helper>No existing business found. Enter the business details below.</p>
-                                @endif
-                                <x-form.validation-message for="income_source_id" />
-                            </div>
+                            @unless($businessCheck)
+                                <div>
+                                    <span id="business-check-income-source-label" class="ui-label">Business / Income Source</span>
+                                    @if($hasExistingBusinesses)
+                                        <select id="business-check-income-source" name="income_source_id" class="ui-control" data-applied-income-source-id="{{ $selectedIncomeSourceId }}" data-business-check-income-source-select>
+                                            {{-- This branch only renders when the exact person actually
+                                                 has selectable businesses, so the placeholder simply
+                                                 prompts for one. The manual path is what the zero-business
+                                                 branch below covers. --}}
+                                            <option value="">Select an existing business</option>
+                                            @foreach($businesses as $business)
+                                                @php($alreadyChecked = filled($business['existing_check_id']))
+                                                <option value="{{ $business['id'] }}" data-business-name="{{ $business['name'] }}" data-location="{{ $business['location'] }}" data-ci-date="{{ $business['ci_date'] }}" @disabled($alreadyChecked) @selected((int) $selectedIncomeSourceId === (int) $business['id'])>{{ $business['name'] }}{{ $alreadyChecked ? ' — Business Check already exists.' : '' }}</option>
+                                            @endforeach
+                                        </select>
+                                    @else
+                                        {{-- The one and only message under this field: no Business Report
+                                             availability/pending status, no explanation of what Business
+                                             Check does or does not create. --}}
+                                        <p class="mt-1.5 text-xs text-text-muted" data-business-source-helper>No existing business found. Enter the business details below.</p>
+                                    @endif
+                                    <x-form.validation-message for="income_source_id" />
+                                </div>
+                            @endunless
                             <div>
                                 <label for="business-check-business-name" class="ui-label">Business Name <span class="text-danger" aria-hidden="true">*</span></label>
                                 <input id="business-check-business-name" name="business_name" type="text" class="ui-control read-only:bg-surface-subtle read-only:text-text-muted" maxlength="255" required placeholder="Enter business name" value="{{ old('business_name', $currentBusinessName) }}" @readonly($businessNameReadOnly) data-business-check-business-name @error('business_name') aria-invalid="true" aria-describedby="business_name-error" @enderror>

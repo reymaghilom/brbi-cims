@@ -6,7 +6,7 @@
      */
     $displayTimezone = config('cims.display_timezone');
     $tab = $filters['tab'] ?? 'all';
-    $hasFilters = collect($filters)->except('tab')->filter(fn ($value) => filled($value))->isNotEmpty();
+    $hasFilters = collect($filters)->except(['tab', 'per_page'])->filter(fn ($value) => filled($value))->isNotEmpty();
     $emptyTitle = match ($tab) {
         'pending' => 'No pending reports.',
         'completed' => 'No completed reports yet.',
@@ -85,6 +85,13 @@
 
     <footer class="flex flex-col gap-3 border-t border-ui-border bg-surface-muted px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <p class="text-sm text-text-muted">Showing {{ $items->firstItem() }} to {{ $items->lastItem() }} of {{ $items->total() }} {{ Str::plural('report', $items->total()) }}</p>
-        @if($items->hasPages())<nav aria-label="Reports pagination" data-reports-pagination>{{ $items->onEachSide(1)->links() }}</nav>@endif
+        <div class="flex items-center gap-3">
+            <x-ui.compact-pagination :paginator="$items" aria-label="Reports pagination" data-reports-pagination />
+            <select name="per_page" form="global-reports-filter" class="ui-control min-h-9 w-28 py-1.5 text-sm" onchange="this.form.submit()">
+                @foreach($perPageOptions as $option)
+                    <option value="{{ $option }}" @selected($filters['per_page'] === $option)>{{ $option }} / page</option>
+                @endforeach
+            </select>
+        </div>
     </footer>
 @endif

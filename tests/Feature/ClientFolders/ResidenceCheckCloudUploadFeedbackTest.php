@@ -78,7 +78,7 @@ class ResidenceCheckCloudUploadFeedbackTest extends TestCase
         $this->assertStringContainsString('field.getStagedPhotoFiles = () => files.map(({ file }) => file);', $script);
         $this->assertStringContainsString('payload.delete(photoInput.name);', $script);
         $this->assertStringContainsString('stagedPhotos.forEach((file) => payload.append(photoInput.name, file, file.name));', $script);
-        $this->assertStringContainsString("statusText.textContent = 'Uploading media to cloud storage…';", $script);
+        $this->assertStringContainsString("statusText.textContent = 'Uploading media…';", $script);
         $this->assertStringContainsString("statusText.textContent = 'Saving Residence Check…';", $script);
     }
 

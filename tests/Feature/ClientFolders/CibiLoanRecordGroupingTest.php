@@ -992,6 +992,53 @@ class CibiLoanRecordGroupingTest extends TestCase
         $this->assertNull($sheet->getCell('M'.$totalRow)->getValue());
     }
 
+    public function test_interleaved_institutions_present_as_first_occurrence_groups_without_reordering_saved_rows(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $coMaker = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'GROUPED CO MAKER']);
+
+        foreach ([null, $coMaker] as $person) {
+            $payload = $this->payload();
+            $payload['co_maker_id'] = $person?->id;
+            $payload['loan_records'] = [
+                $this->loanRow('Institution A', 'A Loan 1', '100,000'),
+                $this->loanRow('Institution B', 'B Loan 1', '200,000'),
+                $this->loanRow('Institution A', 'A Loan 2', '300,000'),
+            ];
+            $this->actingAs($ci)->put(route('client-folders.cibi-report.update', $folder), $payload)->assertRedirect();
+
+            $report = $folder->cibiReport()->where('co_maker_id', $person?->id)->sole();
+            $saved = $report->loanRecords()->orderBy('sort_order')->get();
+            $savedIds = $saved->pluck('id')->all();
+            $this->assertCount(3, $saved);
+            $this->assertSame(['Institution A', 'Institution B', 'Institution A'], $saved->pluck('institution')->all());
+            $this->assertSame([1, 2, 3], $saved->pluck('sort_order')->all());
+
+            $editUrl = route('client-folders.cibi-report.edit', [$folder] + ($person ? ['person' => 'co-maker', 'co_maker_id' => $person->id] : []));
+            $section = $this->loanSection($this->get($editUrl)->assertOk()->getContent());
+            preg_match_all('/name="loan_records\[\d+\]\[id\]" value="(\d+)"/', $section, $idMatches);
+            $this->assertSame([$savedIds[0], $savedIds[2], $savedIds[1]], array_map('intval', $idMatches[1]));
+
+            $document = app(OfficialReportDataBuilder::class)->build($folder->fresh(), OfficialReportType::Cibi, null, $person);
+            $this->assertSame(['Institution A', '', 'Institution B'], array_column($document['cibi']['loan_records'], 0));
+            $this->assertSame(['100,000', '300,000', '200,000'], array_column($document['cibi']['loan_records'], 1));
+
+            $sheet = $this->officialWorkbookSheet($folder, $person);
+            $start = $this->rowContaining($sheet, 'IV. SUMMARY ON CREDIT/LOAN INFORMATION') + 2;
+            $this->assertSame(['Institution A', '', 'Institution B'], array_map(
+                fn (int $row): string => (string) $sheet->getCell('C'.$row)->getValue(),
+                range($start, $start + 2),
+            ));
+            $this->assertSame(['A Loan 1', 'A Loan 2', 'B Loan 1'], array_map(
+                fn (int $row): string => (string) $sheet->getCell('T'.$row)->getValue(),
+                range($start, $start + 2),
+            ));
+
+            $this->assertSame($savedIds, $report->loanRecords()->orderBy('sort_order')->pluck('id')->all());
+            $this->assertSame([1, 2, 3], $report->loanRecords()->orderBy('sort_order')->pluck('sort_order')->all());
+        }
+    }
+
     public function test_excel_sections_and_monetary_totals_are_isolated_to_the_exact_applicant_or_co_maker(): void
     {
         [$ci, $folder] = $this->folder();

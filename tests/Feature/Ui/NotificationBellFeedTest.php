@@ -95,6 +95,104 @@ class NotificationBellFeedTest extends TestCase
         }
     }
 
+    public function test_bank_scheduler_to_bell_flow_includes_only_todays_exact_target_without_duplicates(): void
+    {
+        $timezone = config('cims.display_timezone');
+        Carbon::setTestNow(Carbon::parse('2026-08-29 12:00:00', $timezone)->utc());
+        try {
+            $ci = User::factory()->create();
+            $folder = $this->folderFor($ci);
+            $bank = $this->bankActivity($folder, $ci);
+            $yesterday = $this->bankTarget($bank, $ci, [
+                'institution_name' => 'Yesterday Bank',
+                'status' => ActivityStatus::Scheduled,
+                'scheduled_at' => now($timezone)->subDay()->setTime(9, 0)->utc(),
+                'scheduled_has_time' => true,
+            ]);
+            $today = $this->bankTarget($bank, $ci, [
+                'institution_name' => 'Today Bank',
+                'branch_location' => 'Exact Branch',
+                'status' => ActivityStatus::Scheduled,
+                'scheduled_at' => now($timezone)->setTime(9, 0)->utc(),
+                'scheduled_has_time' => true,
+            ]);
+            $tomorrow = $this->bankTarget($bank, $ci, [
+                'institution_name' => 'Tomorrow Bank',
+                'status' => ActivityStatus::Scheduled,
+                'scheduled_at' => now($timezone)->addDay()->setTime(9, 0)->utc(),
+                'scheduled_has_time' => true,
+            ]);
+
+            $this->artisan('ci-activities:send-reminders')->assertSuccessful();
+            $this->artisan('ci-activities:send-reminders')->assertSuccessful();
+
+            $payload = $this->actingAs($ci)->getJson(route('notifications.ci-activities.feed'))->assertOk()->json();
+            $this->assertSame(1, $payload['unread_count']);
+            $this->assertStringContainsString('data-scheduled-today-item="bank_target:'.$today->id.'"', $payload['html']);
+            $this->assertStringContainsString('Today Bank', $payload['html']);
+            $this->assertStringContainsString('Exact Branch', $payload['html']);
+            $this->assertStringNotContainsString('bank_target:'.$yesterday->id, $payload['html']);
+            $this->assertStringNotContainsString('Yesterday Bank', $payload['html']);
+            $this->assertStringNotContainsString('bank_target:'.$tomorrow->id, $payload['html']);
+            $this->assertStringNotContainsString('Tomorrow Bank', $payload['html']);
+
+            $todayNotifications = $ci->notifications()
+                ->where('type', CiActivityScheduledReminder::class)
+                ->where('data->target_type', CiActivityScheduledReminder::TARGET_TYPE_BANK)
+                ->where('data->target_id', $today->id)
+                ->get();
+            $this->assertCount(1, $todayNotifications);
+            $this->actingAs($ci)
+                ->post(route('notifications.ci-activities.read', $todayNotifications->sole()->id))
+                ->assertRedirect(route('client-folders.activities.index', $folder));
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_bank_scheduler_to_bell_flow_preserves_exact_co_maker_context(): void
+    {
+        $timezone = config('cims.display_timezone');
+        Carbon::setTestNow(Carbon::parse('2026-08-29 12:00:00', $timezone)->utc());
+        try {
+            $ci = User::factory()->create();
+            $folder = $this->folderFor($ci);
+            $coMaker = CoMaker::create([
+                'client_folder_id' => $folder->id,
+                'full_name' => 'Exact Bank Co-Maker',
+                'first_name' => 'Exact Bank',
+                'last_name' => 'Co-Maker',
+            ]);
+            $bank = $this->bankActivity($folder, $ci, 0, $coMaker->id);
+            $target = $this->bankTarget($bank, $ci, [
+                'institution_name' => 'Co-Maker Bank',
+                'status' => ActivityStatus::Scheduled,
+                'scheduled_at' => now($timezone)->setTime(9, 0)->utc(),
+                'scheduled_has_time' => true,
+            ]);
+
+            $this->artisan('ci-activities:send-reminders')->assertSuccessful();
+
+            $payload = $this->actingAs($ci)->getJson(route('notifications.ci-activities.feed'))->assertOk()->json();
+            $this->assertStringContainsString('data-scheduled-today-item="bank_target:'.$target->id.'"', $payload['html']);
+            $this->assertStringContainsString('Co-Maker: Exact Bank Co-Maker', $payload['html']);
+
+            $notification = $ci->notifications()
+                ->where('data->target_type', CiActivityScheduledReminder::TARGET_TYPE_BANK)
+                ->where('data->target_id', $target->id)
+                ->sole();
+            $this->actingAs($ci)
+                ->post(route('notifications.ci-activities.read', $notification->id))
+                ->assertRedirect(route('client-folders.activities.index', [
+                    $folder,
+                    'person' => 'co-maker',
+                    'co_maker_id' => $coMaker->id,
+                ]));
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     public function test_feed_contains_an_individual_asset_target_notification_with_null_parent_schedule(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-08-29 01:00:00', 'UTC'));
@@ -223,7 +321,7 @@ class NotificationBellFeedTest extends TestCase
         }
     }
 
-    public function test_feed_request_creates_no_notification_rows_and_marks_nothing_read(): void
+    public function test_repeated_feed_requests_create_only_the_due_reminder_and_mark_nothing_read(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-08-29 01:00:00', 'UTC'));
         try {
@@ -233,13 +331,14 @@ class NotificationBellFeedTest extends TestCase
             $target = $this->bankTarget($bank, $ci, ['status' => ActivityStatus::Scheduled, 'scheduled_at' => Carbon::parse('2026-08-29 09:00:00', config('cims.display_timezone'))->utc(), 'scheduled_has_time' => true]);
             $this->notifyTarget($ci, $bank, $target, CiActivityScheduledReminder::TARGET_TYPE_BANK, $target->targetLabel(), $target->scheduled_at, true);
 
-            $before = DB::table('notifications')->count();
             $this->actingAs($ci)->getJson(route('notifications.ci-activities.feed'))->assertOk();
+            $afterFirstPoll = DB::table('notifications')->count();
             $this->actingAs($ci)->getJson(route('notifications.ci-activities.feed'))->assertOk();
-            $after = DB::table('notifications')->count();
+            $afterSecondPoll = DB::table('notifications')->count();
 
-            $this->assertSame($before, $after);
-            $this->assertNull($ci->notifications()->sole()->read_at);
+            $this->assertSame(2, $afterFirstPoll);
+            $this->assertSame($afterFirstPoll, $afterSecondPoll);
+            $this->assertTrue($ci->notifications()->get()->every(fn ($notification): bool => $notification->read_at === null));
         } finally {
             Carbon::setTestNow();
         }

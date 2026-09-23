@@ -16,6 +16,7 @@ use App\Models\ResidenceCheckPhoto;
 use App\Models\User;
 use App\Services\ClientFolders\ClientFolderEditingPresence;
 use App\Services\ClientFolders\ClientFolderFileCleanup;
+use App\Services\ClientFolders\CoMakerSavedRecords;
 use App\Services\Media\ClientMediaUploader;
 use App\Services\Media\PrivateMediaStorage;
 use App\Support\ClientFolders\MissingCoMakerResponse;
@@ -452,6 +453,7 @@ class CoMakerDeleteTest extends TestCase
         $empty = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Empty Maker']);
         $busy = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Busy Maker']);
         self::activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, $busy->id);
+        AuditLog::create(['user_id' => $ci->id, 'client_folder_id' => $folder->id, 'action' => 'cibi_report.updated', 'module' => 'cibi_report', 'description' => 'Applicant work.', 'metadata' => ['co_maker_id' => null]]);
 
         foreach ([$ci, User::factory()->seniorCreditInvestigator()->create(), User::factory()->administrator()->create()] as $actor) {
             $html = $this->actingAs($actor)->get(route('client-folders.show', $folder))->assertOk()->getContent();
@@ -492,6 +494,37 @@ class CoMakerDeleteTest extends TestCase
         $this->assertStringNotContainsString('close()', $refused);
         $this->assertStringContainsString('const payload = await response.json().catch(() => ({}));', $submit);
         $this->assertMatchesRegularExpression('/} catch \{\s*setCoMakerDeleteError\(dialog, CO_MAKER_DELETE_FAILED_MESSAGE\);\s*} finally \{\s*submit\?\.removeAttribute\(\'disabled\'\);/', $submit);
+    }
+
+    public function test_saved_record_flags_remain_one_batched_query_with_multiple_co_makers(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $empty = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Empty Maker']);
+        $busy = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Busy Maker']);
+        self::activity($folder, $ci, ActivityDefinition::BARANGAY_CHECK_CODE, $busy->id);
+        $savedRecords = app(CoMakerSavedRecords::class);
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $ids = $savedRecords->idsWithSavedRecords($folder);
+        $twoCoMakerQueries = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        foreach (range(1, 4) as $index) {
+            CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'Extra Maker '.$index]);
+        }
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $manyIds = $savedRecords->idsWithSavedRecords($folder);
+        $manyCoMakerQueries = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $this->assertSame([$busy->id], $ids->all());
+        $this->assertSame([$busy->id], $manyIds->all());
+        $this->assertFalse($manyIds->contains($empty->id));
+        $this->assertSame(1, $twoCoMakerQueries);
+        $this->assertSame($twoCoMakerQueries, $manyCoMakerQueries);
     }
 
     // ---------------------------------------------------------------- Helpers

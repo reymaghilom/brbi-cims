@@ -8,10 +8,12 @@ use App\Exceptions\ResidenceCheckConflictException;
 use App\Models\AuditLog;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
+use App\Models\MediaReference;
 use App\Models\ResidenceCheck;
 use App\Models\User;
 use App\Services\ClientFolders\ActivePersonResolver;
 use App\Services\ClientFolders\CiParticipantService;
+use App\Services\ClientFolders\ClientFolderFileCleanup;
 use App\Services\ClientFolders\PersonAddressResolver;
 use App\Services\ClientFolders\PersonCiDateResolver;
 use App\Services\ClientFolders\ResidenceBusinessCheckCompletionEvaluator;
@@ -31,6 +33,7 @@ class SaveResidenceCheck
         private readonly CiParticipantService $participants,
         private readonly UpdateResidenceCheckContributors $updateContributors,
         private readonly ClientProgressService $progress,
+        private readonly ClientFolderFileCleanup $fileCleanup,
     ) {}
 
     /** @param  array<string, mixed>  $data */
@@ -130,12 +133,14 @@ class SaveResidenceCheck
         // A replaced/removed Cloudinary asset must only ever be destroyed once the DB transaction
         // that stopped using it has actually committed — never from inside it, and never if it
         // rolls back — so these are collected here and only acted on after DB::transaction()
-        // returns successfully below. Local-file removal has no such constraint and keeps running
-        // immediately inside the transaction exactly as it already did.
+        // returns successfully below. Old local files are staged in the same transaction and
+        // retired through the durable cleanup queue only after the database change succeeds.
         $retiredCloudAssets = [];
+        $retiredLocalPaths = [];
+        $cleanupTaskIds = [];
 
         try {
-            $check = DB::transaction(function () use ($actor, $folder, $data, $checkId, $activePerson, &$storedUploads, &$retiredCloudAssets): ResidenceCheck {
+            $check = DB::transaction(function () use ($actor, $folder, $data, $checkId, $activePerson, &$storedUploads, &$retiredCloudAssets, &$retiredLocalPaths, &$cleanupTaskIds): ResidenceCheck {
                 // Existing checks are locked before the revision comparison and stay locked through
                 // every parent, contributor, photo, audit and progress mutation in this save.
                 $check = $checkId !== null
@@ -209,7 +214,7 @@ class SaveResidenceCheck
                     $newPhotoCount = count($data['photos'] ?? []);
                     $removedPhotoCount = $check->photos()->whereIn('id', $data['removed_photo_ids'] ?? [])->count();
                     $mapScreenshotChanged = isset($data['map_screenshot'])
-                        || (($data['remove_map_screenshot'] ?? false) && $check->map_screenshot_path);
+                        || (($data['remove_map_screenshot'] ?? false) && $check->hasMapScreenshot());
 
                     if (! $textFieldsChanged && ! $check->isDirty(['ci_date', 'location']) && $newPhotoCount === 0 && $removedPhotoCount === 0 && ! $mapScreenshotChanged && ! $participantsChanged) {
                         throw new NoChangesDetectedException('Nothing changed. No updates were saved to the database.');
@@ -242,7 +247,7 @@ class SaveResidenceCheck
                         if ($photo->isCloud()) {
                             $retiredCloudAssets[] = ['public_id' => $photo->cloud_public_id, 'resource_type' => $photo->cloud_resource_type, 'delivery_type' => $photo->cloud_delivery_type];
                         } else {
-                            $this->mediaUploader->deleteLocal($photo->path, $photo->thumbnail_path);
+                            array_push($retiredLocalPaths, $photo->path, $photo->thumbnail_path);
                         }
                         $photo->delete();
                         $photosRemoved++;
@@ -256,7 +261,7 @@ class SaveResidenceCheck
                     if ($check->hasCloudMapScreenshot()) {
                         $retiredCloudAssets[] = ['public_id' => $check->map_screenshot_cloud_public_id, 'resource_type' => $check->map_screenshot_cloud_resource_type, 'delivery_type' => $check->map_screenshot_cloud_delivery_type];
                     } else {
-                        $this->mediaUploader->deleteLocal($check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
+                        array_push($retiredLocalPaths, $check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
                     }
                     $check->fill([
                         'map_screenshot_file_name' => null,
@@ -279,7 +284,7 @@ class SaveResidenceCheck
                         if ($check->hasCloudMapScreenshot()) {
                             $retiredCloudAssets[] = ['public_id' => $check->map_screenshot_cloud_public_id, 'resource_type' => $check->map_screenshot_cloud_resource_type, 'delivery_type' => $check->map_screenshot_cloud_delivery_type];
                         } else {
-                            $this->mediaUploader->deleteLocal($check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
+                            array_push($retiredLocalPaths, $check->map_screenshot_path, $check->map_screenshot_thumbnail_path);
                         }
                     }
                     $stored = $this->mediaUploader->store($folder, $data['map_screenshot'], 'residence/map-screenshots', 'map_screenshot', $check->co_maker_id === null, $activePerson);
@@ -338,9 +343,15 @@ class SaveResidenceCheck
                 $this->completion->evaluate($folder, $activePerson?->id);
                 $this->progress->recalculate($folder);
 
+                $cleanupTaskIds = $this->fileCleanup->stage(['local' => array_map(
+                    fn (string $path): array => ['path' => $path, 'provider' => MediaReference::STORAGE_PROVIDER_LOCAL],
+                    array_values(array_unique(array_filter($retiredLocalPaths))),
+                )]);
+
                 return $check->refresh();
             });
 
+            $this->fileCleanup->retire($cleanupTaskIds);
             // The DB transaction has actually committed at this point — only now is it safe to
             // destroy any Cloudinary asset a replace/remove retired above.
             foreach ($retiredCloudAssets as $asset) {

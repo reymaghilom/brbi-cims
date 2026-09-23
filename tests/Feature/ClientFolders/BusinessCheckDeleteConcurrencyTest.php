@@ -142,7 +142,7 @@ class BusinessCheckDeleteConcurrencyTest extends TestCase
         // Refused by the request's own exists rule on check_id, before the action runs. The message
         // is the CI-facing sentence, not Laravel's default "The selected check id is invalid."
         $response->assertUnprocessable()->assertJsonValidationErrors([
-            'check_id' => 'This Business Check was deleted by another user while you were working on it. Please return to the Residence & Business Report page.',
+            'check_id' => 'This Business Check was deleted by another user while you were working on it. Please return to the Residence & Business Check page.',
         ]);
         $this->assertSame(0, BusinessCheck::query()->count());
         $this->assertDatabaseCount('business_check_photos', 0);

@@ -71,8 +71,8 @@ class SaveCibiReport
                 if ($baselineConflict) {
                     $editorName = $report->lastEditor?->full_name;
                     $message = $editorName
-                        ? "{$editorName} updated this report while you were editing. Please review the latest version before saving again."
-                        : 'This CI/BI Report was updated by another user while you were editing. Please review the latest version before saving again.';
+                        ? "{$editorName} updated this CI/BI Report while you were editing it. Your changes were not saved. Please refresh the report or reopen it to review the latest information before editing again."
+                        : 'This CI/BI Report was updated by another CI while you were editing it. Your changes were not saved. Please refresh the report or reopen it to review the latest information before editing again.';
 
                     throw ValidationException::withMessages(['expected_revision' => $message]);
                 }

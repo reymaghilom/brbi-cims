@@ -35,6 +35,12 @@ class BusinessExcelExporter
 {
     private const SHEET = 'BUSINESS REPORT';
 
+    public function __construct(
+        private readonly OfficialReportDataBuilder $dataBuilder,
+        private readonly CiParticipantService $participants,
+        private readonly ReportTemporaryFiles $temporaryFiles,
+    ) {}
+
     /**
      * "Other Business/Source of Income" has no section on the shared BUSINESS REPORT sheet —
      * its reference layout (income-source ranking checklist) lives on this separate sheet,
@@ -116,8 +122,6 @@ class BusinessExcelExporter
 
     /** Schema `tables.branches.*` column keys (differ from the retail section's Eloquent attribute names) mapped to the shared branches-table columns. */
     private const SCHEMA_BRANCH_COLUMNS = ['C' => 'location', 'G' => 'frontage', 'H' => 'total_area', 'I' => 'air_conditioned', 'J' => 'operating_days_hours', 'M' => 'shifts', 'N' => 'employees_per_shift', 'P' => 'average_sales_per_shift', 'R' => 'inventory_level', 'T' => 'monthly_rent', 'V' => 'years_in_area', 'X' => 'nearby_brands'];
-
-    public function __construct(private readonly OfficialReportDataBuilder $dataBuilder, private readonly CiParticipantService $participants) {}
 
     public function generate(ClientFolder $folder, IncomeSource $source): string
     {
@@ -383,8 +387,7 @@ class BusinessExcelExporter
 
     private function save(Spreadsheet $book): string
     {
-        $temporary = tempnam(sys_get_temp_dir(), 'brbi-business-xlsx-');
-        abort_if($temporary === false, 500, 'Unable to prepare the Excel report.');
+        $temporary = $this->temporaryFiles->create('brbi-business-xlsx-');
         try {
             (new Xlsx($book))->save($temporary);
             $bytes = file_get_contents($temporary);

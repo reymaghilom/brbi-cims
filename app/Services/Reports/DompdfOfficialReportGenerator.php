@@ -15,6 +15,7 @@ class DompdfOfficialReportGenerator implements PdfGenerator
     public function __construct(
         private readonly ReportMediaResolver $mediaResolver,
         private readonly CiTeamDocumentStorage $documents,
+        private readonly ReportTemporaryFiles $temporaryFiles,
     ) {}
 
     public function generate(string $template, array $data, ReportRenderOptions $options): GeneratedReportArtifact
@@ -29,7 +30,7 @@ class DompdfOfficialReportGenerator implements PdfGenerator
             $dompdfOptions->set('defaultFont', 'DejaVu Sans');
             $dompdfOptions->set('isRemoteEnabled', false);
             $dompdfOptions->set('isPhpEnabled', false);
-            $dompdfOptions->set('chroot', ReportImageRoots::all());
+            $this->temporaryFiles->configureDompdf($dompdfOptions);
             // Dompdf's own default media type is "screen" (not "print"), so without this it wrongly
             // applies every report stylesheet's `@media screen` rules — including the official-sheet
             // `min-height` meant only for the on-screen preview — to the generated PDF too, forcing

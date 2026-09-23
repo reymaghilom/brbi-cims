@@ -20,7 +20,10 @@ use Illuminate\Support\Collection;
  */
 class BusinessBatchPdfExporter
 {
-    public function __construct(private readonly OfficialReportDataBuilder $dataBuilder) {}
+    public function __construct(
+        private readonly OfficialReportDataBuilder $dataBuilder,
+        private readonly ReportTemporaryFiles $temporaryFiles,
+    ) {}
 
     /** @param  Collection<int, IncomeSource>  $sources */
     public function generate(ClientFolder $folder, Collection $sources): string
@@ -41,7 +44,7 @@ class BusinessBatchPdfExporter
         $options->set('defaultFont', 'DejaVu Sans');
         $options->set('isRemoteEnabled', false);
         $options->set('isPhpEnabled', false);
-        $options->set('chroot', ReportImageRoots::all());
+        $this->temporaryFiles->configureDompdf($options);
         // Same fix as DompdfOfficialReportGenerator: without this, Dompdf applies the preview-only
         // `@media screen` rules (meant for the on-screen browser view) to the PDF too.
         $options->set('defaultMediaType', 'print');

@@ -33,7 +33,7 @@ class BusinessReportEditDeleteConcurrencyTest extends TestCase
 {
     use RefreshDatabase;
 
-    private const DELETED_WHILE_EDITING = 'This Business Report was deleted by another CI while you were editing it. Your changes were not saved. Please refresh or return to the Business Reports page.';
+    private const DELETED_WHILE_EDITING = 'This Business Report was deleted by another user while you were working on it. Please return to the Business Report page.';
 
     private const UNAVAILABLE_ON_SAVE = 'This Business Report is no longer available. It may have been deleted by another CI while you were editing it. Please return to the Business Reports page and review the latest information.';
 
@@ -71,7 +71,8 @@ class BusinessReportEditDeleteConcurrencyTest extends TestCase
         $auditsBefore = AuditLog::query()->count();
 
         $this->save($ci1, $folder, $source, 'Stale Resurrection', $openedRevision)
-            ->assertSessionHasErrors(['expected_revision' => self::DELETED_WHILE_EDITING]);
+            ->assertSessionHas('business_report_deleted.message', self::DELETED_WHILE_EDITING)
+            ->assertSessionHasNoErrors();
 
         $fresh = $source->fresh();
         $this->assertSame(0, BusinessReport::query()->where('income_source_id', $source->id)->count());
@@ -83,7 +84,7 @@ class BusinessReportEditDeleteConcurrencyTest extends TestCase
         $this->assertSame($auditsBefore, AuditLog::query()->count());
     }
 
-    public function test_the_stale_form_shows_the_friendly_deleted_banner(): void
+    public function test_the_stale_form_renders_the_terminal_deleted_notification(): void
     {
         [$ci1, $ci2, $folder] = $this->twoCis();
         $source = $this->savedBusiness($ci1, $folder, 'Original Store');
@@ -95,6 +96,7 @@ class BusinessReportEditDeleteConcurrencyTest extends TestCase
             ->followingRedirects()
             ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $this->fields('Stale Resurrection') + ['expected_revision' => $openedRevision])
             ->assertOk()
+            ->assertSee('data-business-deleted-notify', false)
             ->assertSee(self::DELETED_WHILE_EDITING)
             ->assertDontSee('App\\Models', false);
     }
@@ -356,6 +358,18 @@ class BusinessReportEditDeleteConcurrencyTest extends TestCase
     }
 
     // ---------------------------------------------------------------- Bulk Delete Selected
+
+    public function test_delete_selected_modal_actions_are_equal_width_on_mobile_and_auto_width_on_desktop(): void
+    {
+        [$ci1, , $folder] = $this->twoCis();
+        $this->savedBusiness($ci1, $folder, 'Responsive Store');
+
+        $html = $this->actingAs($ci1)->get(route('client-folders.income-sources.manage', $folder))->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('/class="ui-button-secondary w-full sm:w-auto"[^>]*data-business-delete-selected-cancel/', $html);
+        $this->assertMatchesRegularExpression('/class="w-full sm:w-auto"[^>]*data-business-delete-selected-form/', $html);
+        $this->assertMatchesRegularExpression('/class="ui-button-danger w-full sm:w-auto"[^>]*data-business-delete-selected-submit/', $html);
+    }
 
     public function test_each_selectable_row_renders_its_current_revision(): void
     {

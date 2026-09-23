@@ -181,12 +181,12 @@
             <p class="text-sm leading-6 text-text-muted" data-business-delete-selected-body>You are about to permanently delete the selected Business Reports. This action cannot be undone. Existing Business Checks will remain unchanged.</p>
             <p class="mt-3 hidden rounded-control border border-danger/25 bg-danger-soft px-3.5 py-2.5 text-sm text-danger" role="alert" data-business-delete-selected-error></p>
             <x-slot:footer>
-                <button type="button" class="ui-button-secondary" data-modal-close data-business-delete-selected-cancel>Cancel</button>
-                <form method="POST" action="{{ route('client-folders.income-sources.business-report.destroy-selected', [$clientFolder] + $personParams) }}" data-business-delete-selected-form>
+                <button type="button" class="ui-button-secondary w-full sm:w-auto" data-modal-close data-business-delete-selected-cancel>Cancel</button>
+                <form method="POST" action="{{ route('client-folders.income-sources.business-report.destroy-selected', [$clientFolder] + $personParams) }}" class="w-full sm:w-auto" data-business-delete-selected-form>
                     @csrf
                     @method('DELETE')
                     <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
-                    <button type="submit" class="ui-button-danger" data-business-delete-selected-submit>Delete</button>
+                    <button type="submit" class="ui-button-danger w-full sm:w-auto" data-business-delete-selected-submit>Delete</button>
                 </form>
             </x-slot:footer>
         </x-ui.modal>

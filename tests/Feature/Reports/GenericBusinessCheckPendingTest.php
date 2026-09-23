@@ -38,42 +38,37 @@ class GenericBusinessCheckPendingTest extends TestCase
     }
 
     // ---------------------------------------------------------------------
-    // TEST A — two Business Reports, no checks
+    // TEST A — any number of Business Reports, no checks
     // ---------------------------------------------------------------------
 
-    public function test_two_completed_business_reports_produce_exactly_one_generic_pending_check(): void
+    public function test_one_three_or_five_business_reports_produce_exactly_one_generic_pending_check(): void
     {
         $ci = User::factory()->create();
-        $folder = $this->folder($ci);
-        $a = $this->business($folder, 'BUSINESS A');
-        $b = $this->business($folder, 'BUSINESS B');
+        foreach ([1, 3, 5] as $businessCount) {
+            $folder = $this->folder($ci);
+            $businesses = collect(range(1, $businessCount))->map(
+                fn (int $number): IncomeSource => $this->business($folder, "BUSINESS $businessCount-$number"),
+            );
 
-        $checks = $this->businessChecks($ci, $folder);
+            $checks = $this->businessChecks($ci, $folder);
+            $this->assertCount(1, $checks, 'One generic entry point, never one Pending row per business.');
+            $this->assertFalse($checks[0]->isCompleted);
+            $this->assertNull($checks[0]->incomeSourceId, 'The generic row belongs to no particular business.');
+            $this->assertNull($checks[0]->businessName, 'No business name is attached to the generic row.');
+            $this->assertNull($checks[0]->sourceId, 'It is derived, never a stored row.');
+            $this->assertSame(route('client-folders.business-checks.create', $folder->id), $checks[0]->continueUrl());
 
-        $this->assertCount(1, $checks, 'One generic entry point, never one Pending row per business.');
-        $this->assertFalse($checks[0]->isCompleted);
-        $this->assertNull($checks[0]->incomeSourceId, 'The generic row belongs to no particular business.');
-        $this->assertNull($checks[0]->businessName, 'No business name is attached to the generic row.');
-        $this->assertNull($checks[0]->sourceId, 'It is derived, never a stored row.');
-        $this->assertSame(route('client-folders.business-checks.create', $folder->id), $checks[0]->continueUrl());
-
-        // Business Report rows are untouched: still one per exact business.
-        $reports = $this->itemsFor($ci, $folder, 'business_report');
-        $this->assertSame([$a->id, $b->id], $reports->pluck('incomeSourceId')->sort()->values()->all());
-        $this->assertTrue($reports->every(fn (ReportWorkItem $row): bool => $row->isCompleted));
-
-        // The page itself never renders a per-business Pending Business Check.
-        $html = $this->actingAs($ci)->get(route('reports.index', ['report_type' => 'business_check', 'tab' => 'pending']))->assertOk()->getContent();
-        foreach (['BUSINESS A', 'BUSINESS B'] as $name) {
-            $this->assertStringNotContainsString($name, $html);
+            $reports = $this->itemsFor($ci, $folder, 'business_report');
+            $this->assertSame($businesses->pluck('id')->sort()->values()->all(), $reports->pluck('incomeSourceId')->sort()->values()->all());
+            $this->assertDatabaseCount('business_checks', 0);
         }
     }
 
     // ---------------------------------------------------------------------
-    // TEST B — one check saved, one business still eligible
+    // TEST B — one saved check replaces the standard placeholder
     // ---------------------------------------------------------------------
 
-    public function test_one_saved_check_leaves_the_single_generic_pending_entry_point(): void
+    public function test_one_saved_check_is_the_only_business_check_row_regardless_of_other_reports(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci);
@@ -89,26 +84,25 @@ class GenericBusinessCheckPendingTest extends TestCase
         $this->assertSame($checkA->id, $completed[0]->sourceId);
         $this->assertSame('BUSINESS A', $completed[0]->businessName);
 
-        // Business B stays eligible, so ONE generic entry point remains — not a row named after B.
+        // Business B stays a separate Business Report, but cannot manufacture another Business Check.
         $pending = $checks->reject(fn (ReportWorkItem $row): bool => $row->isCompleted)->values();
-        $this->assertCount(1, $pending);
-        $this->assertNull($pending[0]->incomeSourceId);
-        $this->assertNull($pending[0]->businessName);
+        $this->assertCount(0, $pending);
+        $this->assertCount(1, $checks);
         $this->assertNull($checks->firstWhere('incomeSourceId', $b->id));
     }
 
     // ---------------------------------------------------------------------
-    // TEST C — every eligible business checked
+    // TEST C — additional checks are explicit saved rows only
     // ---------------------------------------------------------------------
 
-    public function test_the_generic_pending_disappears_once_every_eligible_business_is_checked(): void
+    public function test_explicit_additional_checks_appear_but_new_business_reports_do_not_change_their_count(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci);
         $a = $this->business($folder, 'BUSINESS A');
         $b = $this->business($folder, 'BUSINESS B');
-        $this->checkFor($ci, $folder, $a);
-        $this->checkFor($ci, $folder, $b);
+        $checkA = $this->checkFor($ci, $folder, $a);
+        $checkB = $this->checkFor($ci, $folder, $b);
 
         $checks = $this->businessChecks($ci, $folder);
 
@@ -117,12 +111,21 @@ class GenericBusinessCheckPendingTest extends TestCase
         $this->assertSame([$a->id, $b->id], $checks->pluck('incomeSourceId')->sort()->values()->all());
         $this->assertCount(0, $checks->reject(fn (ReportWorkItem $row): bool => $row->isCompleted), 'No entry point is needed.');
 
-        // A new unchecked business brings the single entry point back.
+        $this->assertSame([$checkA->id, $checkB->id], $checks->pluck('sourceId')->sort()->values()->all());
+
+        // A new Business Report cannot bring the standard placeholder back.
         $this->business($folder, 'BUSINESS C');
         $after = $this->businessChecks($ci, $folder);
-        $pending = $after->reject(fn (ReportWorkItem $row): bool => $row->isCompleted)->values();
-        $this->assertCount(1, $pending);
-        $this->assertNull($pending[0]->incomeSourceId);
+        $this->assertCount(2, $after);
+        $this->assertSame([$checkA->id, $checkB->id], $after->pluck('sourceId')->sort()->values()->all());
+        $this->assertDatabaseCount('business_checks', 2);
+
+        $a->businessReport()->update(['main_business_address' => 'EDITED REPORT ADDRESS']);
+        $b->businessReport()->delete();
+        $afterReportChanges = $this->businessChecks($ci, $folder);
+        $this->assertCount(2, $afterReportChanges);
+        $this->assertSame([$checkA->id, $checkB->id], $afterReportChanges->pluck('sourceId')->sort()->values()->all());
+        $this->assertDatabaseCount('business_checks', 2);
     }
 
     // ---------------------------------------------------------------------
@@ -154,7 +157,7 @@ class GenericBusinessCheckPendingTest extends TestCase
         $this->assertSame(0, BusinessReport::query()->count());
     }
 
-    public function test_a_business_created_after_a_manual_check_brings_the_entry_point_back(): void
+    public function test_a_business_created_after_a_manual_check_does_not_bring_the_entry_point_back(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci);
@@ -167,8 +170,7 @@ class GenericBusinessCheckPendingTest extends TestCase
         $checks = $this->businessChecks($ci, $folder);
         $pending = $checks->reject(fn (ReportWorkItem $row): bool => $row->isCompleted)->values();
 
-        $this->assertCount(1, $pending);
-        $this->assertNull($pending[0]->incomeSourceId);
+        $this->assertCount(0, $pending);
         $this->assertCount(1, $checks->filter(fn (ReportWorkItem $row): bool => $row->isCompleted), 'The manual check stays Completed on its own row.');
     }
 
@@ -214,6 +216,31 @@ class GenericBusinessCheckPendingTest extends TestCase
         $this->assertCount(1, $completed);
         $this->assertSame($coMakerB->id, $completed[0]->coMakerId);
         $this->assertSame($bBusiness->id, $completed[0]->incomeSourceId);
+    }
+
+    public function test_a_saved_check_suppresses_only_its_exact_person_placeholder(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->folder($ci);
+        $coMakerA = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER A']);
+        $coMakerB = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'CO MAKER B']);
+        $applicantBusiness = $this->business($folder, 'APPLICANT BUSINESS');
+        $coMakerABusiness = $this->business($folder, 'CO MAKER A BUSINESS', $coMakerA->id);
+        $this->business($folder, 'CO MAKER B BUSINESS', $coMakerB->id);
+
+        $applicantCheck = $this->checkFor($ci, $folder, $applicantBusiness);
+        $rows = $this->businessChecks($ci, $folder);
+
+        $this->assertCount(3, $rows);
+        $this->assertSame($applicantCheck->id, $rows->whereStrict('coMakerId', null)->sole()->sourceId);
+        $this->assertFalse($rows->where('coMakerId', $coMakerA->id)->sole()->isCompleted);
+        $this->assertFalse($rows->where('coMakerId', $coMakerB->id)->sole()->isCompleted);
+
+        $coMakerACheck = $this->checkFor($ci, $folder, $coMakerABusiness);
+        $after = $this->businessChecks($ci, $folder);
+        $this->assertCount(3, $after);
+        $this->assertSame($coMakerACheck->id, $after->where('coMakerId', $coMakerA->id)->sole()->sourceId);
+        $this->assertFalse($after->where('coMakerId', $coMakerB->id)->sole()->isCompleted);
     }
 
     // ---------------------------------------------------------------------
@@ -266,7 +293,7 @@ class GenericBusinessCheckPendingTest extends TestCase
     private function itemsFor(User $ci, ClientFolder $folder, string $kind): Collection
     {
         return collect($this->actingAs($ci)
-            ->get(route('reports.index', ['report_type' => $kind]))
+            ->get(route('reports.index', ['report_type' => $kind, 'client_folder_id' => $folder->id, 'per_page' => 50]))
             ->assertOk()
             ->viewData('items')
             ->items())

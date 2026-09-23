@@ -120,4 +120,66 @@ class IncomeSource extends Model implements HasCiParticipants
         return IncomeSourceTemplate::defaultBusinessNameFor($this->template_type)
             ?: ($this->businessReport?->business_name ?: ($this->business_name ?: $this->source_name));
     }
+
+    /**
+     * The one-way name snapshot a newly linked Business Check should own.
+     *
+     * Other Business / Source of Income is a generic container, so its template name is never the
+     * useful subject when its report has saved concrete checkbox selections. Resolve those stable
+     * keys to their human-readable labels now; SaveBusinessCheck persists the result in its own
+     * business_name column, keeping later Business Report edits and custom-category renames from
+     * silently changing an already-saved Check. Every specific template retains its existing name.
+     */
+    public function businessCheckSnapshotName(): string
+    {
+        if ($this->template_type !== 'other_business_source_of_income') {
+            return $this->resolvedBusinessName();
+        }
+
+        $selectedKeys = array_values(array_filter(
+            (array) data_get($this->businessReport?->template_data, 'fields.income_sources', []),
+            static fn (mixed $key): bool => is_string($key) && filled($key),
+        ));
+        if ($selectedKeys === []) {
+            return $this->otherBusinessFallbackName();
+        }
+
+        $schema = CustomBusinessCategory::resolveOutputSchema(
+            $this->template?->businessReportSchema() ?? [],
+            $selectedKeys,
+        );
+        $labelsByKey = collect((array) data_get($schema, 'income_source_groups', []))
+            ->flatten(1)
+            ->filter(fn (mixed $choice): bool => is_array($choice) && filled($choice['key'] ?? null) && filled($choice['label'] ?? null))
+            ->mapWithKeys(fn (array $choice): array => [(string) $choice['key'] => (string) $choice['label']]);
+        $selectedLabel = collect($selectedKeys)
+            ->map(fn (string $key): ?string => $labelsByKey->get($key))
+            ->filter()
+            ->first();
+
+        return filled($selectedLabel)
+            ? $selectedLabel
+            : $this->otherBusinessFallbackName();
+    }
+
+    /** Meaningful saved name before the generic template text, matching Business Check precedence. */
+    private function otherBusinessFallbackName(): string
+    {
+        $genericKeys = ['otherbusinesssourceofincome', 'otherbusinessincomesource'];
+        $meaningful = collect([
+            $this->businessReport?->business_name,
+            $this->business_name,
+            $this->source_name,
+        ])->first(function (mixed $name) use ($genericKeys): bool {
+            if (! is_string($name) || blank($name)) {
+                return false;
+            }
+
+            $normalized = mb_strtolower((string) preg_replace('/[^a-z0-9]+/i', '', $name));
+
+            return ! in_array($normalized, $genericKeys, true);
+        });
+
+        return $meaningful ?: (IncomeSourceTemplate::defaultBusinessNameFor($this->template_type) ?? 'Other Business / Source of Income');
+    }
 }

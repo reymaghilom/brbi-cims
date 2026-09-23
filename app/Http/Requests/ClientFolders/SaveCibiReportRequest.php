@@ -5,6 +5,8 @@ namespace App\Http\Requests\ClientFolders;
 use App\Enums\PartyType;
 use App\Models\CibiBankAccount;
 use App\Services\ClientFolders\ActivePersonResolver;
+use App\Services\ClientFolders\BusinessReportInitialData;
+use App\Support\BranchOptions;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -29,6 +31,9 @@ class SaveCibiReportRequest extends FormRequest
 
     public function rules(): array
     {
+        $folder = $this->route('clientFolder');
+        $existingBranch = $folder->cibiReport()->where('co_maker_id', $this->coMakerId())->value('branch_name');
+        $initialBranch = app(BusinessReportInitialData::class)->for($folder, $this->coMakerId())['branch_name'] ?? null;
         $rules = [
             'co_maker_id' => ActivePersonResolver::rule($this->route('clientFolder')),
             'expected_revision' => ['nullable', 'integer', 'min:0'],
@@ -36,7 +41,7 @@ class SaveCibiReportRequest extends FormRequest
             'start_date' => ['required', 'date', 'before_or_equal:today'],
             'submitted_date' => ['required', 'date', 'after_or_equal:start_date', 'before_or_equal:today'],
             'party_type' => ['required', Rule::enum(PartyType::class)],
-            'branch_name' => ['required', 'string', 'max:255'],
+            'branch_name' => ['required', 'string', 'max:255', Rule::in(BranchOptions::allowed($existingBranch, $initialBranch))],
             'account_officer_name' => ['required', 'string', 'max:255'],
             'amount_applied' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'],
             'ci_risk_level' => ['required', Rule::in(['very_low', 'low', 'mid', 'high', 'very_high'])],

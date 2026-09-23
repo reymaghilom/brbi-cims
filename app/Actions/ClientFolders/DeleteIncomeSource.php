@@ -9,6 +9,7 @@ use App\Models\BusinessReport;
 use App\Models\ClientFolder;
 use App\Models\IncomeSource;
 use App\Models\User;
+use App\Services\ClientFolders\ClientFolderFileCleanup;
 use App\Services\ClientFolders\IncomeSourcesCompletionEvaluator;
 use App\Services\ClientFolders\ResidenceBusinessCheckCompletionEvaluator;
 use App\Services\Media\BusinessCheckMediaCleanup;
@@ -24,6 +25,7 @@ class DeleteIncomeSource
         private readonly ResidenceBusinessCheckCompletionEvaluator $checkCompletion,
         private readonly ClientProgressService $progress,
         private readonly BusinessCheckMediaCleanup $mediaCleanup,
+        private readonly ClientFolderFileCleanup $fileCleanup,
         private readonly ClientMediaUploader $mediaUploader,
     ) {}
 
@@ -37,8 +39,9 @@ class DeleteIncomeSource
         // Same deferred-cleanup convention as DeleteBusinessCheck: the linked check's Cloudinary
         // assets are only destroyed once the transaction below has committed.
         $retiredCloudAssets = [];
+        $cleanupTaskIds = [];
 
-        DB::transaction(function () use ($actor, $folder, $source, $expectedRevision, &$retiredCloudAssets): void {
+        DB::transaction(function () use ($actor, $folder, $source, $expectedRevision, &$retiredCloudAssets, &$cleanupTaskIds): void {
             $lockedSource = $this->exactSourceQuery($folder, $source)->lockForUpdate()->firstOrFail();
             // The HTTP delete route requires the token, so null is only ever an in-process caller.
             if ($expectedRevision !== null && $expectedRevision !== $lockedSource->revision) {
@@ -65,7 +68,7 @@ class DeleteIncomeSource
             // business_check.deleted lifecycle event beside this action's income_source.deleted.
             $report?->delete();
             if ($check !== null) {
-                $retiredCloudAssets = $this->mediaCleanup->purgeLocalFilesAndCollectCloudAssets($check);
+                $retiredCloudAssets = $this->mediaCleanup->stageLocalFilesAndCollectCloudAssets($check, $cleanupTaskIds);
                 $check->delete();
             }
             $lockedSource->forceDelete();
@@ -93,7 +96,8 @@ class DeleteIncomeSource
             $this->progress->recalculate($folder);
         });
 
-        DB::afterCommit(function () use ($retiredCloudAssets): void {
+        DB::afterCommit(function () use ($cleanupTaskIds, $retiredCloudAssets): void {
+            $this->fileCleanup->retire($cleanupTaskIds);
             foreach ($retiredCloudAssets as $asset) {
                 $this->mediaUploader->retireCloudAsset($asset['public_id'], $asset['resource_type'], $asset['delivery_type']);
             }

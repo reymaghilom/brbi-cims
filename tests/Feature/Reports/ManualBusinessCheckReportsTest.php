@@ -289,12 +289,11 @@ class ManualBusinessCheckReportsTest extends TestCase
         $this->assertSame($check->id, $completed->first()->sourceId);
         $this->assertSame($businessA->id, $completed->first()->incomeSourceId);
 
-        // Business B is still unchecked, so ONE generic entry point remains for creating the next
-        // Business Check — never a Pending row named after Business B.
+        // Business B remains an independent Business Report, but it does not manufacture another
+        // Business Check row or keep the first-activity placeholder alive.
         $pending = $rows->reject(fn (ReportWorkItem $row): bool => $row->isCompleted)->values();
-        $this->assertCount(1, $pending);
-        $this->assertNull($pending[0]->incomeSourceId);
-        $this->assertNull($pending[0]->businessName);
+        $this->assertCount(0, $pending);
+        $this->assertCount(1, $rows);
         $this->assertNull($rows->firstWhere('incomeSourceId', $businessB->id));
     }
 

@@ -1879,7 +1879,8 @@ class IncomeSourcesTest extends TestCase
 
     public function test_business_header_uses_saved_client_values_and_keeps_its_optional_dates_independent_from_cibi(): void
     {
-        [$ci, $folder, $source] = $this->createSource('leasing_non_agricultural');
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         $cibiStart = now()->subDays(12)->toDateString();
         $cibiSubmitted = now()->subDays(10)->toDateString();
         CibiReport::factory()->create([
@@ -1892,7 +1893,7 @@ class IncomeSourcesTest extends TestCase
             'account_officer_name' => 'Saved Account Officer',
             'amount_applied' => 275000,
         ]);
-        $source->update(['amount_applied' => 'Stale Business Amount']);
+        [, , $source] = $this->createSource('leasing_non_agricultural', $ci, $folder);
 
         $headerResponse = $this->actingAs($ci)
             ->get(route('client-folders.income-sources.edit', [$folder, $source]))
@@ -1905,7 +1906,6 @@ class IncomeSourcesTest extends TestCase
             ->assertSee('business-report-party-check" aria-hidden="true">( ✓ )', false)
             ->assertSee('id="branch_name"', false)
             ->assertSee('id="account_officer_name"', false)
-            ->assertSee('readonly aria-readonly="true"', false)
             ->assertSee('id="amount_applied"', false)
             ->assertSee('type="text"', false)
             ->assertSee('data-business-template-preview="', false)
@@ -1913,9 +1913,9 @@ class IncomeSourcesTest extends TestCase
             ->assertSee('name="submitted_date"', false)
             ->assertDontSee('value="'.$cibiStart.'"', false)
             ->assertDontSee('value="'.$cibiSubmitted.'"', false);
-        $this->assertMatchesRegularExpression('/<input id="amount_applied" type="text" value="275,000\.00" class="business-report-header-control" readonly aria-readonly="true">/', $headerResponse->getContent());
-        $this->assertDoesNotMatchRegularExpression('/<input id="amount_applied"[^>]+(?:name=|disabled)/', $headerResponse->getContent());
-        $headerResponse->assertDontSee('Stale Business Amount');
+        $this->assertMatchesRegularExpression('/<select id="branch_name"[^>]+name="branch_name"[^>]*>.*?<option value="Saved Client Branch" selected>/s', $headerResponse->getContent());
+        $this->assertMatchesRegularExpression('/<input id="amount_applied" name="amount_applied"[^>]+value="275,000\.00"/', $headerResponse->getContent());
+        $this->assertDoesNotMatchRegularExpression('/<input id="(?:account_officer_name|amount_applied)"[^>]+readonly/', $headerResponse->getContent());
 
         $stylesheet = file_get_contents(resource_path('css/app.css'));
         preg_match('/\.business-report-official-header\s*\{([^}]*)\}/', $stylesheet, $headerRule);
@@ -1927,7 +1927,9 @@ class IncomeSourcesTest extends TestCase
         $payload['intent'] = 'stay';
         $payload['start_date'] = $businessStart;
         $payload['submitted_date'] = $businessSubmitted;
-        $payload['amount_applied'] = 'PHP 275,000 / approved range';
+        $payload['branch_name'] = 'BLU TIN-AO';
+        $payload['account_officer_name'] = 'Business Snapshot Officer';
+        $payload['amount_applied'] = '275,000.00';
 
         $this->actingAs($ci)
             ->put(route('client-folders.income-sources.business.update', [$folder, $source]), $payload + ['expected_revision' => $source->fresh()->revision])
@@ -1935,7 +1937,9 @@ class IncomeSourcesTest extends TestCase
 
         $this->assertSame($businessStart, $source->businessReport->fresh()->start_date->toDateString());
         $this->assertSame($businessSubmitted, $source->businessReport->fresh()->submitted_date->toDateString());
-        $this->assertSame('Stale Business Amount', $source->fresh()->amount_applied);
+        $this->assertSame('BLU TIN-AO', $source->fresh()->branch_name);
+        $this->assertSame('Business Snapshot Officer', $source->fresh()->account_officer_name);
+        $this->assertSame('275000.00', $source->fresh()->amount_applied);
         $this->assertSame($cibiStart, $folder->cibiReport->fresh()->start_date->toDateString());
         $this->assertSame($cibiSubmitted, $folder->cibiReport->fresh()->submitted_date->toDateString());
 
@@ -1943,8 +1947,9 @@ class IncomeSourcesTest extends TestCase
         $this->actingAs($ci)
             ->get(route('client-folders.income-sources.edit', [$folder, $source]))
             ->assertOk()
-            ->assertSee('id="amount_applied" type="text" value="1,000,000.50"', false)
-            ->assertDontSee('value="275,000.00"', false);
+            ->assertSee('id="amount_applied" name="amount_applied"', false)
+            ->assertSee('value="275,000.00"', false)
+            ->assertDontSee('value="1,000,000.50"', false);
     }
 
     public function test_official_fallback_saves_ranked_declared_items_and_requires_rank_one_to_complete(): void
@@ -2913,6 +2918,42 @@ class IncomeSourcesTest extends TestCase
             ->assertSessionHas('statusType', 'info');
 
         $this->assertSame($revisionBefore, $source->refresh()->revision);
+    }
+
+    public function test_business_report_can_be_saved_before_cibi_with_editable_application_snapshot_fields(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $template = IncomeSourceTemplate::where('template_type', 'leasing_non_agricultural')->firstOrFail();
+
+        $page = $this->actingAs($ci)->get(route('client-folders.income-sources.index', $folder))->assertOk();
+        $page->assertSee('<select id="branch_name" name="branch_name"', false)
+            ->assertSee('<option value="CM RECTO"', false)
+            ->assertSee('<option value="BLU MALITBOG"', false)
+            ->assertSee('id="account_officer_name" name="account_officer_name"', false)
+            ->assertSee('id="amount_applied" name="amount_applied"', false);
+        $this->assertDoesNotMatchRegularExpression('/<(?:select|input) id="(?:branch_name|account_officer_name|amount_applied)"[^>]+readonly/', $page->getContent());
+
+        $payload = $this->businessPayload() + [
+            'income_source_template_id' => $template->id,
+            'branch_name' => 'BLU MALITBOG',
+            'account_officer_name' => 'FIRST BUSINESS OFFICER',
+            'amount_applied' => '450,000.00',
+        ];
+        $this->actingAs($ci)
+            ->post(route('client-folders.income-sources.store', $folder), $payload)
+            ->assertSessionHasNoErrors();
+
+        $source = $folder->incomeSources()->sole();
+        $this->assertSame('BLU MALITBOG', $source->branch_name);
+        $this->assertSame('FIRST BUSINESS OFFICER', $source->account_officer_name);
+        $this->assertSame('450000.00', $source->amount_applied);
+        $this->assertDatabaseCount('cibi_reports', 0);
+
+        $source->update(['branch_name' => 'HISTORICAL BRANCH']);
+        $this->actingAs($ci)->get(route('client-folders.income-sources.edit', [$folder, $source]))
+            ->assertOk()
+            ->assertSee('<option value="HISTORICAL BRANCH" selected>', false);
     }
 
     private function createSource(string $templateType, ?User $ci = null, ?ClientFolder $folder = null): array

@@ -68,12 +68,13 @@ class ResidenceCheckDeleteConcurrencyTest extends TestCase
         ], ['Accept' => 'application/json', 'X-Requested-With' => 'XMLHttpRequest']);
 
         // Refused by SaveResidenceCheckRequest's own exists rule on check_id, before the action is
-        // ever reached — a plain validation failure, never a success and never the "updated by
-        // another user" conflict wording, which would wrongly imply the record is still there to
-        // reload. Nothing was recreated and no photo was uploaded on the way. The message is the
-        // CI-facing sentence, not Laravel's default "The selected check id is invalid."
-        $response->assertUnprocessable()->assertJsonValidationErrors([
-            'check_id' => 'This Residence Check was deleted by another user while you were working on it. Please return to the Residence & Business Report page.',
+        // ever reached — the dedicated deleted-record response, never a success and never the
+        // "updated by another user" conflict wording, which would wrongly imply the record still
+        // exists to reload. Nothing was recreated and no photo was uploaded on the way.
+        $response->assertNotFound()->assertJson([
+            'result' => 'deleted',
+            'message' => 'This Residence Check was deleted by another user while you were working on it. Please return to the Residence & Business Check page.',
+            'residence_check_id' => $check->id,
         ]);
         $this->assertSame(0, ResidenceCheck::query()->count());
         $this->assertDatabaseCount('residence_check_photos', 0);

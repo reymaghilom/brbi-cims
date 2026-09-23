@@ -8,9 +8,9 @@
         <x-slot:description>Enter the minimum client identity details. The stable folder number will be generated securely after submission.</x-slot:description>
     </x-ui.page-header>
 
-    <form method="POST" action="{{ route('client-folders.store') }}" class="max-w-4xl" data-submit-guard>
+    <form method="POST" action="{{ route('client-folders.store') }}" class="mx-auto w-full max-w-5xl pb-6" data-submit-guard>
         @csrf
-        <x-ui.form-section title="Client identity" description="Names are normalized for the official filing-cabinet display.">
+        <x-ui.form-section title="Client identity" description="Enter the client's name as it should appear in the official filing cabinet.">
             <div>
                 <label for="last_name" class="ui-label">Last name <span class="text-danger" aria-hidden="true">*</span></label>
                 <input id="last_name" name="last_name" value="{{ old('last_name') }}" class="ui-control" required maxlength="100" autocomplete="family-name" aria-describedby="last_name-error">
@@ -33,32 +33,17 @@
             </div>
         </x-ui.form-section>
 
-        <x-ui.form-section title="Credit Investigator" description="Client Folders are a shared workspace — every Credit Investigator can open and work on any active folder." class="mt-6">
-            @if(auth()->user()->role === App\Enums\UserRole::Administrator)
-                <div class="sm:col-span-2">
-                    <label for="assigned_ci_id" class="ui-label">Credit Investigator <span class="font-normal text-text-muted">(optional)</span></label>
-                    <select id="assigned_ci_id" name="assigned_ci_id" class="ui-control" aria-describedby="assigned_ci_id-help assigned_ci_id-error">
-                        <option value="">Leave unassigned</option>
-                        @foreach($creditInvestigators as $investigator)
-                            <option value="{{ $investigator->id }}" @selected((string) old('assigned_ci_id') === (string) $investigator->id)>{{ $investigator->full_name }}</option>
-                        @endforeach
-                    </select>
-                    <p id="assigned_ci_id-help" class="ui-help">This does not restrict who can access the folder — it is informational only.</p>
-                    @error('assigned_ci_id')<p id="assigned_ci_id-error" class="mt-2 text-sm font-semibold text-danger" role="alert">{{ $message }}</p>@enderror
-                </div>
-            @else
-                <div class="rounded-card border border-brand-primary/20 bg-brand-soft p-4 sm:col-span-2">
-                    <p class="text-sm font-semibold text-brand-primary">You'll be listed as the creator of this folder.</p>
-                    <p class="mt-1 text-sm text-text-muted">{{ auth()->user()->full_name }} · All Credit Investigators can still access and work on this folder.</p>
-                </div>
-            @endif
-        </x-ui.form-section>
-
-        <x-ui.sticky-form-toolbar class="mt-7">
-            Folder numbers are generated after validation.
+        <x-ui.sticky-form-toolbar class="mt-6 sm:mt-7">
+            <span class="leading-5">Folder numbers are generated after validation.</span>
             <x-slot:actions>
-                <a href="{{ route('client-folders.index') }}" class="ui-button-secondary">Cancel</a>
-                <button class="ui-button-primary">Create Client Folder</button>
+                <a href="{{ route('client-folders.index') }}" class="ui-button-secondary">
+                    <x-ui.icon name="close" size="size-4" data-action-icon="close" />
+                    <span>Cancel</span>
+                </a>
+                <button class="ui-button-primary">
+                    <x-ui.icon name="plus" size="size-4" data-action-icon="plus" />
+                    <span>Create Client Folder</span>
+                </button>
             </x-slot:actions>
         </x-ui.sticky-form-toolbar>
     </form>

@@ -21,7 +21,7 @@ class CurrentAuthenticationSessionTest extends TestCase
             'password' => self::PASSWORD,
         ]);
         $this->post(route('login.store'), [
-            'username' => $user->username,
+            'email' => $user->email,
             'password' => self::PASSWORD,
         ]);
         $this->withSession(['sensitive_probe' => 'present']);
@@ -50,7 +50,7 @@ class CurrentAuthenticationSessionTest extends TestCase
             'password' => self::PASSWORD,
         ]);
         $this->post(route('login.store'), [
-            'username' => $user->username,
+            'email' => $user->email,
             'password' => self::PASSWORD,
         ]);
         $this->withSession([
@@ -96,7 +96,7 @@ class CurrentAuthenticationSessionTest extends TestCase
         $sessionIdBefore = session()->getId();
 
         $this->post(route('login.store'), [
-            'username' => $user->username,
+            'email' => $user->email,
             'password' => self::PASSWORD,
         ])->assertRedirect(route('home'));
 
@@ -114,7 +114,7 @@ class CurrentAuthenticationSessionTest extends TestCase
 
         $this->get($destination)->assertRedirect(route('login'));
         $this->post(route('login.store'), [
-            'username' => $user->username,
+            'email' => $user->email,
             'password' => self::PASSWORD,
         ])->assertRedirect($destination);
 
@@ -131,7 +131,7 @@ class CurrentAuthenticationSessionTest extends TestCase
 
         $this->get(route('home'))->assertRedirect(route('login'));
         $this->post(route('login.store'), [
-            'username' => $user->username,
+            'email' => $user->email,
             'password' => self::PASSWORD,
         ])->assertRedirect(route('password.change-required.edit'));
 
@@ -149,7 +149,7 @@ class CurrentAuthenticationSessionTest extends TestCase
 
         $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.42'])
             ->post(route('login.store'), [
-                'username' => $user->username,
+                'email' => $user->email,
                 'password' => self::PASSWORD,
             ])->assertRedirect(route('home'));
 
@@ -168,7 +168,7 @@ class CurrentAuthenticationSessionTest extends TestCase
         $recallerName = Auth::guard('web')->getRecallerName();
 
         $loginResponse = $this->post(route('login.store'), [
-            'username' => $user->username,
+            'email' => $user->email,
             'password' => self::PASSWORD,
             'remember' => '1',
         ]);

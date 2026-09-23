@@ -17,7 +17,10 @@ use Dompdf\Options;
  */
 class ResidenceBusinessCheckBatchPdfExporter
 {
-    public function __construct(private readonly ReportMediaResolver $mediaResolver) {}
+    public function __construct(
+        private readonly ReportMediaResolver $mediaResolver,
+        private readonly ReportTemporaryFiles $temporaryFiles,
+    ) {}
 
     /** @param  array<int, array<string, mixed>>  $photoSections */
     public function generate(ClientFolder $folder, array $photoSections, string $title): string
@@ -39,7 +42,7 @@ class ResidenceBusinessCheckBatchPdfExporter
             $options->set('defaultFont', 'DejaVu Sans');
             $options->set('isRemoteEnabled', false);
             $options->set('isPhpEnabled', false);
-            $options->set('chroot', ReportImageRoots::all());
+            $this->temporaryFiles->configureDompdf($options);
             $options->set('defaultMediaType', 'print');
 
             $render = ReportRenderOptions::brbiDefault();

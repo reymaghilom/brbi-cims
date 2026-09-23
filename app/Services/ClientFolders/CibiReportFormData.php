@@ -5,12 +5,14 @@ namespace App\Services\ClientFolders;
 use App\Enums\PartyType;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
+use App\Support\BranchOptions;
 
 class CibiReportFormData
 {
     public function __construct(
         private readonly ClientNameFormatter $names,
         private readonly BankInstitutionPrefill $bankInstitutionPrefill,
+        private readonly BusinessReportInitialData $businessReportInitialData,
     ) {}
 
     public function for(ClientFolder $clientFolder, ?CoMaker $activePerson = null): array
@@ -67,10 +69,16 @@ class CibiReportFormData
                 ->latest('id')
                 ->first(['ci_date'])?->ci_date?->format('Y-m-d');
         }
+        $applicationInitialData = $clientFolder->cibiReport
+            ? null
+            : $this->businessReportInitialData->for($clientFolder, $activePerson?->id);
+        $selectedBranch = $clientFolder->cibiReport?->branch_name ?? $applicationInitialData['branch_name'] ?? null;
 
         return [
             'report' => $clientFolder->cibiReport,
             'defaultStartDate' => $defaultStartDate,
+            'applicationInitialData' => $applicationInitialData,
+            'branchOptions' => BranchOptions::options($selectedBranch),
             'personalSnapshot' => $personalSnapshot,
             'summaryTotals' => $summaryTotals,
             'bankAccountPrefillRows' => $this->bankInstitutionPrefill->cibiBankAccountsFromTargets(

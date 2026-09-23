@@ -71,7 +71,6 @@ class ClientFolderContentsTest extends TestCase
         $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
         // Telegram History, Google Drive and Attachments / Documents were retired; nothing should
         // render them and their placeholder routes are gone.
-        $modules = [];
 
         $contents = $this->actingAs($ci)->get(route('client-folders.show', $folder))->assertOk();
         $contents->assertDontSee(route('client-folders.client-information.edit', $folder), false);
@@ -92,15 +91,7 @@ class ClientFolderContentsTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.generated-reports.index', $folder))->assertOk()->assertSee('Protected official artifacts');
         $contents->assertDontSee('Photos &amp; Videos', false)->assertDontSee('/client-folders/'.$folder->id.'/media', false);
         $this->actingAs($ci)->get('/client-folders/'.$folder->id.'/media')->assertNotFound();
-        $this->actingAs($ci)->get(route('client-folders.modules.show', [$folder, 'media']))->assertNotFound();
-
-        foreach ($modules as $key => $title) {
-            $contents->assertSee($title)->assertSee(route('client-folders.modules.show', [$folder, $key]), false);
-            $this->actingAs($ci)->get(route('client-folders.modules.show', [$folder, $key]))
-                ->assertOk()
-                ->assertSee($title)
-                ->assertSee('No later-phase business workflow has been implemented.');
-        }
+        $this->actingAs($ci)->get('/client-folders/'.$folder->id.'/modules/media')->assertNotFound();
     }
 
     public function test_co_maker_module_cards_link_directly_to_the_exact_person_scoped_destinations(): void
@@ -125,7 +116,7 @@ class ClientFolderContentsTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.activities.index', [$folder] + $personParams))->assertOk()->assertSee('CI Activities');
     }
 
-    public function test_other_ci_can_open_folder_module_placeholder_for_a_folder_assigned_to_another_ci(): void
+    public function test_other_ci_can_open_client_information_for_a_folder_assigned_to_another_ci(): void
     {
         $assignedCi = User::factory()->create();
         $otherCi = User::factory()->create();
@@ -547,6 +538,27 @@ class ClientFolderContentsTest extends TestCase
             ->assertDontSee('Business updated');
     }
 
+    public function test_selected_co_maker_history_survives_more_than_thirty_newer_other_person_events(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $selected = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'SELECTED MAKER']);
+        $other = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'OTHER MAKER']);
+
+        $this->activityLog($ci, $folder, 'residence_check.updated', 'residence_business_report', ['residence_check_id' => 1, 'co_maker_id' => $selected->id]);
+        $this->activityLog($ci, $folder, 'client_folder.renamed', 'client_folders', []);
+        foreach (range(1, 35) as $index) {
+            $this->activityLog($ci, $folder, 'cibi_report.updated', 'cibi_report', ['report_id' => $index, 'co_maker_id' => $index % 2 ? null : $other->id]);
+        }
+
+        $this->actingAs($ci)
+            ->get(route('client-folders.show', $folder).'?person=co-maker&co_maker_id='.$selected->id)
+            ->assertOk()
+            ->assertSee('Residence Check updated')
+            ->assertSee('Folder renamed')
+            ->assertDontSee('CI/BI updated');
+    }
+
     public function test_folder_level_lifecycle_activity_appears_for_either_person_context(): void
     {
         $ci = User::factory()->create();
@@ -642,6 +654,36 @@ class ClientFolderContentsTest extends TestCase
         DB::disableQueryLog();
 
         $this->assertLessThanOrEqual(10, $queryCount);
+    }
+
+    public function test_person_scoped_recent_activity_query_count_stays_flat_with_more_co_makers_and_history(): void
+    {
+        $ci = User::factory()->create();
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        $selected = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'SELECTED MAKER']);
+        $this->activityLog($ci, $folder, 'residence_check.updated', 'residence_business_report', ['co_maker_id' => $selected->id]);
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        app(ClientFolderOverview::class)->recentPersonActivity($folder, $selected);
+        $oneCoMakerQueries = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        foreach (range(1, 4) as $index) {
+            $other = CoMaker::create(['client_folder_id' => $folder->id, 'full_name' => 'OTHER MAKER '.$index]);
+            foreach (range(1, 10) as $event) {
+                $this->activityLog($ci, $folder, 'cibi_report.updated', 'cibi_report', ['co_maker_id' => $other->id]);
+            }
+        }
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        app(ClientFolderOverview::class)->recentPersonActivity($folder, $selected);
+        $crowdedQueries = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $this->assertSame(2, $oneCoMakerQueries); // Bounded audit fetch and actor eager load.
+        $this->assertSame($oneCoMakerQueries, $crowdedQueries);
     }
 
     public function test_existing_dashboard_folder_history_remains_unchanged(): void

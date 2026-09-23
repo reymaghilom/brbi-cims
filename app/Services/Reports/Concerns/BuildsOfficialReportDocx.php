@@ -2,6 +2,7 @@
 
 namespace App\Services\Reports\Concerns;
 
+use App\Services\Reports\ReportTemporaryFiles;
 use PhpOffice\PhpWord\Element\AbstractContainer;
 use PhpOffice\PhpWord\Element\Section;
 use PhpOffice\PhpWord\PhpWord;
@@ -412,14 +413,11 @@ trait BuildsOfficialReportDocx
             return null;
         }
 
-        // PhpWord detects image type from the file's actual content (getimagesize()), never from
-        // its filename extension, so the plain tempnam() path is used as-is — no ".png" suffix
-        // needed, and no separate throwaway file left behind. @ suppressed for the same reason as
-        // every other tempnam(sys_get_temp_dir(), ...) call in this trait/its callers: an
-        // unwritable sys_get_temp_dir() still yields a real, usable fallback path, but PHP's own
-        // informational warning about that fallback must not be allowed to crash generation.
-        $temporary = @tempnam(sys_get_temp_dir(), 'brbi-docx-img-');
-        if ($temporary === false) {
+        // PhpWord detects the image type from its content, so this Laravel-storage path does not
+        // need a .png suffix and no second throwaway file is required.
+        try {
+            $temporary = app(ReportTemporaryFiles::class)->create('brbi-docx-img-');
+        } catch (\RuntimeException) {
             imagedestroy($source);
 
             return null;

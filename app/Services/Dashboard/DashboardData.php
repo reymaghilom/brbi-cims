@@ -56,13 +56,13 @@ class DashboardData
         $timezone = (string) config('cims.display_timezone');
         $now = CarbonImmutable::now($timezone);
 
-        // One query also carries what the KPI detail lists show (name, updated, assigned CI), most
+        // One query also carries what the KPI detail lists show (name, updated, creator), most
         // recently updated first - no per-folder lookups.
         $folders = $this->scopedFolders($user)
-            ->leftJoin('users as assigned_ci', 'assigned_ci.id', '=', 'client_folders.assigned_ci_id')
+            ->leftJoin('users as folder_creator', 'folder_creator.id', '=', 'client_folders.created_by')
             ->orderByDesc('client_folders.updated_at')
             ->orderByDesc('client_folders.id')
-            ->get(['client_folders.id', 'client_folders.display_name', 'client_folders.status', 'client_folders.completed_at', 'client_folders.updated_at', 'assigned_ci.full_name as assigned_ci_name']);
+            ->get(['client_folders.id', 'client_folders.display_name', 'client_folders.status', 'client_folders.completed_at', 'client_folders.updated_at', 'folder_creator.full_name as creator_name']);
         $folderIds = $folders->pluck('id');
 
         $mandatory = $this->progressData->mandatory($folderIds);
@@ -149,7 +149,7 @@ class DashboardData
             'client' => $folder->display_name ?: 'Unnamed client',
             'url' => route('client-folders.show', $folder->id),
             'status' => str($folder->status->value)->replace('_', ' ')->title()->toString(),
-            'ci' => $folder->assigned_ci_name,
+            'creator' => $folder->creator_name,
             'progress' => $mandatory[$folder->id] ?? null,
             'updated' => $folder->updated_at?->timezone($timezone)->format('M j, Y'),
         ];

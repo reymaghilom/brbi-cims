@@ -13,8 +13,8 @@ use RuntimeException;
  * pictures and map screenshots once evidence moved into the CI Team document tree — the files were
  * resolved correctly and then dropped at render time because that tree was not listed here.
  *
- * `storage_path('app/private')` stays first: it holds the legacy media disk and the temporary
- * downloads ReportMediaResolver writes for Cloudinary-backed images.
+ * `storage_path('app/private')` stays first for the legacy media disk. ReportTemporaryFiles adds
+ * the application-owned report temp directory when it configures each Dompdf instance.
  */
 class ReportImageRoots
 {

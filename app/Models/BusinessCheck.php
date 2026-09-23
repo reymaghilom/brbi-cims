@@ -81,6 +81,14 @@ class BusinessCheck extends Model implements HasCiParticipants
         return filled($this->map_screenshot_cloud_public_id);
     }
 
+    /** The Business Check's independent saved subject, with a legacy relationship fallback only. */
+    public function resolvedSubjectName(): ?string
+    {
+        return filled($this->business_name)
+            ? $this->business_name
+            : $this->incomeSource?->displayName();
+    }
+
     public function contributors(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'business_check_contributors')->withPivot('position')->withTimestamps();

@@ -95,7 +95,7 @@ class SaveBusinessCheckRequest extends FormRequest
             // request class and this one rule, so Laravel's default "selected ... is invalid"
             // wording is untouched everywhere else. The save still fails exactly as before; only
             // the sentence the CI reads changes. Same approach as SaveResidenceCheckRequest.
-            'check_id.exists' => 'This Business Check was deleted by another user while you were working on it. Please return to the Residence & Business Report page.',
+            'check_id.exists' => 'This Business Check was deleted by another user while you were working on it. Please return to the Residence & Business Check page.',
         ];
     }
 
@@ -121,21 +121,18 @@ class SaveBusinessCheckRequest extends FormRequest
 
                 return;
             }
-            if ($validBusiness && blank($this->input('check_id')) && $folder->businessChecks()
-                ->where('co_maker_id', $coMakerId)
-                ->where('income_source_id', $incomeSourceId)
-                ->exists()) {
-                $validator->errors()->add('income_source_id', 'A Business Check already exists for the selected business. Open the existing Business Check to view or edit it.');
+            $existingCheck = $this->existingCheck();
+            $submittedIncomeSourceId = filled($this->input('income_source_id')) ? $incomeSourceId : null;
+            $savedIncomeSourceId = $existingCheck?->income_source_id === null ? null : (int) $existingCheck->income_source_id;
+            if ($existingCheck !== null && $submittedIncomeSourceId !== $savedIncomeSourceId) {
+                $validator->errors()->add('income_source_id', 'Business / Income Source cannot be changed after a Business Check is saved.');
+
+                return;
             }
-            // Friendly early answer for an edit that repoints this check at a business another
-            // Business Check already links to. SaveBusinessCheck re-checks this authoritatively
-            // under the income_sources row lock.
-            if ($validBusiness && filled($this->input('check_id')) && BusinessCheck::query()
-                ->where('income_source_id', $incomeSourceId)
-                ->whereKeyNot((int) $this->input('check_id'))
-                ->exists()) {
-                $validator->errors()->add('income_source_id', 'This business is already linked to another Business Check.');
-            }
+            // Create-time linked-business duplication is decided inside SaveBusinessCheck, after
+            // its request_token result cache has had the opportunity to replay a previously
+            // accepted save. The Action retains the authoritative transaction + row lock guard,
+            // so a fresh token is still rejected without weakening one-check-per-income-source.
         });
     }
 
@@ -146,8 +143,11 @@ class SaveBusinessCheckRequest extends FormRequest
             // An unselected "Select a business" option posts an empty string; normalising it here
             // is what makes a manual Business Check store a real null rather than 0.
             'income_source_id' => filled($this->input('income_source_id')) ? $this->input('income_source_id') : null,
-            'business_name' => is_string($this->input('business_name')) ? trim($this->input('business_name')) : $this->input('business_name'),
         ]);
+
+        if ($this->exists('business_name')) {
+            $this->merge(['business_name' => is_string($this->input('business_name')) ? trim($this->input('business_name')) : $this->input('business_name')]);
+        }
 
         // The companion CI picker always renders this marker alongside its contributor_ids[]
         // hidden inputs, even when zero companions are selected — without it, an all-removed
@@ -213,6 +213,9 @@ class SaveBusinessCheckRequest extends FormRequest
             ->count();
 
         foreach (array_keys((array) $this->input('photo_groups', [])) as $groupIndex) {
+            if (filter_var($this->input("photo_groups.$groupIndex._delete", false), FILTER_VALIDATE_BOOL)) {
+                continue;
+            }
             $newPhotoCount += collect((array) $this->file("photo_groups.$groupIndex.photos", []))
                 ->filter(fn ($file) => $file instanceof UploadedFile && $file->isValid())
                 ->count();

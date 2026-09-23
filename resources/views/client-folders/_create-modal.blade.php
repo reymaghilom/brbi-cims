@@ -29,31 +29,18 @@
                     <input id="create-folder-suffix" name="suffix" class="ui-control" maxlength="30" placeholder="JR., SR., III" aria-describedby="create-folder-suffix-error">
                     <p id="create-folder-suffix-error" class="mt-2 text-sm font-semibold text-danger" role="alert" data-create-error-for="suffix" hidden></p>
                 </div>
-
-                @if(auth()->user()->role === App\Enums\UserRole::Administrator)
-                    <div class="sm:col-span-2">
-                        <label for="create-folder-assigned-ci" class="ui-label">Credit Investigator <span class="font-normal text-text-muted">(optional)</span></label>
-                        <select id="create-folder-assigned-ci" name="assigned_ci_id" class="ui-control" aria-describedby="create-folder-assigned-ci-help create-folder-assigned-ci-error">
-                            <option value="">Leave unassigned</option>
-                            @foreach($creditInvestigators as $investigator)
-                                <option value="{{ $investigator->id }}">{{ $investigator->full_name }}</option>
-                            @endforeach
-                        </select>
-                        <p id="create-folder-assigned-ci-help" class="ui-help">Client Folders are a shared workspace — every Credit Investigator can open and work on any active folder regardless of this selection.</p>
-                        <p id="create-folder-assigned-ci-error" class="mt-2 text-sm font-semibold text-danger" role="alert" data-create-error-for="assigned_ci_id" hidden></p>
-                    </div>
-                @else
-                    <div class="rounded-card border border-brand-primary/20 bg-brand-soft p-4 sm:col-span-2">
-                        <p class="text-sm font-semibold text-brand-primary">You'll be listed as the creator of this folder.</p>
-                        <p class="mt-1 text-sm text-text-muted">{{ auth()->user()->full_name }} · All Credit Investigators can still access and work on this folder.</p>
-                    </div>
-                @endif
             </div>
         </form>
 
         <x-slot:footer>
-            <button type="button" data-modal-close class="ui-button-secondary">Cancel</button>
-            <button type="submit" form="create-client-folder-form" class="ui-button-primary">Create Client Folder</button>
+            <button type="button" data-modal-close class="ui-button-secondary">
+                <x-ui.icon name="close" size="size-4" data-action-icon="close" />
+                <span>Cancel</span>
+            </button>
+            <button type="submit" form="create-client-folder-form" class="ui-button-primary">
+                <x-ui.icon name="plus" size="size-4" data-action-icon="plus" />
+                <span>Create Client Folder</span>
+            </button>
         </x-slot:footer>
     </x-ui.modal>
 @endcan

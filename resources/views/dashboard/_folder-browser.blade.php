@@ -1,20 +1,6 @@
 @php
     $folderBrowserAction = $folderBrowserAction ?? route('home');
     $folderBrowserContext = $folderBrowserContext ?? (request()->routeIs('home') ? 'dashboard' : 'client_folders');
-    // Batched once for the whole listed page (not per folder) to keep the query count constant.
-    // Dashboard Folder History shows ONLY the folder's own created/renamed lifecycle — delete,
-    // restore, permanent-delete, and every child-record module action (CI/BI, business reports,
-    // photo uploads, etc.) are excluded here even though their audit rows remain untouched in
-    // the database and still surface in the Admin Audit Log / Client Folder Contents' own
-    // Recent Activity panel.
-    $folderHistoryByFolder = \App\Models\AuditLog::query()
-        ->whereIn('client_folder_id', $clientFolders->pluck('id'))
-        ->whereIn('action', ['client_folder.created', 'client_folder.renamed'])
-        ->with('user:id,full_name')
-        ->orderByDesc('created_at')
-        ->orderByDesc('id')
-        ->get(['id', 'client_folder_id', 'user_id', 'action', 'metadata', 'created_at'])
-        ->groupBy('client_folder_id');
 @endphp
 {{-- Flash-prevention for the desktop Preview Panel collapse, same technique as the Photos &
      Videos support panel: read the persisted choice before first paint so the CSS below can

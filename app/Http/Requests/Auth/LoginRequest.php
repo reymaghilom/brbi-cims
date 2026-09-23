@@ -17,7 +17,7 @@ class LoginRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'username' => ['required', 'string', 'max:100'],
+            'email' => ['required', 'string', 'email', 'max:255'],
             'password' => ['required', 'string'],
             'remember' => ['sometimes', 'boolean'],
         ];
@@ -26,9 +26,16 @@ class LoginRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'username.required' => 'Username is required.',
+            'email.required' => 'Email is required.',
             'password.required' => 'Password is required.',
         ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->merge([
+            'email' => strtolower(trim((string) $this->email)),
+        ]);
     }
 
     /**
@@ -38,14 +45,14 @@ class LoginRequest extends FormRequest
     public function authenticate(): void
     {
         $authenticated = Auth::attempt([
-            'username' => trim($this->string('username')->toString()),
+            'email' => $this->string('email')->toString(),
             'password' => $this->string('password')->toString(),
             'status' => UserStatus::Active->value,
         ], $this->boolean('remember'));
 
         if (! $authenticated) {
             throw ValidationException::withMessages([
-                'authentication' => 'Invalid username or password. Please check your credentials and try again.',
+                'authentication' => 'Invalid email or password. Please check your credentials and try again.',
             ]);
         }
     }

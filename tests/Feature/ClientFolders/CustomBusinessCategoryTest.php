@@ -68,6 +68,18 @@ class CustomBusinessCategoryTest extends TestCase
         $this->assertSame(['still_lotto_outlet', $category->optionKey()], data_get($report->template_data, 'fields.income_sources'));
     }
 
+    public function test_other_business_still_requires_at_least_one_selected_business(): void
+    {
+        [$ci, $folder] = $this->context();
+
+        $this->store($ci, $folder, 'Nothing Selected', [])
+            ->assertSessionHasErrors([
+                'template_data.fields.income_sources' => 'Please select at least one business/income source.',
+            ]);
+
+        $this->assertSame(0, $folder->incomeSources()->count());
+    }
+
     /** TESTS 7, 8 — renaming keeps the same row, the same key and the same saved selections. */
     public function test_renaming_preserves_the_categorys_stable_identity(): void
     {
@@ -233,8 +245,31 @@ class CustomBusinessCategoryTest extends TestCase
             $this->assertStringContainsString($placeholder, $template);
         }
 
+        // The nested <template> content is not visited when app.js assigns a form owner to the
+        // initial preview controls. It therefore has to carry its own owner: otherwise a row added
+        // and checked immediately is visible in the DOM but omitted from the native submission.
+        $templateCheckbox = $this->inputTag($template, 'other_income___OPTION_KEY__');
+        $this->assertStringContainsString('name="template_data[fields][income_sources][]"', $templateCheckbox);
+        $this->assertStringContainsString('value="__OPTION_KEY__"', $templateCheckbox);
+        $this->assertStringContainsString('form="business-template-form"', $templateCheckbox);
+
         // It lives outside the catalog, so it is never counted or submitted as a real option.
         $this->assertStringNotContainsString('__OPTION_KEY__', $this->catalog($ci, $folder));
+    }
+
+    public function test_other_business_checkboxes_keep_the_correct_form_owner_for_create_and_edit(): void
+    {
+        [$ci, $folder] = $this->context();
+        $category = $this->category($ci, $folder, 'Vulcanizing Shop');
+
+        $createCheckbox = $this->inputTag($this->catalog($ci, $folder), 'other_income_'.$category->optionKey());
+        $this->assertStringContainsString('form="business-template-form"', $createCheckbox);
+
+        $this->store($ci, $folder, 'Vulcanizing Shop', [$category->optionKey()])->assertSessionHasNoErrors();
+        $source = $folder->incomeSources()->sole();
+        $editCheckbox = $this->inputTag($this->catalog($ci, $folder, $source), 'other_income_'.$category->optionKey());
+        $this->assertStringContainsString('form="business-report-form"', $editCheckbox);
+        $this->assertStringContainsString('checked', $editCheckbox);
     }
 
     public function test_the_business_report_layout_exposes_a_non_empty_csrf_token(): void

@@ -6,7 +6,9 @@ use App\Http\Requests\ClientFolders\Concerns\ValidatesCheckPhotoUploads;
 use App\Models\ResidenceCheck;
 use App\Rules\CiContributorRule;
 use App\Services\ClientFolders\ActivePersonResolver;
+use Illuminate\Contracts\Validation\Validator as ValidatorContract;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -14,6 +16,8 @@ use Illuminate\Validation\Validator;
 class SaveResidenceCheckRequest extends FormRequest
 {
     use ValidatesCheckPhotoUploads;
+
+    private const DELETED_MESSAGE = 'This Residence Check was deleted by another user while you were working on it. Please return to the Residence & Business Check page.';
 
     public function authorize(): bool
     {
@@ -94,6 +98,33 @@ class SaveResidenceCheckRequest extends FormRequest
             // the sentence the CI reads changes.
             'check_id.exists' => 'This Residence Check was deleted by another user while you were working on it. Please return to the Residence & Business Report page.',
         ];
+    }
+
+    protected function failedValidation(ValidatorContract $validator): void
+    {
+        // An AJAX edit whose exact folder + Applicant/Co-Maker scoped check_id disappeared is the
+        // delete-while-editing outcome, not an ordinary field-validation failure. Return a stable
+        // contract before the save action can upload media, write an audit row, or create anything.
+        // Plain non-JS submissions retain Laravel's existing validation redirect and input/errors.
+        $checkId = $this->input('check_id');
+        $recordWasDeleted = filled($checkId)
+            && ctype_digit((string) $checkId)
+            && ResidenceCheck::query()->whereKey((int) $checkId)->doesntExist();
+
+        if ($this->expectsJson() && $recordWasDeleted && $validator->errors()->has('check_id')) {
+            $folder = $this->route('clientFolder');
+            $activePerson = ActivePersonResolver::resolve($folder, blank($this->input('co_maker_id')) ? null : (int) $this->input('co_maker_id'));
+
+            throw new HttpResponseException(response()->json([
+                'result' => 'deleted',
+                'message' => self::DELETED_MESSAGE,
+                'status_type' => 'error',
+                'residence_check_id' => (int) $checkId,
+                'return_url' => route('client-folders.residence-business.edit', [$folder] + ActivePersonResolver::queryParams($activePerson)),
+            ], 404));
+        }
+
+        parent::failedValidation($validator);
     }
 
     private function remainingExistingResidencePhotoCount(): int

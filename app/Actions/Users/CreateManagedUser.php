@@ -21,6 +21,7 @@ class CreateManagedUser
                 $user = User::create([
                     'full_name' => $data['full_name'],
                     'username' => $data['username'],
+                    'email' => $data['email'] ?? null,
                     'role' => $data['role'],
                     'status' => UserStatus::Active,
                     'password' => $data['password'],

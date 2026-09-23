@@ -71,7 +71,8 @@ class DoubleSubmitGuardTest extends TestCase
         $this->assertStringContainsString('data-submit-guard', $form);
         $this->assertStringNotContainsString('novalidate', $form);
         $this->assertMatchesRegularExpression('/<input id="last_name"[^>]*\brequired\b/', $html);
-        $this->assertMatchesRegularExpression('/<button class="ui-button-primary">Create Client Folder<\/button>/', $html);
+        $this->assertMatchesRegularExpression('/<a href="[^"]+" class="ui-button-secondary">\s*<svg[^>]*data-action-icon="close"[^>]*>.*?<\/svg>\s*<span>Cancel<\/span>\s*<\/a>/s', $html);
+        $this->assertMatchesRegularExpression('/<button class="ui-button-primary">\s*<svg[^>]*data-action-icon="plus"[^>]*>.*?<\/svg>\s*<span>Create Client Folder<\/span>\s*<\/button>/s', $html);
     }
 
     public function test_first_full_page_create_is_allowed_and_creates_exactly_one_folder(): void
@@ -100,7 +101,7 @@ class DoubleSubmitGuardTest extends TestCase
         $form = $this->formTag($html, route('client-folders.store'));
         $this->assertStringContainsString('data-submit-guard', $form);
         $this->assertStringNotContainsString('data-submitting', $form);
-        $this->assertDoesNotMatchRegularExpression('/<button[^>]*\bdisabled\b[^>]*>Create Client Folder/', $html);
+        $this->assertDoesNotMatchRegularExpression('/<button[^>]*\bdisabled\b[^>]*>[\s\S]*?<span>Create Client Folder<\/span>/', $html);
     }
 
     // ---------------------------------------------------------------- Business Report edit

@@ -16,30 +16,41 @@ class UpdateManagedUser
         private readonly ProfilePhotoStorage $photos,
     ) {}
 
-    public function execute(User $administrator, User $user, array $data): User
+    public function execute(User $administrator, User $user, array $data): bool
     {
         if ($administrator->is($user) && $data['role'] !== $user->role->value) {
             throw new DomainException('You cannot change your own Administrator role.');
+        }
+
+        $previousRole = $user->role->value;
+        $attributes = [
+            'full_name' => $data['full_name'],
+            'username' => $data['username'],
+            ...(array_key_exists('email', $data) ? ['email' => $data['email']] : []),
+            'role' => $data['role'],
+        ];
+        $newPhotoUploaded = filled($data['profile_photo'] ?? null);
+
+        $user->fill($attributes);
+
+        if (! $newPhotoUploaded && ! $user->isDirty()) {
+            return false;
         }
 
         // Stored before the transaction (the same pattern as CreateManagedUser): a newly
         // uploaded photo is only ever added to the update payload below when one was actually
         // submitted, so the previous path is left completely untouched otherwise.
         $previousPhotoPath = $user->profile_photo_path;
-        $newPhotoUploaded = filled($data['profile_photo'] ?? null);
         $newPhotoPath = $newPhotoUploaded ? $this->photos->store($data['profile_photo']) : null;
+        $roleChanged = $user->isDirty('role');
 
         try {
-            $updatedUser = DB::transaction(function () use ($administrator, $user, $data, $newPhotoUploaded, $newPhotoPath): User {
-                $previousRole = $user->role->value;
-                $roleChanged = $previousRole !== $data['role'];
+            DB::transaction(function () use ($administrator, $user, $previousRole, $newPhotoUploaded, $newPhotoPath, $roleChanged): void {
+                if ($newPhotoUploaded) {
+                    $user->profile_photo_path = $newPhotoPath;
+                }
 
-                $user->update([
-                    'full_name' => $data['full_name'],
-                    'username' => $data['username'],
-                    'role' => $data['role'],
-                    ...($newPhotoUploaded ? ['profile_photo_path' => $newPhotoPath] : []),
-                ]);
+                $user->save();
 
                 if ($roleChanged) {
                     $this->sessions->invalidate($user);
@@ -62,7 +73,6 @@ class UpdateManagedUser
                     'user_agent' => request()->userAgent(),
                 ]);
 
-                return $user;
             });
         } catch (\Throwable $exception) {
             if ($newPhotoUploaded) {
@@ -78,6 +88,6 @@ class UpdateManagedUser
             $this->photos->delete($previousPhotoPath);
         }
 
-        return $updatedUser;
+        return true;
     }
 }

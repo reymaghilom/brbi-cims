@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
+use App\Notifications\Auth\ResetPasswordNotification;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -18,6 +19,11 @@ class User extends Authenticatable
     protected $guarded = [];
 
     protected $hidden = ['password', 'remember_token'];
+
+    public function sendPasswordResetNotification(#[\SensitiveParameter] $token): void
+    {
+        $this->notify(new ResetPasswordNotification($token));
+    }
 
     protected function casts(): array
     {

@@ -218,27 +218,31 @@ class ClientFolderOverview
         return AuditLog::query()
             ->where('client_folder_id', $folder->id)
             ->whereIn('action', array_keys($labels))
+            ->where(function ($eligible) use ($personId): void {
+                $eligible->where(function ($lifecycle) use ($personId): void {
+                    $lifecycle->whereIn('action', self::CO_MAKER_LIFECYCLE_ACTIONS);
+                    if ($personId !== null) {
+                        $lifecycle->whereJsonContains('metadata->co_maker_id', $personId);
+                    }
+                })->orWhere(function ($folderLevel): void {
+                    $folderLevel->where('module', 'client_folders')
+                        ->whereNotIn('action', self::CO_MAKER_LIFECYCLE_ACTIONS);
+                })->orWhere(function ($personEvent) use ($personId): void {
+                    $personEvent->whereNotIn('action', self::CO_MAKER_LIFECYCLE_ACTIONS)
+                        ->where('module', '!=', 'client_folders')
+                        ->whereJsonContainsKey('metadata->co_maker_id');
+                    if ($personId === null) {
+                        $personEvent->whereNull('metadata->co_maker_id');
+                    } else {
+                        $personEvent->whereJsonContains('metadata->co_maker_id', $personId);
+                    }
+                });
+            })
             ->with('user:id,full_name')
             ->latest('created_at')
             ->latest('id')
             ->limit(30)
             ->get(['id', 'user_id', 'module', 'action', 'metadata', 'created_at'])
-            ->filter(function (AuditLog $event) use ($personId): bool {
-                $metadata = (array) $event->metadata;
-
-                if (in_array($event->action, self::CO_MAKER_LIFECYCLE_ACTIONS, true)) {
-                    // Visible as folder-level participant-management activity from the Applicant's
-                    // view, but scoped to the exact affected Co-Maker everywhere else — never
-                    // shown as though it belongs to a different Co-Maker.
-                    return $personId === null || (array_key_exists('co_maker_id', $metadata) && $metadata['co_maker_id'] === $personId);
-                }
-
-                if ($event->module === 'client_folders') {
-                    return true;
-                }
-
-                return array_key_exists('co_maker_id', $metadata) && $metadata['co_maker_id'] === $personId;
-            })
             ->take(20)
             ->values()
             ->map(function (AuditLog $event) use ($labels, $personContextLabel) {

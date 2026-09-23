@@ -8,6 +8,7 @@ use App\Actions\ClientFolders\UpdateBusinessCheckContributors;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Exceptions\BusinessCheckConflictException;
+use App\Exceptions\CloudMediaUploadException;
 use App\Exceptions\NoChangesDetectedException;
 use App\Exceptions\SimilarBusinessCheckExistsException;
 use App\Http\Requests\ClientFolders\SaveBusinessCheckRequest;
@@ -103,6 +104,17 @@ class BusinessCheckController extends Controller
             }
 
             return redirect()->route('client-folders.residence-business.edit', [$clientFolder] + $personParams)->with('status', $e->getMessage())->with('statusType', 'info');
+        } catch (CloudMediaUploadException) {
+            $message = 'Business Check was not saved because one or more photos could not be uploaded to cloud storage. Please check your connection and try again.';
+            if ($wantsJson) {
+                return response()->json(['result' => 'cloud_failure', 'message' => $message, 'status_type' => 'error'], 502);
+            }
+
+            $retryRoute = filled($request->validated('check_id'))
+                ? redirect()->route('client-folders.business-checks.edit', [$clientFolder, $request->validated('check_id')] + $personParams)
+                : redirect()->route('client-folders.business-checks.create', [$clientFolder] + $personParams);
+
+            return $retryRoute->withInput()->with('status', $message)->with('statusType', 'error');
         }
 
         // wasRecentlyCreated is Eloquent's own "this exact save() call inserted a new row" flag,
@@ -218,17 +230,12 @@ class BusinessCheckController extends Controller
         // only (revision > 1 AND a BusinessReport row exists — the same authoritative "actually
         // saved" convention as IncomeSourceController::dedicatedSources()'s requireReport). A
         // revision-1 draft/Check-first/quick-add shell is not a saved Report and must never appear
-        // here. A candidate must also
-        // have no Business Check of its own yet (no duplicate candidates — server-side rejection in
-        // SaveBusinessCheck stays in place regardless of this listing rule). The one exception to the
-        // saved-Report requirement is a business whose Report was intentionally deleted
-        // (business_report_deleted_at): its IncomeSource survives and still needs its independent
-        // Business Check. Orphaned IncomeSources
-        // (no meaningful Report and no Check — see DeleteIncomeSourceIfOrphaned) are force-deleted at
-        // delete time and so never reach this query at all. The Business Check currently being
-        // edited is the one exception to both rules: its own business must still render (and remain
-        // selected) no matter its Report/Check state, or the edit form itself would have nothing to
-        // select — CREATE mode (no $businessCheck) never grants this exception.
+        // here. A candidate must also have no Business Check of its own yet. A surviving
+        // IncomeSource whose Business Report was deleted is not a current saved Report and remains
+        // ineligible. SaveBusinessCheck's server-side duplicate rejection stays in place regardless
+        // of this listing rule. The Business Check currently being edited is the only exception: its
+        // own business must still render selected, or an existing saved Check could not be edited.
+        // CREATE mode (no $businessCheck) never grants that edit-only exception.
         //
         // Business Check NEVER creates a business. When this list is empty (or the CI leaves it
         // unselected) the business is recorded manually on the Business Check itself and
@@ -239,14 +246,7 @@ class BusinessCheckController extends Controller
             ->whereHas('template', fn ($query) => $query->where('is_fallback', false)->where('form_handler', 'dedicated-business'))
             ->where(fn ($query) => $query
                 ->where(fn ($saved) => $saved->whereHas('businessReport')->where('revision', '>', 1))
-                // A surviving business whose Business Report was intentionally deleted (report-only
-                // delete keeps the IncomeSource). Business Check is independent of that report, and
-                // Reports still lists this person's Pending Business Check for it, so it must stay
-                // linkable here. Every other constraint below (person, template, no existing check)
-                // still applies; only this exact deletion marker admits it, never a draft shell.
-                ->orWhereNotNull('business_report_deleted_at')
-                ->when($businessCheck, fn ($query) => $query->orWhere('id', $businessCheck->income_source_id))
-                ->when($requestedCreateIncomeSourceId, fn ($query, int $incomeSourceId) => $query->orWhere('id', $incomeSourceId)))
+                ->when($businessCheck, fn ($query) => $query->orWhere('id', $businessCheck->income_source_id)))
             ->where(fn ($query) => $query
                 ->whereDoesntHave('businessCheck')
                 ->when($businessCheck, fn ($query) => $query->orWhere('id', $businessCheck->income_source_id)))
@@ -283,19 +283,16 @@ class BusinessCheckController extends Controller
         // references a business it renders read-only and shows that business's own name.
         $currentBusinessName = $businessCheck ? $businessCheck->business_name : ($selectedNewBusiness['name'] ?? null);
 
-        // Read-only is decided PER FIELD, on whether an authoritative value actually exists —
-        // referencing a business is not on its own enough. Business Name and CI Date always have
-        // one for a saved Business Report (CI Date is mandatory in that workflow, and the six
-        // no-input templates now carry a derived name), but Main Business Address genuinely can be
-        // blank; when it is, the CI types it here and it is stored on the Business Check ALONE —
-        // SaveBusinessCheck never writes any of it back into the Business Report.
+        // A referenced business is authoritative only for the initial create prefill. An existing
+        // Business Check owns an independent snapshot, so its business details stay editable and
+        // are never locked or refreshed from the later state of the Business Report.
         $linkedSource = $businessCheck?->income_source_id ?? ($selectedNewBusiness['id'] ?? null);
         $linkedLocation = $businessCheck
             ? ($businessCheck->income_source_id === null ? null : $businesses->firstWhere('id', $businessCheck->income_source_id)['location'] ?? null)
             : ($selectedNewBusiness['location'] ?? null);
-        $businessNameReadOnly = $linkedSource !== null && filled($currentBusinessName);
-        $locationReadOnly = $linkedSource !== null && filled($linkedLocation);
-        $ciDateReadOnly = $linkedSource !== null && filled($currentCiDate);
+        $businessNameReadOnly = ! $businessCheck && $linkedSource !== null && filled($currentBusinessName);
+        $locationReadOnly = ! $businessCheck && $linkedSource !== null && filled($linkedLocation);
+        $ciDateReadOnly = ! $businessCheck && $linkedSource !== null && filled($currentCiDate);
 
         $mapQuery = $currentLocation;
         $photos = $businessCheck?->photos ?? collect();

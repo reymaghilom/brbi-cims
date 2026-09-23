@@ -18,6 +18,10 @@
         id="other_income_{{ $fieldKey }}"
         class="business-report-checkbox"
         name="template_data[fields][income_sources][]"
+        {{-- New-report fields are rendered in a preview outside the hidden submission form. Keep
+             the form owner on the row template itself so a checkbox cloned by Add Business is
+             submitted exactly like the server-rendered choices. --}}
+        form="{{ ($incomeSource ?? null) ? 'business-report-form' : 'business-template-form' }}"
         type="checkbox"
         value="{{ $fieldKey }}"
         data-income-source-choice

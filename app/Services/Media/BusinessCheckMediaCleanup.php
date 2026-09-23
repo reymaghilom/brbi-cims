@@ -3,6 +3,8 @@
 namespace App\Services\Media;
 
 use App\Models\BusinessCheck;
+use App\Models\MediaReference;
+use App\Services\ClientFolders\ClientFolderFileCleanup;
 
 /**
  * Single definition of "which media does a Business Check own, and how is it retired", shared by
@@ -23,14 +25,14 @@ use App\Models\BusinessCheck;
  */
 class BusinessCheckMediaCleanup
 {
-    public function __construct(private readonly PrivateMediaStorage $storage) {}
+    public function __construct(private readonly ClientFolderFileCleanup $fileCleanup) {}
 
     /**
-     * Deletes every local file the check owns and returns its Cloudinary assets, each shaped as
+     * Stages every local file the check owns and returns its Cloudinary assets, each shaped as
      * ['public_id' => ?string, 'resource_type' => ?string, 'delivery_type' => ?string], for the
      * caller to retire after commit.
      */
-    public function purgeLocalFilesAndCollectCloudAssets(BusinessCheck $check): array
+    public function stageLocalFilesAndCollectCloudAssets(BusinessCheck $check, array &$cleanupTaskIds): array
     {
         $cloudAssets = [];
 
@@ -50,7 +52,10 @@ class BusinessCheckMediaCleanup
             }
         }
 
-        $this->storage->deleteStoredFiles($localPaths);
+        $cleanupTaskIds = $this->fileCleanup->stage(['local' => array_map(
+            fn (string $path): array => ['path' => $path, 'provider' => MediaReference::STORAGE_PROVIDER_LOCAL],
+            array_values(array_unique(array_filter($localPaths))),
+        )]);
 
         return $cloudAssets;
     }

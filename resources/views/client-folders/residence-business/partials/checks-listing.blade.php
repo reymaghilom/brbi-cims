@@ -178,13 +178,13 @@
                                 @foreach($businessChecks as $check)
                                     <tr class="transition hover:bg-surface-muted has-[[data-business-check-select]:checked]:bg-brand-soft/40"
                                         data-sort-ci_date="{{ $check->ci_date?->format('Y-m-d') ?? '' }}"
-                                        data-sort-business_subject="{{ strtolower($check->incomeSource?->displayName() ?? '') }}"
+                                        data-sort-business_subject="{{ strtolower($check->resolvedSubjectName() ?? '') }}"
                                         data-sort-location="{{ strtolower($check->location ?? '') }}"
                                         data-sort-ci="{{ strtolower($check->investigator?->full_name ?? '') }}"
                                     >
                                         <td class="px-4 py-3.5 align-middle"><input type="checkbox" class="size-4 rounded border-ui-border-strong text-brand-primary focus:ring-brand-primary" data-business-check-select value="{{ $check->id }}" aria-label="Select this Business Check"></td>
                                         <td class="px-4 py-3.5 align-middle text-sm text-text-muted">{{ $check->ci_date?->format('M j, Y') ?? '—' }}</td>
-                                        <td class="px-4 py-3.5 align-middle"><span class="inline-flex items-center rounded-full bg-success-soft px-2.5 py-1 text-xs font-semibold text-success">{{ $check->business_name ?: ($check->incomeSource?->displayName() ?? '—') }}</span></td>
+                                        <td class="px-4 py-3.5 align-middle"><span class="inline-flex items-center rounded-full bg-success-soft px-2.5 py-1 text-xs font-semibold text-success">{{ $check->resolvedSubjectName() ?? '—' }}</span></td>
                                         <td class="px-4 py-3.5 align-middle"><span class="line-clamp-2 text-sm text-text-main" title="{{ $check->location }}">{{ $check->location ?: '—' }}</span></td>
                                         <td class="px-4 py-3.5 align-middle text-sm text-text-muted">{{ $check->investigator?->full_name ?? '—' }}</td>
                                         <td class="px-2 py-3.5 align-middle text-center">

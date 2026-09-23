@@ -37,7 +37,7 @@
         </div>
     @endif
 
-    <form id="residence-check-form" method="POST" action="{{ route('client-folders.residence-checks.store', $clientFolder) }}" enctype="multipart/form-data" class="flex flex-col gap-4 pb-20" data-unsaved-form data-residence-check-form data-cloud-storage-enabled="{{ $cloudStorageEnabled ? '1' : '0' }}">
+    <form id="residence-check-form" method="POST" action="{{ route('client-folders.residence-checks.store', $clientFolder) }}" enctype="multipart/form-data" class="flex flex-col gap-4 pb-20" data-unsaved-form data-residence-check-form data-residence-list-return-url="{{ route('client-folders.residence-business.edit', [$clientFolder] + $personParams) }}" data-cloud-storage-enabled="{{ $cloudStorageEnabled ? '1' : '0' }}">
         @csrf
         <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
         <input type="hidden" name="check_id" value="{{ $residenceCheck?->id }}">

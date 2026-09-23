@@ -28,7 +28,7 @@
     </script>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
-<body class="min-h-screen overflow-x-hidden bg-app-bg text-text-main antialiased">
+<body class="min-h-screen overflow-x-hidden bg-app-bg text-text-main antialiased" data-authenticated-page>
     @php
         $currentUser = auth()->user();
         $roleLabel = $currentUser->role->label();

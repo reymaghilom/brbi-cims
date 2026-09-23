@@ -24,8 +24,9 @@ class ReportsController extends Controller
     {
         Gate::authorize('viewAny', ClientFolder::class);
 
-        $filters = $request->safe()->only(['search', 'client_folder_id', 'report_type', 'person', 'tab', 'from', 'to', 'sort', 'direction']);
+        $filters = $request->safe()->only(['search', 'client_folder_id', 'report_type', 'person', 'tab', 'from', 'to', 'sort', 'direction', 'per_page']);
         $filters['tab'] = $filters['tab'] ?? 'all';
+        $filters['per_page'] = (int) ($filters['per_page'] ?? ReportWorkspaceQuery::PER_PAGE_OPTIONS[0]);
         $user = $request->user();
 
         $data = [
@@ -33,6 +34,7 @@ class ReportsController extends Controller
             'filters' => $filters,
             'sort' => $filters['sort'] ?? null,
             'direction' => ($filters['direction'] ?? null) === 'desc' ? 'desc' : 'asc',
+            'perPageOptions' => ReportWorkspaceQuery::PER_PAGE_OPTIONS,
         ];
 
         // A sort or pagination click asks for the listing alone, so the header, KPIs and toolbar

@@ -3,6 +3,7 @@
 
 <x-form.input name="full_name" label="Full name" :value="$managedUser->full_name ?? null" required class="sm:col-span-2" autocomplete="name" />
 <x-form.input name="username" label="Username" :value="$managedUser->username ?? null" required autocomplete="off" />
+<x-form.input name="email" label="Email" type="email" :value="$managedUser->email ?? null" :required="! isset($managedUser)" autocomplete="email" />
 <x-form.select name="role" label="Role" :options="$roleOptions" :selected="isset($managedUser) ? $managedUser->role->value : null" required class="sm:col-span-2" help="Role changes invalidate the user's existing sessions." />
 
 <div class="sm:col-span-2">

@@ -9,7 +9,8 @@ use Illuminate\Support\Collection;
 
 /**
  * The single definition of a Co-Maker that "already contains saved investigation records" — and so
- * may no longer be permanently deleted by a Credit Investigator or Senior CI. Always scoped to the
+ * may no longer be permanently deleted by a Credit Investigator. A Senior CI or Administrator may
+ * delete one with saved records. Always scoped to the
  * exact client_folder_id AND co_maker_id: Applicant records, other Co-Makers and folder-wide data
  * never make a Co-Maker non-empty.
  *

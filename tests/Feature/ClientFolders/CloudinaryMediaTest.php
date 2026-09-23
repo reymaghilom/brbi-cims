@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\ClientFolders;
 
+use App\Models\AuditLog;
 use App\Models\ClientFolder;
 use App\Models\CoMaker;
 use App\Models\IncomeSource;
@@ -76,6 +77,52 @@ class CloudinaryMediaTest extends TestCase
         $this->assertNull($check->map_screenshot_path);
         $this->assertTrue($check->hasCloudMapScreenshot());
         $this->assertTrue($check->hasMapScreenshot());
+    }
+
+    public function test_removing_only_a_cloud_residence_map_screenshot_is_a_real_update(): void
+    {
+        $ci = User::factory()->create();
+        $folder = $this->residenceFolder($ci);
+        $check = $folder->residenceChecks()->create([
+            'ci_user_id' => $ci->id,
+            'ci_date' => now()->toDateString(),
+            'location' => 'Applicant Address',
+            'revision' => 1,
+            'map_screenshot_cloud_public_id' => 'residence-map-remove-only',
+            'map_screenshot_cloud_resource_type' => 'image',
+            'map_screenshot_cloud_delivery_type' => 'authenticated',
+        ]);
+        $check->photos()->create([
+            'file_name' => 'front.jpg', 'path' => null, 'uploaded_by' => $ci->id,
+            'cloud_public_id' => 'residence-photo-keep', 'cloud_resource_type' => 'image',
+            'cloud_delivery_type' => 'authenticated',
+        ]);
+        $this->assertNull($check->map_screenshot_path);
+        $this->mockCloud()->shouldReceive('destroy')->once()
+            ->with('residence-map-remove-only', 'image', 'authenticated');
+
+        $this->actingAs($ci)->post(route('client-folders.residence-checks.store', $folder), [
+            'check_id' => $check->id,
+            'expected_revision' => 1,
+            'ci_date' => $check->ci_date->toDateString(),
+            'location' => $check->location,
+            'remove_map_screenshot' => '1',
+        ])->assertSessionHasNoErrors()->assertSessionHas('status', 'Residence Check updated successfully.');
+
+        $check->refresh();
+        $this->assertFalse($check->hasMapScreenshot());
+        $this->assertSame(2, $check->revision);
+        $this->assertSame(1, $check->photos()->count());
+        $this->assertTrue($folder->completionResults()
+            ->whereHas('rule', fn ($query) => $query->where('code', 'residence_business_report'))
+            ->firstOrFail()->is_satisfied);
+        $this->assertGreaterThan(0, $folder->fresh()->progress_percent);
+        $this->assertDatabaseHas('audit_logs', [
+            'client_folder_id' => $folder->id,
+            'action' => 'residence_check.updated',
+        ]);
+        $this->assertSame(1, AuditLog::query()
+            ->where('client_folder_id', $folder->id)->where('action', 'residence_check.updated')->count());
     }
 
     public function test_residence_create_uploads_and_persists_every_selected_cloud_photo_at_one_three_and_ten(): void

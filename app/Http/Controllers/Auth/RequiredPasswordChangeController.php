@@ -7,6 +7,7 @@ use App\Services\Authentication\SessionInvalidator;
 use App\Support\Authentication\PasswordPolicy;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
 
 class RequiredPasswordChangeController extends Controller
@@ -35,11 +36,11 @@ class RequiredPasswordChangeController extends Controller
         ])->save();
 
         $sessions->invalidate($user);
-        $user->refresh();
 
-        $request->session()->regenerate();
-        $request->session()->put('auth_session_version', $user->auth_session_version);
+        Auth::guard('web')->logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
 
-        return redirect()->route('home')->with('status', 'Password changed successfully.');
+        return redirect()->route('login')->with('status', 'Password changed successfully. Please sign in with your new password.');
     }
 }

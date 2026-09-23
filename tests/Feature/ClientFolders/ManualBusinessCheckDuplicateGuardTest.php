@@ -203,13 +203,30 @@ class ManualBusinessCheckDuplicateGuardTest extends TestCase
         $this->create($ci, $folder, 'linked-token-1', ['income_source_id' => $source->id])
             ->assertOk()->assertJson(['result' => 'success']);
 
-        foreach ([[], ['allow_similar_duplicate' => '1']] as $bypassAttempt) {
-            $this->create($ci, $folder, 'linked-token-'.count($bypassAttempt), $bypassAttempt + ['income_source_id' => $source->id])
+        foreach ([[], ['allow_similar_duplicate' => '1']] as $index => $bypassAttempt) {
+            $this->create($ci, $folder, 'fresh-linked-token-'.$index, $bypassAttempt + ['income_source_id' => $source->id])
                 ->assertUnprocessable()
                 ->assertJsonValidationErrors('income_source_id');
         }
 
         $this->assertCount(1, $folder->businessChecks()->get());
+        $this->assertSame(1, $this->createdAudits($folder));
+    }
+
+    public function test_the_same_request_token_replays_a_successful_linked_business_create(): void
+    {
+        [$ci, $folder] = $this->folder();
+        $source = $this->businessSource($folder);
+        $payload = ['income_source_id' => $source->id];
+
+        $first = $this->create($ci, $folder, 'linked-replay-token', $payload);
+        $replay = $this->create($ci, $folder, 'linked-replay-token', $payload);
+
+        $first->assertOk()->assertJson(['result' => 'success']);
+        $replay->assertOk()->assertJson(['result' => 'success']);
+        $this->assertSame($first->json('return_url'), $replay->json('return_url'));
+        $this->assertCount(1, $folder->businessChecks()->get());
+        $this->assertDatabaseCount('business_check_photos', 1);
         $this->assertSame(1, $this->createdAudits($folder));
     }
 

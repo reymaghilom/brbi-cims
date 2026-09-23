@@ -63,9 +63,13 @@ class DashboardKpiDetailsTest extends TestCase
 
     public function test_active_folders_card_opens_a_most_recently_updated_first_list(): void
     {
+        $creator = User::factory()->create(['full_name' => 'ACTUAL FOLDER CREATOR']);
+        $assigned = User::factory()->create(['full_name' => 'ASSIGNED CI MUST NOT DISPLAY']);
+        $updater = User::factory()->create(['full_name' => 'UPDATER MUST NOT DISPLAY']);
         $older = $this->folder('OLDER, CLIENT');
-        $older->forceFill(['updated_at' => now()->subDays(3)])->saveQuietly();
+        $older->forceFill(['created_by' => $creator->id, 'assigned_ci_id' => $assigned->id, 'updated_by' => $updater->id, 'updated_at' => now()->subDays(3)])->saveQuietly();
         $newer = $this->folder('NEWER, CLIENT');
+        $newer->forceFill(['created_by' => $creator->id, 'assigned_ci_id' => $assigned->id, 'updated_by' => $updater->id])->saveQuietly();
 
         $response = $this->home();
         $html = $response->getContent();
@@ -76,7 +80,11 @@ class DashboardKpiDetailsTest extends TestCase
         $this->assertStringContainsString('2 active client folders', $modal);
         $this->assertSame(['NEWER, CLIENT', 'OLDER, CLIENT'], array_column($response->viewData('kpiDetails')['active'], 'client'));
         $this->assertStringContainsString('href="'.route('client-folders.show', $newer).'"', $modal);
-        $this->assertStringContainsString('Rey Investigator', $modal);
+        $this->assertSame('ACTUAL FOLDER CREATOR', $response->viewData('kpiDetails')['active'][0]['creator']);
+        $this->assertSame(2, substr_count($modal, 'Created By:'));
+        $this->assertStringContainsString('ACTUAL FOLDER CREATOR', $modal);
+        $this->assertStringNotContainsString('ASSIGNED CI MUST NOT DISPLAY', $modal);
+        $this->assertStringNotContainsString('UPDATER MUST NOT DISPLAY', $modal);
         $this->assertSame(2, substr_count($modal, '<li data-kpi-detail-row'));
 
         $older->delete();
@@ -116,8 +124,13 @@ class DashboardKpiDetailsTest extends TestCase
 
     public function test_completed_this_month_lists_only_this_months_completions_newest_first(): void
     {
-        $this->folder('EARLY, CLIENT', ClientFolderStatus::Completed, '2026-09-02 02:00:00');
-        $this->folder('LATE, CLIENT', ClientFolderStatus::Completed, '2026-09-10 02:00:00');
+        $creator = User::factory()->create(['full_name' => 'COMPLETED FOLDER CREATOR']);
+        $assigned = User::factory()->create(['full_name' => 'COMPLETED ASSIGNED CI']);
+        $updater = User::factory()->create(['full_name' => 'COMPLETED UPDATER']);
+        $early = $this->folder('EARLY, CLIENT', ClientFolderStatus::Completed, '2026-09-02 02:00:00');
+        $early->forceFill(['created_by' => $creator->id, 'assigned_ci_id' => $assigned->id, 'updated_by' => $updater->id])->saveQuietly();
+        $late = $this->folder('LATE, CLIENT', ClientFolderStatus::Completed, '2026-09-10 02:00:00');
+        $late->forceFill(['created_by' => $creator->id, 'assigned_ci_id' => $assigned->id, 'updated_by' => $updater->id])->saveQuietly();
         // 2026-08-31 11:30 PM in Manila: last month locally, even though the UTC date is also Aug 31.
         $this->folder('AUGUST, CLIENT', ClientFolderStatus::Completed, '2026-08-31 15:30:00');
         $this->folder('OPEN, CLIENT');
@@ -129,6 +142,11 @@ class DashboardKpiDetailsTest extends TestCase
         $this->assertSame(['LATE, CLIENT', 'EARLY, CLIENT'], array_column($response->viewData('kpiDetails')['completed_this_month'], 'client'));
         $this->assertStringContainsString('2 client folders completed this month', $modal);
         $this->assertStringContainsString('Completed Sep 10, 2026', $modal);
+        $this->assertSame('COMPLETED FOLDER CREATOR', $response->viewData('kpiDetails')['completed_this_month'][0]['creator']);
+        $this->assertSame(2, substr_count($modal, 'Created By:'));
+        $this->assertStringContainsString('COMPLETED FOLDER CREATOR', $modal);
+        $this->assertStringNotContainsString('COMPLETED ASSIGNED CI', $modal);
+        $this->assertStringNotContainsString('COMPLETED UPDATER', $modal);
         $this->assertStringNotContainsString('AUGUST, CLIENT', $modal);
         $this->assertInteractiveCard($response->getContent(), 'dashboard-completed-month-dialog', 'Completed This Month: 2, view details');
     }

@@ -106,6 +106,27 @@ class BusinessReportEditingPresenceTest extends TestCase
         $this->heartbeat($second, $source)->assertOk()->assertJson(['other_editors' => []]);
     }
 
+    public function test_closing_the_business_modal_releases_presence_and_discards_the_stale_iframe_document(): void
+    {
+        $javascript = file_get_contents(resource_path('js/app.js'));
+        $closeLifecycle = substr(
+            $javascript,
+            strpos($javascript, "if (dialog.matches('[data-business-report-dialog]')) {", strpos($javascript, "document.querySelectorAll('dialog').forEach")),
+            2200,
+        );
+
+        $this->assertStringContainsString("frameDocument?.dispatchEvent(new Event('editing-presence-release'));", $closeLifecycle);
+        $this->assertStringContainsString("form.dispatchEvent(new Event('unsaved-form-reset'))", $closeLifecycle);
+        $this->assertStringContainsString("frame.src = 'about:blank';", $closeLifecycle);
+
+        $presenceLifecycle = substr($javascript, strpos($javascript, "document.querySelectorAll('[data-editing-presence]')"));
+        $this->assertStringContainsString("document.addEventListener('editing-presence-release', release);", $presenceLifecycle);
+        $this->assertStringContainsString("window.addEventListener('pagehide', release);", $presenceLifecycle);
+
+        $modal = file_get_contents(resource_path('views/components/ui/business-report-modal.blade.php'));
+        $this->assertMatchesRegularExpression('/<iframe(?![^>]*\ssrc=)[^>]*data-business-report-frame[^>]*><\/iframe>/', $modal);
+    }
+
     public function test_first_save_wins_and_the_second_stale_save_is_blocked_with_friendly_wording(): void
     {
         [$first, $folder] = $this->context();

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\ClientFolders;
 
+use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
@@ -98,6 +99,20 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertSame($investigator->id, ClientFolder::sole()->assigned_ci_id);
     }
 
+    public function test_senior_credit_investigator_creation_remains_self_assigned(): void
+    {
+        $senior = User::factory()->create(['role' => UserRole::SeniorCreditInvestigator]);
+
+        $this->actingAs($senior)->post(route('client-folders.store'), [
+            'last_name' => 'Senior',
+            'first_name' => 'Investigator',
+        ])->assertRedirect();
+
+        $folder = ClientFolder::sole();
+        $this->assertSame($senior->id, $folder->assigned_ci_id);
+        $this->assertSame($senior->id, $folder->created_by);
+    }
+
     public function test_administrator_assignment_is_optional_but_rejects_disabled_and_non_ci_users(): void
     {
         $administrator = User::factory()->administrator()->create();
@@ -118,7 +133,7 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertDatabaseCount('client_folders', 1);
     }
 
-    public function test_create_form_lists_only_active_credit_investigators_for_administrator(): void
+    public function test_create_form_exposes_no_credit_investigator_assignment_for_any_role(): void
     {
         $administrator = User::factory()->administrator()->create();
         $activeCi = User::factory()->create(['full_name' => 'VISIBLE ACTIVE CI']);
@@ -127,17 +142,17 @@ class ClientFolderLifecycleTest extends TestCase
 
         $this->actingAs($administrator)->get(route('client-folders.create'))
             ->assertOk()
-            ->assertSee('VISIBLE ACTIVE CI')
+            ->assertDontSee('VISIBLE ACTIVE CI')
             ->assertDontSee('HIDDEN DISABLED CI')
             ->assertDontSee('HIDDEN ADMINISTRATOR')
-            ->assertSee('name="assigned_ci_id"', false);
+            ->assertDontSee('name="assigned_ci_id"', false)
+            ->assertDontSee('Leave unassigned');
 
         $this->actingAs($activeCi)->get(route('client-folders.create'))
             ->assertOk()
-            ->assertSee("You'll be listed as the creator of this folder.", false)
+            ->assertDontSee("You'll be listed as the creator of this folder.", false)
             ->assertDontSee("You'll be recorded as the creator of this folder.", false)
-            // The supporting line names the signed-in CI dynamically — never a hard-coded name.
-            ->assertSee($activeCi->full_name.' · All Credit Investigators can still access and work on this folder.', false)
+            ->assertDontSee($activeCi->full_name.' · All Credit Investigators can still access and work on this folder.', false)
             ->assertDontSee('every Credit Investigator can still open and work on it.', false)
             ->assertDontSee('name="assigned_ci_id"', false);
     }
@@ -236,6 +251,27 @@ class ClientFolderLifecycleTest extends TestCase
         $this->assertSame($original, $folder->only(array_keys($original)));
         $this->assertSame($folder->id, $information->fresh()->client_folder_id);
         $this->assertDatabaseHas('audit_logs', ['action' => 'client_folder.renamed', 'client_folder_id' => $folder->id]);
+    }
+
+    public function test_optional_name_fields_can_be_intentionally_cleared_when_editing_a_folder(): void
+    {
+        $investigator = User::factory()->create();
+        $folder = ClientFolder::factory()->create([
+            'assigned_ci_id' => $investigator->id,
+            'middle_name' => 'SANTOS',
+            'suffix' => 'JR.',
+        ]);
+
+        $this->actingAs($investigator)->patch(route('client-folders.update-name', $folder), [
+            'last_name' => $folder->last_name,
+            'first_name' => $folder->first_name,
+            'middle_name' => '',
+            'suffix' => '',
+        ])->assertRedirect(route('client-folders.show', $folder));
+
+        $folder->refresh();
+        $this->assertNull($folder->middle_name);
+        $this->assertNull($folder->suffix);
     }
 
     public function test_rename_records_the_actual_authenticated_actor_not_the_folder_creator_or_assigned_ci(): void

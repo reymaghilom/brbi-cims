@@ -24,7 +24,7 @@ class DashboardWorkTodayModalTest extends TestCase
         $this->seed(ReferenceDataSeeder::class);
     }
 
-    public function test_non_overdue_work_opens_the_exact_ci_activities_page_instead_of_the_dashboard_edit_modal(): void
+    public function test_pending_work_opens_the_exact_ci_activities_page_instead_of_the_completion_modal(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci);
@@ -97,12 +97,12 @@ class DashboardWorkTodayModalTest extends TestCase
             ->assertDontSee('data-dashboard-overdue-complete-edit', false)
             ->assertDontSee('data-completion-icon="edit"', false)
             ->assertSee('The schedule and time will be cleared. This completion will be recorded in Recent Activity under the user who confirms it.');
-        $this->assertSame(4, substr_count($dashboard->getContent(), 'data-work-today-action="continue"'));
+        $this->assertSame(4, substr_count($dashboard->getContent(), 'data-work-today-action="complete"'));
         $overdueWork = collect($dashboard->viewData('workToday')->items())->keyBy('id');
         $this->assertTrue($overdueWork[$applicant->id]['direct_completion']);
         $this->assertTrue($overdueWork[$remaining->id]['direct_completion']);
-        $this->assertSame('Continue', $overdueWork[$applicant->id]['action']);
-        $this->assertSame('Continue', $overdueWork[$remaining->id]['action']);
+        $this->assertSame('Mark as Completed', $overdueWork[$applicant->id]['action']);
+        $this->assertSame('Mark as Completed', $overdueWork[$remaining->id]['action']);
         $this->assertNull($overdueWork[$applicant->id]['completion_co_maker_id']);
         $this->assertSame($coMaker->id, $overdueWork[$remaining->id]['completion_co_maker_id']);
         $this->assertSame(route('client-folders.activities.update', [$folder, $applicant]), $overdueWork[$applicant->id]['completion_url']);
@@ -127,6 +127,7 @@ class DashboardWorkTodayModalTest extends TestCase
         $this->assertStringNotContainsString('data-dashboard-overdue-complete-edit', $script);
         $this->assertStringContainsString('dashboardCompletionModal.close();', $script);
         $this->assertStringContainsString(': `${activityName} marked as completed.`', $script);
+        $this->assertStringContainsString("function showToast(message, type = 'success', duration = 4500)", $script);
         $this->assertStringContainsString('refreshDashboard()', $script);
         $this->assertStringContainsString("'X-Dashboard-Refresh': '1'", $script);
         $refreshFunction = substr($script, strpos($script, 'async function refreshDashboard()'), strpos($script, "document.querySelectorAll('[data-dashboard-completion-modal]')") - strpos($script, 'async function refreshDashboard()'));
@@ -198,7 +199,7 @@ class DashboardWorkTodayModalTest extends TestCase
         $future = $this->assetTarget($asset, $ci, 'Future Office');
         $city->update(['status' => ActivityStatus::Scheduled, 'scheduled_at' => now()->subDays(2)]);
         $ropa->update(['assessor_type' => 'provincial_assessor', 'status' => ActivityStatus::Scheduled, 'scheduled_at' => now()->subDay()]);
-        $future->update(['assessor_type' => 'provincial_assessor', 'status' => ActivityStatus::Scheduled, 'scheduled_at' => now()->addDay()]);
+        $future->update(['assessor_type' => 'provincial_assessor', 'status' => ActivityStatus::FollowUp, 'scheduled_at' => now()->addDay()]);
         $asset->update(['status' => ActivityStatus::Scheduled]);
 
         $dashboard = $this->actingAs($ci)->get(route('home'))->assertOk()
@@ -216,10 +217,10 @@ class DashboardWorkTodayModalTest extends TestCase
 
         $this->assertTrue($items[$city->id]['direct_completion']);
         $this->assertTrue($items[$ropa->id]['direct_completion']);
-        $this->assertFalse($items[$future->id]['direct_completion']);
-        $this->assertSame('Continue', $items[$city->id]['action']);
-        $this->assertSame('Continue', $items[$ropa->id]['action']);
-        $this->assertSame('Open', $items[$future->id]['action']);
+        $this->assertTrue($items[$future->id]['direct_completion']);
+        $this->assertSame('Mark as Completed', $items[$city->id]['action']);
+        $this->assertSame('Mark as Completed', $items[$ropa->id]['action']);
+        $this->assertSame('Mark as Completed', $items[$future->id]['action']);
         $this->assertSame('City Assessor — SS', $items[$city->id]['completion_target']);
         $this->assertSame('Provincial Assessor — Main Branch', $items[$ropa->id]['completion_target']);
         $this->assertSame('dashboard-overdue-asset-complete-modal', $items[$city->id]['completion_modal_id']);
@@ -228,7 +229,7 @@ class DashboardWorkTodayModalTest extends TestCase
             route('client-folders.activities.asset-targets.complete', [$folder, $asset, $city]),
             $items[$city->id]['completion_url'],
         );
-        $this->assertSame(4, substr_count($dashboard->getContent(), 'data-modal-open="dashboard-overdue-asset-complete-modal"'));
+        $this->assertSame(6, substr_count($dashboard->getContent(), 'data-modal-open="dashboard-overdue-asset-complete-modal"'));
         $this->assertStringContainsString('data-dashboard-completion-target="City Assessor — SS"', $dashboard->getContent());
         $this->assertStringContainsString('data-dashboard-completion-target="Provincial Assessor — Main Branch"', $dashboard->getContent());
 
@@ -250,8 +251,8 @@ class DashboardWorkTodayModalTest extends TestCase
         $this->assertSame(ActivityStatus::Completed, $city->fresh()->status);
         $this->assertNull($city->fresh()->scheduled_at);
         $this->assertSame(ActivityStatus::Scheduled, $ropa->fresh()->status);
-        $this->assertSame(ActivityStatus::Scheduled, $future->fresh()->status);
-        $this->assertSame(ActivityStatus::Scheduled, $asset->fresh()->status);
+        $this->assertSame(ActivityStatus::FollowUp, $future->fresh()->status);
+        $this->assertSame(ActivityStatus::FollowUp, $asset->fresh()->status);
         $this->assertDatabaseCount('audit_logs', 1);
         $this->assertDatabaseHas('audit_logs', [
             'action' => 'ci_activity.asset_target_completed',
@@ -265,7 +266,7 @@ class DashboardWorkTodayModalTest extends TestCase
         $this->assertTrue($remaining->has($ropa->id));
         $this->assertTrue($remaining[$ropa->id]['direct_completion']);
         $this->assertTrue($remaining->has($future->id));
-        $this->assertFalse($remaining[$future->id]['direct_completion']);
+        $this->assertTrue($remaining[$future->id]['direct_completion']);
 
         $this->assertStringContainsString('if (!response.ok)', $script);
         $this->assertStringContainsString('error.hidden = false', $script);
@@ -304,10 +305,10 @@ class DashboardWorkTodayModalTest extends TestCase
 
         $this->assertTrue($items[$bpi->id]['direct_completion']);
         $this->assertTrue($items[$ficco->id]['direct_completion']);
-        $this->assertFalse($items[$future->id]['direct_completion']);
-        $this->assertSame('Continue', $items[$bpi->id]['action']);
-        $this->assertSame('Continue', $items[$ficco->id]['action']);
-        $this->assertSame('Open', $items[$future->id]['action']);
+        $this->assertTrue($items[$future->id]['direct_completion']);
+        $this->assertSame('Mark as Completed', $items[$bpi->id]['action']);
+        $this->assertSame('Mark as Completed', $items[$ficco->id]['action']);
+        $this->assertSame('Mark as Completed', $items[$future->id]['action']);
         $this->assertFalse($items->has($completed->id));
         $this->assertSame('BPI', $items[$bpi->id]['completion_target']);
         $this->assertSame('Loan Inquiry', $items[$bpi->id]['completion_target_type']);
@@ -319,7 +320,7 @@ class DashboardWorkTodayModalTest extends TestCase
             route('client-folders.activities.bank-targets.complete', [$folder, $bank, $bpi]),
             $items[$bpi->id]['completion_url'],
         );
-        $this->assertSame(4, substr_count($dashboard->getContent(), 'data-modal-open="dashboard-overdue-bank-complete-modal"'));
+        $this->assertSame(6, substr_count($dashboard->getContent(), 'data-modal-open="dashboard-overdue-bank-complete-modal"'));
         $this->assertStringContainsString('data-dashboard-completion-target="BPI"', $dashboard->getContent());
         $this->assertStringContainsString('data-dashboard-completion-target-type="Loan Inquiry"', $dashboard->getContent());
         $this->assertStringContainsString('data-dashboard-completion-target="FICCO — Main Branch"', $dashboard->getContent());
@@ -364,7 +365,7 @@ class DashboardWorkTodayModalTest extends TestCase
         $this->assertTrue($remaining->has($ficco->id));
         $this->assertTrue($remaining[$ficco->id]['direct_completion']);
         $this->assertTrue($remaining->has($future->id));
-        $this->assertFalse($remaining[$future->id]['direct_completion']);
+        $this->assertTrue($remaining[$future->id]['direct_completion']);
 
         $this->assertStringContainsString('if (!response.ok)', $script);
         $this->assertStringContainsString('dashboardCompletionModal.close();', $script);

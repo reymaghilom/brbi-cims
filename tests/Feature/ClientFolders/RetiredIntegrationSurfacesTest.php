@@ -60,7 +60,8 @@ class RetiredIntegrationSurfacesTest extends TestCase
             ->assertSee('CI Activities')
             ->assertSee('Business / Income Sources');
 
-        // Their module-placeholder routes were removed with them.
+        // These were the exact slugs accepted by the retired placeholder route. Their public
+        // URLs must continue to answer 404 after that unreachable route is removed.
         foreach (['attachments', 'google-drive', 'telegram-history'] as $module) {
             $this->actingAs($ci)->get('/client-folders/'.$folder->id.'/modules/'.$module)->assertNotFound();
         }

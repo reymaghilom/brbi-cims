@@ -19,6 +19,7 @@ class PhpWordOfficialReportGenerator implements DocxGenerator
     public function __construct(
         private readonly ReportMediaResolver $mediaResolver,
         private readonly CiTeamDocumentStorage $documents,
+        private readonly ReportTemporaryFiles $temporaryFiles,
     ) {}
 
     public function generate(string $template, array $data, ReportRenderOptions $options): GeneratedReportArtifact
@@ -50,15 +51,14 @@ class PhpWordOfficialReportGenerator implements DocxGenerator
             $this->photoSection($section, $photoSection);
         }
 
-        // Suppressed — see ResidenceBusinessCheckBatchDocxExporter's identical call for why: an
-        // unwritable sys_get_temp_dir() still leaves tempnam() returning a real, usable fallback
-        // path, but its own informational warning must not be allowed to crash generation.
-        $temporary = @tempnam(sys_get_temp_dir(), 'brbi-docx-');
-        if ($temporary === false) {
-            throw new \RuntimeException('A temporary report file could not be created.');
-        }
+        // The shared service keeps the writer inside Laravel-owned storage on every platform.
+        $temporary = $this->temporaryFiles->create('brbi-docx-');
         try {
-            IOFactory::createWriter($phpWord, 'Word2007')->save($temporary);
+            $this->temporaryFiles->withPhpWordTempDirectory(function () use ($phpWord, $temporary): void {
+                $writer = IOFactory::createWriter($phpWord, 'Word2007');
+                $this->temporaryFiles->configurePhpWord($writer);
+                $writer->save($temporary);
+            });
             $bytes = file_get_contents($temporary);
             if ($bytes === false || ! $this->documents->disk()->put($data['_artifact_path'], $bytes)) {
                 throw new \RuntimeException('The DOCX artifact could not be stored.');

@@ -63,7 +63,7 @@ class DashboardTest extends TestCase
         $this->actingAs($ci)->get(route('client-folders.create'))
             ->assertOk()
             ->assertSee('Create Client Folder')
-            ->assertSee("You'll be listed as the creator of this folder.", false);
+            ->assertDontSee("You'll be listed as the creator of this folder.", false);
     }
 
     public function test_dashboard_uses_responsive_card_markup_and_excludes_unapproved_widgets(): void
@@ -277,6 +277,23 @@ class DashboardTest extends TestCase
                 '11:45 AM', 'Folder Updated', 'REYES, JUAN', 'REYES, JUAN JR.', 'REY C. MAGHILOM',
                 '10:20 AM', 'Folder Updated', 'JUAN REYES', 'REYES, JUAN', 'REASAN MARK Q. GURA',
             ]);
+    }
+
+    public function test_dashboard_context_live_search_preserves_folder_history(): void
+    {
+        $ci = User::factory()->create(['full_name' => 'HISTORY ACTOR']);
+        $folder = ClientFolder::factory()->create(['assigned_ci_id' => $ci->id]);
+        AuditLog::create([
+            'user_id' => $ci->id, 'client_folder_id' => $folder->id,
+            'action' => 'client_folder.created', 'module' => 'client_folders',
+            'description' => 'A client folder was created.', 'metadata' => [],
+        ]);
+
+        $this->actingAs($ci)->get(route('client-folders.live-search', ['context' => 'dashboard']))
+            ->assertOk()
+            ->assertSee('Folder History')
+            ->assertSee('Folder Created')
+            ->assertSee('by HISTORY ACTOR');
     }
 
     public function test_folder_history_shows_creation_with_actor_and_asia_manila_timestamp(): void

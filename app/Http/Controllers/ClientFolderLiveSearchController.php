@@ -38,6 +38,7 @@ class ClientFolderLiveSearchController extends Controller
 
         return response(view('dashboard._folder-browser', [
             'clientFolders' => $clientFolders,
+            'folderHistoryByFolder' => $browser->previewHistoryFor($clientFolders),
             'filters' => $filters,
             'folderBrowserAction' => $action,
             'folderBrowserContext' => $validated['context'],

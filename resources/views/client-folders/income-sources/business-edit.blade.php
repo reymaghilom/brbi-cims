@@ -7,9 +7,11 @@
     $report = $incomeSource?->businessReport;
     $hasActiveReport = $report !== null;
     $cibiReport = $clientFolder->cibiReport()->where('co_maker_id', ($activePerson ?? null)?->id)->first();
-    $headerBranch = $incomeSource?->branch_name ?: $cibiReport?->branch_name;
-    $headerAccountOfficer = $incomeSource?->account_officer_name ?: $cibiReport?->account_officer_name;
-    $headerAmountApplied = $cibiReport?->amount_applied;
+    $isSavedBusinessReport = $incomeSource && $report && $incomeSource->revision > 1;
+    $headerBranch = $isSavedBusinessReport ? $incomeSource->branch_name : ($incomeSource?->branch_name ?: $cibiReport?->branch_name);
+    $headerAccountOfficer = $isSavedBusinessReport ? $incomeSource->account_officer_name : ($incomeSource?->account_officer_name ?: $cibiReport?->account_officer_name);
+    $headerAmountApplied = $isSavedBusinessReport ? $incomeSource->amount_applied : ($incomeSource?->amount_applied ?: $cibiReport?->amount_applied);
+    $branchOptions = \App\Support\BranchOptions::options($headerBranch);
     $formatAmountApplied = static function (mixed $value): string {
         $original = trim((string) $value);
         $normalized = str_replace(',', '', $original);
@@ -128,7 +130,7 @@
                         </div>
                     </div>
                     <label class="business-report-header-label" for="branch_name">BRANCH:</label>
-                    <div class="business-report-header-value business-report-header-branch"><input id="branch_name" name="branch_name" form="{{ $headerFormId }}" value="{{ old('branch_name', $headerBranch) }}" class="business-report-header-control" readonly aria-readonly="true" @error('branch_name') aria-invalid="true" aria-describedby="branch_name-error" @enderror><x-form.validation-message for="branch_name" /></div>
+                    <div class="business-report-header-value business-report-header-branch"><select id="branch_name" name="branch_name" form="{{ $headerFormId }}" class="business-report-header-control" @error('branch_name') aria-invalid="true" aria-describedby="branch_name-error" @enderror><option value="">Select branch</option>@foreach($branchOptions as $value => $label)<option value="{{ $value }}" @selected((string) old('branch_name', $headerBranch) === (string) $value)>{{ $label }}</option>@endforeach</select><x-form.validation-message for="branch_name" /></div>
 
                     <label class="business-report-header-label" for="start_date">START DATE OF CI:</label>
                     <div class="business-report-header-value"><input id="start_date" name="start_date" form="{{ $headerFormId }}" type="date" required value="{{ old('start_date', $report?->start_date?->format('Y-m-d')) }}" class="business-report-header-control" @error('start_date') aria-invalid="true" aria-describedby="start_date-error" @enderror><x-form.validation-message for="start_date" /></div>
@@ -138,14 +140,14 @@
                     <label class="business-report-header-label" for="submitted_date">DATE SUBMITTED TO CA:</label>
                     <div class="business-report-header-value"><input id="submitted_date" name="submitted_date" form="{{ $headerFormId }}" type="date" value="{{ old('submitted_date', $report?->submitted_date?->format('Y-m-d')) }}" class="business-report-header-control" @error('submitted_date') aria-invalid="true" aria-describedby="submitted_date-error" @enderror><x-form.validation-message for="submitted_date" /></div>
                     <label class="business-report-header-label" for="account_officer_name">ACCOUNT OFFICER:</label>
-                    <div class="business-report-header-value"><input id="account_officer_name" name="account_officer_name" form="{{ $headerFormId }}" value="{{ old('account_officer_name', $headerAccountOfficer) }}" class="business-report-header-control" readonly aria-readonly="true" @error('account_officer_name') aria-invalid="true" aria-describedby="account_officer_name-error" @enderror><x-form.validation-message for="account_officer_name" /></div>
+                    <div class="business-report-header-value"><input id="account_officer_name" name="account_officer_name" form="{{ $headerFormId }}" value="{{ old('account_officer_name', $headerAccountOfficer) }}" class="business-report-header-control" @error('account_officer_name') aria-invalid="true" aria-describedby="account_officer_name-error" @enderror><x-form.validation-message for="account_officer_name" /></div>
 
                     <div class="business-report-header-party" aria-label="Saved applicant role">
                         <span><span class="business-report-party-check" aria-hidden="true">( {{ $partyType === 'borrower' ? '✓' : ' ' }} )</span> BORROWER</span>
                         <span><span class="business-report-party-check" aria-hidden="true">( {{ $partyType === 'co_maker' ? '✓' : ' ' }} )</span> CO-MAKER</span>
                     </div>
                     <label class="business-report-header-label" for="amount_applied">AMOUNT APPLIED:</label>
-                    <div class="business-report-header-value"><input id="amount_applied" type="text" value="{{ $headerAmountAppliedDisplay }}" class="business-report-header-control" readonly aria-readonly="true"></div>
+                    <div class="business-report-header-value"><input id="amount_applied" name="amount_applied" form="{{ $headerFormId }}" type="text" inputmode="decimal" value="{{ old('amount_applied', $headerAmountAppliedDisplay) }}" class="business-report-header-control" data-number-format @error('amount_applied') aria-invalid="true" aria-describedby="amount_applied-error" @enderror><x-form.validation-message for="amount_applied" /></div>
                 </div>
             </section>
 
@@ -237,7 +239,7 @@
              The submit's form/name/value are untouched, so intent handling is exactly as before. --}}
         <x-slot:actions>
             <button type="button" class="ui-button-secondary" data-close-parent-dialog><x-ui.icon name="close" size="size-4" />Cancel</button>
-            <button type="submit" form="{{ $headerFormId }}" name="intent" value="complete" class="ui-button-primary" data-business-save><x-ui.icon name="check" size="size-4" />{{ $hasActiveReport ? 'Update Business Report' : 'Save Business Report' }}</button>
+            <button type="submit" form="{{ $headerFormId }}" name="intent" value="complete" class="ui-button-primary" data-business-save @disabled(session('business_report_deleted'))><x-ui.icon name="check" size="size-4" />{{ $hasActiveReport ? 'Update Business Report' : 'Save Business Report' }}</button>
         </x-slot:actions>
     </x-ui.sticky-form-toolbar>
 

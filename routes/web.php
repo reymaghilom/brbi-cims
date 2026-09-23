@@ -9,6 +9,8 @@ use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\UserPasswordResetController;
 use App\Http\Controllers\Admin\UserStatusController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
+use App\Http\Controllers\Auth\NewPasswordController;
+use App\Http\Controllers\Auth\PasswordResetLinkController;
 use App\Http\Controllers\Auth\RequiredPasswordChangeController;
 use App\Http\Controllers\BusinessCheckController;
 use App\Http\Controllers\CiActivityAssetTargetController;
@@ -22,7 +24,6 @@ use App\Http\Controllers\ClientFolderAccessController;
 use App\Http\Controllers\ClientFolderController;
 use App\Http\Controllers\ClientFolderDeleteController;
 use App\Http\Controllers\ClientFolderLiveSearchController;
-use App\Http\Controllers\ClientFolderModulePlaceholderController;
 use App\Http\Controllers\ClientFolderNameController;
 use App\Http\Controllers\ClientFolderSuggestionController;
 use App\Http\Controllers\ClientInformationController;
@@ -41,18 +42,26 @@ use App\Http\Controllers\ResidenceBusinessReportController;
 use App\Http\Controllers\ResidenceCheckController;
 use Illuminate\Support\Facades\Route;
 
+Route::view('/acceptable-use', 'policies.acceptable-use')->name('policies.acceptable-use');
+Route::view('/privacy', 'policies.privacy')->name('policies.privacy');
+
 Route::middleware('guest')->group(function (): void {
     Route::get('/login', [AuthenticatedSessionController::class, 'create'])->name('login');
     Route::post('/login', [AuthenticatedSessionController::class, 'store'])->name('login.store');
+    Route::get('/forgot-password', [PasswordResetLinkController::class, 'create'])->name('password.request');
+    Route::post('/forgot-password', [PasswordResetLinkController::class, 'store'])->middleware('throttle:5,1')->name('password.email');
+    Route::get('/reset-password/{token}', [NewPasswordController::class, 'create'])->name('password.reset');
+    Route::post('/reset-password', [NewPasswordController::class, 'store'])->middleware('throttle:10,1')->name('password.update');
 });
 
-Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
+Route::middleware(['auth', 'auth.session.current', 'auth.no-cache'])->group(function (): void {
     Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
     Route::get('/password/change-required', [RequiredPasswordChangeController::class, 'edit'])->name('password.change-required.edit');
     Route::put('/password/change-required', [RequiredPasswordChangeController::class, 'update'])->name('password.change-required.update');
 
     Route::middleware('password.changed')->group(function (): void {
         Route::get('/', DashboardController::class)->name('home');
+        Route::redirect('/dashboard', '/');
         Route::post('/notifications/ci-activities/{notification}/read', CiActivityNotificationReadController::class)
             ->name('notifications.ci-activities.read');
         Route::get('/notifications/ci-activities/feed', CiActivityNotificationFeedController::class)
@@ -260,11 +269,6 @@ Route::middleware(['auth', 'auth.session.current'])->group(function (): void {
         Route::get('/client-folders/{clientFolder}/generated-reports/{generatedReport}/download', [GeneratedReportController::class, 'download'])->scopeBindings()->name('client-folders.generated-reports.download');
         Route::get('/client-folders/{clientFolder}', [ClientFolderAccessController::class, 'show'])
             ->name('client-folders.show');
-        Route::get('/client-folders/{clientFolder}/modules/{module}', ClientFolderModulePlaceholderController::class)
-            ->whereIn('module', [
-                'google-drive', 'telegram-history', 'attachments',
-            ])
-            ->name('client-folders.modules.show');
 
         Route::middleware('role:administrator')->prefix('admin')->name('admin.')->group(function (): void {
             Route::resource('users', UserController::class)->except(['show', 'destroy']);

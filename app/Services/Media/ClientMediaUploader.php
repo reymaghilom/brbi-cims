@@ -139,12 +139,15 @@ class ClientMediaUploader
     {
         $method = self::LOCAL_MIRRORED_CLOUD_KINDS[trim($mediaFolder, '/')] ?? null;
         if ($method !== null) {
+            $canonicalBase = $this->documents->personDirectory($folder, $coMaker);
             $evidenceBase = $this->documents->evidencePersonDirectory($folder, $coMaker);
             $evidencePath = $this->documents->{$method}($folder, $coMaker);
-            if (str_starts_with($evidencePath, $evidenceBase.'/')) {
-                $moduleSubpath = substr($evidencePath, strlen($evidenceBase) + 1);
+            $sourceBase = collect([$canonicalBase, $evidenceBase])
+                ->first(fn (string $base): bool => str_starts_with($evidencePath, $base.'/'));
+            if ($sourceBase !== null) {
+                $moduleSubpath = substr($evidencePath, strlen($sourceBase) + 1);
 
-                return $this->cloudSafePath($this->documents->personDirectory($folder, $coMaker).'/'.$moduleSubpath);
+                return $this->cloudSafePath($canonicalBase.'/'.$moduleSubpath);
             }
         }
 

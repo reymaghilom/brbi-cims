@@ -11,7 +11,7 @@
         id="{{ $controlId }}"
         type="button"
         class="ui-button-primary-compact {{ $controlClass }} cursor-pointer"
-        data-work-today-action="continue"
+        data-work-today-action="complete"
         data-modal-open="{{ $item['completion_modal_id'] }}"
         data-dashboard-completion-name="{{ $item['activity'] }}"
         data-dashboard-completion-target="{{ $item['completion_target'] }}"
@@ -27,8 +27,8 @@
         data-dashboard-activity-context="{{ ($item['person'] ? 'Co-Maker: '.$item['person'] : 'Applicant: '.$item['client']).' · '.$item['status'] }}"
         aria-haspopup="dialog"
     >
-        <x-ui.icon name="chevron-right" size="size-4" data-work-today-action-icon />
-        Continue
+        <x-ui.icon name="check" size="size-4" data-work-today-action-icon />
+        Mark as Completed
     </button>
 @else
     <a

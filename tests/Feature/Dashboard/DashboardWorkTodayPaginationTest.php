@@ -83,11 +83,12 @@ class DashboardWorkTodayPaginationTest extends TestCase
     public function test_priority_is_applied_to_the_full_dataset_before_pagination_and_completed_work_is_excluded(): void
     {
         $ci = User::factory()->create();
-        $future = $this->activity($this->folder($ci, 'FUTURE SCHEDULED, CLIENT'), $ci, ActivityStatus::Scheduled, now()->addDay());
+        [$todaySchedule] = CiActivity::normalizeScheduleInput(now(config('cims.display_timezone'))->toDateString());
+        $future = $this->activity($this->folder($ci, 'FUTURE SCHEDULED, CLIENT'), $ci, ActivityStatus::Scheduled, $todaySchedule->copy()->addDay());
         $pendingOne = $this->activity($this->folder($ci, 'PENDING ONE, CLIENT'), $ci, ActivityStatus::Pending);
-        $followUpToday = $this->activity($this->folder($ci, 'FOLLOW-UP, CLIENT'), $ci, ActivityStatus::FollowUp, now());
-        $scheduledToday = $this->activity($this->folder($ci, 'SCHEDULED, CLIENT'), $ci, ActivityStatus::Scheduled, now());
-        $overdue = $this->activity($this->folder($ci, 'OVERDUE, CLIENT'), $ci, ActivityStatus::Scheduled, now()->subDay());
+        $followUpToday = $this->activity($this->folder($ci, 'FOLLOW-UP, CLIENT'), $ci, ActivityStatus::FollowUp, $todaySchedule->copy());
+        $scheduledToday = $this->activity($this->folder($ci, 'SCHEDULED, CLIENT'), $ci, ActivityStatus::Scheduled, $todaySchedule->copy());
+        $overdue = $this->activity($this->folder($ci, 'OVERDUE, CLIENT'), $ci, ActivityStatus::Scheduled, $todaySchedule->copy()->subDay());
         $pendingTwo = $this->activity($this->folder($ci, 'PENDING TWO, CLIENT'), $ci, ActivityStatus::Pending);
         $completed = $this->activity($this->folder($ci, 'COMPLETED, CLIENT'), $ci, ActivityStatus::Completed);
 
@@ -107,7 +108,7 @@ class DashboardWorkTodayPaginationTest extends TestCase
         $this->assertCount(1, $pageTwo->items());
     }
 
-    public function test_scheduled_follow_up_and_pending_checks_use_open_links_without_dashboard_edit_modal_triggers(): void
+    public function test_scheduled_and_follow_up_checks_use_completion_modal_while_pending_checks_stay_open_links(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci, 'STATUS ACTIONS, CLIENT');
@@ -147,6 +148,8 @@ class DashboardWorkTodayPaginationTest extends TestCase
             ->assertSee('Scheduled')
             ->assertSee('For Follow-up')
             ->assertSee('Pending')
+            ->assertSee('data-work-today-action="complete"', false)
+            ->assertSee('Mark as Completed')
             ->assertSee('data-work-today-action="open"', false)
             ->assertDontSee('data-modal-open="dashboard-activity-dialog"', false);
         $pageTwoResponse = $this->get(route('home', ['work_page' => 2]))->assertOk()
@@ -162,11 +165,25 @@ class DashboardWorkTodayPaginationTest extends TestCase
             ).'#activity-'.$activity->id;
             $item = $items[$activity->id];
 
-            $this->assertSame('Open', $item['action']);
-            $this->assertSame($expectedUrl, $item['url']);
             $this->assertSame($expectedUrl, $item['client_url']);
-            $this->assertFalse($item['direct_completion']);
+
+            if ($activity->status === ActivityStatus::Pending) {
+                $this->assertSame('Open', $item['action']);
+                $this->assertSame($expectedUrl, $item['url']);
+                $this->assertFalse($item['direct_completion']);
+                $this->assertNull($item['completion_url']);
+            } else {
+                $this->assertSame('Mark as Completed', $item['action']);
+                $this->assertTrue($item['direct_completion']);
+                $this->assertSame('dashboard-overdue-complete-activity-modal', $item['completion_modal_id']);
+                $this->assertSame(route('client-folders.activities.update', [$folder, $activity]), $item['completion_url']);
+                $this->assertSame($activity->co_maker_id, $item['completion_co_maker_id']);
+            }
         }
+
+        $this->assertSame(8, substr_count($pageOneResponse->getContent(), 'data-work-today-action="complete"'));
+        $this->assertSame(8, substr_count($pageOneResponse->getContent(), 'data-modal-open="dashboard-overdue-complete-activity-modal"'));
+        $this->assertSame(0, substr_count($pageTwoResponse->getContent(), 'data-work-today-action="complete"'));
 
         $first = collect($pageOneResponse->viewData('workToday')->items())->first();
         $pageOneResponse->assertSee($first['client'])
@@ -178,7 +195,7 @@ class DashboardWorkTodayPaginationTest extends TestCase
         $this->assertStringContainsString('class="size-4 shrink-0"', $pageTwoResponse->getContent());
     }
 
-    public function test_client_links_preserve_exact_applicant_and_co_maker_context_separately_from_continue(): void
+    public function test_client_links_preserve_exact_applicant_and_co_maker_context_separately_from_completion(): void
     {
         $ci = User::factory()->create();
         $folder = $this->folder($ci, 'LINKED, CLIENT');

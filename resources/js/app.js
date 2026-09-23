@@ -2,6 +2,26 @@ import './bootstrap';
 
 const focusableSelector = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+if (document.body?.hasAttribute('data-authenticated-page')) {
+    window.addEventListener('pageshow', (event) => {
+        if (event.persisted) window.location.reload();
+    });
+}
+
+document.querySelectorAll('[data-password-visibility-toggle]').forEach((toggle) => {
+    toggle.addEventListener('click', () => {
+        const input = document.getElementById(toggle.getAttribute('aria-controls'));
+        if (!(input instanceof HTMLInputElement)) return;
+
+        const showPassword = input.type === 'password';
+        input.type = showPassword ? 'text' : 'password';
+        toggle.setAttribute('aria-label', showPassword ? 'Hide password' : 'Show password');
+        toggle.setAttribute('aria-pressed', String(showPassword));
+        toggle.querySelector('[data-password-visible-icon]')?.toggleAttribute('hidden', showPassword);
+        toggle.querySelector('[data-password-hidden-icon]')?.toggleAttribute('hidden', !showPassword);
+    });
+});
+
 function setDrawer(open) {
     const drawer = document.querySelector('[data-mobile-drawer]');
     const backdrop = document.querySelector('[data-mobile-backdrop]');
@@ -643,16 +663,11 @@ function refreshReportsWorkspace() {
 // this page is displaying (no ?co_maker_id for the Applicant, the exact ?co_maker_id for a
 // Co-Maker), so the controller resolves the same ActivePerson it resolved for the page itself and
 // the fragment can never come back holding another person's rows. Nothing about the URL, history or
-// person context changes; only [data-checks-listing] is replaced.
+// person context changes; only the existing [data-checks-listing] contents are updated once the
+// authoritative response is ready.
 function refreshChecksListing() {
     const region = document.querySelector('[data-checks-listing]');
     if (!region) return;
-
-    // Subtle in-flight state only (the same [data-refreshing] opacity/pointer-events treatment the
-    // Reports and CI Activities listings already use) — the current table stays visible and
-    // readable until the response actually lands.
-    region.setAttribute('aria-busy', 'true');
-    region.setAttribute('data-refreshing', 'true');
 
     fetch(window.location.href, { headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } })
         .then((response) => {
@@ -660,29 +675,24 @@ function refreshChecksListing() {
             return response.text();
         })
         .then((html) => {
-            const holder = document.createElement('template');
-            holder.innerHTML = html;
-            const next = holder.content.querySelector('[data-checks-listing]');
+            const page = new DOMParser().parseFromString(html, 'text/html');
+            const next = page.querySelector('[data-checks-listing]');
             if (!next) throw new Error('The check list response was incomplete.');
-            region.replaceWith(next);
+            // Match Business Report's smooth refresh: retain the live region (and therefore page
+            // position/layout) while the request runs, then apply the authoritative contents in
+            // one synchronous swap. No dimming, blank state, root replacement or page reload.
+            region.innerHTML = next.innerHTML;
 
             // Row menus, the row Edit triggers and every per-row <dialog> are already driven by
             // document-level delegated listeners, so they need nothing here. These two are the only
             // narrowly bound pieces inside the region — re-run just them against the new nodes,
             // never a whole-app re-initialization.
             initCheckBatchPanel();
-            next.querySelectorAll('[data-check-sort-table]').forEach(initSortableTable);
+            region.querySelectorAll('[data-check-sort-table]').forEach(initSortableTable);
         })
         .catch(() => {
-            // The save itself already succeeded and was already confirmed to the user — only the
-            // refresh failed. Say exactly that, leave the page as it is, and never navigate or
-            // reload on its behalf.
-            showToast('Saved. The list could not be refreshed — reload the page to see the change.', 'error');
-        })
-        .finally(() => {
-            const live = document.querySelector('[data-checks-listing]');
-            live?.removeAttribute('aria-busy');
-            live?.removeAttribute('data-refreshing');
+            // Match Business Report's close refresh fallback: leave the currently usable list in
+            // place and let the next normal navigation obtain fresh authoritative data.
         });
 }
 
@@ -1445,8 +1455,19 @@ document.addEventListener('click', (event) => {
         event.preventDefault();
         closeFolderMenus();
         const dialog = document.getElementById(modalTrigger.dataset.modalOpen);
-        if (dialog instanceof HTMLDialogElement) {
-            setFolderEditNotice(dialog.querySelector('[data-folder-rename-form]'), false);
+            if (dialog instanceof HTMLDialogElement) {
+                dialog.querySelector('[data-folder-rename-form]')?.reset();
+                setFolderEditNotice(dialog.querySelector('[data-folder-rename-form]'), false);
+                if (dialog.matches('[data-business-report-dialog]')) {
+                    delete dialog.dataset.businessDeletedReturnUrl;
+                    delete dialog.dataset.businessSaveConfirmed;
+                }
+                if (dialog.matches('[data-check-report-dialog]')) {
+                    delete dialog.dataset.checkDeletedReturnUrl;
+                    delete dialog.dataset.checkSaveConfirmed;
+                    delete dialog.dataset.checkCloseReturnUrl;
+                    delete dialog.dataset.checkCloseNeedsRefresh;
+                }
             if (dialog.matches('[data-add-business-dialog]') && modalTrigger.dataset.businessTemplateBaseUrl) {
                 dialog.dataset.businessReportBaseUrl = modalTrigger.dataset.businessTemplateBaseUrl;
             }
@@ -1701,6 +1722,7 @@ window.addEventListener('message', (event) => {
     if (event.data.message) showToast(event.data.message, event.data.statusType || 'success');
 
     refreshReportsWorkspace();
+    dialog.dataset.businessSaveConfirmed = 'true';
 
     // Everything behind the dialog — the Client Folder's CI/BI module card, folder progress and
     // Recent Activity, or the Reports workspace list — has already been swapped from this same
@@ -1752,6 +1774,47 @@ function applyBusinessManageRefresh(payload) {
     window.initBusinessSearch?.();
     window.initBusinessBatchPanel?.();
     window.initBusinessHistoryToggle?.();
+}
+
+// A stale Business Report editor has no mutation response payload of its own because its save was
+// rejected. Re-read the exact Applicant/Co-Maker manage page and apply the same authoritative
+// fragments used by successful saves/deletes, matching Residence Check's stale-delete refresh.
+function refreshBusinessManagePage(url = window.location.href) {
+    const panelBody = document.querySelector('[data-business-panel-body]');
+    const activityBody = document.querySelector('[data-business-activity-body]');
+    if (!panelBody || !activityBody) return;
+
+    fetch(url, { headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } })
+        .then((response) => {
+            if (!response.ok) throw new Error('The Business Report list could not be updated.');
+            return response.text();
+        })
+        .then((html) => {
+            const page = new DOMParser().parseFromString(html, 'text/html');
+            const freshPanel = page.querySelector('[data-business-panel-body]');
+            const freshActivity = page.querySelector('[data-business-activity-body]');
+            if (!freshPanel || !freshActivity) throw new Error('The Business Report list response was incomplete.');
+
+            const freshModal = page.getElementById('business-recent-activity-dialog');
+            const freshTemplateSelect = page.querySelector('[data-add-business-template-select]');
+            let usedTemplateIds = null;
+            try {
+                usedTemplateIds = JSON.parse(freshTemplateSelect?.dataset.usedTemplateIds || 'null');
+            } catch {
+                usedTemplateIds = null;
+            }
+
+            applyBusinessManageRefresh({
+                panel: freshPanel.innerHTML,
+                activity: freshActivity.innerHTML,
+                modal: freshModal?.outerHTML,
+                usedTemplateIds,
+            });
+        })
+        .catch(() => {
+            // The deleted editor is already terminal. Keep the current page usable and let the
+            // next normal navigation/reload obtain the authoritative list if this refresh fails.
+        });
 }
 
 // Single delete (per-row confirmation dialog, data-business-delete-form) and Delete Selected
@@ -1856,6 +1919,31 @@ window.addEventListener('message', (event) => {
     dialog.close();
 });
 
+window.addEventListener('message', (event) => {
+    if (event.origin !== window.location.origin || event.data?.type !== 'brbi:business-deleted') return;
+
+    const returnUrl = new URL(event.data.returnUrl, window.location.href);
+    if (returnUrl.origin !== window.location.origin) return;
+
+    const dialog = document.querySelector('[data-business-report-dialog][open]');
+    if (!dialog) return;
+
+    // Saving only reveals the terminal state. Keep the modal open until the CI explicitly closes
+    // it; the close lifecycle below owns presence release, iframe disposal and list refresh.
+    dialog.dataset.businessDeletedReturnUrl = returnUrl.href;
+
+    // The redirect response is a fresh, report-less edit page. Prevent another submit from that
+    // stale modal session; intentionally recreating the report still works after closing/reopening.
+    const frame = dialog.querySelector('[data-business-report-frame]');
+    const staleForm = frame instanceof HTMLIFrameElement
+        ? frame.contentDocument?.querySelector('[data-business-report-form]')
+        : null;
+    staleForm?.addEventListener('submit', (submitEvent) => submitEvent.preventDefault(), { capture: true });
+    staleForm?.querySelectorAll('button[type="submit"], input[type="submit"]')
+        .forEach((button) => { button.disabled = true; });
+
+});
+
 const businessSavedNotify = document.querySelector('[data-business-saved-notify]');
 if (businessSavedNotify && window.parent !== window) {
     let businessSavedPayload = null;
@@ -1874,6 +1962,19 @@ if (businessSavedNotify && window.parent !== window) {
     }, window.location.origin);
 }
 
+const businessDeletedNotify = document.querySelector('[data-business-deleted-notify]');
+if (businessDeletedNotify) {
+    showToast(businessDeletedNotify.dataset.businessDeletedMessage || 'This Business Report was deleted by another user while you were working on it. Please return to the Business Report page.', 'error');
+    if (window.parent !== window) {
+        window.parent.postMessage({
+            type: 'brbi:business-deleted',
+            returnUrl: businessDeletedNotify.dataset.businessDeletedReturnUrl,
+            incomeSourceId: businessDeletedNotify.dataset.businessDeletedIncomeSourceId,
+            message: businessDeletedNotify.dataset.businessDeletedMessage,
+        }, window.location.origin);
+    }
+}
+
 window.addEventListener('message', (event) => {
     if (event.origin !== window.location.origin || event.data?.type !== 'brbi:check-saved') return;
 
@@ -1882,6 +1983,7 @@ window.addEventListener('message', (event) => {
 
     const dialog = document.querySelector('[data-check-report-dialog][open]');
     if (!dialog) return;
+    dialog.dataset.checkSaveConfirmed = 'true';
 
     const currentUrl = new URL(window.location.href);
 
@@ -1932,6 +2034,20 @@ window.addEventListener('message', (event) => {
         }
     }
     dialog.close();
+});
+
+window.addEventListener('message', (event) => {
+    if (event.origin !== window.location.origin || event.data?.type !== 'brbi:residence-deleted') return;
+
+    const returnUrl = new URL(event.data.returnUrl, window.location.href);
+    if (returnUrl.origin !== window.location.origin || !/^\d+$/.test(String(event.data.residenceCheckId || ''))) return;
+
+    const dialog = document.querySelector('[data-check-report-dialog][open]');
+    if (!dialog) return;
+
+    // Saving only reveals the terminal state. The iframe has already rendered the persistent
+    // deleted-record alert and disabled Save; cleanup and refresh wait for Cancel, X, or Escape.
+    dialog.dataset.checkDeletedReturnUrl = returnUrl.href;
 });
 
 const checkSavedNotify = document.querySelector('[data-check-saved-notify]');
@@ -2023,19 +2139,79 @@ document.querySelectorAll('dialog').forEach((dialog) => {
     dialog.addEventListener('close', () => {
         dialog.querySelectorAll('video').forEach((video) => video.pause());
 
-        // The Residence/Business Check iframe is never actually unloaded when this dialog closes
-        // (native <dialog>.close() just hides it — the same document, and its own unsaved-changes
-        // baseline, stays alive in memory) — whether it closed via the in-form Cancel button, the
-        // dialog's own X, Escape, or a successful save. Resetting its baseline here on every close,
-        // not only a deliberate Cancel, is what stops an edit abandoned that way from resurfacing as
-        // a "leave site" warning later, when reopening this same dialog for a different record
-        // forces that stale iframe to actually navigate. A close right after a genuine save is a
-        // no-op here — the form's own 'submit' listener already brought the baseline in line with
-        // what was just submitted.
-        if (dialog.matches('[data-check-report-dialog]')) {
-            dialog.querySelector('[data-check-report-frame]')?.contentDocument
-                ?.querySelectorAll('[data-unsaved-form]')
+        // A native dialog close only hides its iframe; it does not navigate the iframe document.
+        // Business Report presence is owned by that document, so leaving it alive would keep its
+        // heartbeat running and would also retain unsaved form DOM for a later session. Release the
+        // presence first, mark the intentional discard as clean (so beforeunload does not prompt),
+        // then destroy the stale document. The normal modal-open path above always loads the
+        // trigger's current server URL again, matching the CI/BI modal's authoritative-open cycle.
+        if (dialog.matches('[data-business-report-dialog]')) {
+            const frame = dialog.querySelector('[data-business-report-frame]');
+            const frameDocument = frame instanceof HTMLIFrameElement ? frame.contentDocument : null;
+            const listReturnUrl = dialog.dataset.businessDeletedReturnUrl
+                || frameDocument?.querySelector('[data-business-list-return-url]')?.dataset.businessListReturnUrl
+                || '';
+            const saveConfirmed = dialog.dataset.businessSaveConfirmed === 'true';
+            dialog.dataset.businessCloseReturnUrl = listReturnUrl;
+            dialog.dataset.businessCloseNeedsRefresh = saveConfirmed ? 'false' : 'true';
+            delete dialog.dataset.businessSaveConfirmed;
+            frameDocument?.dispatchEvent(new Event('editing-presence-release'));
+            frameDocument?.querySelectorAll('[data-unsaved-form]')
                 .forEach((form) => form.dispatchEvent(new Event('unsaved-form-reset')));
+            if (frame instanceof HTMLIFrameElement && frame.getAttribute('src')) {
+                const loading = dialog.querySelector('[data-business-report-loading]');
+                if (loading) loading.hidden = false;
+                frame.src = 'about:blank';
+            }
+        }
+
+        // CI/BI uses the same iframe-owned presence lifecycle as Business Report. Closing by the
+        // header X, in-form Cancel, Escape, or a successful save must end that session and discard
+        // its document; the next intentional open then reloads the exact Applicant/Co-Maker URL.
+        if (dialog.matches('[data-cibi-report-dialog]')) {
+            const frame = dialog.querySelector('[data-cibi-report-frame]');
+            const frameDocument = frame instanceof HTMLIFrameElement ? frame.contentDocument : null;
+            frameDocument?.dispatchEvent(new Event('editing-presence-release'));
+            frameDocument?.querySelectorAll('[data-unsaved-form]')
+                .forEach((form) => form.dispatchEvent(new Event('unsaved-form-reset')));
+            if (frame instanceof HTMLIFrameElement && frame.getAttribute('src')) {
+                const loading = dialog.querySelector('[data-cibi-report-loading]');
+                if (loading) loading.hidden = false;
+                frame.src = 'about:blank';
+            }
+        }
+
+        // Residence and Business Check presence and unsaved state live inside this iframe. Cancel,
+        // X, and Escape all reach this one close lifecycle: release presence, discard the form
+        // state, unload the document, then update the authoritative exact-person list.
+        if (dialog.matches('[data-check-report-dialog]')) {
+            const frame = dialog.querySelector('[data-check-report-frame]');
+            const frameDocument = frame instanceof HTMLIFrameElement ? frame.contentDocument : null;
+            const residenceForm = frameDocument?.querySelector('[data-residence-check-form]');
+            const businessCheckForm = frameDocument?.querySelector('[data-business-check-form]');
+            const checkForm = residenceForm || businessCheckForm;
+            if (checkForm) {
+                const listReturnUrl = dialog.dataset.checkDeletedReturnUrl
+                    || residenceForm?.dataset.residenceListReturnUrl
+                    || businessCheckForm?.dataset.businessCheckListReturnUrl
+                    || '';
+                const saveConfirmed = dialog.dataset.checkSaveConfirmed === 'true';
+                dialog.dataset.checkCloseReturnUrl = listReturnUrl;
+                dialog.dataset.checkCloseNeedsRefresh = saveConfirmed ? 'false' : 'true';
+                delete dialog.dataset.checkSaveConfirmed;
+                delete dialog.dataset.checkDeletedReturnUrl;
+                frameDocument.dispatchEvent(new Event('editing-presence-release'));
+                frameDocument.querySelectorAll('[data-unsaved-form]')
+                    .forEach((form) => form.dispatchEvent(new Event('unsaved-form-reset')));
+                if (frame instanceof HTMLIFrameElement && frame.getAttribute('src')) {
+                    const loading = dialog.querySelector('[data-check-report-loading]');
+                    if (loading) loading.hidden = false;
+                    frame.src = 'about:blank';
+                }
+            } else {
+                frameDocument?.querySelectorAll('[data-unsaved-form]')
+                    .forEach((form) => form.dispatchEvent(new Event('unsaved-form-reset')));
+            }
         }
 
         if (dialog.matches('[data-add-business-dialog]')) {
@@ -2045,6 +2221,9 @@ document.querySelectorAll('dialog').forEach((dialog) => {
             templateSelect?.removeAttribute('aria-invalid');
             if (templateSelect) templateSelect.value = '';
             hideAddBusinessTemplateError(templateError);
+        }
+        if (dialog.matches('[data-business-report-dialog]') && dialog.dataset.businessDeletedReturnUrl) {
+            delete dialog.dataset.businessDeletedReturnUrl;
         }
         if (dialog.matches('[data-business-report-dialog]') && dialog.dataset.businessSavedReturnUrl) {
             const returnUrl = new URL(dialog.dataset.businessSavedReturnUrl, window.location.href);
@@ -2060,6 +2239,32 @@ document.querySelectorAll('dialog').forEach((dialog) => {
             return;
         }
 
+        if (dialog.matches('[data-business-report-dialog]') && dialog.dataset.businessCloseNeedsRefresh === 'true') {
+            const returnUrlValue = dialog.dataset.businessCloseReturnUrl;
+            delete dialog.dataset.businessCloseNeedsRefresh;
+            delete dialog.dataset.businessCloseReturnUrl;
+            if (!returnUrlValue) return;
+
+            const returnUrl = new URL(returnUrlValue, window.location.href);
+            if (returnUrl.origin !== window.location.origin) return;
+            const currentUrl = new URL(window.location.href);
+            if (document.querySelector('[data-business-batch-panel]')
+                && currentUrl.pathname === returnUrl.pathname
+                && currentUrl.search === returnUrl.search) {
+                refreshBusinessManagePage(returnUrl.href);
+            } else if (document.querySelector('[data-reports-listing]')) {
+                refreshReportsWorkspace();
+            } else {
+                window.location.assign(returnUrl.href);
+            }
+            return;
+        }
+
+        if (dialog.matches('[data-business-report-dialog]')) {
+            delete dialog.dataset.businessCloseNeedsRefresh;
+            delete dialog.dataset.businessCloseReturnUrl;
+        }
+
         if (dialog.matches('[data-check-report-dialog]') && dialog.dataset.checkSavedReturnUrl) {
             const returnUrl = new URL(dialog.dataset.checkSavedReturnUrl, window.location.href);
             delete dialog.dataset.checkSavedReturnUrl;
@@ -2070,6 +2275,32 @@ document.querySelectorAll('dialog').forEach((dialog) => {
                 window.location.assign(returnUrl.href);
             }
             return;
+        }
+
+        if (dialog.matches('[data-check-report-dialog]') && dialog.dataset.checkCloseNeedsRefresh === 'true') {
+            const returnUrlValue = dialog.dataset.checkCloseReturnUrl;
+            delete dialog.dataset.checkCloseNeedsRefresh;
+            delete dialog.dataset.checkCloseReturnUrl;
+            if (!returnUrlValue) return;
+
+            const returnUrl = new URL(returnUrlValue, window.location.href);
+            if (returnUrl.origin !== window.location.origin) return;
+            const currentUrl = new URL(window.location.href);
+            if (document.querySelector('[data-checks-listing]')
+                && currentUrl.pathname === returnUrl.pathname
+                && currentUrl.search === returnUrl.search) {
+                refreshChecksListing();
+            } else if (document.querySelector('[data-reports-listing]')) {
+                refreshReportsWorkspace();
+            } else {
+                window.location.assign(returnUrl.href);
+            }
+            return;
+        }
+
+        if (dialog.matches('[data-check-report-dialog]')) {
+            delete dialog.dataset.checkCloseNeedsRefresh;
+            delete dialog.dataset.checkCloseReturnUrl;
         }
 
         if (!dialog.matches('[data-cibi-report-dialog]') || !dialog.dataset.cibiSavedReturnUrl) return;
@@ -2812,6 +3043,166 @@ document.querySelectorAll('dialog[data-open-on-error="true"]').forEach((dialog) 
     dialog.showModal();
     dialog.querySelector('[autofocus]')?.focus();
 });
+
+// User Management keeps its authoritative table as the page and reuses one dialog for both
+// Create and Edit. Populate it during capture before the existing delegated modal opener runs.
+(() => {
+    const dialog = document.querySelector('[data-user-form-dialog]');
+    const form = dialog?.querySelector('[data-user-management-form]');
+    if (!(dialog instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement)) return;
+
+    const field = (name) => form.elements.namedItem(name);
+    const setFieldValue = (name, value = '') => {
+        const control = field(name);
+        if (control instanceof HTMLInputElement || control instanceof HTMLSelectElement) control.value = value;
+    };
+    const setProfilePhoto = (url = '') => {
+        const preview = form.querySelector('[data-photo-preview]');
+        const placeholder = form.querySelector('[data-photo-preview-placeholder]');
+        if (preview instanceof HTMLImageElement) {
+            preview.src = url;
+            preview.classList.toggle('hidden', url === '');
+        }
+        placeholder?.classList.toggle('hidden', url !== '');
+        const help = form.querySelector('#profile-photo-help');
+        if (help) help.textContent = `JPG, JPEG, PNG, or WEBP. Max 2 MB.${url ? ' Leave blank to keep the current photo.' : ''}`;
+    };
+    const notice = dialog.querySelector('[data-user-modal-notice]');
+    const noticeMessage = notice?.querySelector('[data-user-modal-notice-message]');
+    const hideNotice = () => notice?.setAttribute('hidden', '');
+
+    form.addEventListener('input', hideNotice);
+    form.addEventListener('change', hideNotice);
+    form.addEventListener('submit', async (event) => {
+        const method = form.querySelector('[data-user-method]');
+        if (!(method instanceof HTMLInputElement) || method.disabled || !form.checkValidity()) return;
+
+        event.preventDefault();
+        const submitter = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
+        if (submitter) submitter.disabled = true;
+
+        try {
+            const response = await fetch(form.action, {
+                method: 'POST',
+                body: new FormData(form),
+                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const payload = await response.json().catch(() => ({}));
+
+            if (response.ok && payload.no_change === true) {
+                if (noticeMessage) noticeMessage.textContent = payload.message || 'No changes were made.';
+                notice?.removeAttribute('hidden');
+                return;
+            }
+
+            if (response.ok && payload.redirect_url) {
+                window.location.assign(payload.redirect_url);
+                return;
+            }
+
+            // Preserve the established server-rendered validation flow for rejected edits.
+            form.submit();
+        } catch (error) {
+            form.submit();
+        } finally {
+            if (submitter) submitter.disabled = false;
+        }
+    });
+
+    document.addEventListener('click', (event) => {
+        const trigger = event.target.closest('[data-user-form-trigger]');
+        if (trigger) {
+            const editing = trigger.dataset.userFormMode === 'edit';
+            notice?.toggleAttribute('hidden', !editing || trigger.dataset.userId !== notice.dataset.userModalNoticeUserId);
+            if (notice) notice.dataset.userModalNoticeUserId = editing ? (trigger.dataset.userId || '') : '';
+            form.reset();
+            form.action = trigger.dataset.userFormAction || form.dataset.userStoreUrl;
+            const method = form.querySelector('[data-user-method]');
+            if (method instanceof HTMLInputElement) method.disabled = !editing;
+            setFieldValue('user_modal', editing ? 'edit' : 'create');
+            setFieldValue('user_modal_id', editing ? trigger.dataset.userId : '');
+            setFieldValue('full_name', editing ? trigger.dataset.userFullName : '');
+            setFieldValue('username', editing ? trigger.dataset.userUsername : '');
+            setFieldValue('email', editing ? trigger.dataset.userEmail : '');
+            setFieldValue('role', editing ? trigger.dataset.userRole : form.querySelector('select[name="role"] option')?.value);
+
+            const email = field('email');
+            if (email instanceof HTMLInputElement) email.required = !editing;
+            const photoInput = field('profile_photo');
+            if (photoInput instanceof HTMLInputElement) photoInput.value = '';
+            setProfilePhoto(editing ? trigger.dataset.userPhotoUrl : '');
+
+            const passwordSection = form.querySelector('[data-user-password-section]');
+            passwordSection?.toggleAttribute('hidden', editing);
+            form.querySelectorAll('[data-user-password]').forEach((password) => {
+                if (!(password instanceof HTMLInputElement)) return;
+                password.disabled = editing;
+                password.required = !editing;
+                password.value = '';
+            });
+
+            const title = dialog.querySelector('#user-form-dialog-title');
+            const description = dialog.querySelector('#user-form-dialog-description');
+            if (title) title.textContent = editing ? 'Edit User' : 'Create User';
+            if (description) description.textContent = editing
+                ? 'Update the selected staff account and approved system role.'
+                : 'Create an authorized staff account with a temporary password.';
+            const submit = dialog.querySelector('[data-user-form-submit]');
+            if (submit) submit.textContent = editing ? 'Save Changes' : 'Create User';
+
+            const accountActions = form.querySelector('[data-user-account-actions]');
+            accountActions?.toggleAttribute('hidden', !editing || trigger.dataset.userIsSelf === 'true');
+            const statusTrigger = form.querySelector('[data-user-status-trigger]');
+            if (statusTrigger instanceof HTMLButtonElement && editing) {
+                const active = trigger.dataset.userStatus === 'active';
+                statusTrigger.textContent = active ? 'Disable account' : 'Activate account';
+                statusTrigger.classList.toggle('ui-button-danger', active);
+                statusTrigger.classList.toggle('ui-button-primary', !active);
+                statusTrigger.dataset.userName = trigger.dataset.userFullName || '';
+                statusTrigger.dataset.userStatus = trigger.dataset.userStatus || '';
+                statusTrigger.dataset.userStatusAction = trigger.dataset.userStatusAction || '';
+            }
+            const resetTrigger = form.querySelector('[data-user-password-reset-trigger]');
+            if (resetTrigger instanceof HTMLButtonElement && editing) {
+                resetTrigger.dataset.userName = trigger.dataset.userFullName || '';
+                resetTrigger.dataset.userPasswordResetAction = trigger.dataset.userPasswordResetAction || '';
+            }
+        }
+
+        const statusTrigger = event.target.closest('[data-user-status-trigger]');
+        if (statusTrigger) {
+            const active = statusTrigger.dataset.userStatus === 'active';
+            const statusDialog = document.getElementById('user-status-dialog');
+            const statusForm = statusDialog?.querySelector('form');
+            if (statusForm instanceof HTMLFormElement) statusForm.action = statusTrigger.dataset.userStatusAction || '#';
+            const statusValue = statusDialog?.querySelector('[data-user-status-value]');
+            if (statusValue instanceof HTMLInputElement) statusValue.value = active ? 'disabled' : 'active';
+            const title = statusDialog?.querySelector('#user-status-dialog-title');
+            if (title) title.textContent = active ? 'Disable this account?' : 'Activate this account?';
+            const message = statusDialog?.querySelector('[data-user-status-message]');
+            if (message) message.textContent = active
+                ? `${statusTrigger.dataset.userName || 'The user'} will be signed out and prevented from signing in.`
+                : `${statusTrigger.dataset.userName || 'The user'} will be permitted to sign in again.`;
+            const confirm = statusForm?.querySelector('button');
+            if (confirm instanceof HTMLButtonElement) {
+                confirm.textContent = active ? 'Disable account' : 'Activate account';
+                confirm.classList.toggle('ui-button-danger', active);
+                confirm.classList.toggle('ui-button-primary', !active);
+            }
+            dialog.close();
+        }
+
+        const resetTrigger = event.target.closest('[data-user-password-reset-trigger]');
+        if (resetTrigger) {
+            const resetDialog = document.getElementById('user-reset-password-dialog');
+            const resetForm = resetDialog?.querySelector('form');
+            if (resetForm instanceof HTMLFormElement) resetForm.action = resetTrigger.dataset.userPasswordResetAction || '#';
+            const name = resetDialog?.querySelector('[data-user-reset-password-name]');
+            if (name) name.textContent = resetTrigger.dataset.userName || 'The user';
+            dialog.close();
+        }
+    }, true);
+})();
 
 document.addEventListener('toggle', (event) => {
     const menu = event.target;
@@ -4965,6 +5356,14 @@ document.querySelectorAll('[data-residence-check-form]').forEach((form) => {
         const status = document.querySelector('[data-residence-check-save-status]');
         status?.classList.add('hidden');
     };
+    const markDeleted = (message) => {
+        form.dataset.residenceDeleted = 'true';
+        submitButton.disabled = true;
+        submitButton.removeAttribute('aria-busy');
+        submitButton.querySelector('[data-residence-check-submit-icon]')?.classList.remove('hidden');
+        submitButton.querySelector('[data-residence-check-submit-spinner]')?.classList.add('hidden');
+        showToast(message || 'This Residence Check was deleted by another user while you were working on it. Please return to the Residence & Business Check page.', 'error');
+    };
 
     form.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -4973,7 +5372,7 @@ document.querySelectorAll('[data-residence-check-form]').forEach((form) => {
         // click before the button visually disables, Enter in a text field, form.requestSubmit()
         // from elsewhere) — none of those depend on the submit *button*'s own state the way a
         // native click on a disabled button already does.
-        if (form.dataset.submitting === 'true' || submitButton.disabled) return;
+        if (form.dataset.residenceDeleted === 'true' || form.dataset.submitting === 'true' || submitButton.disabled) return;
         form.dataset.submitting = 'true';
 
         const photoInput = form.querySelector('[data-photo-upload-input]');
@@ -4993,7 +5392,7 @@ document.querySelectorAll('[data-residence-check-form]').forEach((form) => {
         if (status && statusText) {
             status.classList.remove('hidden');
             if (hasNewPhotos || hasNewMapScreenshot) {
-                statusText.textContent = 'Uploading media to cloud storage…';
+                statusText.textContent = 'Uploading media…';
                 if (statusHelper) statusHelper.hidden = false;
             } else {
                 statusText.textContent = 'Saving Residence Check…';
@@ -5023,6 +5422,8 @@ document.querySelectorAll('[data-residence-check-form]').forEach((form) => {
                 // itself, so it isn't repeated here.
                 if (window.parent !== window) {
                     window.parent.postMessage({ type: 'brbi:check-saved', returnUrl: payload.return_url, message: payload.message, statusType: payload.status_type }, window.location.origin);
+                } else {
+                    window.location.assign(payload.return_url);
                 }
                 return;
             }
@@ -5054,6 +5455,22 @@ document.querySelectorAll('[data-residence-check-form]').forEach((form) => {
             if (xhr.status === 422 && payload?.errors) {
                 const firstMessage = Object.values(payload.errors).flat()[0];
                 showToast(firstMessage || 'Please correct the highlighted fields. No changes were saved.', 'error');
+                return;
+            }
+            if (xhr.status === 404 && payload?.result === 'deleted') {
+                markDeleted(payload.message);
+                if (window.parent !== window) {
+                    window.parent.postMessage({
+                        type: 'brbi:residence-deleted',
+                        returnUrl: payload.return_url,
+                        residenceCheckId: payload.residence_check_id,
+                        message: payload.message,
+                    }, window.location.origin);
+                }
+                return;
+            }
+            if (xhr.status === 404) {
+                showToast('This Residence Check is no longer available. Please return to the Residence & Business Report page.', 'error');
                 return;
             }
             // Anything else (an unexpected server error, a malformed response) never surfaces its
@@ -5128,6 +5545,7 @@ document.querySelectorAll('[data-editing-presence]').forEach((node) => {
     );
     let saving = false;
     let lastSentState = null;
+    let released = false;
     const currentState = () => {
         if (saving) return 'saving';
         if (failedSave || form?.hasUnsavedEdits?.()) return 'dirty';
@@ -5135,6 +5553,7 @@ document.querySelectorAll('[data-editing-presence]').forEach((node) => {
     };
 
     const ping = async () => {
+        if (released) return;
         const state = currentState();
         lastSentState = state;
         try {
@@ -5184,14 +5603,24 @@ document.querySelectorAll('[data-editing-presence]').forEach((node) => {
         });
     }
 
+    const release = () => {
+        if (released) return;
+        released = true;
+        navigator.sendBeacon?.('/editing-presence/release', new Blob([JSON.stringify({ type, id, _token: token })], { type: 'application/json' }));
+    };
+    // Same-document signal used by iframe modals that are intentionally discarded. It runs before
+    // the iframe navigation so the authenticated page owns and sends its own release request.
+    document.addEventListener('editing-presence-release', release);
+
     // pagehide (not beforeunload) so the release happens only when the page really goes away: a
     // cancelled "leave site?" prompt keeps dirty work registered, and a native save stays 'saving'
     // until its response replaces the page. A page restored from the back/forward cache pings again.
-    window.addEventListener('pagehide', () => {
-        navigator.sendBeacon?.('/editing-presence/release', new Blob([JSON.stringify({ type, id, _token: token })], { type: 'application/json' }));
-    });
+    window.addEventListener('pagehide', release);
     window.addEventListener('pageshow', (event) => {
-        if (event.persisted) ping();
+        if (event.persisted) {
+            released = false;
+            ping();
+        }
     });
 });
 
@@ -5326,7 +5755,7 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
         if (status && statusText) {
             status.classList.remove('hidden');
             if (hasNewPhotos || hasNewMapScreenshot) {
-                statusText.textContent = 'Uploading media to cloud storage…';
+                statusText.textContent = 'Uploading media…';
                 if (statusHelper) statusHelper.hidden = false;
             } else {
                 statusText.textContent = 'Saving Business Check…';
@@ -5347,8 +5776,10 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
                 payload = null;
             }
 
-            resetButton();
             if (xhr.status === 200 && payload?.result === 'success') {
+                // Keep this accepted save single-flight until the parent consumes the success
+                // message and closes/unloads the iframe. Re-enabling here would leave a small
+                // second-click window between the HTTP response and the modal close.
                 if (window.parent !== window) {
                     window.parent.postMessage({ type: 'brbi:check-saved', returnUrl: payload.return_url, message: payload.message, statusType: payload.status_type }, window.location.origin);
                 } else {
@@ -5356,6 +5787,10 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
                 }
                 return;
             }
+
+            // Every non-success response keeps this form open, so restore Save and allow the CI
+            // to correct the problem or retry the request.
+            resetButton();
             if (xhr.status === 200 && payload?.result === 'no_change') {
                 showToast(payload.message, 'info');
                 return;
@@ -5363,6 +5798,10 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
             if (xhr.status === 409 && payload?.result === 'conflict') {
                 // Another CI saved this Business Check first — nothing here was stored. The form
                 // stays open so the CI can reload and review the newer version.
+                showToast(payload.message, 'error');
+                return;
+            }
+            if (xhr.status === 502 && payload?.result === 'cloud_failure') {
                 showToast(payload.message, 'error');
                 return;
             }
@@ -5386,6 +5825,10 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
             if (xhr.status === 422 && payload?.errors) {
                 const firstMessage = Object.values(payload.errors).flat()[0];
                 showToast(firstMessage || 'Please correct the highlighted fields. No changes were saved.', 'error');
+                return;
+            }
+            if (xhr.status === 404) {
+                showToast('This Business Check is no longer available. Please return to the Residence & Business Report page.', 'error');
                 return;
             }
             showToast('Business Check could not be saved. Please check your connection and try again.', 'error');
@@ -5415,7 +5858,7 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
 });
 
 // Opt-in single-flight guard for ordinary full-page POST forms marked [data-submit-guard] (the
-// full-page Create Client Folder form and the Business Report edit form). Only the first accepted
+// login form, full-page Create Client Folder form and Business Report edit form). Only the first accepted
 // submit navigates; later clicks, Enter presses or requestSubmit() calls while that request is in
 // flight are cancelled, so a slow network can't create a second folder or replay an old
 // expected_revision into a false "updated by another CI" warning. Nothing about the submitted
@@ -5431,12 +5874,24 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
 //    resets a page restored from the back/forward cache after a failed navigation.
 const submitGuardButtons = (form) => [...form.elements]
     .filter((element) => element instanceof HTMLButtonElement && element.type === 'submit');
+const setLoginSubmitState = (form, busy) => {
+    const submit = form.querySelector('[data-login-submit]');
+    if (!(submit instanceof HTMLButtonElement)) return;
+
+    const ready = submit.querySelector('[data-login-ready]');
+    const loading = submit.querySelector('[data-login-loading]');
+    if (ready instanceof HTMLElement) ready.hidden = busy;
+    if (loading instanceof HTMLElement) loading.hidden = !busy;
+    if (busy) submit.setAttribute('aria-busy', 'true');
+    else submit.removeAttribute('aria-busy');
+};
 const resetSubmitGuard = (form) => {
     delete form.dataset.submitting;
     submitGuardButtons(form).forEach((button) => {
         button.disabled = false;
         button.removeAttribute('aria-busy');
     });
+    setLoginSubmitState(form, false);
 };
 window.addEventListener('submit', (event) => {
     const form = event.target;
@@ -5448,6 +5903,7 @@ window.addEventListener('submit', (event) => {
     if (event.defaultPrevented) return;
 
     form.dataset.submitting = 'true';
+    setLoginSubmitState(form, true);
     window.setTimeout(() => {
         if (form.dataset.submitting !== 'true') return;
         submitGuardButtons(form).forEach((button) => {
