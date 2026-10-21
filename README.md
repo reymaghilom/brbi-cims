@@ -6,6 +6,13 @@ Key Features
 - Investigation reports: CI/BI reports, business and income-source reports, and residence and business checks.
 - Document generation: PDF, DOCX, and Excel exports, depending on the report type.
 - Administration: Dashboard, user roles, access controls, and system settings.
+
+## Application Screenshots
+
+### Dashboard
+
+![BRBI CIMS Dashboard](screenshots/dashboard.png)
+
 Tech Stack
 Area	Technologies
 Backend	PHP 8.3, Laravel 13
