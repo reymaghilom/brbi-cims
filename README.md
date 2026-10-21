@@ -12,7 +12,6 @@ Key Features
 ### Dashboard
 
 ![BRBI CIMS Dashboard](screenshots/dashboard.png)
-![BRBI CIMS Dashboard](screenshots/create-client-folder.png)
 ![BRBI CIMS Dashboard](screenshots/credit-investigation-report.png)
 ![BRBI CIMS Dashboard](screenshots/client-management.png)
 ![BRBI CIMS Dashboard](screenshots/business-management.png)
