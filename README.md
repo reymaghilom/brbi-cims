@@ -17,16 +17,18 @@ BRBI CIMS is an internal web application developed for Binhi Rural Bank Inc. to 
 ![BRBI CIMS Dashboard](screenshots/business-management.png)
 ![BRBI CIMS Dashboard](screenshots/reports.png)
 
-## Tech Stack
-Area	Technologies
-Backend	PHP 8.3, Laravel 13
-Frontend	Laravel Blade, JavaScript, Tailwind CSS v4
-Database	MySQL
-Build Tools	Vite 7, Composer, npm
-Reports	dompdf, PHPWord, PhpSpreadsheet
-Scheduling & Notifications	Laravel Task Scheduling, Artisan commands, database notifications
-File Storage	Laravel filesystem, optional Cloudinary
-Testing & Code Quality	PHPUnit 12, Laravel Pint
+## Technology Stack
+
+| Category | Technologies |
+|---|---|
+| Backend | PHP 8.3, Laravel 13 |
+| Frontend | Laravel Blade, JavaScript, Tailwind CSS v4 |
+| Database | MySQL |
+| Build Tools | Vite 7, Composer, npm |
+| Reports & Exports | dompdf, PHPWord, PhpSpreadsheet |
+| Scheduling & Notifications | Laravel Task Scheduling, Artisan Commands, Database Notifications |
+| File Storage | Laravel Filesystem, Optional Cloudinary Integration |
+| Testing & Code Quality | PHPUnit 12, Laravel Pint |
 
 
 Developer & Project Information
