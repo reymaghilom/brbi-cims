@@ -1,6 +1,6 @@
-BRBI Credit Investigation Management System (BRBI CIMS)
+## BRBI Credit Investigation Management System (BRBI CIMS)
 BRBI CIMS is an internal web application developed for Binhi Rural Bank Inc. to help its Credit Investigation team organize applicant records, monitor investigation activities, and prepare official reports. It brings client folders, investigation findings, schedules, supporting documents, and reporting into a centralized workflow.
-Key Features
+## Key Features
 - Client management: Client folders, applicant and co-maker information, and investigation progress tracking.
 - Activity tracking: Credit investigation activities, scheduling, follow-ups, proof photos, and in-app reminders.
 - Investigation reports: CI/BI reports, business and income-source reports, and residence and business checks.
@@ -17,7 +17,7 @@ Key Features
 ![BRBI CIMS Dashboard](screenshots/business-management.png)
 ![BRBI CIMS Dashboard](screenshots/reports.png)
 
-Tech Stack
+## Tech Stack
 Area	Technologies
 Backend	PHP 8.3, Laravel 13
 Frontend	Laravel Blade, JavaScript, Tailwind CSS v4
