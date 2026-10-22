@@ -12,18 +12,18 @@ BRBI CIMS is an internal web application developed for Binhi Rural Bank Inc. to 
 ### Dashboard
 
 <p align="center">
-  <img src="screenshots/dashboard.jpg" width="760" alt="BRBI CIMS Dashboard">
+  <img src="screenshots/dashboard.png" width="760" alt="BRBI CIMS Dashboard">
 </p>
 
 ### Core Application Modules
 
 | Client Folders | Client Management |
 |:---:|:---:|
-| <img src="screenshots/create-client-folder.jpg" width="380" alt="Client Folders"> | <img src="screenshots/client-management.jpg" width="380" alt="Client Management"> |
+| <img src="screenshots/create-client-folder.png" width="380" alt="Client Folders"> | <img src="screenshots/client-management.png" width="380" alt="Client Management"> |
 
 | Reports | Document Management |
 |:---:|:---:|
-| <img src="screenshots/reports.jpg" width="380" alt="Reports"> | <img src="screenshots/business-management.jpg" width="380" alt="Document Management"> |
+| <img src="screenshots/reports.png" width="380" alt="Reports"> | <img src="screenshots/business-management.png" width="380" alt="Document Management"> |
 
 ## Technology Stack
 
