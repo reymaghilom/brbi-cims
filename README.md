@@ -7,6 +7,15 @@ BRBI CIMS is an internal web application developed for Binhi Rural Bank Inc. to 
 - Document generation: PDF, DOCX, and Excel exports, depending on the report type.
 - Administration: Dashboard, user roles, access controls, and system settings.
 
+### Disclaimer — Demo Data & Privacy
+
+All screenshots included in this repository are intended for demonstration and portfolio purposes only.
+
+The information displayed in the screenshots consists of fictional or dummy data and does not represent actual customers, accounts, or confidential banking records.
+
+The BRBI Credit Investigation Management System (CIMS) was developed as an internal application for Binhi Rural Bank Inc. The screenshots are provided solely to demonstrate the application's interface and functionality.
+
+No real customer information, sensitive banking records, or production credentials are intentionally disclosed.
 ## Application Screenshots
 
 ### Dashboard
