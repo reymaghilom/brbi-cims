@@ -46,6 +46,7 @@ No real customer information, sensitive banking records, or production credentia
 | Scheduling & Notifications | Laravel Task Scheduling, Artisan Commands, Database Notifications |
 | File Storage | Laravel Filesystem, Optional Cloudinary Integration |
 | Testing & Code Quality | PHPUnit 12, Laravel Pint |
+| Automation | N8n |
 
 
 Developer & Project Information
