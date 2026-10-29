@@ -4,8 +4,11 @@ namespace Tests\Feature\Auth;
 
 use App\Models\User;
 use App\Notifications\Auth\ResetPasswordNotification;
+use App\Services\Email\BrevoTransactionalEmail;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Password;
 use Tests\TestCase;
@@ -53,6 +56,70 @@ class PasswordResetTest extends TestCase
         $this->assertSame($knownStatus, $unknownResponse->getSession()->get('status'));
         $this->assertSame("If the email is registered, we'll send password reset instructions.", $knownStatus);
         Notification::assertNotSentTo(new User(['email' => 'unknown.user@example.com']), ResetPasswordNotification::class);
+    }
+
+    public function test_registered_email_is_sent_through_brevo_https_api(): void
+    {
+        $this->configureBrevo();
+        Http::preventStrayRequests();
+        Http::fake([
+            BrevoTransactionalEmail::ENDPOINT => Http::response(['messageId' => '<brevo-message-id>'], 201),
+        ]);
+        $user = User::factory()->create([
+            'full_name' => 'Password Reset User',
+            'email' => 'reset.user@example.com',
+        ]);
+
+        $response = $this->post(route('password.email'), ['email' => $user->email]);
+
+        $response->assertRedirect()
+            ->assertSessionHas('status', "If the email is registered, we'll send password reset instructions.");
+        Http::assertSentCount(1);
+        Http::assertSent(function ($request): bool {
+            $payload = $request->data();
+
+            return $request->url() === BrevoTransactionalEmail::ENDPOINT
+                && $request->hasHeader('api-key', 'test-brevo-api-key')
+                && $payload['sender'] === ['email' => 'verified.sender@example.com', 'name' => 'BRBI CIMS']
+                && $payload['to'] === [['email' => 'reset.user@example.com', 'name' => 'Password Reset User']]
+                && $payload['subject'] === 'BRBI CIMS - Password Reset Request'
+                && str_contains($payload['htmlContent'], 'https://cis.kesug.com/reset-password/')
+                && str_contains($payload['htmlContent'], 'expires in 60 minutes')
+                && $payload['tags'] === ['brbi-cims-password-reset'];
+        });
+    }
+
+    public function test_unknown_email_does_not_call_brevo(): void
+    {
+        $this->configureBrevo();
+        Http::preventStrayRequests();
+        Http::fake();
+
+        $this->post(route('password.email'), ['email' => 'unknown.user@example.com'])
+            ->assertRedirect()
+            ->assertSessionHas('status', "If the email is registered, we'll send password reset instructions.");
+
+        Http::assertNothingSent();
+    }
+
+    public function test_brevo_failure_keeps_the_generic_response_and_logs_no_sensitive_values(): void
+    {
+        $this->configureBrevo();
+        Http::preventStrayRequests();
+        Http::fake([
+            BrevoTransactionalEmail::ENDPOINT => Http::response(['code' => 'provider_failure'], 500),
+        ]);
+        Log::spy();
+        $user = User::factory()->create(['email' => 'reset.user@example.com']);
+
+        $this->post(route('password.email'), ['email' => $user->email])
+            ->assertRedirect()
+            ->assertSessionHas('status', "If the email is registered, we'll send password reset instructions.");
+
+        Log::shouldHaveReceived('warning')->once()->withArgs(
+            fn (string $message, array $context): bool => $message === 'Password reset email delivery failed.'
+                && array_keys($context) === ['exception_type']
+        );
     }
 
     public function test_reset_email_is_branded_and_retains_the_secure_laravel_reset_url(): void
@@ -221,5 +288,16 @@ class PasswordResetTest extends TestCase
         ])->assertSessionHasErrors('email');
 
         $this->assertTrue(Hash::check(self::OLD_PASSWORD, $user->fresh()->password));
+    }
+
+    private function configureBrevo(): void
+    {
+        config([
+            'app.url' => 'https://cis.kesug.com',
+            'brevo.api_key' => 'test-brevo-api-key',
+            'brevo.sender_email' => 'verified.sender@example.com',
+            'brevo.sender_name' => 'BRBI CIMS',
+            'brevo.timeout_seconds' => 10,
+        ]);
     }
 }

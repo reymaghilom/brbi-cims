@@ -219,12 +219,12 @@ Route::middleware(['auth', 'auth.session.current', 'auth.no-cache'])->group(func
         Route::delete('/client-folders/{clientFolder}/income-sources/business-reports/destroy-selected', [IncomeSourceController::class, 'destroySelectedBusinessReports'])->name('client-folders.income-sources.business-report.destroy-selected');
         Route::get('/client-folders/{clientFolder}/income-sources/new', [IncomeSourceController::class, 'selectTemplate'])->name('client-folders.income-sources.select-template');
         Route::get('/client-folders/{clientFolder}/income-sources/create', [IncomeSourceController::class, 'create'])->name('client-folders.income-sources.create');
-        Route::post('/client-folders/{clientFolder}/income-sources', [IncomeSourceController::class, 'store'])->name('client-folders.income-sources.store');
+        Route::post('/client-folders/{clientFolder}/income-sources', [IncomeSourceController::class, 'store'])->middleware('submission.once')->name('client-folders.income-sources.store');
         Route::get('/client-folders/{clientFolder}/income-sources/{incomeSource}', [IncomeSourceController::class, 'show'])->scopeBindings()->name('client-folders.income-sources.show');
         Route::get('/client-folders/{clientFolder}/income-sources/{incomeSource}/edit', [IncomeSourceController::class, 'edit'])->scopeBindings()->name('client-folders.income-sources.edit');
         Route::post('/client-folders/{clientFolder}/income-sources/{incomeSource}/businesses', [IncomeSourceController::class, 'addBusiness'])->scopeBindings()->name('client-folders.income-sources.businesses.store');
         Route::put('/client-folders/{clientFolder}/income-sources/{incomeSource}/general', [IncomeSourceController::class, 'updateGeneral'])->scopeBindings()->name('client-folders.income-sources.general.update');
-        Route::put('/client-folders/{clientFolder}/income-sources/{incomeSource}/business', [IncomeSourceController::class, 'updateBusiness'])->scopeBindings()->name('client-folders.income-sources.business.update');
+        Route::put('/client-folders/{clientFolder}/income-sources/{incomeSource}/business', [IncomeSourceController::class, 'updateBusiness'])->scopeBindings()->middleware('submission.once')->name('client-folders.income-sources.business.update');
         Route::put('/client-folders/{clientFolder}/income-sources/{incomeSource}/contributors', [IncomeSourceController::class, 'updateContributors'])->scopeBindings()->name('client-folders.income-sources.contributors.update');
         // Registered before the {incomeSource}/export-* routes below: those wildcard routes
         // share the exact same two-segment shape (X/export-pdf, X/export-excel), so if a

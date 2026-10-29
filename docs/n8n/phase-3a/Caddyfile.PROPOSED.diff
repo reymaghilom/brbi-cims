@@ -1,0 +1,65 @@
+--- /etc/caddy/Caddyfile (live, sha256 c90b30e5d741a3c6a6f37d209161f310cf63dfe97410ce698a1f8856ee3e444c)
++++ /etc/caddy/Caddyfile (proposed, sha256 a3957fc9611420022d9112d6edc07eea7754440b495c3a7c2f40d0c7c0ebf88f)
+@@ -128,3 +128,62 @@
+ 		}
+ 	}
+ }
++
++# BRBI CIMS reminder ingress (Phase 3A). Separate origin; exposes exactly ONE n8n production webhook:
++# POST /webhook/brbi-cims/reminder-events (HMAC + ±300 s + 16 KiB enforced again inside n8n Workflow A).
++# Everything else on this host (n8n editor, /rest, /webhook-test, other webhooks, any GET) answers 404.
++brbi-cims.pesowifi.duckdns.org {
++	# Same 16 KiB limit as the Workflow A contract (Caddy answers 413 above it).
++	request_body {
++		max_size 16KiB
++	}
++
++	header {
++		?Strict-Transport-Security "max-age=31536000"
++		?X-Content-Type-Options "nosniff"
++		-Server
++		-X-Powered-By
++	}
++
++	@reminder_events {
++		method POST
++		path /webhook/brbi-cims/reminder-events
++	}
++	handle @reminder_events {
++		reverse_proxy 127.0.0.1:5678 {
++			header_up -Forwarded
++			header_up -X-Real-IP
++			header_up -X-Client-IP
++			header_up -True-Client-IP
++			header_up -CF-Connecting-IP
++			transport http {
++				dial_timeout 5s
++				response_header_timeout 15s
++			}
++		}
++	}
++
++	handle {
++		respond 404
++	}
++
++	# Signatures and idempotency keys are not secrets, but are deleted from the log as defence in depth.
++	log {
++		output file /var/log/caddy/brbi-cims-access.log {
++			roll_size 10MiB
++			roll_keep 10
++			roll_keep_for 336h
++		}
++		format filter {
++			wrap json
++			fields {
++				request>headers>X-Cims-Signature delete
++				request>headers>Idempotency-Key delete
++				request>headers>Cookie delete
++				request>headers>Authorization delete
++				request>headers>Proxy-Authorization delete
++				resp_headers>Set-Cookie delete
++			}
++		}
++	}
++}

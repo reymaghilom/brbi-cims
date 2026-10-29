@@ -1,0 +1,2110 @@
+{
+  "name": "BRBI CIMS — Reminder Event Ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "brbi-cims/reminder-events",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "00000000-2a6a-4000-8000-000000000001",
+      "name": "CIMS Reminder Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "5f0c2a6e-6a61-4c1d-9b2e-2a6000000001"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "data",
+        "destinationKey": "raw_body",
+        "options": {
+          "encoding": "utf8",
+          "stripBOM": false,
+          "keepSource": "json"
+        }
+      },
+      "id": "00000000-2a6a-4000-8000-000000000002",
+      "name": "Read Raw Body",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// BRBI CIMS Phase 2A-6, Workflow A: pre-check the raw request BEFORE any HMAC work.\n// Plain JavaScript only: no module loading, no Node built-ins, no environment variables. The signing secret is never\n// visible here; the Crypto nodes that follow read it from an n8n Crypto credential.\nconst MAX_BODY_BYTES = 16 * 1024;\nconst TOLERANCE_SECONDS = 300;\n\nfunction utf8Length(text) {\n    let bytes = 0;\n    for (const character of text) {\n        const point = character.codePointAt(0);\n        bytes += point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4;\n    }\n\n    return bytes;\n}\n\nconst reject = (httpStatus, code) => [{ json: { ok: false, http_status: httpStatus, code } }];\nconst request = $input.first().json;\nconst headers = request.headers && typeof request.headers === 'object' ? request.headers : {};\nconst raw = typeof request.raw_body === 'string' ? request.raw_body : null;\n\nif (raw === null) {\n    return reject(400, 'raw_body_unavailable');\n}\nconst size = utf8Length(raw);\nif (size === 0 || size > MAX_BODY_BYTES) {\n    return reject(413, 'body_size_invalid');\n}\n\n// Node.js joins a repeated custom header with \", \", which then fails the strict formats below.\nconst single = (name) => {\n    const value = headers[name];\n\n    return typeof value === 'string' && value.length > 0 && value.length <= 256 ? value : null;\n};\nconst signature = single('x-cims-signature');\nconst timestamp = single('x-cims-timestamp');\nconst eventId = single('x-cims-event-id');\nconst idempotencyKey = single('idempotency-key');\n\nif (signature === null || timestamp === null || eventId === null || idempotencyKey === null) {\n    return reject(401, 'authentication_headers_missing');\n}\nif (!/^\\d{1,12}$/.test(timestamp)) {\n    return reject(401, 'timestamp_malformed');\n}\nif (Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp)) > TOLERANCE_SECONDS) {\n    return reject(401, 'timestamp_outside_tolerance');\n}\nif (!/^sha256=[0-9a-f]{64}$/.test(signature)) {\n    return reject(401, 'signature_malformed');\n}\n\n// Canonical signed string: \"{timestamp}.{exact raw body}\". The body is never re-serialized.\nreturn [{\n    json: {\n        ok: true,\n        signed_string: `${timestamp}.${raw}`,\n        supplied_signature: signature,\n        header_event_id: eventId,\n        header_idempotency_key: idempotencyKey,\n        raw_body: raw,\n    },\n}];\n"
+      },
+      "id": "00000000-2a6a-4000-8000-000000000003",
+      "name": "Precheck Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "={{ $json.ok }}:true",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000004",
+      "name": "Precheck Passed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.signed_string }}",
+        "dataPropertyName": "expected_hex",
+        "encoding": "hex"
+      },
+      "id": "00000000-2a6a-4000-8000-000000000005",
+      "name": "HMAC Expected Signature",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "=sha256={{ $json.expected_hex }}",
+        "dataPropertyName": "expected_mac",
+        "encoding": "hex"
+      },
+      "id": "00000000-2a6a-4000-8000-000000000006",
+      "name": "Seal Expected Signature",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.supplied_signature }}",
+        "dataPropertyName": "supplied_mac",
+        "encoding": "hex"
+      },
+      "id": "00000000-2a6a-4000-8000-000000000007",
+      "name": "Seal Supplied Signature",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "type": "SHA256",
+        "value": "={{ $json.raw_body }}",
+        "dataPropertyName": "payload_fingerprint",
+        "encoding": "hex"
+      },
+      "id": "00000000-2a6a-4000-8000-000000000008",
+      "name": "Fingerprint Body",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// BRBI CIMS Phase 2A-6, Workflow A: signature decision and strict brbi.cims.reminder.v1 schema.\n// Plain JavaScript only: no module loading, no Node built-ins, no environment variables.\n//\n// Constant-time-equivalent comparison WITHOUT Code-node crypto: the Crypto nodes computed\n// expected_mac = HMAC(secret, expected signature) and supplied_mac = HMAC(secret, supplied\n// signature). Comparing those two digests (\"double HMAC\") leaks nothing usable through timing,\n// because an attacker cannot predict either digest without the secret.\n\n// Optional, non-secret staging setting: the only origin activities_url may point at, e.g.\n// 'https://cims.example.org'. Empty accepts any http(s) URL (the body is already authenticated).\nconst ALLOWED_ACTIVITIES_ORIGIN = '';\n\nconst SCHEMA = 'brbi.cims.reminder.v1';\nconst SUBJECT_TYPES = ['ci_activity', 'bank_target', 'asset_target'];\nconst ACTIVE_EVENT_TYPES = ['schedule.created', 'schedule.changed'];\nconst CANCEL_REASONS = ['completed', 'unscheduled', 'deleted', 'recipient_unavailable'];\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nconst UTC = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$/;\nconst MANILA = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?\\+08:00$/;\nconst EMAIL = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nconst MANILA_OFFSET_MS = 8 * 60 * 60 * 1000; // Asia/Manila has no daylight saving time.\n\nconst reject = (httpStatus, code) => [{ json: { ok: false, http_status: httpStatus, code } }];\n\nfunction invalid(code) {\n    const error = new Error(code);\n    error.contractCode = code;\n    throw error;\n}\nfunction check(condition, code) {\n    if (!condition) {\n        invalid(code);\n    }\n}\nfunction plain(value) {\n    return value !== null && typeof value === 'object' && !Array.isArray(value);\n}\nfunction exactKeys(value, expected, path) {\n    check(plain(value), `${path}_must_be_object`);\n    const actual = Object.keys(value).sort();\n    const wanted = [...expected].sort();\n    check(actual.length === wanted.length && actual.every((key, index) => key === wanted[index]), `${path}_unexpected_fields`);\n}\nfunction positiveInteger(value, path) {\n    check(Number.isSafeInteger(value) && value > 0, `${path}_must_be_positive_integer`);\n}\nfunction timestamp(value, pattern, path) {\n    check(typeof value === 'string' && pattern.test(value) && Number.isFinite(Date.parse(value)), `${path}_invalid`);\n}\nfunction manila(isoUtc) {\n    return `${new Date(Date.parse(isoUtc) + MANILA_OFFSET_MS).toISOString().slice(0, 19)}+08:00`;\n}\n\nconst input = $input.first().json;\nconst expected = input.expected_mac;\nif (!(typeof expected === 'string' && /^[0-9a-f]{64}$/.test(expected) && expected === input.supplied_mac)) {\n    return reject(401, 'signature_invalid');\n}\n\nlet payload;\ntry {\n    payload = JSON.parse(input.raw_body);\n} catch (error) {\n    return reject(400, 'body_must_be_json');\n}\n\ntry {\n    exactKeys(payload, ['schema', 'event_id', 'idempotency_key', 'event_type', 'occurred_at', 'reminder', 'recipient', 'content'], 'payload');\n    check(payload.schema === SCHEMA, 'schema_unsupported');\n    check(typeof payload.event_id === 'string' && UUID.test(payload.event_id), 'event_id_invalid');\n    check(payload.event_id === input.header_event_id, 'event_id_header_mismatch');\n    check(typeof payload.idempotency_key === 'string' && payload.idempotency_key === input.header_idempotency_key, 'idempotency_key_header_mismatch');\n    check(ACTIVE_EVENT_TYPES.includes(payload.event_type) || payload.event_type === 'schedule.cancelled', 'event_type_invalid');\n    timestamp(payload.occurred_at, UTC, 'occurred_at');\n\n    const reminder = payload.reminder;\n    exactKeys(reminder, ['key', 'subject_type', 'subject_id', 'ci_activity_id', 'version', 'scheduled_at', 'has_specific_time', 'trigger_at', 'trigger_at_local', 'timezone', 'cancel_reason'], 'reminder');\n    check(SUBJECT_TYPES.includes(reminder.subject_type), 'subject_type_invalid');\n    positiveInteger(reminder.subject_id, 'subject_id');\n    positiveInteger(reminder.ci_activity_id, 'ci_activity_id');\n    positiveInteger(reminder.version, 'version');\n    const subjectKey = `${reminder.subject_type}:${reminder.subject_id}`;\n    check(reminder.key === subjectKey, 'reminder_key_invalid');\n    check(payload.idempotency_key === `${subjectKey}:v${reminder.version}`, 'idempotency_key_invalid');\n    check(reminder.timezone === 'Asia/Manila', 'timezone_invalid');\n\n    const active = ACTIVE_EVENT_TYPES.includes(payload.event_type);\n    if (active) {\n        timestamp(reminder.scheduled_at, UTC, 'scheduled_at');\n        timestamp(reminder.trigger_at, UTC, 'trigger_at');\n        timestamp(reminder.trigger_at_local, MANILA, 'trigger_at_local');\n        check(typeof reminder.has_specific_time === 'boolean', 'has_specific_time_invalid');\n        check(reminder.cancel_reason === null, 'cancel_reason_must_be_null');\n        check(Date.parse(reminder.trigger_at) === Date.parse(reminder.trigger_at_local), 'trigger_timestamps_disagree');\n        if (reminder.has_specific_time) {\n            check(Date.parse(reminder.scheduled_at) === Date.parse(reminder.trigger_at), 'specific_time_trigger_mismatch');\n        } else {\n            check(reminder.trigger_at_local.slice(11, 19) === '08:00:00', 'date_only_trigger_time_invalid');\n            check(manila(reminder.scheduled_at).slice(0, 10) === reminder.trigger_at_local.slice(0, 10), 'date_only_trigger_date_invalid');\n        }\n\n        exactKeys(payload.recipient, ['user_id', 'email'], 'recipient');\n        positiveInteger(payload.recipient.user_id, 'recipient_user_id');\n        check(typeof payload.recipient.email === 'string' && payload.recipient.email.length <= 254 && EMAIL.test(payload.recipient.email), 'recipient_email_invalid');\n\n        exactKeys(payload.content, ['subject_label', 'activities_url'], 'content');\n        check(typeof payload.content.subject_label === 'string' && payload.content.subject_label.length >= 1 && payload.content.subject_label.length <= 100, 'subject_label_invalid');\n        check(typeof payload.content.activities_url === 'string' && payload.content.activities_url.length <= 2048, 'activities_url_invalid');\n        let url;\n        try {\n            url = new URL(payload.content.activities_url);\n        } catch (error) {\n            invalid('activities_url_invalid');\n        }\n        check(url.protocol === 'https:' || url.protocol === 'http:', 'activities_url_invalid');\n        check(ALLOWED_ACTIVITIES_ORIGIN === '' || url.origin === ALLOWED_ACTIVITIES_ORIGIN, 'activities_url_origin_not_allowed');\n    } else {\n        check(reminder.scheduled_at === null, 'cancelled_scheduled_at_must_be_null');\n        check(reminder.has_specific_time === null, 'cancelled_has_specific_time_must_be_null');\n        check(reminder.trigger_at === null, 'cancelled_trigger_at_must_be_null');\n        check(reminder.trigger_at_local === null, 'cancelled_trigger_at_local_must_be_null');\n        check(CANCEL_REASONS.includes(reminder.cancel_reason), 'cancel_reason_invalid');\n        exactKeys(payload.recipient, ['user_id'], 'recipient');\n        check(payload.recipient.user_id === null || (Number.isSafeInteger(payload.recipient.user_id) && payload.recipient.user_id > 0), 'recipient_user_id_must_be_positive_integer');\n        check(payload.content === null, 'cancelled_content_must_be_null');\n    }\n\n    const receivedAt = new Date().toISOString();\n\n    // Flat, column-named output. A cancellation clears the email address (data minimisation).\n    return [{\n        json: {\n            ok: true,\n            event_id: payload.event_id,\n            idempotency_key: payload.idempotency_key,\n            event_type: payload.event_type,\n            payload_fingerprint: input.payload_fingerprint,\n            subject_key: subjectKey,\n            subject_type: reminder.subject_type,\n            subject_id: reminder.subject_id,\n            ci_activity_id: reminder.ci_activity_id,\n            schedule_version: reminder.version,\n            recipient_user_id: payload.recipient.user_id,\n            recipient_email: active ? payload.recipient.email : '',\n            scheduled_at_utc: active ? reminder.scheduled_at : null,\n            scheduled_at_manila: active ? manila(reminder.scheduled_at) : '',\n            trigger_at_utc: active ? reminder.trigger_at : null,\n            trigger_at_manila: active ? reminder.trigger_at_local : '',\n            has_specific_time: active ? reminder.has_specific_time : false,\n            status: active ? 'scheduled' : 'cancelled',\n            cancel_reason: active ? '' : reminder.cancel_reason,\n            subject_label: active ? payload.content.subject_label : '',\n            activities_url: active ? payload.content.activities_url : '',\n            last_event_id: payload.event_id,\n            updated_at: receivedAt,\n            delivery_status: active ? 'pending' : 'cancelled',\n            delivery_claim: '',\n            delivery_attempts: 0,\n            delivery_next_attempt_at: null,\n            delivery_updated_at: receivedAt,\n            received_at: receivedAt,\n        },\n    }];\n} catch (error) {\n    if (error && typeof error.contractCode === 'string') {\n        return reject(422, error.contractCode);\n    }\n    throw error;\n}\n"
+      },
+      "id": "00000000-2a6a-4000-8000-000000000009",
+      "name": "Verify Signature and Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "={{ $json.ok }}:true",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000010",
+      "name": "Event Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_events"
+        },
+        "matchType": "anyCondition",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "event_id",
+              "condition": "eq",
+              "keyValue": "={{ $('Verify Signature and Validate').first().json.event_id }}"
+            },
+            {
+              "keyName": "idempotency_key",
+              "condition": "eq",
+              "keyValue": "={{ $('Verify Signature and Validate').first().json.idempotency_key }}"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 20
+      },
+      "id": "00000000-2a6a-4000-8000-000000000011",
+      "name": "Find Event Identity",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2400,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// BRBI CIMS Phase 2A-6, Workflow A: replay / duplicate / conflict classification.\n// Input: ledger rows whose event_id OR idempotency_key matches this event (possibly none).\n// Data Tables have no unique constraint, so two simultaneous first deliveries can both see\n// \"new\" and both insert a ledger row; that is harmless because the schedule write below is a\n// version-guarded compare-and-set and is safe to repeat.\nconst TERMINAL = ['applied', 'stale'];\nconst event = $('Verify Signature and Validate').first().json;\nconst rows = $input.all().map((item) => item.json).filter((row) => row && typeof row.event_id === 'string');\n\nconst same = [];\nconst conflicts = [];\nfor (const row of rows) {\n    const identical = row.event_id === event.event_id\n        && row.idempotency_key === event.idempotency_key\n        && row.payload_fingerprint === event.payload_fingerprint;\n    (identical ? same : conflicts).push(row);\n}\n\nif (conflicts.length > 0) {\n    // Same event id or idempotency key with different bytes: never apply, never acknowledge.\n    return [{ json: { route: 'reject', http_status: 409, code: 'event_identity_conflict' } }];\n}\nif (same.some((row) => TERMINAL.includes(row.processing_status))) {\n    return [{ json: { route: 'duplicate', event_id: event.event_id, outcome: 'duplicate' } }];\n}\n\n// \"resume\": a previous attempt recorded the event but did not finish; re-run the idempotent write.\nreturn [{ json: { route: same.length > 0 ? 'resume' : 'new', event_id: event.event_id } }];\n"
+      },
+      "id": "00000000-2a6a-4000-8000-000000000012",
+      "name": "Classify Identity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "={{ $json.route }}=reject",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "reject",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000013",
+      "name": "Identity Conflict?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "={{ $json.route }}=duplicate",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "duplicate",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000014",
+      "name": "Already Processed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "={{ $json.route }}=new",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "new",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000015",
+      "name": "New Event?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_events"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_id": "={{ $('Verify Signature and Validate').first().json.event_id }}",
+            "idempotency_key": "={{ $('Verify Signature and Validate').first().json.idempotency_key }}",
+            "subject_key": "={{ $('Verify Signature and Validate').first().json.subject_key }}",
+            "schedule_version": "={{ $('Verify Signature and Validate').first().json.schedule_version }}",
+            "event_type": "={{ $('Verify Signature and Validate').first().json.event_type }}",
+            "payload_fingerprint": "={{ $('Verify Signature and Validate').first().json.payload_fingerprint }}",
+            "processing_status": "received",
+            "failure_code": "",
+            "received_at": "={{ $('Verify Signature and Validate').first().json.received_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "event_id",
+              "displayName": "event_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "idempotency_key",
+              "displayName": "idempotency_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject_key",
+              "displayName": "subject_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "schedule_version",
+              "displayName": "schedule_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "payload_fingerprint",
+              "displayName": "payload_fingerprint",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "processing_status",
+              "displayName": "processing_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "failure_code",
+              "displayName": "failure_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000016",
+      "name": "Insert Event Ledger",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3600,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_schedules"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "subject_key",
+              "condition": "eq",
+              "keyValue": "={{ $('Verify Signature and Validate').first().json.subject_key }}"
+            },
+            {
+              "keyName": "schedule_version",
+              "condition": "lt",
+              "keyValue": "={{ $('Verify Signature and Validate').first().json.schedule_version }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "subject_key": "={{ $('Verify Signature and Validate').first().json.subject_key }}",
+            "subject_type": "={{ $('Verify Signature and Validate').first().json.subject_type }}",
+            "subject_id": "={{ $('Verify Signature and Validate').first().json.subject_id }}",
+            "ci_activity_id": "={{ $('Verify Signature and Validate').first().json.ci_activity_id }}",
+            "schedule_version": "={{ $('Verify Signature and Validate').first().json.schedule_version }}",
+            "recipient_user_id": "={{ $('Verify Signature and Validate').first().json.recipient_user_id }}",
+            "recipient_email": "={{ $('Verify Signature and Validate').first().json.recipient_email }}",
+            "scheduled_at_utc": "={{ $('Verify Signature and Validate').first().json.scheduled_at_utc }}",
+            "scheduled_at_manila": "={{ $('Verify Signature and Validate').first().json.scheduled_at_manila }}",
+            "trigger_at_utc": "={{ $('Verify Signature and Validate').first().json.trigger_at_utc }}",
+            "trigger_at_manila": "={{ $('Verify Signature and Validate').first().json.trigger_at_manila }}",
+            "has_specific_time": "={{ $('Verify Signature and Validate').first().json.has_specific_time }}",
+            "status": "={{ $('Verify Signature and Validate').first().json.status }}",
+            "cancel_reason": "={{ $('Verify Signature and Validate').first().json.cancel_reason }}",
+            "last_event_id": "={{ $('Verify Signature and Validate').first().json.last_event_id }}",
+            "updated_at": "={{ $('Verify Signature and Validate').first().json.updated_at }}",
+            "subject_label": "={{ $('Verify Signature and Validate').first().json.subject_label }}",
+            "activities_url": "={{ $('Verify Signature and Validate').first().json.activities_url }}",
+            "delivery_status": "={{ $('Verify Signature and Validate').first().json.delivery_status }}",
+            "delivery_claim": "={{ $('Verify Signature and Validate').first().json.delivery_claim }}",
+            "delivery_attempts": "={{ $('Verify Signature and Validate').first().json.delivery_attempts }}",
+            "delivery_next_attempt_at": "={{ $('Verify Signature and Validate').first().json.delivery_next_attempt_at }}",
+            "delivery_updated_at": "={{ $('Verify Signature and Validate').first().json.delivery_updated_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "subject_key",
+              "displayName": "subject_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject_type",
+              "displayName": "subject_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject_id",
+              "displayName": "subject_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ci_activity_id",
+              "displayName": "ci_activity_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "schedule_version",
+              "displayName": "schedule_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recipient_user_id",
+              "displayName": "recipient_user_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recipient_email",
+              "displayName": "recipient_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scheduled_at_utc",
+              "displayName": "scheduled_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scheduled_at_manila",
+              "displayName": "scheduled_at_manila",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "trigger_at_utc",
+              "displayName": "trigger_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "trigger_at_manila",
+              "displayName": "trigger_at_manila",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "has_specific_time",
+              "displayName": "has_specific_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cancel_reason",
+              "displayName": "cancel_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_event_id",
+              "displayName": "last_event_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject_label",
+              "displayName": "subject_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "activities_url",
+              "displayName": "activities_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_status",
+              "displayName": "delivery_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_claim",
+              "displayName": "delivery_claim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_attempts",
+              "displayName": "delivery_attempts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_next_attempt_at",
+              "displayName": "delivery_next_attempt_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_updated_at",
+              "displayName": "delivery_updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000017",
+      "name": "Guarded Schedule Write",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3840,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_schedules"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "subject_key",
+              "condition": "eq",
+              "keyValue": "={{ $('Verify Signature and Validate').first().json.subject_key }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "00000000-2a6a-4000-8000-000000000018",
+      "name": "Read Schedule Rows",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4080,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// BRBI CIMS Phase 2A-6, Workflow A: decide from a FRESH read after the version-guarded write.\n// The Data Table update result is deliberately not trusted (on SQLite n8n selects the affected\n// rows before the UPDATE runs); only this re-read is used.\nconst AFTER_INSERT = false;\nconst event = $('Verify Signature and Validate').first().json;\nconst seen = new Set();\nconst rows = $input.all()\n    .map((item) => item.json)\n    .filter((row) => row && row.subject_key === event.subject_key)\n    .filter((row) => {\n        const id = String(row.id);\n        if (seen.has(id)) {\n            return false;\n        }\n        seen.add(id);\n\n        return true;\n    });\n\nif (rows.length === 0) {\n    return [{\n        json: AFTER_INSERT\n            ? { route: 'reject', http_status: 503, code: 'schedule_row_not_persisted' }\n            : { route: 'insert', event_id: event.event_id },\n    }];\n}\n\nconst newest = Math.max(...rows.map((row) => Number(row.schedule_version)));\nif (newest >= event.schedule_version) {\n    const applied = rows.some((row) => Number(row.schedule_version) === event.schedule_version && row.last_event_id === event.event_id);\n\n    // \"stale\": an equal-or-newer version is already stored, so this older event changed nothing.\n    return [{ json: { route: 'done', event_id: event.event_id, outcome: applied ? 'applied' : 'stale' } }];\n}\n\n// Only older rows exist: one was inserted concurrently after this event's guarded write. Do not\n// acknowledge; Laravel retries the same event later and the guarded write then converges.\nreturn [{ json: { route: 'reject', http_status: 503, code: 'concurrent_write_retry' } }];\n"
+      },
+      "id": "00000000-2a6a-4000-8000-000000000019",
+      "name": "Decide After Write",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "={{ $json.route }}=insert",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "insert",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000020",
+      "name": "Insert Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_schedules"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "subject_key": "={{ $('Verify Signature and Validate').first().json.subject_key }}",
+            "subject_type": "={{ $('Verify Signature and Validate').first().json.subject_type }}",
+            "subject_id": "={{ $('Verify Signature and Validate').first().json.subject_id }}",
+            "ci_activity_id": "={{ $('Verify Signature and Validate').first().json.ci_activity_id }}",
+            "schedule_version": "={{ $('Verify Signature and Validate').first().json.schedule_version }}",
+            "recipient_user_id": "={{ $('Verify Signature and Validate').first().json.recipient_user_id }}",
+            "recipient_email": "={{ $('Verify Signature and Validate').first().json.recipient_email }}",
+            "scheduled_at_utc": "={{ $('Verify Signature and Validate').first().json.scheduled_at_utc }}",
+            "scheduled_at_manila": "={{ $('Verify Signature and Validate').first().json.scheduled_at_manila }}",
+            "trigger_at_utc": "={{ $('Verify Signature and Validate').first().json.trigger_at_utc }}",
+            "trigger_at_manila": "={{ $('Verify Signature and Validate').first().json.trigger_at_manila }}",
+            "has_specific_time": "={{ $('Verify Signature and Validate').first().json.has_specific_time }}",
+            "status": "={{ $('Verify Signature and Validate').first().json.status }}",
+            "cancel_reason": "={{ $('Verify Signature and Validate').first().json.cancel_reason }}",
+            "last_event_id": "={{ $('Verify Signature and Validate').first().json.last_event_id }}",
+            "updated_at": "={{ $('Verify Signature and Validate').first().json.updated_at }}",
+            "subject_label": "={{ $('Verify Signature and Validate').first().json.subject_label }}",
+            "activities_url": "={{ $('Verify Signature and Validate').first().json.activities_url }}",
+            "delivery_status": "={{ $('Verify Signature and Validate').first().json.delivery_status }}",
+            "delivery_claim": "={{ $('Verify Signature and Validate').first().json.delivery_claim }}",
+            "delivery_attempts": "={{ $('Verify Signature and Validate').first().json.delivery_attempts }}",
+            "delivery_next_attempt_at": "={{ $('Verify Signature and Validate').first().json.delivery_next_attempt_at }}",
+            "delivery_updated_at": "={{ $('Verify Signature and Validate').first().json.delivery_updated_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "subject_key",
+              "displayName": "subject_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject_type",
+              "displayName": "subject_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject_id",
+              "displayName": "subject_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ci_activity_id",
+              "displayName": "ci_activity_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "schedule_version",
+              "displayName": "schedule_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recipient_user_id",
+              "displayName": "recipient_user_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recipient_email",
+              "displayName": "recipient_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scheduled_at_utc",
+              "displayName": "scheduled_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scheduled_at_manila",
+              "displayName": "scheduled_at_manila",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "trigger_at_utc",
+              "displayName": "trigger_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "trigger_at_manila",
+              "displayName": "trigger_at_manila",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "has_specific_time",
+              "displayName": "has_specific_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cancel_reason",
+              "displayName": "cancel_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_event_id",
+              "displayName": "last_event_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject_label",
+              "displayName": "subject_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "activities_url",
+              "displayName": "activities_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_status",
+              "displayName": "delivery_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_claim",
+              "displayName": "delivery_claim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_attempts",
+              "displayName": "delivery_attempts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_next_attempt_at",
+              "displayName": "delivery_next_attempt_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_updated_at",
+              "displayName": "delivery_updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000021",
+      "name": "Insert Schedule Row",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4800,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_schedules"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "subject_key",
+              "condition": "eq",
+              "keyValue": "={{ $('Verify Signature and Validate').first().json.subject_key }}"
+            },
+            {
+              "keyName": "schedule_version",
+              "condition": "lt",
+              "keyValue": "={{ $('Verify Signature and Validate').first().json.schedule_version }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "subject_key": "={{ $('Verify Signature and Validate').first().json.subject_key }}",
+            "subject_type": "={{ $('Verify Signature and Validate').first().json.subject_type }}",
+            "subject_id": "={{ $('Verify Signature and Validate').first().json.subject_id }}",
+            "ci_activity_id": "={{ $('Verify Signature and Validate').first().json.ci_activity_id }}",
+            "schedule_version": "={{ $('Verify Signature and Validate').first().json.schedule_version }}",
+            "recipient_user_id": "={{ $('Verify Signature and Validate').first().json.recipient_user_id }}",
+            "recipient_email": "={{ $('Verify Signature and Validate').first().json.recipient_email }}",
+            "scheduled_at_utc": "={{ $('Verify Signature and Validate').first().json.scheduled_at_utc }}",
+            "scheduled_at_manila": "={{ $('Verify Signature and Validate').first().json.scheduled_at_manila }}",
+            "trigger_at_utc": "={{ $('Verify Signature and Validate').first().json.trigger_at_utc }}",
+            "trigger_at_manila": "={{ $('Verify Signature and Validate').first().json.trigger_at_manila }}",
+            "has_specific_time": "={{ $('Verify Signature and Validate').first().json.has_specific_time }}",
+            "status": "={{ $('Verify Signature and Validate').first().json.status }}",
+            "cancel_reason": "={{ $('Verify Signature and Validate').first().json.cancel_reason }}",
+            "last_event_id": "={{ $('Verify Signature and Validate').first().json.last_event_id }}",
+            "updated_at": "={{ $('Verify Signature and Validate').first().json.updated_at }}",
+            "subject_label": "={{ $('Verify Signature and Validate').first().json.subject_label }}",
+            "activities_url": "={{ $('Verify Signature and Validate').first().json.activities_url }}",
+            "delivery_status": "={{ $('Verify Signature and Validate').first().json.delivery_status }}",
+            "delivery_claim": "={{ $('Verify Signature and Validate').first().json.delivery_claim }}",
+            "delivery_attempts": "={{ $('Verify Signature and Validate').first().json.delivery_attempts }}",
+            "delivery_next_attempt_at": "={{ $('Verify Signature and Validate').first().json.delivery_next_attempt_at }}",
+            "delivery_updated_at": "={{ $('Verify Signature and Validate').first().json.delivery_updated_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "subject_key",
+              "displayName": "subject_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject_type",
+              "displayName": "subject_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject_id",
+              "displayName": "subject_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ci_activity_id",
+              "displayName": "ci_activity_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "schedule_version",
+              "displayName": "schedule_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recipient_user_id",
+              "displayName": "recipient_user_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recipient_email",
+              "displayName": "recipient_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scheduled_at_utc",
+              "displayName": "scheduled_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scheduled_at_manila",
+              "displayName": "scheduled_at_manila",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "trigger_at_utc",
+              "displayName": "trigger_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "trigger_at_manila",
+              "displayName": "trigger_at_manila",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "has_specific_time",
+              "displayName": "has_specific_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cancel_reason",
+              "displayName": "cancel_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_event_id",
+              "displayName": "last_event_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject_label",
+              "displayName": "subject_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "activities_url",
+              "displayName": "activities_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_status",
+              "displayName": "delivery_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_claim",
+              "displayName": "delivery_claim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_attempts",
+              "displayName": "delivery_attempts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_next_attempt_at",
+              "displayName": "delivery_next_attempt_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_updated_at",
+              "displayName": "delivery_updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000022",
+      "name": "Converge Schedule Rows",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        5040,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_schedules"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "subject_key",
+              "condition": "eq",
+              "keyValue": "={{ $('Verify Signature and Validate').first().json.subject_key }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "00000000-2a6a-4000-8000-000000000023",
+      "name": "Final Read Schedule Rows",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        5280,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// BRBI CIMS Phase 2A-6, Workflow A: decide from a FRESH read after the version-guarded write.\n// The Data Table update result is deliberately not trusted (on SQLite n8n selects the affected\n// rows before the UPDATE runs); only this re-read is used.\nconst AFTER_INSERT = true;\nconst event = $('Verify Signature and Validate').first().json;\nconst seen = new Set();\nconst rows = $input.all()\n    .map((item) => item.json)\n    .filter((row) => row && row.subject_key === event.subject_key)\n    .filter((row) => {\n        const id = String(row.id);\n        if (seen.has(id)) {\n            return false;\n        }\n        seen.add(id);\n\n        return true;\n    });\n\nif (rows.length === 0) {\n    return [{\n        json: AFTER_INSERT\n            ? { route: 'reject', http_status: 503, code: 'schedule_row_not_persisted' }\n            : { route: 'insert', event_id: event.event_id },\n    }];\n}\n\nconst newest = Math.max(...rows.map((row) => Number(row.schedule_version)));\nif (newest >= event.schedule_version) {\n    const applied = rows.some((row) => Number(row.schedule_version) === event.schedule_version && row.last_event_id === event.event_id);\n\n    // \"stale\": an equal-or-newer version is already stored, so this older event changed nothing.\n    return [{ json: { route: 'done', event_id: event.event_id, outcome: applied ? 'applied' : 'stale' } }];\n}\n\n// Only older rows exist: one was inserted concurrently after this event's guarded write. Do not\n// acknowledge; Laravel retries the same event later and the guarded write then converges.\nreturn [{ json: { route: 'reject', http_status: 503, code: 'concurrent_write_retry' } }];\n"
+      },
+      "id": "00000000-2a6a-4000-8000-000000000024",
+      "name": "Decide After Insert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "={{ $json.route }}=done",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "done",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000025",
+      "name": "Settled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [$input.first()];\n"
+      },
+      "id": "00000000-2a6a-4000-8000-000000000026",
+      "name": "Accepted Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6000,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_events"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "event_id",
+              "condition": "eq",
+              "keyValue": "={{ $('Accepted Result').first().json.event_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "processing_status": "={{ $('Accepted Result').first().json.outcome }}",
+            "failure_code": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "processing_status",
+              "displayName": "processing_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "failure_code",
+              "displayName": "failure_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "00000000-2a6a-4000-8000-000000000027",
+      "name": "Record Event Outcome",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        6240,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ result: $('Accepted Result').first().json.outcome, event_id: $('Accepted Result').first().json.event_id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "00000000-2a6a-4000-8000-000000000028",
+      "name": "Respond Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        6480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ result: 'duplicate', event_id: $json.event_id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "00000000-2a6a-4000-8000-000000000029",
+      "name": "Respond Duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        6720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Never acknowledge an event whose persistence failed: Laravel keeps it pending and retries.\nreturn [{ json: { http_status: 503, code: 'storage_unavailable' } }];\n"
+      },
+      "id": "00000000-2a6a-4000-8000-000000000030",
+      "name": "Storage Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ result: 'rejected', code: $json.code }) }}",
+        "options": {
+          "responseCode": "={{ $json.http_status }}"
+        }
+      },
+      "id": "00000000-2a6a-4000-8000-000000000031",
+      "name": "Respond Rejected",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        7200,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "CIMS Reminder Webhook": {
+      "main": [
+        [
+          {
+            "node": "Read Raw Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Raw Body": {
+      "main": [
+        [
+          {
+            "node": "Precheck Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Precheck Request": {
+      "main": [
+        [
+          {
+            "node": "Precheck Passed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Precheck Passed?": {
+      "main": [
+        [
+          {
+            "node": "HMAC Expected Signature",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HMAC Expected Signature": {
+      "main": [
+        [
+          {
+            "node": "Seal Expected Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seal Expected Signature": {
+      "main": [
+        [
+          {
+            "node": "Seal Supplied Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seal Supplied Signature": {
+      "main": [
+        [
+          {
+            "node": "Fingerprint Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fingerprint Body": {
+      "main": [
+        [
+          {
+            "node": "Verify Signature and Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Signature and Validate": {
+      "main": [
+        [
+          {
+            "node": "Event Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event Valid?": {
+      "main": [
+        [
+          {
+            "node": "Find Event Identity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Event Identity": {
+      "main": [
+        [
+          {
+            "node": "Classify Identity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Storage Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Identity": {
+      "main": [
+        [
+          {
+            "node": "Identity Conflict?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identity Conflict?": {
+      "main": [
+        [
+          {
+            "node": "Respond Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Already Processed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Processed?": {
+      "main": [
+        [
+          {
+            "node": "Respond Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "New Event?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Event?": {
+      "main": [
+        [
+          {
+            "node": "Insert Event Ledger",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Guarded Schedule Write",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Event Ledger": {
+      "main": [
+        [
+          {
+            "node": "Guarded Schedule Write",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Storage Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guarded Schedule Write": {
+      "main": [
+        [
+          {
+            "node": "Read Schedule Rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Storage Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Schedule Rows": {
+      "main": [
+        [
+          {
+            "node": "Decide After Write",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Storage Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide After Write": {
+      "main": [
+        [
+          {
+            "node": "Insert Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Needed?": {
+      "main": [
+        [
+          {
+            "node": "Insert Schedule Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Settled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Schedule Row": {
+      "main": [
+        [
+          {
+            "node": "Converge Schedule Rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Storage Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Converge Schedule Rows": {
+      "main": [
+        [
+          {
+            "node": "Final Read Schedule Rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Storage Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Read Schedule Rows": {
+      "main": [
+        [
+          {
+            "node": "Decide After Insert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Storage Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide After Insert": {
+      "main": [
+        [
+          {
+            "node": "Settled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settled?": {
+      "main": [
+        [
+          {
+            "node": "Accepted Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accepted Result": {
+      "main": [
+        [
+          {
+            "node": "Record Event Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Event Outcome": {
+      "main": [
+        [
+          {
+            "node": "Respond Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Storage Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Storage Failure": {
+      "main": [
+        [
+          {
+            "node": "Respond Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Manila",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "brbiCimsPhase": "2A-6",
+    "description": "One-way Laravel -> n8n ingestion. HMAC via Crypto nodes + Crypto credential (assign at staging). Inactive."
+  },
+  "tags": []
+}

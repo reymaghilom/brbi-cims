@@ -10,6 +10,7 @@ use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
 use Tests\TestCase;
 
 class AdministratorPasswordResetTest extends TestCase
@@ -27,6 +28,8 @@ class AdministratorPasswordResetTest extends TestCase
             'payload' => 'payload',
             'last_activity' => now()->timestamp,
         ]);
+        $outstandingResetToken = Password::createToken($user);
+        $this->assertTrue(Password::tokenExists($user, $outstandingResetToken));
         $temporaryPassword = 'controlled temporary password';
 
         $returnedPassword = app(ResetUserPassword::class)->execute($administrator, $user, $temporaryPassword);
@@ -39,6 +42,7 @@ class AdministratorPasswordResetTest extends TestCase
         $this->assertNull($user->password_changed_at);
         $this->assertSame($previousVersion + 1, $user->auth_session_version);
         $this->assertDatabaseMissing('sessions', ['user_id' => $user->id]);
+        $this->assertFalse(Password::tokenExists($user, $outstandingResetToken));
 
         $audit = AuditLog::where('action', 'user.password_reset')->sole();
         $this->assertSame($administrator->id, $audit->user_id);

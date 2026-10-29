@@ -1,0 +1,80 @@
+{
+  "phase": "2A-7",
+  "status": "design-for-staging-not-provisioned",
+  "supersedes": "../phase-2a-6/data-tables.schema.json",
+  "supportedColumnTypes": ["string", "number", "boolean", "date"],
+  "notes": [
+    "The id, createdAt, and updatedAt system columns are supplied by n8n and are not declared here.",
+    "Data Tables provide no unique constraint, multi-statement transaction, or row lock. Correctness relies only on single-statement filtered UPDATEs (version-guarded compare-and-set and the delivery claim) plus readers that use only the highest schedule_version per subject.",
+    "Changes from 2A-6: cims_reminder_schedules gains last_execution_id (distinguishes 'applied' from a replayed 'duplicate'); cims_reminder_events becomes an append-only receipt log written AFTER the schedule decision, so payload_fingerprint and failure_code were removed.",
+    "recipient_email is cleared on cancellation. Delivery logs never store the email address or message body. No table stores a raw webhook body, signature, or secret."
+  ],
+  "tables": [
+    {
+      "name": "cims_reminder_schedules",
+      "purpose": "Current reminder state per subject_key plus delivery state. May contain duplicate rows for one subject; only the highest schedule_version counts.",
+      "columns": [
+        {"name": "subject_key", "type": "string"},
+        {"name": "subject_type", "type": "string"},
+        {"name": "subject_id", "type": "number"},
+        {"name": "ci_activity_id", "type": "number"},
+        {"name": "schedule_version", "type": "number"},
+        {"name": "recipient_user_id", "type": "number"},
+        {"name": "recipient_email", "type": "string"},
+        {"name": "scheduled_at_utc", "type": "date"},
+        {"name": "scheduled_at_manila", "type": "string"},
+        {"name": "trigger_at_utc", "type": "date"},
+        {"name": "trigger_at_manila", "type": "string"},
+        {"name": "has_specific_time", "type": "boolean"},
+        {"name": "status", "type": "string"},
+        {"name": "cancel_reason", "type": "string"},
+        {"name": "last_event_id", "type": "string"},
+        {"name": "last_execution_id", "type": "string"},
+        {"name": "updated_at", "type": "date"},
+        {"name": "subject_label", "type": "string"},
+        {"name": "activities_url", "type": "string"},
+        {"name": "delivery_status", "type": "string"},
+        {"name": "delivery_claim", "type": "string"},
+        {"name": "delivery_attempts", "type": "number"},
+        {"name": "delivery_next_attempt_at", "type": "date"},
+        {"name": "delivery_updated_at", "type": "date"}
+      ]
+    },
+    {
+      "name": "cims_reminder_events",
+      "purpose": "Append-only receipt log: one row per acknowledged delivery attempt (applied, duplicate or stale). Rejected requests are not logged.",
+      "columns": [
+        {"name": "event_id", "type": "string"},
+        {"name": "idempotency_key", "type": "string"},
+        {"name": "subject_key", "type": "string"},
+        {"name": "schedule_version", "type": "number"},
+        {"name": "event_type", "type": "string"},
+        {"name": "processing_status", "type": "string"},
+        {"name": "received_at", "type": "date"}
+      ]
+    },
+    {
+      "name": "cims_reminder_delivery_logs",
+      "purpose": "Append-only delivery attempt audit metadata written by Workflow B.",
+      "columns": [
+        {"name": "delivery_key", "type": "string"},
+        {"name": "subject_key", "type": "string"},
+        {"name": "schedule_version", "type": "number"},
+        {"name": "event_id", "type": "string"},
+        {"name": "recipient_user_id", "type": "number"},
+        {"name": "attempt_number", "type": "number"},
+        {"name": "outcome", "type": "string"},
+        {"name": "provider_message_id", "type": "string"},
+        {"name": "response_status", "type": "number"},
+        {"name": "error_code", "type": "string"},
+        {"name": "attempted_at", "type": "date"}
+      ]
+    }
+  ],
+  "enumerations": {
+    "cims_reminder_schedules.status": ["scheduled", "cancelled"],
+    "cims_reminder_schedules.delivery_status": ["pending", "sending", "sent", "failed", "uncertain", "cancelled", "skipped"],
+    "cims_reminder_events.processing_status": ["applied", "duplicate", "stale"],
+    "cims_reminder_delivery_logs.outcome": ["sent", "failed", "uncertain"]
+  }
+}

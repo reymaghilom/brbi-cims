@@ -4,15 +4,19 @@ namespace App\Providers;
 
 use App\Models\AuditLog;
 use App\Models\CiActivity;
+use App\Models\CiActivityAssetTarget;
+use App\Models\CiActivityBankTarget;
 use App\Models\CibiReport;
 use App\Models\ClientFolder;
 use App\Models\ClientInformation;
+use App\Models\CoMaker;
 use App\Models\GeneratedReport;
 use App\Models\IncomeSource;
 use App\Models\MediaReference;
 use App\Models\ResidenceBusinessReport;
 use App\Models\SystemSetting;
 use App\Models\User;
+use App\Observers\ReminderScheduleObserver;
 use App\Policies\AuditLogPolicy;
 use App\Policies\CiActivityPolicy;
 use App\Policies\CibiReportPolicy;
@@ -67,5 +71,10 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(GeneratedReport::class, GeneratedReportPolicy::class);
         Gate::policy(SystemSetting::class, SystemSettingPolicy::class);
         Gate::policy(AuditLog::class, AuditLogPolicy::class);
+
+        // n8n email-reminder outbox (inert unless services.n8n_reminders.enabled).
+        foreach ([CiActivity::class, CiActivityBankTarget::class, CiActivityAssetTarget::class, CoMaker::class, ClientFolder::class] as $model) {
+            $model::observe(ReminderScheduleObserver::class);
+        }
     }
 }

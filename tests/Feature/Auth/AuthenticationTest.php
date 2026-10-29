@@ -4,8 +4,10 @@ namespace Tests\Feature\Auth;
 
 use App\Enums\UserStatus;
 use App\Models\User;
+use Illuminate\Auth\Events\Lockout;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
@@ -14,6 +16,8 @@ class AuthenticationTest extends TestCase
     use RefreshDatabase;
 
     private const PASSWORD = 'a secure password';
+
+    private const THROTTLED_60 = 'Too many sign-in attempts. Please try again in 60 seconds.';
 
     public function test_login_screen_is_private_entry_point_and_registration_is_absent(): void
     {
@@ -142,26 +146,137 @@ class AuthenticationTest extends TestCase
         $this->assertGuest();
     }
 
-    public function test_repeated_failed_attempts_never_lock_the_account(): void
+    public function test_five_failed_attempts_keep_the_generic_message_and_the_sixth_is_throttled(): void
     {
+        $this->freezeTime();
+        Event::fake([Lockout::class]);
         $user = User::factory()->create(['email' => 'many.attempts@example.com', 'password' => self::PASSWORD]);
 
-        // Well past the old five-attempt limit: every failure keeps the same generic message.
-        for ($attempt = 0; $attempt < 8; $attempt++) {
-            $this->post('/login', ['email' => $user->email, 'password' => 'incorrect password'])
-                ->assertSessionHasErrors([
-                    'authentication' => 'Invalid email or password. Please check your credentials and try again.',
-                ]);
-            $this->assertGuest();
-        }
+        $this->failLogin($user->email, 5);
+        Event::assertNotDispatched(Lockout::class);
 
-        // The correct password still signs in immediately — no lockout, no waiting.
+        // Sixth attempt is refused before credentials are checked — even the correct password.
+        $this->from('/login')->post('/login', ['email' => $user->email, 'password' => self::PASSWORD])
+            ->assertRedirect('/login')
+            ->assertSessionHasErrors(['authentication' => self::THROTTLED_60]);
+        $this->assertGuest();
+        $this->assertNull($user->fresh()->last_login_at);
+        Event::assertDispatched(Lockout::class);
+
+        $this->followingRedirects()->from('/login')
+            ->post('/login', ['email' => $user->email, 'password' => 'incorrect password'])
+            ->assertOk()
+            ->assertSee('role="alert"', false)
+            ->assertSee(self::THROTTLED_60)
+            ->assertSee('value="many.attempts@example.com"', false)
+            ->assertDontSee('name="password" type="password" value=', false);
+    }
+
+    public function test_throttle_message_states_the_remaining_wait_and_lifts_after_the_window(): void
+    {
+        $this->freezeTime();
+        $user = User::factory()->create(['email' => 'cooldown@example.com', 'password' => self::PASSWORD]);
+
+        $this->failLogin($user->email, 5);
+
+        $this->travel(45)->seconds();
+        $this->post('/login', ['email' => $user->email, 'password' => self::PASSWORD])
+            ->assertSessionHasErrors(['authentication' => 'Too many sign-in attempts. Please try again in 15 seconds.']);
+        $this->assertGuest();
+
+        $this->travel(16)->seconds();
         $this->withSession(['probe' => 'kept'])
             ->post('/login', ['email' => $user->email, 'password' => self::PASSWORD, 'remember' => '1'])
             ->assertRedirect(route('home'))
             ->assertSessionDoesntHaveErrors()
             ->assertCookie(Auth::guard('web')->getRecallerName());
         $this->assertAuthenticatedAs($user);
+    }
+
+    public function test_a_successful_login_clears_the_failed_attempt_counter(): void
+    {
+        $this->freezeTime();
+        $user = User::factory()->create(['email' => 'reset.counter@example.com', 'password' => self::PASSWORD]);
+
+        $this->failLogin($user->email, 4);
+        $this->post('/login', ['email' => $user->email, 'password' => self::PASSWORD])->assertRedirect(route('home'));
+        $this->assertAuthenticatedAs($user);
+        Auth::guard('web')->logout();
+
+        // A full fresh allowance: five more failures all answer generically, only the sixth is paused.
+        $this->failLogin($user->email, 5);
+        $this->post('/login', ['email' => $user->email, 'password' => 'incorrect password'])
+            ->assertSessionHasErrors(['authentication' => self::THROTTLED_60]);
+    }
+
+    public function test_the_limiter_is_scoped_to_the_exact_email_and_ip_pair(): void
+    {
+        $this->freezeTime();
+        $user = User::factory()->create(['email' => 'scoped@example.com', 'password' => self::PASSWORD]);
+        $other = User::factory()->create(['email' => 'other@example.com', 'password' => self::PASSWORD]);
+
+        $this->failLogin($user->email, 5);
+
+        // Normalization: a differently cased / padded spelling of the same email shares the counter.
+        $this->post('/login', ['email' => ' SCOPED@Example.com ', 'password' => self::PASSWORD])
+            ->assertSessionHasErrors(['authentication' => self::THROTTLED_60]);
+
+        // Same IP, different email: unaffected.
+        $this->post('/login', ['email' => $other->email, 'password' => self::PASSWORD])->assertRedirect(route('home'));
+        $this->assertAuthenticatedAs($other);
+        Auth::guard('web')->logout();
+
+        // Same email, different IP: unaffected.
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.9'])
+            ->post('/login', ['email' => $user->email, 'password' => self::PASSWORD])
+            ->assertRedirect(route('home'));
+        $this->assertAuthenticatedAs($user);
+    }
+
+    public function test_disabled_and_unknown_accounts_are_throttled_identically_without_revealing_existence(): void
+    {
+        $this->freezeTime();
+        $disabled = User::factory()->create([
+            'email' => 'disabled.throttle@example.com',
+            'password' => self::PASSWORD,
+            'status' => UserStatus::Disabled,
+        ]);
+
+        // A disabled account's correct password is still just a generic failure, and counts.
+        $this->failLogin($disabled->email, 5, self::PASSWORD);
+        $this->post('/login', ['email' => $disabled->email, 'password' => self::PASSWORD])
+            ->assertSessionHasErrors(['authentication' => self::THROTTLED_60]);
+
+        // An email with no account behaves exactly the same way.
+        $this->failLogin('nobody@example.com', 5);
+        $this->post('/login', ['email' => 'nobody@example.com', 'password' => self::PASSWORD])
+            ->assertSessionHasErrors(['authentication' => self::THROTTLED_60]);
+
+        $this->assertGuest();
+        $this->assertSame(UserStatus::Disabled, $disabled->fresh()->status);
+    }
+
+    public function test_blank_or_malformed_submissions_do_not_consume_attempts(): void
+    {
+        $user = User::factory()->create(['email' => 'validation.only@example.com', 'password' => self::PASSWORD]);
+
+        for ($attempt = 0; $attempt < 6; $attempt++) {
+            $this->post('/login', ['email' => $user->email, 'password' => ''])->assertSessionHasErrors('password');
+        }
+
+        $this->post('/login', ['email' => $user->email, 'password' => self::PASSWORD])->assertRedirect(route('home'));
+        $this->assertAuthenticatedAs($user);
+    }
+
+    private function failLogin(string $email, int $times, string $password = 'incorrect password'): void
+    {
+        for ($attempt = 0; $attempt < $times; $attempt++) {
+            $this->post('/login', ['email' => $email, 'password' => $password])
+                ->assertSessionHasErrors([
+                    'authentication' => 'Invalid email or password. Please check your credentials and try again.',
+                ]);
+            $this->assertGuest();
+        }
     }
 
     public function test_blank_login_fields_use_concise_field_level_validation(): void

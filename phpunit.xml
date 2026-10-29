@@ -35,6 +35,20 @@
         <server name="CLOUDINARY_CLOUD_NAME" value="" force="true"/>
         <server name="CLOUDINARY_API_KEY" value="" force="true"/>
         <server name="CLOUDINARY_API_SECRET" value="" force="true"/>
+        <!-- The n8n reminder integration is forced off with no endpoint or secret, so neither .env nor
+             host variables can make the suite reach a real webhook. Tests opt in via config(). -->
+        <env name="N8N_REMINDERS_ENABLED" value="false" force="true"/>
+        <env name="N8N_REMINDERS_WEBHOOK_URL" value="" force="true"/>
+        <env name="N8N_REMINDERS_SIGNING_SECRET" value="" force="true"/>
+        <env name="N8N_REMINDERS_DISPATCH_AFTER_COMMIT" value="false" force="true"/>
+        <server name="N8N_REMINDERS_ENABLED" value="false" force="true"/>
+        <server name="N8N_REMINDERS_WEBHOOK_URL" value="" force="true"/>
+        <server name="N8N_REMINDERS_SIGNING_SECRET" value="" force="true"/>
+        <server name="N8N_REMINDERS_DISPATCH_AFTER_COMMIT" value="false" force="true"/>
+        <env name="N8N_REMINDER_AUTHORIZATION_ENABLED" value="false" force="true"/>
+        <env name="N8N_REMINDER_AUTHORIZATION_TOKEN" value="" force="true"/>
+        <server name="N8N_REMINDER_AUTHORIZATION_ENABLED" value="false" force="true"/>
+        <server name="N8N_REMINDER_AUTHORIZATION_TOKEN" value="" force="true"/>
         <env name="DB_CONNECTION" value="sqlite" force="true"/>
         <env name="DB_DATABASE" value=":memory:" force="true"/>
         <env name="DB_URL" value="" force="true"/>

@@ -2,11 +2,34 @@
 
 namespace App\Notifications\Auth;
 
+use App\Notifications\Channels\BrevoPasswordResetChannel;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Notifications\Messages\MailMessage;
 
 class ResetPasswordNotification extends ResetPassword
 {
+    /**
+     * Password resets use Brevo's HTTPS API without changing the application's default mailer.
+     *
+     * @return array<int, class-string>
+     */
+    public function via($notifiable): array
+    {
+        return [BrevoPasswordResetChannel::class];
+    }
+
+    public function resetUrlFor($notifiable): string
+    {
+        if (static::$createUrlCallback) {
+            return call_user_func(static::$createUrlCallback, $notifiable, $this->token);
+        }
+
+        return rtrim((string) config('app.url'), '/').route('password.reset', [
+            'token' => $this->token,
+            'email' => $notifiable->getEmailForPasswordReset(),
+        ], false);
+    }
+
     /**
      * Build the branded password reset email while retaining Laravel's
      * native reset URL and token handling.

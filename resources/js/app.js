@@ -1833,13 +1833,21 @@ document.addEventListener('submit', (event) => {
     // carries its own marker attribute directly, since it isn't built from that shared component.
     if (!(form instanceof HTMLFormElement) || !(form.matches('[data-business-delete-selected-form]') || form.closest('[data-business-delete-form]'))) return;
     event.preventDefault();
+    // Single-flight: a second click, Enter press or requestSubmit() while this delete is in flight
+    // is ignored rather than sent as a second DELETE.
+    if (form.dataset.submitting === 'true') return;
+    form.dataset.submitting = 'true';
 
     const dialog = form.closest('dialog');
     const isBulk = form.matches('[data-business-delete-selected-form]');
-    const submitButton = form.querySelector('button[type="submit"]');
+    // The shared confirmation dialog renders its button without an explicit type (a default submit).
+    const submitButton = form.querySelector('button:not([type]), button[type="submit"]');
     const errorBox = dialog?.querySelector('[data-business-delete-selected-error]');
-    const originalLabel = submitButton?.textContent ?? '';
-    if (submitButton) { submitButton.disabled = true; submitButton.textContent = 'Deleting…'; }
+    if (submitButton instanceof HTMLButtonElement) {
+        setButtonPending(submitButton, 'Deleting...');
+        submitButton.disabled = true;
+        submitButton.setAttribute('aria-busy', 'true');
+    }
     if (errorBox) { errorBox.hidden = true; errorBox.textContent = ''; }
 
     fetch(form.action, {
@@ -1871,7 +1879,12 @@ document.addEventListener('submit', (event) => {
             }
         })
         .finally(() => {
-            if (submitButton) { submitButton.disabled = false; submitButton.textContent = originalLabel; }
+            delete form.dataset.submitting;
+            if (submitButton instanceof HTMLButtonElement) {
+                clearButtonPending(submitButton);
+                submitButton.disabled = false;
+                submitButton.removeAttribute('aria-busy');
+            }
         });
 });
 
@@ -4978,7 +4991,9 @@ function initCheckBatchPanel() {
         if (count === 0 || !deleteForm) return;
         if (!window.confirm(`Delete ${count} selected reports? This action cannot be undone.`)) return;
         syncBatchForm(deleteForm);
+        setButtonPending(deleteSelectedButton, 'Deleting...');
         deleteSelectedButton.disabled = true;
+        deleteSelectedButton.setAttribute('aria-busy', 'true');
         deleteForm.submit();
     });
 
@@ -5343,7 +5358,8 @@ document.querySelectorAll('[data-residence-check-form]').forEach((form) => {
         submitButton.querySelector('[data-residence-check-submit-icon]')?.classList.add('hidden');
         submitButton.querySelector('[data-residence-check-submit-spinner]')?.classList.remove('hidden');
         const text = submitButton.querySelector('[data-residence-check-submit-text]');
-        if (text) text.textContent = 'Saving…';
+        // An existing check (check_id rendered) is an Update; a blank one is an Add.
+        if (text) text.textContent = form.querySelector('input[name="check_id"]')?.value ? 'Updating…' : 'Saving…';
     };
     const resetButton = () => {
         delete form.dataset.submitting;
@@ -5725,7 +5741,8 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
         submitButton.setAttribute('aria-busy', 'true');
         submitButton.querySelector('[data-business-check-submit-icon]')?.classList.add('hidden');
         submitButton.querySelector('[data-business-check-submit-spinner]')?.classList.remove('hidden');
-        if (submitText) submitText.textContent = 'Saving…';
+        // An existing check (check_id rendered) is an Update; a blank one is an Add.
+        if (submitText) submitText.textContent = form.querySelector('input[name="check_id"]')?.value ? 'Updating…' : 'Saving…';
     };
     const resetButton = () => {
         delete form.dataset.submitting;
@@ -5872,6 +5889,32 @@ document.querySelectorAll('[data-business-check-form]').forEach((form) => {
 //    Report toolbar Save button outside the <form> is covered too.
 //  - A validation/stale redirect is a fresh page load, which resets everything; 'pageshow' also
 //    resets a page restored from the back/forward cache after a failed navigation.
+//  - A form that also carries [data-submit-pending-label] (the Business Report create and update
+//    forms, and a confirmation dialog given a pending-label, e.g. the Residence/Business Check
+//    deletes) additionally swaps its submitter's content for a spinner and that label while pending.
+// Visible pending state for one submit button: the same spinner the Business Check form uses plus
+// a short label, with the button's rendered width kept so the shorter label never shifts the
+// layout. The original content is restored exactly by clearButtonPending().
+const pendingButtonContent = new WeakMap();
+const setButtonPending = (button, label) => {
+    if (pendingButtonContent.has(button)) return;
+    pendingButtonContent.set(button, { html: button.innerHTML, minWidth: button.style.minWidth });
+    button.style.minWidth = `${button.getBoundingClientRect().width}px`;
+    const spinner = document.createElement('span');
+    spinner.className = 'size-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none';
+    spinner.setAttribute('aria-hidden', 'true');
+    spinner.dataset.submitPendingSpinner = '';
+    const text = document.createElement('span');
+    text.textContent = label;
+    button.replaceChildren(spinner, text);
+};
+const clearButtonPending = (button) => {
+    const original = pendingButtonContent.get(button);
+    if (!original) return;
+    pendingButtonContent.delete(button);
+    button.innerHTML = original.html;
+    button.style.minWidth = original.minWidth;
+};
 const submitGuardButtons = (form) => [...form.elements]
     .filter((element) => element instanceof HTMLButtonElement && element.type === 'submit');
 const setLoginSubmitState = (form, busy) => {
@@ -5888,6 +5931,7 @@ const setLoginSubmitState = (form, busy) => {
 const resetSubmitGuard = (form) => {
     delete form.dataset.submitting;
     submitGuardButtons(form).forEach((button) => {
+        clearButtonPending(button);
         button.disabled = false;
         button.removeAttribute('aria-busy');
     });
@@ -5904,12 +5948,16 @@ window.addEventListener('submit', (event) => {
 
     form.dataset.submitting = 'true';
     setLoginSubmitState(form, true);
+    // Enter-key and requestSubmit() submissions report the form's default button as submitter.
+    const pendingLabel = form.dataset.submitPendingLabel;
+    const pendingButton = event.submitter instanceof HTMLButtonElement ? event.submitter : submitGuardButtons(form)[0];
     window.setTimeout(() => {
         if (form.dataset.submitting !== 'true') return;
         submitGuardButtons(form).forEach((button) => {
             button.disabled = true;
             button.setAttribute('aria-busy', 'true');
         });
+        if (pendingLabel && pendingButton) setButtonPending(pendingButton, pendingLabel);
     }, 0);
 });
 window.addEventListener('pageshow', (event) => {

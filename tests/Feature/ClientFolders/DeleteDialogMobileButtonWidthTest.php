@@ -25,7 +25,8 @@ class DeleteDialogMobileButtonWidthTest extends TestCase
         $this->assertStringContainsString('class="ui-button-secondary w-full sm:w-auto"', $component);
         $this->assertStringContainsString("{{ \$destructive ? 'ui-button-danger' : 'ui-button-primary' }} w-full sm:w-auto", $component);
         // The wrapping form must stretch too, otherwise the button inside it cannot match Cancel.
-        $this->assertStringContainsString('<form method="POST" action="{{ $action }}" class="w-full sm:w-auto">', $component);
+        // (Only the optional pendingLabel submit-guard attributes may follow the class.)
+        $this->assertStringContainsString('<form method="POST" action="{{ $action }}" class="w-full sm:w-auto"@if($pendingLabel) data-submit-guard data-submit-pending-label="{{ $pendingLabel }}"@endif>', $component);
 
         // Desktop behaviour is preserved: every width rule is mobile-first with an sm:auto reset,
         // so nothing is forced full-width at desktop widths.

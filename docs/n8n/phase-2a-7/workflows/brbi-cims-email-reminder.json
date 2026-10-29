@@ -1,0 +1,779 @@
+{
+  "name": "BRBI CIMS — Email Reminder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "00000000-2a7b-4000-8000-000000000001",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_schedules"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "scheduled"
+            },
+            {
+              "keyName": "trigger_at_utc",
+              "condition": "lte",
+              "keyValue": "={{ $now.toUTC().toISO() }}"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 50,
+        "orderBy": true,
+        "orderByColumn": "trigger_at_utc",
+        "orderByDirection": "ASC"
+      },
+      "id": "00000000-2a7b-4000-8000-000000000002",
+      "name": "Find Due Reminders",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_schedules"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "subject_key",
+              "condition": "eq",
+              "keyValue": "={{ $json.subject_key }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "00000000-2a7b-4000-8000-000000000003",
+      "name": "Read Subject Rows",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        0
+      ],
+      "notes": "All rows of each due subject, so a newer (rescheduled or cancelled) version always wins."
+    },
+    {
+      "parameters": {
+        "jsCode": "// BRBI CIMS Phase 2A-7, Workflow B \"Select Deliverable\": decide per subject from ALL of its rows\n// (input: every row of every subject that has a due row; rows may repeat and are de-duplicated).\n//  - Only the highest schedule_version is authoritative; a lower-version duplicate is ignored.\n//  - If the authoritative version is cancelled, nothing is sent.\n//  - \"sent\" and \"uncertain\" are never retried automatically.\n//  - \"failed\" (a definitive provider rejection) is retried at most MAX_ATTEMPTS times.\n//  - A \"sending\" claim older than STALE_CLAIM_MINUTES has an unknown outcome -> \"uncertain\".\nconst MAX_ATTEMPTS = 3;\nconst STALE_CLAIM_MINUTES = 30;\nconst EMAIL = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nconst now = Date.now();\nconst runToken = `${$execution.id}:${now}`;\n\nconst bySubject = new Map();\nconst seen = new Set();\nfor (const item of $input.all()) {\n    const row = item.json;\n    if (!row || typeof row.subject_key !== 'string' || seen.has(String(row.id))) {\n        continue;\n    }\n    seen.add(String(row.id));\n    if (!bySubject.has(row.subject_key)) {\n        bySubject.set(row.subject_key, []);\n    }\n    bySubject.get(row.subject_key).push(row);\n}\n\nconst output = [];\nfor (const [subjectKey, rows] of bySubject) {\n    const version = Math.max(...rows.map((row) => Number(row.schedule_version)));\n    const current = rows.filter((row) => Number(row.schedule_version) === version);\n    if (current.some((row) => row.status !== 'scheduled')) {\n        continue;\n    }\n\n    const states = current.map((row) => row.delivery_status);\n    if (states.includes('sent') || states.includes('uncertain') || states.includes('skipped')) {\n        continue;\n    }\n\n    const row = current[0];\n    if (!(Date.parse(row.trigger_at_utc) <= now)) {\n        continue;\n    }\n\n    const common = {\n        subject_key: subjectKey,\n        schedule_version: version,\n        event_id: row.last_event_id,\n        recipient_user_id: Number(row.recipient_user_id),\n        delivery_key: `${subjectKey}:v${version}`,\n    };\n\n    const sending = current.find((candidate) => candidate.delivery_status === 'sending');\n    if (sending) {\n        if (now - Date.parse(sending.delivery_updated_at) > STALE_CLAIM_MINUTES * 60 * 1000) {\n            output.push({\n                json: {\n                    ...common,\n                    action: 'record',\n                    claim_token: sending.delivery_claim,\n                    outcome: 'uncertain',\n                    next_claim: sending.delivery_claim,\n                    next_attempt_at: null,\n                    attempt_number: Number(sending.delivery_attempts) || 0,\n                    provider_message_id: '',\n                    response_status: null,\n                    error_code: 'claim_expired_without_result',\n                    attempted_at: new Date(now).toISOString(),\n                },\n            });\n        }\n        continue;\n    }\n\n    if (typeof row.recipient_email !== 'string' || !EMAIL.test(row.recipient_email)) {\n        continue;\n    }\n\n    const attempts = Number(row.delivery_attempts) || 0;\n    const retryDue = row.delivery_status === 'failed'\n        && attempts < MAX_ATTEMPTS\n        && (row.delivery_next_attempt_at === null || row.delivery_next_attempt_at === '' || Date.parse(row.delivery_next_attempt_at) <= now);\n    if (row.delivery_status !== 'pending' && !retryDue) {\n        continue;\n    }\n\n    output.push({\n        json: {\n            ...common,\n            action: 'claim',\n            claim_token: `${runToken}:${subjectKey}`,\n            expected_delivery_status: row.delivery_status,\n            expected_attempts: attempts,\n            attempt_number: attempts + 1,\n            recipient_email: row.recipient_email,\n            subject_label: row.subject_label,\n            activities_url: row.activities_url,\n            trigger_at_manila: row.trigger_at_manila,\n            has_specific_time: row.has_specific_time === true,\n        },\n    });\n}\n\nreturn output;\n"
+      },
+      "id": "00000000-2a7b-4000-8000-000000000004",
+      "name": "Select Deliverable",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "={{ $json.action }}=claim",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "claim",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-2a7b-4000-8000-000000000005",
+      "name": "Claim Action?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "NOT_APPROVED=APPROVED_FOR_PHASE_2B",
+              "leftValue": "NOT_APPROVED",
+              "rightValue": "APPROVED_FOR_PHASE_2B",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-2a7b-4000-8000-000000000006",
+      "name": "Live Sending Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_schedules"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "subject_key",
+              "condition": "eq",
+              "keyValue": "={{ $json.subject_key }}"
+            },
+            {
+              "keyName": "schedule_version",
+              "condition": "eq",
+              "keyValue": "={{ $json.schedule_version }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "scheduled"
+            },
+            {
+              "keyName": "delivery_status",
+              "condition": "eq",
+              "keyValue": "={{ $json.expected_delivery_status }}"
+            },
+            {
+              "keyName": "delivery_attempts",
+              "condition": "eq",
+              "keyValue": "={{ $json.expected_attempts }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "delivery_status": "sending",
+            "delivery_claim": "={{ $json.claim_token }}",
+            "delivery_attempts": "={{ $json.attempt_number }}",
+            "delivery_updated_at": "={{ $now.toUTC().toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "delivery_status",
+              "displayName": "delivery_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_claim",
+              "displayName": "delivery_claim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_attempts",
+              "displayName": "delivery_attempts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_updated_at",
+              "displayName": "delivery_updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "00000000-2a7b-4000-8000-000000000007",
+      "name": "Claim Reminder",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1440,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_schedules"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "delivery_status",
+              "condition": "eq",
+              "keyValue": "sending"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "00000000-2a7b-4000-8000-000000000008",
+      "name": "Read Claimed Rows",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1680,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// BRBI CIMS Phase 2A-7, Workflow B \"Confirm Claims\": keep only candidates whose claim this execution now owns.\n// The claim itself was one guarded UPDATE (status, version, delivery state and attempt count must\n// all still match), so of two overlapping executions at most one can own a subject's claim.\nconst candidates = $('Select Deliverable').all().map((item) => item.json).filter((candidate) => candidate.action === 'claim');\nconst rows = $input.all().map((item) => item.json).filter((row) => row && typeof row.subject_key === 'string');\n\nfunction when(candidate) {\n    const date = String(candidate.trigger_at_manila).slice(0, 10);\n    const time = String(candidate.trigger_at_manila).slice(11, 16);\n\n    return candidate.has_specific_time ? `${date} ${time} (Asia/Manila)` : `${date} (Asia/Manila)`;\n}\n\nconst output = [];\nfor (const candidate of candidates) {\n    const owned = rows.some((row) => row.subject_key === candidate.subject_key\n        && Number(row.schedule_version) === candidate.schedule_version\n        && row.delivery_claim === candidate.claim_token);\n    if (!owned) {\n        continue;\n    }\n\n    // Generic wording only: subject_label is a generic activity label chosen by Laravel.\n    output.push({\n        json: {\n            ...candidate,\n            email_subject: `BRBI CIMS reminder: ${candidate.subject_label} scheduled ${when(candidate)}`,\n            email_body: [\n                'This is a reminder for a CI activity you created in BRBI CIMS.',\n                '',\n                `Activity: ${candidate.subject_label}`,\n                `Scheduled: ${when(candidate)}`,\n                '',\n                `Open the activities list: ${candidate.activities_url}`,\n                '',\n                'This message was sent automatically. Sign in to BRBI CIMS for details.',\n            ].join('\\n'),\n        },\n    });\n}\n\nreturn output;\n"
+      },
+      "id": "00000000-2a7b-4000-8000-000000000009",
+      "name": "Confirm Claims",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.recipient_email }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailType": "text",
+        "message": "={{ $json.email_body }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "00000000-2a7b-4000-8000-000000000010",
+      "name": "Send Reminder Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2160,
+        0
+      ],
+      "disabled": true,
+      "onError": "continueErrorOutput",
+      "retryOnFail": false,
+      "notes": "Disabled, no credential. Phase 2B approval required before enabling."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// BRBI CIMS Phase 2A-7, Workflow B \"Interpret Gmail Outcome\" (run once for each item).\n// Connected to BOTH Gmail outputs: an item carrying `error` came from the error output.\n//\n//  - \"sent\" only for a recognisable Gmail API message resource (id, threadId, labelIds incl. SENT).\n//    Anything else on the success output, including the pass-through item a DISABLED Gmail node\n//    emits, is \"uncertain\".\n//  - A definite 4xx rejection (except 408) means Gmail did not accept the message: \"failed\",\n//    retried at most MAX_ATTEMPTS times after a growing delay.\n//  - 5xx, 408, timeouts, network resets and unknown errors may or may not have sent the\n//    message: \"uncertain\", NEVER retried automatically.\nconst MAX_ATTEMPTS = 3;\nconst RETRY_DELAY_MINUTES = 15;\nconst claim = $('Confirm Claims').item.json;\nconst now = Date.now();\n\nlet outcome;\nlet status = null;\nlet providerMessageId = '';\nlet errorCode = '';\nlet nextAttemptAt = null;\n\nif ($json && $json.error) {\n    const error = $json.error;\n    const fromMessage = String(error.message || error.description || '').match(/\\b([45]\\d\\d)\\b/);\n    status = [error.httpCode, error.status, error.statusCode, fromMessage ? fromMessage[1] : null]\n        .map(Number)\n        .find((value) => Number.isInteger(value) && value >= 100 && value <= 599) ?? null;\n    const definite = status !== null && status >= 400 && status < 500 && status !== 408;\n    outcome = definite ? 'failed' : 'uncertain';\n    errorCode = definite ? `gmail_rejected_${status}` : 'gmail_outcome_uncertain';\n    if (definite && claim.attempt_number < MAX_ATTEMPTS) {\n        nextAttemptAt = new Date(now + RETRY_DELAY_MINUTES * claim.attempt_number * 60 * 1000).toISOString();\n    }\n} else {\n    const sent = $json\n        && typeof $json.id === 'string'\n        && typeof $json.threadId === 'string'\n        && Array.isArray($json.labelIds)\n        && $json.labelIds.includes('SENT');\n    outcome = sent ? 'sent' : 'uncertain';\n    providerMessageId = sent ? $json.id : '';\n    errorCode = sent ? '' : 'gmail_response_unrecognized';\n}\n\nreturn {\n    json: {\n        action: 'record',\n        subject_key: claim.subject_key,\n        schedule_version: claim.schedule_version,\n        event_id: claim.event_id,\n        recipient_user_id: claim.recipient_user_id,\n        delivery_key: claim.delivery_key,\n        claim_token: claim.claim_token,\n        outcome,\n        // A failed attempt releases the claim so a later run may retry it.\n        next_claim: outcome === 'failed' ? '' : claim.claim_token,\n        next_attempt_at: nextAttemptAt,\n        attempt_number: claim.attempt_number,\n        provider_message_id: providerMessageId,\n        response_status: status,\n        error_code: errorCode,\n        attempted_at: new Date(now).toISOString(),\n    },\n};\n"
+      },
+      "id": "00000000-2a7b-4000-8000-000000000011",
+      "name": "Interpret Gmail Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_schedules"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "subject_key",
+              "condition": "eq",
+              "keyValue": "={{ $json.subject_key }}"
+            },
+            {
+              "keyName": "schedule_version",
+              "condition": "eq",
+              "keyValue": "={{ $json.schedule_version }}"
+            },
+            {
+              "keyName": "delivery_status",
+              "condition": "eq",
+              "keyValue": "sending"
+            },
+            {
+              "keyName": "delivery_claim",
+              "condition": "eq",
+              "keyValue": "={{ $json.claim_token }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "delivery_status": "={{ $json.outcome }}",
+            "delivery_claim": "={{ $json.next_claim }}",
+            "delivery_next_attempt_at": "={{ $json.next_attempt_at }}",
+            "delivery_updated_at": "={{ $now.toUTC().toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "delivery_status",
+              "displayName": "delivery_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_claim",
+              "displayName": "delivery_claim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_next_attempt_at",
+              "displayName": "delivery_next_attempt_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "delivery_updated_at",
+              "displayName": "delivery_updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "00000000-2a7b-4000-8000-000000000012",
+      "name": "Record Delivery Outcome",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "cims_reminder_delivery_logs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "delivery_key": "={{ $json.delivery_key }}",
+            "subject_key": "={{ $json.subject_key }}",
+            "schedule_version": "={{ $json.schedule_version }}",
+            "event_id": "={{ $json.event_id }}",
+            "recipient_user_id": "={{ $json.recipient_user_id }}",
+            "attempt_number": "={{ $json.attempt_number }}",
+            "outcome": "={{ $json.outcome }}",
+            "provider_message_id": "={{ $json.provider_message_id }}",
+            "response_status": "={{ $json.response_status }}",
+            "error_code": "={{ $json.error_code }}",
+            "attempted_at": "={{ $json.attempted_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "delivery_key",
+              "displayName": "delivery_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject_key",
+              "displayName": "subject_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "schedule_version",
+              "displayName": "schedule_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "event_id",
+              "displayName": "event_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recipient_user_id",
+              "displayName": "recipient_user_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "attempt_number",
+              "displayName": "attempt_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "outcome",
+              "displayName": "outcome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "provider_message_id",
+              "displayName": "provider_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "response_status",
+              "displayName": "response_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "error_code",
+              "displayName": "error_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "attempted_at",
+              "displayName": "attempted_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "00000000-2a7b-4000-8000-000000000013",
+      "name": "Write Delivery Log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2880,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Find Due Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Due Reminders": {
+      "main": [
+        [
+          {
+            "node": "Read Subject Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Subject Rows": {
+      "main": [
+        [
+          {
+            "node": "Select Deliverable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Deliverable": {
+      "main": [
+        [
+          {
+            "node": "Claim Action?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Action?": {
+      "main": [
+        [
+          {
+            "node": "Live Sending Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Delivery Outcome",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Write Delivery Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Live Sending Approved?": {
+      "main": [
+        [
+          {
+            "node": "Claim Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Reminder": {
+      "main": [
+        [
+          {
+            "node": "Read Claimed Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Claimed Rows": {
+      "main": [
+        [
+          {
+            "node": "Confirm Claims",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Claims": {
+      "main": [
+        [
+          {
+            "node": "Send Reminder Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Reminder Email": {
+      "main": [
+        [
+          {
+            "node": "Interpret Gmail Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Interpret Gmail Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpret Gmail Outcome": {
+      "main": [
+        [
+          {
+            "node": "Record Delivery Outcome",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Write Delivery Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Manila",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "brbiCimsPhase": "2A-7",
+    "description": "Due reminders. Live sending gated off before any claim; Gmail node disabled with no credential. Inactive."
+  },
+  "tags": []
+}

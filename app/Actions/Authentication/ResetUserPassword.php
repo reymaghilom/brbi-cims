@@ -9,6 +9,7 @@ use App\Services\Authentication\SessionInvalidator;
 use App\Support\Authentication\PasswordPolicy;
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -39,6 +40,10 @@ class ResetUserPassword
                 'must_change_password' => true,
                 'password_changed_at' => null,
             ])->save();
+
+            if (filled($user->getEmailForPasswordReset())) {
+                Password::broker()->deleteToken($user);
+            }
 
             $this->sessions->invalidate($user);
 

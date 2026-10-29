@@ -6,6 +6,7 @@ use App\Models\ActivityDefinition;
 use App\Models\AuditLog;
 use App\Models\User;
 use App\Notifications\CiActivityScheduledReminder;
+use App\Services\Integrations\N8n\ReminderScheduleOutbox;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -44,6 +45,8 @@ class ResetOperationalData
      * the browser, so a forged request without it cannot reach this action.
      */
     public const CONFIRMATION_PHRASE = 'RESET DATA';
+
+    public function __construct(private readonly ReminderScheduleOutbox $reminderOutbox) {}
 
     /**
      * Every table this reset is allowed to empty, in child-before-parent order.
@@ -188,6 +191,13 @@ class ResetOperationalData
             // The scheduled-reminder notifications were about activities that no longer exist.
             // Only that one notification type is cleared, so nothing else a user was sent is lost.
             DB::table('notifications')->where('type', CiActivityScheduledReminder::class)->delete();
+
+            // The bulk deletes above fire no model events, so any pending n8n email reminder for
+            // the removed activities is cancelled here, in this same transaction. Inert while the
+            // integration is disabled.
+            if (ReminderScheduleOutbox::enabled()) {
+                $this->reminderOutbox->reconcileMissing();
+            }
 
             AuditLog::create([
                 'user_id' => $actor->id,

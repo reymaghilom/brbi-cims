@@ -1,0 +1,60 @@
+PROPOSED ONLY — NOT APPLIED. Phase 3A item 9: request-driven, bounded n8n outbox retry pass that
+mirrors the existing no-cron reminder fallback in the same controller. No schema change, no change
+to in-app notifications, recipient logic, signing, or the dispatcher itself.
+
+--- a/app/Http/Controllers/CiActivityNotificationFeedController.php
++++ b/app/Http/Controllers/CiActivityNotificationFeedController.php
+@@
+ namespace App\Http\Controllers;
+
++use App\Services\Integrations\N8n\ReminderOutboxDispatcher;
+ use App\Services\Notifications\ProcessDueCiActivityReminders;
+ use App\Services\Notifications\ScheduledTodayNotificationFeed;
+ use Illuminate\Http\JsonResponse;
+@@
+  * Its request-driven reminder pass is a no-cron fallback. Database state is
+  * still the authoritative duplicate guard; the cache key only avoids doing
+  * the same due-item query on every poll.
++ *
++ * The same request also gives the n8n reminder outbox a bounded no-cron retry pass: at most one
++ * pass per minute across ALL users (global cache key), at most OUTBOX_EVENTS_PER_PASS events,
++ * each bounded by the dispatcher's own timeout. The dispatcher's row-locked claim keeps
++ * overlapping passes safe, and superseded versions are never sent.
+  */
+ class CiActivityNotificationFeedController extends Controller
+ {
+-    public function __invoke(Request $request, ProcessDueCiActivityReminders $processor): JsonResponse
++    private const OUTBOX_EVENTS_PER_PASS = 2;
++
++    public function __invoke(Request $request, ProcessDueCiActivityReminders $processor, ReminderOutboxDispatcher $outbox): JsonResponse
+     {
+         $user = $request->user();
+
++        // Runs for every signed-in bell poll (not only CI users), so pending schedule changes and
++        // cancellations are retried whenever anyone has the app open.
++        try {
++            if (config('services.n8n_reminders.enabled')
++                && Cache::add('n8n-reminders:outbox-feed-pass', true, now()->addMinute())) {
++                $outbox->deliverPending(self::OUTBOX_EVENTS_PER_PASS);
++            }
++        } catch (Throwable $exception) {
++            Log::error('n8n reminder outbox fallback failed.', [
++                'exception' => $exception,
++            ]);
++        }
++
+         if (! $user->role->worksAsCreditInvestigator()) {
+
+Proposed accompanying tests (tests/Feature/Integrations/N8nReminderOutboxFeedPassTest.php):
+  1. enabled + pending event  -> one feed poll delivers it (Http::fake 200), event becomes delivered.
+  2. a second poll within the minute does not call the dispatcher again (Cache::add guard).
+  3. disabled integration     -> no HTTP call, feed response unchanged.
+  4. dispatcher throws        -> feed still returns 200 with its normal JSON (error logged).
+  5. non-CI user poll         -> outbox pass still runs; feed still returns the empty payload.
+  6. a pending cancellation supersedes an older pending reschedule of the same subject -> only the
+     cancellation is sent (existing dispatcher behaviour, exercised through the feed).
+
+Configuration (no code): N8N_REMINDERS_MAX_ATTEMPTS=30 in production. With the existing 360-minute
+backoff cap this keeps retrying for about 5.3 days (511 min + 20 x 360 min) instead of about
+8.5 hours (1+2+...+256 = 511 min with the default 10) before an event becomes
+'failed', because 'failed' can only be re-queued via the CLI, which InfinityFree lacks.

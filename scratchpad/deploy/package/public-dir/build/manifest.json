@@ -1,0 +1,26 @@
+{
+  "resources/css/app.css": {
+    "file": "assets/app-QcMaqemO.css",
+    "src": "resources/css/app.css",
+    "isEntry": true,
+    "name": "app",
+    "names": [
+      "app.css"
+    ]
+  },
+  "resources/css/print/official-report.css": {
+    "file": "assets/official-report-DW3lvfgL.css",
+    "src": "resources/css/print/official-report.css",
+    "isEntry": true,
+    "name": "official-report",
+    "names": [
+      "official-report.css"
+    ]
+  },
+  "resources/js/app.js": {
+    "file": "assets/app-oHU76TA-.js",
+    "name": "app",
+    "src": "resources/js/app.js",
+    "isEntry": true
+  }
+}

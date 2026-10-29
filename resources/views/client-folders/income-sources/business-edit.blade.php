@@ -42,13 +42,16 @@
 @endphp
 
 @section('content')
-    <form id="business-template-form" method="POST" action="{{ route('client-folders.income-sources.store', $clientFolder) }}" hidden>@csrf<input type="hidden" name="intent" value="complete"><input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}"></form>
+    {{-- submission_token is fresh on every render: an identical retry of a save whose response was
+         lost replays the first result instead of saving again (PreventDuplicateSubmission). --}}
+    <form id="business-template-form" method="POST" action="{{ route('client-folders.income-sources.store', $clientFolder) }}" hidden data-submit-guard data-submit-pending-label="Saving...">@csrf<input type="hidden" name="intent" value="complete"><input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}"><input type="hidden" name="submission_token" value="{{ \Illuminate\Support\Str::uuid() }}"></form>
 
     @if($incomeSource)
-        <form id="business-report-form" method="POST" action="{{ route('client-folders.income-sources.business.update', [$clientFolder, $incomeSource]) }}" class="business-encoding-page" data-business-report-form data-unsaved-form data-submit-guard>
+        <form id="business-report-form" method="POST" action="{{ route('client-folders.income-sources.business.update', [$clientFolder, $incomeSource]) }}" class="business-encoding-page" data-business-report-form data-unsaved-form data-submit-guard data-submit-pending-label="Updating...">
             @csrf
             @method('PUT')
             <input type="hidden" name="co_maker_id" value="{{ ($activePerson ?? null)?->id }}">
+            <input type="hidden" name="submission_token" value="{{ \Illuminate\Support\Str::uuid() }}">
             {{-- old() keeps a rejected stale token stale: after a stale-save redirect the form still
                  carries the CI's unsaved (older) values, so re-clicking Save must stay blocked until
                  the report is genuinely refreshed. --}}
